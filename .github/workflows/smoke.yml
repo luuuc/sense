@@ -1,0 +1,67 @@
+name: Smoke Test
+
+# Validates a just-published GitHub Release by downloading the Linux
+# amd64 archive and exercising the sense CLI against output assertions.
+# Separate from release.yml so a smoke failure doesn't block the release
+# itself — operators can diagnose and re-run without re-cutting a tag.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  smoke:
+    name: Smoke-test released binary (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release archive and checksums
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ARCHIVE="sense_${VERSION}_linux_amd64.tar.gz"
+          CHECKSUMS="sense_${VERSION}_checksums.txt"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
+          echo "Tag: ${TAG}  Version: ${VERSION}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+          curl -fsSL -o "${ARCHIVE}" "${BASE}/${ARCHIVE}"
+          curl -fsSL -o "${CHECKSUMS}" "${BASE}/${CHECKSUMS}"
+
+          # Verify checksum before running anything from the archive.
+          EXPECTED="$(grep -F "${ARCHIVE}" "${CHECKSUMS}" | awk '{print $1}')"
+          ACTUAL="$(sha256sum "${ARCHIVE}" | awk '{print $1}')"
+          if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "checksum mismatch: expected=${EXPECTED} actual=${ACTUAL}" >&2
+            exit 1
+          fi
+          echo "Checksum verified."
+
+          tar -xzf "${ARCHIVE}"
+          chmod +x ./sense
+
+      - name: sense version reports the tagged version
+        run: |
+          set -euo pipefail
+          out="$(./sense version)"
+          echo "$out"
+          echo "$out" | grep -F "${VERSION}" >/dev/null
+
+      - name: sense help lists the expected subcommands
+        run: |
+          set -euo pipefail
+          out="$(./sense help)"
+          echo "$out"
+          for sub in scan search graph blast conventions status mcp version; do
+            echo "$out" | grep -qE "^\s*${sub}\b" || { echo "help missing: ${sub}" >&2; exit 1; }
+          done

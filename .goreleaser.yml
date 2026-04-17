@@ -1,0 +1,46 @@
+version: 2
+
+builds:
+  - id: sense
+    main: ./cmd/sense
+    binary: sense
+    flags:
+      - -trimpath
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/luuuc/sense/internal/version.Version={{.Version}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: sense
+    ids: [sense]
+    formats: [tar.gz]
+    name_template: "sense_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "sense_{{ .Version }}_checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^ci:"
+      - "^test:"
+      - "^refactor:"
+
+release:
+  github:
+    owner: luuuc
+    name: sense
+  prerelease: auto
+  make_latest: true
