@@ -1,0 +1,265 @@
+// Package python extracts Tier-Basic symbols and intra-file edges from
+// Python source via tree-sitter-python.
+//
+// Symbol kinds:
+//   - class / dataclass      → KindClass
+//   - def at module scope    → KindFunction
+//   - def inside a class     → KindMethod
+//   - UPPER_CASE = …         → KindConstant (module-level only)
+//
+// Intra-file edges:
+//   - class B(A)             → inherits edge (B → A) when A is defined
+//                              in the same file; cross-file inheritance
+//                              is dropped for 01-03 to backfill.
+//
+// Qualified-name rules (per 05-languages.md):
+//   - Class:      A  or  Outer.Inner
+//   - Method:     A.method  (Python has no syntactic instance/class
+//                            split at def-site; decorators identify
+//                            classmethods but we don't emit a separate
+//                            qualified form in Tier-Basic).
+//   - Function:   f  (top-level only; nested defs are closures, skipped)
+//   - Constant:   NAME  or  Outer.NAME
+//
+// What Tier-Basic skips (lives in Full-tier promotion):
+//   - decorators (framework inference: Django models, FastAPI routes)
+//   - imports (edge resolution; handled in 01-03)
+//   - visibility (leading underscore convention)
+package python
+
+import (
+	"slices"
+	"strings"
+
+	sitter "github.com/tree-sitter/go-tree-sitter"
+
+	"github.com/luuuc/sense/internal/extract"
+	"github.com/luuuc/sense/internal/grammars"
+	"github.com/luuuc/sense/internal/model"
+)
+
+// Extractor is the Python implementation of extract.Extractor.
+type Extractor struct{}
+
+func (Extractor) Grammar() *sitter.Language { return grammars.Python() }
+func (Extractor) Language() string          { return "python" }
+func (Extractor) Extensions() []string      { return []string{".py", ".pyi"} }
+func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
+
+func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
+	w := &walker{source: source, emit: emit}
+	return w.walk(tree.RootNode(), nil)
+}
+
+func init() { extract.Register(Extractor{}) }
+
+// ---- walker ----
+
+type walker struct {
+	source []byte
+	emit   extract.Emitter
+}
+
+// walk visits node and its children under the given class-name scope.
+// scope is the chain of enclosing class qualified-name segments —
+// e.g. ["Outer", "Inner"] inside `class Outer: class Inner: …`.
+//
+// Module-level functions and top-level constants live at scope=nil.
+// Function bodies are NOT recursed into: nested defs are closures, not
+// symbols of interest for Tier-Basic.
+func (w *walker) walk(n *sitter.Node, scope []string) error {
+	if n == nil {
+		return nil
+	}
+
+	switch n.Kind() {
+	case "class_definition":
+		return w.handleClass(n, scope)
+	case "function_definition":
+		return w.handleFunction(n, scope)
+	case "decorated_definition":
+		// Unwrap the decoration — the decorator itself is metadata, not
+		// a symbol. Tier-Full will use decorators for framework inference.
+		// A malformed `decorated_definition` with no `definition` field
+		// falls through to walkChildren so the walker stays resilient.
+		if def := n.ChildByFieldName("definition"); def != nil {
+			return w.walk(def, scope)
+		}
+		return w.walkChildren(n, scope)
+	case "expression_statement":
+		// Assignments at module or class scope are wrapped in
+		// expression_statement nodes; descend.
+		return w.walkChildren(n, scope)
+	case "assignment":
+		if err := w.handleAssignment(n, scope); err != nil {
+			return err
+		}
+		return nil // LHS/RHS of an assignment can't contain symbols.
+	default:
+		return w.walkChildren(n, scope)
+	}
+}
+
+func (w *walker) walkChildren(n *sitter.Node, scope []string) error {
+	count := n.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		if err := w.walk(n.NamedChild(i), scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// handleClass emits the class symbol, records inheritance edges, and
+// descends into the body with the class name pushed onto the scope so
+// methods and nested classes qualify correctly.
+//
+// Note on decorated classes: the class's LineStart is the `class …:`
+// line, not the `@decorator` line above it. For Tier-Basic that's
+// intentional — the symbol's location is where tree-sitter places
+// the class_definition, not the outer decorated_definition. A future
+// Full tier that extracts decorators can revisit this if users
+// expect "jump to decorator" semantics.
+func (w *walker) handleClass(n *sitter.Node, scope []string) error {
+	nameNode := n.ChildByFieldName("name")
+	if nameNode == nil {
+		return w.walkChildren(n, scope)
+	}
+	name := extract.Text(nameNode, w.source)
+	if name == "" {
+		return w.walkChildren(n, scope)
+	}
+
+	parent := strings.Join(scope, ".")
+	qualified := name
+	if parent != "" {
+		qualified = parent + "." + name
+	}
+
+	if err := w.emit.Symbol(extract.EmittedSymbol{
+		Name:            name,
+		Qualified:       qualified,
+		Kind:            model.KindClass,
+		ParentQualified: parent,
+		LineStart:       extract.Line(n.StartPosition()),
+		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+
+	// Superclass list: `class B(A, B):` — emit one inherits edge per
+	// simple-name superclass. Compound expressions (e.g. `Generic[T]`
+	// or `module.Base`) are skipped: we'd need type-arg or attribute
+	// resolution, which is cross-file territory for 01-03.
+	if sc := n.ChildByFieldName("superclasses"); sc != nil {
+		line := extract.Line(sc.StartPosition())
+		count := sc.NamedChildCount()
+		for i := uint(0); i < count; i++ {
+			arg := sc.NamedChild(i)
+			if arg == nil || arg.Kind() != "identifier" {
+				continue
+			}
+			if err := w.emit.Edge(extract.EmittedEdge{
+				SourceQualified: qualified,
+				TargetQualified: extract.Text(arg, w.source),
+				Kind:            model.EdgeInherits,
+				Line:            &line,
+				Confidence:      1.0,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	if body := n.ChildByFieldName("body"); body != nil {
+		newScope := append(slices.Clone(scope), name)
+		return w.walkChildren(body, newScope)
+	}
+	return nil
+}
+
+// handleFunction emits a method (inside a class) or function
+// (module-level). The body is not recursed into — Tier-Basic does not
+// extract nested defs or their closures.
+func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
+	nameNode := n.ChildByFieldName("name")
+	if nameNode == nil {
+		return w.walkChildren(n, scope)
+	}
+	name := extract.Text(nameNode, w.source)
+	if name == "" {
+		return w.walkChildren(n, scope)
+	}
+
+	parent := strings.Join(scope, ".")
+	qualified := name
+	kind := model.KindFunction
+	if parent != "" {
+		qualified = parent + "." + name
+		kind = model.KindMethod
+	}
+
+	return w.emit.Symbol(extract.EmittedSymbol{
+		Name:            name,
+		Qualified:       qualified,
+		Kind:            kind,
+		ParentQualified: parent,
+		LineStart:       extract.Line(n.StartPosition()),
+		LineEnd:         extract.Line(n.EndPosition()),
+	})
+}
+
+// handleAssignment emits KindConstant when the LHS is a plain
+// identifier that matches Python's convention for module-level
+// constants (ALL_CAPS / ALL_CAPS_WITH_UNDERSCORES). Class-body and
+// top-level assignments are both candidates — class-level constants
+// qualify through the class scope, top-level ones don't.
+//
+// Attribute assignments (`self.x = …`), subscripts (`d["k"] = …`),
+// and tuple/list targets (`a, b = …`) are all skipped — they're not
+// identifier LHS.
+func (w *walker) handleAssignment(n *sitter.Node, scope []string) error {
+	lhs := n.ChildByFieldName("left")
+	if lhs == nil || lhs.Kind() != "identifier" {
+		return nil
+	}
+	name := extract.Text(lhs, w.source)
+	if !isAllCaps(name) {
+		return nil
+	}
+
+	parent := strings.Join(scope, ".")
+	qualified := name
+	if parent != "" {
+		qualified = parent + "." + name
+	}
+	return w.emit.Symbol(extract.EmittedSymbol{
+		Name:            name,
+		Qualified:       qualified,
+		Kind:            model.KindConstant,
+		ParentQualified: parent,
+		LineStart:       extract.Line(n.StartPosition()),
+		LineEnd:         extract.Line(n.EndPosition()),
+	})
+}
+
+// isAllCaps tests the Python "constant" convention: non-empty, every
+// cased letter is uppercase. Digits and underscores pass through. Same
+// result as the equivalent regexp but without the regex engine.
+//
+// strings.ToUpper on an already-uppercase ASCII name is an identity,
+// so comparing for equality filters out any lowercase letters — but
+// not names that contain *only* underscores and digits (`___`, `_`,
+// `42`). We reject those explicitly since they're not conventional
+// Python constants.
+func isAllCaps(s string) bool {
+	if s == "" || strings.ToUpper(s) != s {
+		return false
+	}
+	for _, r := range s {
+		if (r >= 'A' && r <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
