@@ -26,6 +26,15 @@ var schemaSQL string
 // Bump this when schema.sql changes shape incompatibly.
 const schemaVersion = 1
 
+// maxOpenConns is the connection-pool size Open applies. InTx relies on
+// this being 1 — its raw BEGIN/COMMIT approach shares a transaction
+// across Adapter calls by sharing the single pooled connection. If this
+// ever changes to allow concurrent writes, InTx must be reworked to use
+// database/sql's proper *sql.Tx threading. The constant is checked at
+// InTx entry so a future config change fails loudly instead of silently
+// corrupting transactional semantics.
+const maxOpenConns = 1
+
 // Adapter is the SQLite implementation of index.Index.
 type Adapter struct {
 	db *sql.DB
@@ -55,7 +64,8 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 
 	// Single connection serializes writes and reads. Scan is sequential
 	// today; relax when concurrent MCP reads warrant the contention cost.
-	db.SetMaxOpenConns(1)
+	// Load-bearing for InTx — see maxOpenConns constant.
+	db.SetMaxOpenConns(maxOpenConns)
 
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		_ = db.Close()
@@ -75,6 +85,45 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 // Close releases the underlying database handle and flushes the WAL.
 func (a *Adapter) Close() error {
 	return a.db.Close()
+}
+
+// InTx runs fn inside a SQLite transaction, committing on success and
+// rolling back on error. Callers keep using the same Adapter inside fn —
+// there is no transaction-scoped handle to thread through, which avoids
+// an interface-wide refactor.
+//
+// This relies on MaxOpenConns being 1: with a single pooled connection,
+// the BEGIN/COMMIT/ROLLBACK statements issued here share the same
+// connection as every a.db.ExecContext / QueryRowContext call inside
+// fn, so SQLite treats them as one transaction. If the pool size ever
+// changes, this helper must be reworked to use database/sql's proper
+// BeginTx + *sql.Tx plumbing. The runtime check below fails loudly
+// rather than silently corrupting transactional semantics.
+func (a *Adapter) InTx(ctx context.Context, fn func() error) (err error) {
+	if got := a.db.Stats().MaxOpenConnections; got != maxOpenConns {
+		panic(fmt.Sprintf(
+			"sqlite.InTx: MaxOpenConnections = %d, want %d — the single-conn "+
+				"transaction trick no longer applies; switch InTx to *sql.Tx "+
+				"plumbing before raising the pool size",
+			got, maxOpenConns))
+	}
+	if _, err := a.db.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("sqlite begin: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			// Best-effort rollback; the returned error is the real one.
+			// A rollback failure after a primary error is almost always
+			// a consequence of the primary error, not new information.
+			_, _ = a.db.ExecContext(ctx, "ROLLBACK")
+			return
+		}
+		if _, commitErr := a.db.ExecContext(ctx, "COMMIT"); commitErr != nil {
+			err = fmt.Errorf("sqlite commit: %w", commitErr)
+			_, _ = a.db.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+	return fn()
 }
 
 // -------------------- writes --------------------

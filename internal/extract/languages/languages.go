@@ -5,6 +5,10 @@
 // compile time rather than at runtime.
 package languages
 
-// Language packages are added as they land. Until the first extractor
-// lands (Ruby), this file is intentionally empty — the fixture test
-// runner will iterate over an empty set of languages and pass.
+import (
+	_ "github.com/luuuc/sense/internal/extract/golang"
+	_ "github.com/luuuc/sense/internal/extract/python"
+	_ "github.com/luuuc/sense/internal/extract/ruby"
+	_ "github.com/luuuc/sense/internal/extract/rust"
+	_ "github.com/luuuc/sense/internal/extract/tsjs"
+)
