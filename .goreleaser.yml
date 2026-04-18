@@ -7,7 +7,7 @@ builds:
     flags:
       - -trimpath
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     ldflags:
       - -s -w
       - -X github.com/luuuc/sense/internal/version.Version={{.Version}}
@@ -17,6 +17,27 @@ builds:
     goarch:
       - amd64
       - arm64
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CC=o64-clang
+          - CXX=o64-clang++
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CC=oa64-clang
+          - CXX=oa64-clang++
+      - goos: linux
+        goarch: amd64
+        env:
+          - CC=x86_64-linux-gnu-gcc
+          - CXX=x86_64-linux-gnu-g++
+      - goos: linux
+        goarch: arm64
+        env:
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
 
 archives:
   - id: sense

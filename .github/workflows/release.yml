@@ -19,13 +19,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - uses: goreleaser/goreleaser-action@v7
-        with:
-          version: '~> v2'
-          args: release --clean
+      # Tree-sitter bindings require CGO, and we ship darwin + linux for both
+      # amd64 and arm64. goreleaser-cross bundles osxcross and the gcc
+      # cross-toolchains the .goreleaser.yml overrides reference (o64-clang,
+      # oa64-clang, x86_64-linux-gnu-gcc, aarch64-linux-gnu-gcc). The image
+      # tag tracks the Go version in go.mod — bump both together.
+      - name: Run GoReleaser (goreleaser-cross)
+        run: |
+          docker run --rm \
+            -e GITHUB_TOKEN \
+            -v "$PWD":/src \
+            -w /src \
+            ghcr.io/goreleaser/goreleaser-cross:v1.25.5 \
+            release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
