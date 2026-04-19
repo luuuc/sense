@@ -29,6 +29,38 @@ type Tier string
 
 const TierBasic Tier = "basic"
 
+// Confidence constants — the policy numbers the pitch specifies for
+// edge confidence. Centralising them here keeps the emit-side
+// extractors and the resolve-side clamp aligned, and makes the pitch
+// numbers discoverable by Go-docs lookup rather than grepped out of
+// scattered literals.
+//
+// The four levels describe four distinct resolution paths:
+//   - Static: the extractor saw a syntactic fact (a call_expression,
+//     a superclass clause). No inference.
+//   - Convention: match derived from a naming or framework
+//     convention — reserved for Cycle 5 framework inference and
+//     currently unused by any emit site.
+//   - Ambiguous: the resolver picked among multiple candidates at
+//     the same qualified-name key, or succeeded only via the
+//     calls-edge unqualified-name fallback.
+//   - Tests: a test-file-to-implementation match derived from
+//     filename convention (checkout_service_test.rb ⇒
+//     checkout_service.rb). Same numeric value as Ambiguous today
+//     but semantically distinct — a change to the tests confidence
+//     should not require changing the ambiguous clamp.
+//   - Dynamic: the extractor resolved a literal argument passed to a
+//     dynamic-dispatch callsite (Ruby send, Python getattr). Non-
+//     literal dynamic dispatch is skipped entirely, not flagged
+//     low-confidence.
+const (
+	ConfidenceStatic     = 1.0
+	ConfidenceConvention = 0.9
+	ConfidenceAmbiguous  = 0.8
+	ConfidenceTests      = 0.8
+	ConfidenceDynamic    = 0.7
+)
+
 // EmittedSymbol is the pre-insert form produced by an extractor. Index-
 // assigned fields (ID, FileID, numeric ParentID) are resolved by the
 // scan harness when rows are written; the extractor only sees its own
@@ -177,3 +209,41 @@ func Text(n *sitter.Node, source []byte) string {
 // line number, matching the sense_symbols.line_start / line_end
 // convention.
 func Line(p sitter.Point) int { return int(p.Row) + 1 }
+
+// WalkNamedDescendants visits every named descendant of n whose Kind()
+// equals kind and invokes visit on it. Traversal is depth-first; a
+// matched node is both visited AND recursed through, so nested
+// occurrences (`f(g())`, chained calls, matched nodes inside matched
+// nodes) each produce a visit. A nil node is a no-op — callers don't
+// need to guard.
+//
+// This is the plumbing behind every extractor's body-walking helper:
+// after three language extractors (Go, Ruby, Python) landed the same
+// recursion, it was extracted here so per-language code keeps only its
+// own logic (what to emit when a call is found) and the shared
+// traversal has one authoritative implementation.
+//
+// visit returning an error aborts the walk — the error is surfaced
+// unchanged so extractors can bubble emitter failures out to the
+// scan harness.
+func WalkNamedDescendants(n *sitter.Node, kind string, visit func(*sitter.Node) error) error {
+	if n == nil {
+		return nil
+	}
+	count := n.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if child.Kind() == kind {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		if err := WalkNamedDescendants(child, kind, visit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
