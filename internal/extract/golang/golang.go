@@ -19,6 +19,12 @@
 //   - const NAME = …        → KindConstant  (any case; Go has no
 //                             all-caps convention)
 //
+// Calls edges:
+//   - Function / method bodies are walked for call_expression nodes.
+//     The target is the callee's surface text as written — a bare
+//     `name`, `pkg.Func`, or `recv.Method`. Cross-file / cross-package
+//     resolution is 01-03's resolver job, not the extractor's.
+//
 // What Tier-Basic skips:
 //   - vars (package-level `var` bindings) — pitch explicitly scopes
 //     to "constants". Full-tier can revisit.
@@ -195,7 +201,8 @@ func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool) error {
 	})
 }
 
-// handleFunction emits a top-level function (no receiver).
+// handleFunction emits a top-level function (no receiver) and walks
+// its body for call expressions.
 func (w *walker) handleFunction(n *sitter.Node) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -205,19 +212,26 @@ func (w *walker) handleFunction(n *sitter.Node) error {
 	if name == "" {
 		return nil
 	}
-	return w.emit.Symbol(extract.EmittedSymbol{
+	qualified := w.qualify(name)
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:      name,
-		Qualified: w.qualify(name),
+		Qualified: qualified,
 		Kind:      model.KindFunction,
 		LineStart: extract.Line(n.StartPosition()),
 		LineEnd:   extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+		return w.emitCall(c, qualified)
 	})
 }
 
-// handleMethod emits a method with receiver-type qualification. The
-// receiver syntax is `func (r ReceiverType) Name(...)` or
-// `func (r *ReceiverType) Name(...)`; we strip the pointer and any
-// type parameters to get the base name used for intra-file resolution.
+// handleMethod emits a method with receiver-type qualification and
+// walks its body for call expressions. The receiver syntax is
+// `func (r ReceiverType) Name(...)` or `func (r *ReceiverType) Name(...)`;
+// we strip the pointer and any type parameters to get the base name used
+// for intra-file resolution.
 func (w *walker) handleMethod(n *sitter.Node) error {
 	nameNode := n.ChildByFieldName("name")
 	receiver := n.ChildByFieldName("receiver")
@@ -233,13 +247,50 @@ func (w *walker) handleMethod(n *sitter.Node) error {
 		return nil
 	}
 	parent := w.qualify(recvName)
-	return w.emit.Symbol(extract.EmittedSymbol{
+	qualified := parent + "." + name
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
-		Qualified:       parent + "." + name,
+		Qualified:       qualified,
 		Kind:            model.KindMethod,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+		return w.emitCall(c, qualified)
+	})
+}
+
+// emitCall produces an EdgeCalls edge for one call_expression. The
+// callee text is pulled from the `function` field: an identifier for
+// bare calls, a selector_expression for dotted calls, or anything else
+// (rare: literal function calls, type assertions with method). We emit
+// the surface text for the simple cases and skip the complex ones —
+// `(*p).M()` and `f()()` produce unresolvable garbage otherwise.
+func (w *walker) emitCall(call *sitter.Node, source string) error {
+	fn := call.ChildByFieldName("function")
+	if fn == nil {
+		return nil
+	}
+	var target string
+	switch fn.Kind() {
+	case "identifier", "selector_expression":
+		target = extract.Text(fn, w.source)
+	default:
+		return nil
+	}
+	if target == "" {
+		return nil
+	}
+	line := extract.Line(call.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: target,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      1.0,
 	})
 }
 
