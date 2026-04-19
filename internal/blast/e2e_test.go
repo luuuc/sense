@@ -33,6 +33,9 @@ import (
 // clean. repoRoot is resolved relative to this test file's location:
 // internal/blast/... → `../..` is the module root.
 func TestE2EBlastOnSenseRepo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E: scan-and-query takes ~200ms; run without -short")
+	}
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
