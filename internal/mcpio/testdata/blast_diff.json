@@ -1,0 +1,47 @@
+{
+  "symbol": "diff:HEAD~1",
+  "risk": "medium",
+  "risk_factors": [
+    "3 modified symbols; 5 direct callers"
+  ],
+  "direct_callers": [
+    {
+      "symbol": "OrdersController#create",
+      "file": "app/controllers/orders_controller.rb"
+    },
+    {
+      "symbol": "CheckoutJob#perform",
+      "file": "app/jobs/checkout_job.rb"
+    },
+    {
+      "symbol": "SessionsController#create",
+      "file": "app/controllers/sessions_controller.rb"
+    },
+    {
+      "symbol": "RegistrationMailer#welcome",
+      "file": "app/mailers/registration_mailer.rb"
+    },
+    {
+      "symbol": "Admin::UsersController#index",
+      "file": "app/controllers/admin/users_controller.rb"
+    }
+  ],
+  "indirect_callers": [
+    {
+      "symbol": "WebhookJob#process",
+      "via": "OrdersController#create",
+      "hops": 2
+    }
+  ],
+  "affected_tests": [
+    "test/services/checkout_service_test.rb",
+    "test/controllers/orders_controller_test.rb",
+    "test/controllers/sessions_controller_test.rb"
+  ],
+  "total_affected": 6,
+  "sense_metrics": {
+    "symbols_traversed": 9,
+    "estimated_file_reads_avoided": 8,
+    "estimated_tokens_saved": 2400
+  }
+}

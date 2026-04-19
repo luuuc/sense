@@ -1,0 +1,76 @@
+package mcpio
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
+
+// MarshalGraph renders a GraphResponse as pretty-printed JSON bytes.
+// Nil slices in the input are normalized to empty slices so the wire
+// shape always has `[]`, never `null` — the policy stated on the
+// types. Output has no trailing newline; callers choose their own
+// framing (CLI appends "\n"; MCP wraps in a JSON-RPC envelope).
+func MarshalGraph(r GraphResponse) ([]byte, error) {
+	normalizeGraphResponse(&r)
+	return marshalPretty(r)
+}
+
+// MarshalBlast renders a BlastResponse with the same normalization +
+// pretty-print contract as MarshalGraph.
+func MarshalBlast(r BlastResponse) ([]byte, error) {
+	normalizeBlastResponse(&r)
+	return marshalPretty(r)
+}
+
+// marshalPretty is the shared encoder: SetEscapeHTML(false) keeps
+// identifier characters like `<`, `>`, `&` literal so goldens in
+// card 3 pin the documented examples byte-for-byte. Two-space indent
+// matches the documented examples.
+func marshalPretty(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return nil, fmt.Errorf("mcpio: marshal: %w", err)
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// normalizeGraphResponse replaces nil slice fields with empty
+// non-nil slices so encoding/json emits `[]` rather than `null`. The
+// wire contract treats present-and-empty as "Sense looked, found
+// nothing"; `null` would be "this emitter forgot a field," which is
+// strictly worse semantics for consumers.
+func normalizeGraphResponse(r *GraphResponse) {
+	if r.Edges.Calls == nil {
+		r.Edges.Calls = []CallEdgeRef{}
+	}
+	if r.Edges.CalledBy == nil {
+		r.Edges.CalledBy = []CallEdgeRef{}
+	}
+	if r.Edges.Inherits == nil {
+		r.Edges.Inherits = []InheritEdgeRef{}
+	}
+	if r.Edges.Tests == nil {
+		r.Edges.Tests = []TestEdgeRef{}
+	}
+}
+
+// normalizeBlastResponse mirrors normalizeGraphResponse for every
+// slice on BlastResponse.
+func normalizeBlastResponse(r *BlastResponse) {
+	if r.RiskFactors == nil {
+		r.RiskFactors = []string{}
+	}
+	if r.DirectCallers == nil {
+		r.DirectCallers = []BlastCaller{}
+	}
+	if r.IndirectCallers == nil {
+		r.IndirectCallers = []BlastIndirect{}
+	}
+	if r.AffectedTests == nil {
+		r.AffectedTests = []string{}
+	}
+}
