@@ -13,6 +13,21 @@
 //   - include M / extend M   → includes edge (class → M) when M is
 //                              defined in the same file.
 //
+// Calls edges:
+//   - Method / singleton-method bodies are walked for `call` nodes. The
+//     target is the callee's surface text — `method`, `recv.method`, or
+//     `A::B.method` — with no type inference beyond the syntax. Dynamic
+//     dispatch via `send` / `public_send` / `__send__` is emitted with
+//     confidence 0.7 only when the first argument is a literal symbol or
+//     string; anything else is skipped (unresolvable).
+//   - Known Tier-Basic gap: bare receiverless Ruby method calls without
+//     parentheses (`def self.find; new; end`) are parsed as `identifier`
+//     nodes rather than `call` nodes by tree-sitter-ruby, so they're
+//     silently dropped. The testdata/ruby/basic_class.rb fixture is the
+//     canonical record of this behaviour — its bare `new` produces no
+//     calls edge. Reaching those calls would require local-scope
+//     disambiguation, which Tier-Basic is not interested in.
+//
 // Qualified names follow 05-languages.md: A::B::C for classes/modules,
 // A::B#m for instance methods, A::B.m for singleton methods, A::B::CONST
 // for constants. Top-level symbols carry no leading separator.
@@ -154,6 +169,9 @@ func (w *walker) handleClassOrModule(n *sitter.Node, scope []string, kind model.
 // separator and parent are both empty — they become KindMethod with
 // qualified=name, which matches how Ruby treats top-level defs (they
 // get attached to Object at runtime, but we don't model Object here).
+//
+// After emitting, the body is walked for call nodes so intra-body
+// calls land as calls edges.
 func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -175,14 +193,103 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 		qualified = parent + "#" + name
 	}
 
-	return w.emit.Symbol(extract.EmittedSymbol{
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindMethod,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	// Include / extend / prepend calls inside a method body come through
+	// here too and are emitted as regular calls — the `includes` edges
+	// are produced separately at the class-body level in handleIncludeCall,
+	// and a dynamic include at runtime is rare enough that a bare calls
+	// edge is an accurate record of what was written.
+	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call", func(c *sitter.Node) error {
+		return w.emitCall(c, qualified)
 	})
+}
+
+// emitCall produces a calls edge for one `call` node. The target is
+// the receiver text joined to the method name, or the bare method name
+// for receiverless calls. `send` / `public_send` / `__send__` with a
+// literal symbol or string first argument is emitted with confidence
+// 0.7 (dynamic dispatch we could statically resolve); anything else in
+// that family is skipped.
+func (w *walker) emitCall(n *sitter.Node, source string) error {
+	methodNode := n.ChildByFieldName("method")
+	if methodNode == nil {
+		return nil
+	}
+	methodName := extract.Text(methodNode, w.source)
+	if methodName == "" {
+		return nil
+	}
+	line := extract.Line(n.StartPosition())
+
+	switch methodName {
+	case "send", "public_send", "__send__":
+		target, ok := literalSendTarget(n, w.source)
+		if !ok {
+			return nil
+		}
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: source,
+			TargetQualified: target,
+			Kind:            model.EdgeCalls,
+			Line:            &line,
+			Confidence:      extract.ConfidenceDynamic,
+		})
+	}
+
+	target := methodName
+	if recv := n.ChildByFieldName("receiver"); recv != nil {
+		if recvText := strings.TrimSpace(extract.Text(recv, w.source)); recvText != "" {
+			target = recvText + "." + methodName
+		}
+	}
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: target,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      1.0,
+	})
+}
+
+// literalSendTarget extracts the target name from `send(:name)` /
+// `public_send("name")` / `__send__(:name)` when the first argument is
+// a bare symbol or string literal. Everything else is unresolvable.
+// The tree-sitter-ruby grammar exposes a string's payload as a named
+// `string_content` child (not a named field), and a symbol node
+// carries a leading colon; both are looked up structurally. If the
+// grammar shape drifts, we return false visibly rather than falling
+// back to quote stripping — explicit failure beats degraded output.
+func literalSendTarget(call *sitter.Node, source []byte) (string, bool) {
+	args := call.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return "", false
+	}
+	first := args.NamedChild(0)
+	if first == nil {
+		return "", false
+	}
+	switch first.Kind() {
+	case "simple_symbol":
+		return strings.TrimPrefix(extract.Text(first, source), ":"), true
+	case "string":
+		count := first.NamedChildCount()
+		for i := uint(0); i < count; i++ {
+			c := first.NamedChild(i)
+			if c != nil && c.Kind() == "string_content" {
+				return extract.Text(c, source), true
+			}
+		}
+	}
+	return "", false
 }
 
 // handleConstantAssignment emits a KindConstant symbol when the LHS of
