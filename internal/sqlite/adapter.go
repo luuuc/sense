@@ -234,7 +234,7 @@ func (a *Adapter) ReadSymbol(ctx context.Context, id int64) (*model.SymbolContex
 		return nil, fmt.Errorf("sqlite ReadSymbol: %w", err)
 	}
 
-	hydrateNullableSymbol(&sym, parentID, complexity, visibility, docstring, snippet)
+	model.HydrateSymbolNullables(&sym, parentID, complexity, visibility, docstring, snippet)
 	file.IndexedAt, err = time.Parse(time.RFC3339Nano, indexedAt)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite ReadSymbol: parse indexed_at: %w", err)
@@ -302,13 +302,43 @@ func (a *Adapter) Query(ctx context.Context, f index.Filter) ([]model.Symbol, er
 		); err != nil {
 			return nil, fmt.Errorf("sqlite Query scan: %w", err)
 		}
-		hydrateNullableSymbol(&s, parentID, complexity, visibility, docstring, snippet)
+		model.HydrateSymbolNullables(&s, parentID, complexity, visibility, docstring, snippet)
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite Query iterate: %w", err)
 	}
 	return out, nil
+}
+
+// SymbolRefs returns every symbol's (id, qualified, file_id) ordered
+// by ascending id. It exists so resolution passes that build an
+// in-memory qualified-name index can avoid hydrating Snippet /
+// Docstring / Visibility fields that they immediately discard — about
+// a 5× reduction in bytes loaded on a real-sized repo. The ascending
+// id guarantee lets callers build multi-value maps without a
+// follow-up sort: the first id under each key is deterministically
+// the earliest written.
+func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
+	const q = `SELECT id, qualified, file_id FROM sense_symbols ORDER BY id ASC`
+	rows, err := a.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite SymbolRefs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var refs []model.SymbolRef
+	for rows.Next() {
+		var r model.SymbolRef
+		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID); err != nil {
+			return nil, fmt.Errorf("sqlite SymbolRefs scan: %w", err)
+		}
+		refs = append(refs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite SymbolRefs iterate: %w", err)
+	}
+	return refs, nil
 }
 
 func (a *Adapter) Clear(ctx context.Context) error {
@@ -389,34 +419,10 @@ func (a *Adapter) loadEdges(ctx context.Context, symbolID int64, outbound bool) 
 			l := int(line.Int64)
 			e.Line = &l
 		}
-		hydrateNullableSymbol(&other, otherParentID, otherComplexity, otherVisibility, otherDocstring, otherSnippet)
+		model.HydrateSymbolNullables(&other, otherParentID, otherComplexity, otherVisibility, otherDocstring, otherSnippet)
 		refs = append(refs, model.EdgeRef{Edge: e, Target: other})
 	}
 	return refs, rows.Err()
-}
-
-// hydrateNullableSymbol copies nullable columns from their sql.NullXxx
-// carriers back onto the Symbol. Kept as a free function so the row-scan
-// sites above stay linear.
-func hydrateNullableSymbol(
-	s *model.Symbol,
-	parentID sql.NullInt64,
-	complexity sql.NullInt64,
-	visibility sql.NullString,
-	docstring sql.NullString,
-	snippet sql.NullString,
-) {
-	if parentID.Valid {
-		p := parentID.Int64
-		s.ParentID = &p
-	}
-	if complexity.Valid {
-		c := int(complexity.Int64)
-		s.Complexity = &c
-	}
-	s.Visibility = visibility.String
-	s.Docstring = docstring.String
-	s.Snippet = snippet.String
 }
 
 // nullableInt64 returns nil (mapped to SQL NULL) when p is nil, otherwise
