@@ -19,6 +19,16 @@
 //                                 is defined in the same file.
 //                                 Cross-file resolution waits for 01-03.
 //
+// Calls edges:
+//   - Function / impl-method bodies are walked for `call_expression`
+//     nodes. Target text comes from identifier, field_expression
+//     (`self.method`), or scoped_identifier (`String::from`) callees.
+//     Other shapes (generic_function with turbofish, paren-wrapped
+//     expressions) are skipped for surface-text sanity.
+//   - Macro invocations (`format!`, `println!`, `vec!`) are
+//     `macro_invocation` nodes, not `call_expression`, so they fall
+//     out naturally — macro expansion is out of scope for Tier-Basic.
+//
 // Qualified-name rules:
 //   - Rust uses `::` for path separators throughout. Module-scoped
 //     items carry the module chain: `inner::helper`.
@@ -166,10 +176,10 @@ func (w *walker) handleConstItem(n *sitter.Node, scope []string) error {
 	})
 }
 
-// handleFunction emits a top-level function. Methods are emitted via
-// handleImpl — a function_item at module scope lacks an impl parent
-// type, so ParentQualified ends up being the current module chain
-// (often empty at crate root).
+// handleFunction emits a top-level function and walks its body for
+// calls. Methods are emitted via handleImpl — a function_item at
+// module scope lacks an impl parent type, so ParentQualified ends up
+// being the current module chain (often empty at crate root).
 func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -184,13 +194,18 @@ func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	if parent != "" {
 		qualified = parent + "::" + name
 	}
-	return w.emit.Symbol(extract.EmittedSymbol{
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindFunction,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+		return w.emitCall(c, qualified)
 	})
 }
 
@@ -231,7 +246,7 @@ func (w *walker) handleImpl(n *sitter.Node, scope []string) error {
 	}
 
 	// Methods: functions in the impl body become KindMethod with the
-	// impl type as parent.
+	// impl type as parent, and each method body is walked for calls.
 	body := n.ChildByFieldName("body")
 	if body == nil {
 		return nil
@@ -249,9 +264,10 @@ func (w *walker) handleImpl(n *sitter.Node, scope []string) error {
 		if name == "" {
 			continue
 		}
+		methodQualified := typeQualified + "::" + name
 		if err := w.emit.Symbol(extract.EmittedSymbol{
 			Name:            name,
-			Qualified:       typeQualified + "::" + name,
+			Qualified:       methodQualified,
 			Kind:            model.KindMethod,
 			ParentQualified: typeQualified,
 			LineStart:       extract.Line(child.StartPosition()),
@@ -259,8 +275,43 @@ func (w *walker) handleImpl(n *sitter.Node, scope []string) error {
 		}); err != nil {
 			return err
 		}
+		if err := extract.WalkNamedDescendants(child.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+			return w.emitCall(c, methodQualified)
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// emitCall produces one calls edge for a `call_expression` node. The
+// callee's surface text — identifier, `self.method`, or `Path::item`
+// — is emitted verbatim for confidence 1.0. Other callee shapes are
+// skipped because their surface text tends to be too noisy to resolve
+// usefully (turbofish generics, paren-wrapped expressions, etc.).
+func (w *walker) emitCall(call *sitter.Node, source string) error {
+	fn := call.ChildByFieldName("function")
+	if fn == nil {
+		return nil
+	}
+	var target string
+	switch fn.Kind() {
+	case "identifier", "field_expression", "scoped_identifier":
+		target = extract.Text(fn, w.source)
+	default:
+		return nil
+	}
+	if target == "" {
+		return nil
+	}
+	line := extract.Line(call.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: target,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      1.0,
+	})
 }
 
 // handleMod emits a module symbol and recurses into its body with the
