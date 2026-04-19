@@ -49,7 +49,19 @@ CREATE TABLE IF NOT EXISTS sense_edges (
 );
 
 CREATE INDEX        IF NOT EXISTS idx_sense_edges_source ON sense_edges (source_id, kind);
-CREATE INDEX        IF NOT EXISTS idx_sense_edges_target ON sense_edges (target_id, kind);
+
+-- idx_sense_edges_target is the reverse-edge index the blast BFS
+-- reads against: "given these target_ids, find source_ids for
+-- kind='calls'." Including source_id makes the index COVERING for
+-- that exact query shape so BFS walks with zero row fetches per
+-- hop — `EXPLAIN QUERY PLAN` reports `USING COVERING INDEX` and
+-- `internal/sqlite/plan_test.go` pins that guarantee. The DROP
+-- below is an in-place upgrade path for databases that were created
+-- before the index gained its third column; on a fresh DB it is a
+-- no-op.
+DROP   INDEX        IF EXISTS     idx_sense_edges_target;
+CREATE INDEX        IF NOT EXISTS idx_sense_edges_target ON sense_edges (target_id, kind, source_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sense_edges_unique ON sense_edges (source_id, target_id, kind, file_id);
 
 -- sense_embeddings is created empty now. Cycle 2's embedding pitch will
