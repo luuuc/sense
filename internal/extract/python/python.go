@@ -12,6 +12,13 @@
 //                              in the same file; cross-file inheritance
 //                              is dropped for 01-03 to backfill.
 //
+// Calls edges:
+//   - Function / method bodies are walked for `call` nodes. The target
+//     is the callee's surface text — `name`, `self.foo`, `mod.fn`, etc.
+//     — as written. Type inference is out of scope.
+//   - `getattr(obj, "name")` with a literal string second argument is
+//     emitted with confidence 0.7; non-literal `getattr` is skipped.
+//
 // Qualified-name rules (per 05-languages.md):
 //   - Class:      A  or  Outer.Inner
 //   - Method:     A.method  (Python has no syntactic instance/class
@@ -179,8 +186,11 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 }
 
 // handleFunction emits a method (inside a class) or function
-// (module-level). The body is not recursed into — Tier-Basic does not
-// extract nested defs or their closures.
+// (module-level) and walks the body for call expressions. The body
+// walk does not emit nested defs as symbols — Tier-Basic does not
+// extract closures — but calls made from within a nested closure are
+// attributed to the enclosing function, which is the symbol callers
+// observe.
 func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -199,14 +209,89 @@ func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 		kind = model.KindMethod
 	}
 
-	return w.emit.Symbol(extract.EmittedSymbol{
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            kind,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call", func(c *sitter.Node) error {
+		return w.emitCall(c, qualified)
 	})
+}
+
+// emitCall produces one calls edge. Identifier / attribute callees
+// emit surface text with confidence 1.0. `getattr(obj, "name")` with a
+// literal string second argument emits target = the string with
+// confidence 0.7; any other callable form (subscript, lambda call,
+// `f()()`) is skipped.
+func (w *walker) emitCall(call *sitter.Node, source string) error {
+	fn := call.ChildByFieldName("function")
+	if fn == nil {
+		return nil
+	}
+	kind := fn.Kind()
+	if kind != "identifier" && kind != "attribute" {
+		return nil
+	}
+	target := extract.Text(fn, w.source)
+	if target == "" {
+		return nil
+	}
+	line := extract.Line(call.StartPosition())
+
+	if kind == "identifier" && target == "getattr" {
+		payload, ok := literalGetattrTarget(call, w.source)
+		if !ok {
+			return nil
+		}
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: source,
+			TargetQualified: payload,
+			Kind:            model.EdgeCalls,
+			Line:            &line,
+			Confidence:      extract.ConfidenceDynamic,
+		})
+	}
+
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: target,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      1.0,
+	})
+}
+
+// literalGetattrTarget returns the second argument of a `getattr` call
+// when it's a string literal. `getattr(obj, "name")` resolves to
+// `obj.name` at runtime; for the index we emit just `"name"` and let
+// the resolver match it against any symbol with that unqualified name.
+// Anything but a literal string is unresolvable.
+func literalGetattrTarget(call *sitter.Node, source []byte) (string, bool) {
+	args := call.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() < 2 {
+		return "", false
+	}
+	second := args.NamedChild(1)
+	if second == nil || second.Kind() != "string" {
+		return "", false
+	}
+	// tree-sitter-python exposes a string's payload as a named
+	// `string_content` child between the opening and closing quote
+	// nodes; fish it out structurally rather than trimming quotes.
+	count := second.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		c := second.NamedChild(i)
+		if c != nil && c.Kind() == "string_content" {
+			return extract.Text(c, source), true
+		}
+	}
+	return "", false
 }
 
 // handleAssignment emits KindConstant when the LHS is a plain
