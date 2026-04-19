@@ -20,6 +20,17 @@
 //   - class B implements I     → inherits (B → I) when I is local
 //   - interface B extends A    → inherits (B → A) when A is local
 //
+// Calls edges:
+//   - Method / function / arrow-function bodies are walked for
+//     `call_expression` nodes. The target is the callee's surface
+//     text — `foo`, `obj.bar`, `a.b.c` — as written, with one rewrite:
+//     a leading `this.` is stripped so `this.helper()` resolves against
+//     the enclosing class's members. Tagged template invocations
+//     (`` tag`literal` ``) parse as `call_expression` in tree-sitter and
+//     are emitted as regular calls. `new X()` is a `new_expression`,
+//     not a call_expression; constructors aren't emitted in Tier-Basic.
+//     Subscript / dynamic callees (`obj[k]()`, `f()()`) are skipped.
+//
 // Qualified-name rules (per 05-languages.md, "pkg.module.Class.method"):
 //   Class/Interface/Enum/Type: Name or Outer.Inner
 //   Method:                    Class.method
@@ -292,7 +303,8 @@ func resolveHeritageName(n *sitter.Node, source []byte) string {
 	return ""
 }
 
-// handleMethod emits a method symbol using the enclosing class scope.
+// handleMethod emits a method symbol using the enclosing class scope
+// and walks the body for call expressions.
 func (w *walker) handleMethod(n *sitter.Node, scope []string) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -307,13 +319,18 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string) error {
 	if parent != "" {
 		qualified = parent + "." + name
 	}
-	return w.emit.Symbol(extract.EmittedSymbol{
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindMethod,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+		return w.emitCall(c, qualified)
 	})
 }
 
@@ -415,9 +432,10 @@ func (w *walker) handleEnum(n *sitter.Node, scope []string) error {
 	})
 }
 
-// handleFunction emits a top-level or scoped function. JS/TS have no
-// syntactic "method defined outside a class" idiom, so this always
-// produces KindFunction — methods come from class bodies.
+// handleFunction emits a top-level or scoped function and walks the
+// body for calls. JS/TS have no syntactic "method defined outside a
+// class" idiom, so this always produces KindFunction — methods come
+// from class bodies.
 func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -432,13 +450,18 @@ func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	if parent != "" {
 		qualified = parent + "." + name
 	}
-	return w.emit.Symbol(extract.EmittedSymbol{
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindFunction,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+		return w.emitCall(c, qualified)
 	})
 }
 
@@ -495,13 +518,56 @@ func (w *walker) handleVariableDeclarator(decl *sitter.Node, scope []string) err
 	if parent != "" {
 		qualified = parent + "." + name
 	}
-	return w.emit.Symbol(extract.EmittedSymbol{
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            kind,
 		ParentQualified: parent,
 		LineStart:       extract.Line(decl.StartPosition()),
 		LineEnd:         extract.Line(decl.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	// Only walk bodies for function-valued consts. A class expression
+	// bound to a const doesn't get its methods emitted here — that
+	// gap predates this card and remains a known limitation.
+	if kind == model.KindFunction && valueNode != nil {
+		return extract.WalkNamedDescendants(valueNode.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+			return w.emitCall(c, qualified)
+		})
+	}
+	return nil
+}
+
+// emitCall produces one calls edge. Identifier and member_expression
+// callees emit surface text with confidence 1.0; a leading `this.` is
+// stripped so intra-class calls (`this.helper()`) resolve against the
+// enclosing class's members via the qualified-name resolver. Other
+// callee shapes (subscript, inner-call `f()()`, tagged templates) are
+// skipped — they're either dynamic or not `call_expression` at all.
+func (w *walker) emitCall(call *sitter.Node, source string) error {
+	fn := call.ChildByFieldName("function")
+	if fn == nil {
+		return nil
+	}
+	var target string
+	switch fn.Kind() {
+	case "identifier", "member_expression":
+		target = extract.Text(fn, w.source)
+	default:
+		return nil
+	}
+	target = strings.TrimPrefix(target, "this.")
+	if target == "" {
+		return nil
+	}
+	line := extract.Line(call.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: target,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      1.0,
 	})
 }
 
