@@ -87,6 +87,15 @@ func (a *Adapter) Close() error {
 	return a.db.Close()
 }
 
+// DB exposes the underlying *sql.DB for read-path consumers that
+// speak plain database/sql — the blast BFS in 01-03 and the CLI
+// symbol lookup in 01-04. Writers must continue to go through the
+// named WriteFile / WriteSymbol / WriteEdge methods so the upsert
+// contract stays in one place.
+func (a *Adapter) DB() *sql.DB {
+	return a.db
+}
+
 // InTx runs fn inside a SQLite transaction, committing on success and
 // rolling back on error. Callers keep using the same Adapter inside fn —
 // there is no transaction-scoped handle to thread through, which avoids
