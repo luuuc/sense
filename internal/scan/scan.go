@@ -27,6 +27,7 @@ import (
 	"github.com/luuuc/sense/internal/extract"
 	_ "github.com/luuuc/sense/internal/extract/languages" // register every extractor
 	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/resolve"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
@@ -48,18 +49,28 @@ type Options struct {
 
 // Result summarises one scan invocation.
 type Result struct {
-	Files    int // total files visited (regular files, not directories)
-	Indexed  int // files that had a registered extractor and were processed
-	Symbols  int // symbols written to the index
-	Edges    int // edges written to the index
-	Warnings int // per-file failures logged; scan continues past them
-	Duration time.Duration
+	Files      int // total files visited (regular files, not directories)
+	Indexed    int // files that had a registered extractor and were processed
+	Symbols    int // symbols written to the index
+	Edges      int // edges resolved and written to sense_edges
+	Unresolved int // edges whose target name matched no symbol; dropped
+	Warnings   int // per-file failures logged; scan continues past them
+	Duration   time.Duration
 }
 
 // snippetMaxBytes caps the single-line snippet we store per symbol.
 // Large minified lines (bundled JS, generated protos) would otherwise
 // balloon the index with source text that nobody reads.
 const snippetMaxBytes = 200
+
+// maxUnresolvedWarnings caps the per-edge unresolved-target warnings
+// printed to the Warnings sink. A real repo produces thousands of
+// unresolved edges (stdlib calls, third-party imports, dynamic
+// dispatch) — printing one line each drowns the legitimate
+// parse-error warnings users need to see. The accurate count stays
+// available on Result.Unresolved; after the cap is reached a single
+// "... and N more omitted" summary line closes the stream.
+const maxUnresolvedWarnings = 20
 
 // Run ensures the .sense directory and index.db exist, walks the
 // working tree, parses each file with a registered extractor, and
@@ -109,23 +120,33 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := h.walkTree(root); err != nil {
 		return nil, err
 	}
+	if err := h.resolveAndWriteEdges(); err != nil {
+		return nil, err
+	}
+	if err := h.associateTests(); err != nil {
+		return nil, err
+	}
 	elapsed := time.Since(start)
 
 	res := &Result{
-		Files:    h.files,
-		Indexed:  h.indexed,
-		Symbols:  h.symbols,
-		Edges:    h.edges,
-		Warnings: h.warnings,
-		Duration: elapsed,
+		Files:      h.files,
+		Indexed:    h.indexed,
+		Symbols:    h.symbols,
+		Edges:      h.edges,
+		Unresolved: h.unresolved,
+		Warnings:   h.warnings,
+		Duration:   elapsed,
 	}
 
 	// Summary line follows the "<data> in <duration>" shape from
 	// bootstrap so the CLI's stderr reads the same across pitches —
-	// just carrying more data now. elapsed is printed raw so
-	// time.Duration.String picks the right unit.
-	_, _ = fmt.Fprintf(out, "%d files, %d indexed, %d symbols, %d edges in %s\n",
-		res.Files, res.Indexed, res.Symbols, res.Edges, elapsed)
+	// just carrying more data now. Unresolved is surfaced so users
+	// know how many emitted edges couldn't be linked to a symbol
+	// (external libraries, unresolvable dynamic dispatch, etc.).
+	// elapsed is printed raw so time.Duration.String picks the right
+	// unit.
+	_, _ = fmt.Fprintf(out, "%d files, %d indexed, %d symbols, %d edges, %d unresolved in %s\n",
+		res.Files, res.Indexed, res.Symbols, res.Edges, res.Unresolved, elapsed)
 
 	return res, nil
 }
@@ -135,6 +156,25 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 // harness holds the per-scan state that would otherwise be passed as
 // half a dozen arguments through every helper. It is not exported;
 // callers stay inside Run.
+//
+// Scan runs as a two-phase state machine over the harness:
+//
+//  1. Walk phase (walkTree + writeFile): every file is parsed and its
+//     symbols persisted in a per-file SQLite transaction. Each file's
+//     emitted edges are buffered into pendingEdges with their source
+//     id resolved locally (the source always lives in the emitting
+//     file) and their target left as the qualified-name string the
+//     extractor wrote.
+//
+//  2. Resolve phase (resolveAndWriteEdges): after every file has been
+//     walked, pendingEdges is drained in one global transaction.
+//     Each target name is looked up in the now-complete symbol index
+//     and the resolved edge is written. Unresolved edges are dropped.
+//
+// This differs from the "each file's writes are one atomic unit" shape
+// pitch 01-02 described: edges are no longer scoped to their emitting
+// file's transaction because most of them point at targets in other
+// files. The consequence is called out on resolveAndWriteEdges.
 type harness struct {
 	ctx     context.Context
 	idx     *sqlite.Adapter
@@ -142,12 +182,54 @@ type harness struct {
 	warn    io.Writer // per-file warning sink
 	parsers map[string]*sitter.Parser
 
+	// pendingEdges holds walk-phase output for the resolve phase.
+	// Empty at start, filled by writeFile, drained by
+	// resolveAndWriteEdges.
+	pendingEdges []pendingEdge
+
+	// indexedFiles lists every file successfully processed during
+	// the walk, in visit order. The test-association post-pass
+	// iterates this to pair test files with their implementation
+	// files by naming convention without re-querying sense_files.
+	indexedFiles []indexedFile
+
 	// Tallies for Result.
-	files    int
-	indexed  int
-	symbols  int
-	edges    int
-	warnings int
+	files      int
+	indexed    int
+	symbols    int
+	edges      int
+	unresolved int
+	warnings   int
+}
+
+// indexedFile is the minimum the test-association pass needs to know
+// about each successfully-written file: its id, relative path, and
+// the language the extractor reported. Buffering these in-memory
+// during the walk avoids a `SELECT * FROM sense_files` round trip
+// after the fact.
+type indexedFile struct {
+	ID       int64
+	Path     string
+	Language string
+}
+
+// pendingEdge is the pre-resolution shape held in harness.pendingEdges.
+// SourceID is the numeric symbol id inside the emitting file; it's
+// resolved eagerly during writeFile because the source always lives
+// in the file being scanned. SourceQualified + SourceParentQualified
+// ride along so the resolver can apply receiver rewrites
+// (`self.foo` ⇒ `Parent.foo`) without a second DB round trip.
+// TargetName is the qualified-name text the extractor wrote — global
+// lookup happens in resolveAndWriteEdges.
+type pendingEdge struct {
+	SourceID              int64
+	SourceQualified       string
+	SourceParentQualified string
+	TargetName            string
+	Kind                  model.EdgeKind
+	FileID                int64
+	Line                  *int
+	Confidence            float64
 }
 
 func (h *harness) closeParsers() {
@@ -258,13 +340,16 @@ func (h *harness) parserFor(ex extract.Extractor) (*sitter.Parser, error) {
 	return p, nil
 }
 
-// writeFile persists one file's worth of symbols and edges atomically.
-// All writes for a given source file run inside a single SQLite
-// transaction so a mid-file failure (write error, context cancellation)
-// rolls back cleanly — the index never contains a half-written file's
-// symbols with its edges missing. Re-scans still converge regardless;
-// the transaction just reduces the window in which partial state is
-// observable.
+// writeFile persists one file's symbols atomically and buffers its
+// edges for the post-walk resolution pass.
+//
+// The per-file SQLite transaction still wraps the symbol writes so a
+// mid-file failure (write error, context cancellation) rolls back
+// cleanly — the index never contains a half-written file's symbols.
+// Edges are deliberately excluded from the file-scoped transaction:
+// they're cross-file by nature (the pitch-01-03 design point), so
+// their transaction boundary is the scan as a whole, handled by
+// resolveAndWriteEdges after walkTree completes.
 //
 // The steps inside the transaction:
 //
@@ -276,20 +361,23 @@ func (h *harness) parserFor(ex extract.Extractor) (*sitter.Parser, error) {
 //  3. For each symbol, resolve ParentQualified → ParentID (may be nil
 //     when the parent lives in another file — legitimate state, not
 //     an error) and WriteSymbol.
-//  4. For each edge, resolve Source/Target qualified names to symbol
-//     IDs inside this file. Edges whose endpoint isn't local are
-//     dropped — 01-03 backfills cross-file edges.
+//  4. For each edge, look up the source qualified name in the
+//     file-local map — the source always lives in the emitting file,
+//     so a local lookup is definitive. Buffer the edge into
+//     h.pendingEdges with its target name still as a string.
+//     resolveAndWriteEdges will turn that string into a symbol_id
+//     once every file has been scanned and global names are visible.
 //
-// Counters update only after the transaction commits, so Result.Symbols
-// and Result.Edges always reflect what's actually in the index.
+// Counters for Result.Symbols update after the transaction commits;
+// Result.Edges is updated later when resolveAndWriteEdges writes.
 func (h *harness) writeFile(rel, lang string, source []byte, c *collector) error {
-	var (
-		symsWritten  int
-		edgesWritten int
-	)
+	var symsWritten int
+	var pending []pendingEdge
+	var fileID int64
 	err := h.idx.InTx(h.ctx, func() error {
 		fileHash := hashSource(source)
-		fileID, err := h.idx.WriteFile(h.ctx, &model.File{
+		var err error
+		fileID, err = h.idx.WriteFile(h.ctx, &model.File{
 			Path:      rel,
 			Language:  lang,
 			Hash:      fileHash,
@@ -307,16 +395,16 @@ func (h *harness) writeFile(rel, lang string, source []byte, c *collector) error
 		})
 
 		idByQualified := make(map[string]int64, len(c.symbols))
+		parentByQualified := make(map[string]string, len(c.symbols))
 		for _, s := range c.symbols {
 			var parentID *int64
 			if s.ParentQualified != "" {
 				if pid, ok := idByQualified[s.ParentQualified]; ok {
 					parentID = &pid
 				}
-				// parent not found → leave nil. 01-03 will resolve the
-				// cross-file parent links; no warning here, this is
-				// the expected steady state for Go method receivers
-				// that live in a sibling file of the same package.
+				// parent not found → leave nil. Cross-file parents
+				// stay unresolved in Tier-Basic; a later card can
+				// backfill them through the global symbol table.
 			}
 
 			row := &model.Symbol{
@@ -335,30 +423,28 @@ func (h *harness) writeFile(rel, lang string, source []byte, c *collector) error
 				return fmt.Errorf("write symbol %q: %w", s.Qualified, werr)
 			}
 			idByQualified[s.Qualified] = id
+			parentByQualified[s.Qualified] = s.ParentQualified
 			symsWritten++
 		}
 
 		for _, e := range c.edges {
 			sourceID, ok := idByQualified[e.SourceQualified]
 			if !ok {
-				continue // source unknown to this file; defensive, shouldn't happen.
+				// The source qualified name wasn't written as a symbol
+				// in this file — extractor bug if it ever fires. Skip
+				// defensively rather than writing a dangling edge.
+				continue
 			}
-			targetID, ok := idByQualified[e.TargetQualified]
-			if !ok {
-				continue // cross-file edge; 01-03 will backfill.
-			}
-			edge := &model.Edge{
-				SourceID:   sourceID,
-				TargetID:   targetID,
-				Kind:       e.Kind,
-				FileID:     fileID,
-				Line:       e.Line,
-				Confidence: e.Confidence,
-			}
-			if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
-				return fmt.Errorf("write edge %s→%s: %w", e.SourceQualified, e.TargetQualified, werr)
-			}
-			edgesWritten++
+			pending = append(pending, pendingEdge{
+				SourceID:              sourceID,
+				SourceQualified:       e.SourceQualified,
+				SourceParentQualified: parentByQualified[e.SourceQualified],
+				TargetName:            e.TargetQualified,
+				Kind:                  e.Kind,
+				FileID:                fileID,
+				Line:                  e.Line,
+				Confidence:            e.Confidence,
+			})
 		}
 		return nil
 	})
@@ -366,7 +452,112 @@ func (h *harness) writeFile(rel, lang string, source []byte, c *collector) error
 		return err
 	}
 	h.symbols += symsWritten
-	h.edges += edgesWritten
+	h.pendingEdges = append(h.pendingEdges, pending...)
+	h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: rel, Language: lang})
+	return nil
+}
+
+// resolveAndWriteEdges is the resolve phase: after walkTree has
+// visited every file and written every symbol, drain pendingEdges
+// into sense_edges by feeding each pending edge through the
+// resolve.Index.
+//
+// The resolver does the heavy lifting: exact qualified lookup,
+// same-file scope preference on ambiguity, receiver rewrites for
+// `self.` / `Self::` targets, and a calls-only unqualified fallback.
+// This function is the glue that loads the name index once, iterates
+// the buffer, and persists resolved matches in one commit.
+//
+// Operational contract: the entire drain runs in one SQLite
+// transaction. A crash or cancellation between the symbol-write
+// phase and the commit here leaves symbols persisted and edges
+// missing; because `sense scan` is idempotent, a re-run converges.
+// This is the trade-off for cross-file resolution — the per-file
+// edge atomicity that pitch 01-02 described no longer holds, and
+// most edges couldn't honour it anyway since their targets live
+// outside the emitting file.
+//
+// Scale assumption: the whole pending buffer fits in memory and the
+// single commit is reasonable at pitch-target sizes (≤30K symbols,
+// ≤120K edges ⇒ low-MB range, commits in milliseconds). Much larger
+// repos will want a batched commit strategy; not this card's job.
+func (h *harness) resolveAndWriteEdges() error {
+	if len(h.pendingEdges) == 0 {
+		return nil
+	}
+	refs, err := h.idx.SymbolRefs(h.ctx)
+	if err != nil {
+		return fmt.Errorf("load symbols for edge resolution: %w", err)
+	}
+	resolver := resolve.NewIndex(refs)
+
+	var written, unresolved int
+	err = h.idx.InTx(h.ctx, func() error {
+		for _, pe := range h.pendingEdges {
+			r, ok := resolver.Resolve(resolve.Request{
+				Target:                pe.TargetName,
+				Kind:                  pe.Kind,
+				SourceFileID:          pe.FileID,
+				SourceQualified:       pe.SourceQualified,
+				SourceParentQualified: pe.SourceParentQualified,
+				BaseConfidence:        pe.Confidence,
+			})
+			if !ok {
+				// Unresolved edge: the extractor emitted it but no
+				// symbol matched the target name. Typical causes are
+				// external calls (stdlib, imported packages) or
+				// dynamic dispatch we can't statically resolve. Log
+				// the first N so a user debugging a sparse graph can
+				// see a sample; the rest roll into the count only
+				// (surfaced via Result.Unresolved).
+				if unresolved < maxUnresolvedWarnings {
+					_, _ = fmt.Fprintf(h.warn,
+						"warn: unresolved target %q from %q\n",
+						pe.TargetName, pe.SourceQualified,
+					)
+				}
+				unresolved++
+				continue
+			}
+			if r.Ambiguous {
+				// Ambiguous resolution picked a candidate from more
+				// than one option at the same qualified-name key.
+				// The pitch requires a warning so a user debugging
+				// surprising graph output can see which edges were
+				// guess-resolved. The Warnings counter deliberately
+				// is NOT bumped — that counter tracks per-file
+				// failures; ambiguity is a successful resolution
+				// with reduced confidence, not a failure.
+				_, _ = fmt.Fprintf(h.warn,
+					"warn: ambiguous target %q from %q → picked id=%d confidence=%.2f\n",
+					pe.TargetName, pe.SourceQualified, r.SymbolID, r.Confidence,
+				)
+			}
+			edge := &model.Edge{
+				SourceID:   pe.SourceID,
+				TargetID:   r.SymbolID,
+				Kind:       pe.Kind,
+				FileID:     pe.FileID,
+				Line:       pe.Line,
+				Confidence: r.Confidence,
+			}
+			if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
+				return fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
+			}
+			written++
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if extra := unresolved - maxUnresolvedWarnings; extra > 0 {
+		_, _ = fmt.Fprintf(h.warn,
+			"warn: ... and %d more unresolved targets omitted\n", extra,
+		)
+	}
+	h.edges += written
+	h.unresolved += unresolved
 	return nil
 }
 
