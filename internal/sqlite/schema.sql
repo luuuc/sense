@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_sense_symbols_file_id   ON sense_symbols (file_id
 
 CREATE TABLE IF NOT EXISTS sense_edges (
     id          INTEGER PRIMARY KEY,
-    source_id   INTEGER NOT NULL REFERENCES sense_symbols(id) ON DELETE CASCADE,
+    source_id   INTEGER REFERENCES sense_symbols(id) ON DELETE CASCADE,
     target_id   INTEGER NOT NULL REFERENCES sense_symbols(id) ON DELETE CASCADE,
     kind        TEXT    NOT NULL,
     file_id     INTEGER NOT NULL REFERENCES sense_files(id) ON DELETE CASCADE,
