@@ -22,7 +22,7 @@ import (
 // cannot be interpreted as a git option. Defence-in-depth against
 // an untrusted caller (future MCP server, git hook, CI job) passing
 // e.g. `--upload-pack=...` as a "ref." Available since git 2.24.
-func gitDiffFiles(ctx context.Context, dir, ref string) ([]string, error) {
+func GitDiffFiles(ctx context.Context, dir, ref string) ([]string, error) {
 	// Pre-check git availability so a missing binary produces a
 	// clear "git not in PATH" error instead of an opaque
 	// exec.ErrNotFound wrapped in the generic git-diff message. A
@@ -59,7 +59,7 @@ func gitDiffFiles(ctx context.Context, dir, ref string) ([]string, error) {
 //
 // The query chunks on SQLITE_MAX_VARIABLE_NUMBER (999) so a diff
 // covering hundreds of files stays in one pass of small queries.
-func symbolsInFiles(ctx context.Context, db *sql.DB, paths []string) ([]int64, error) {
+func SymbolsInFiles(ctx context.Context, db *sql.DB, paths []string) ([]int64, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}

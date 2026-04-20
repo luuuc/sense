@@ -113,8 +113,8 @@ func RunGraph(args []string, cio IO) int {
 		return ExitGeneralError
 	}
 
-	fileIDs := collectFileIDs(sc)
-	pathByID, err := loadFilePaths(ctx, adapter.DB(), fileIDs)
+	fileIDs := CollectFileIDs(sc)
+	pathByID, err := LoadFilePaths(ctx, adapter.DB(), fileIDs)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense graph:", err)
 		return ExitGeneralError

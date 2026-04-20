@@ -93,7 +93,7 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 	// RunGraph for the cancellation-deferred-to-01-05 rationale.
 	ctx := context.Background()
 
-	paths, err := gitDiffFiles(ctx, cio.Dir, opts.Diff)
+	paths, err := GitDiffFiles(ctx, cio.Dir, opts.Diff)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
@@ -105,7 +105,7 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	symbolIDs, err := symbolsInFiles(ctx, adapter.DB(), paths)
+	symbolIDs, err := SymbolsInFiles(ctx, adapter.DB(), paths)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
@@ -125,8 +125,8 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 		results = append(results, r)
 	}
 
-	fileIDs := collectDiffFileIDs(results)
-	pathByID, err := loadFilePaths(ctx, adapter.DB(), fileIDs)
+	fileIDs := CollectDiffFileIDs(results)
+	pathByID, err := LoadFilePaths(ctx, adapter.DB(), fileIDs)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
@@ -154,7 +154,7 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 // collectDiffFileIDs returns unique file ids referenced across many
 // blast.Result records — shared prologue for the diff path's single
 // file-path hydration call.
-func collectDiffFileIDs(results []blast.Result) []int64 {
+func CollectDiffFileIDs(results []blast.Result) []int64 {
 	seen := map[int64]struct{}{}
 	var ids []int64
 	note := func(fileID int64) {
@@ -215,8 +215,8 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 		return ExitGeneralError
 	}
 
-	fileIDs := collectBlastFileIDs(result)
-	pathByID, err := loadFilePaths(ctx, adapter.DB(), fileIDs)
+	fileIDs := CollectBlastFileIDs(result)
+	pathByID, err := LoadFilePaths(ctx, adapter.DB(), fileIDs)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
@@ -244,7 +244,7 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 // collectBlastFileIDs returns the unique file ids referenced by the
 // blast Result's direct + indirect callers. Batched so the caller
 // hydrates paths in one query.
-func collectBlastFileIDs(r blast.Result) []int64 {
+func CollectBlastFileIDs(r blast.Result) []int64 {
 	seen := map[int64]struct{}{r.Symbol.FileID: {}}
 	ids := []int64{r.Symbol.FileID}
 	for _, c := range r.DirectCallers {

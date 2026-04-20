@@ -64,7 +64,7 @@ func OpenIndex(ctx context.Context, dir string) (*sqlite.Adapter, error) {
 // collectFileIDs walks a SymbolContext and returns the unique file
 // ids referenced by the subject and every edge endpoint. Used to
 // batch the follow-up file-path lookup into one query.
-func collectFileIDs(sc *model.SymbolContext) []int64 {
+func CollectFileIDs(sc *model.SymbolContext) []int64 {
 	seen := map[int64]struct{}{sc.File.ID: {}}
 	ids := []int64{sc.File.ID}
 	for _, e := range sc.Outbound {
@@ -87,7 +87,7 @@ func collectFileIDs(sc *model.SymbolContext) []int64 {
 // SQLITE_MAX_VARIABLE_NUMBER (999) to stay safe on wide graph
 // responses (a subject with hundreds of edges could otherwise hit
 // the limit in one query).
-func loadFilePaths(ctx context.Context, db *sql.DB, ids []int64) (map[int64]string, error) {
+func LoadFilePaths(ctx context.Context, db *sql.DB, ids []int64) (map[int64]string, error) {
 	out := make(map[int64]string, len(ids))
 	if len(ids) == 0 {
 		return out, nil
