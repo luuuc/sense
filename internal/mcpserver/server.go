@@ -27,12 +27,20 @@ import (
 	"github.com/luuuc/sense/internal/version"
 )
 
-// Run starts the MCP stdio server. It locates .sense/index.db under
-// dir, registers the four tools (search, graph, blast, status), and
-// blocks on stdin until the client disconnects or sends a cancel
-// signal. All diagnostic output goes to stderr — stdout is the
-// JSON-RPC channel.
+// RunOptions configures the MCP server.
+type RunOptions struct {
+	Dir        string
+	WatchState *mcpio.WatchState // nil when not in watch mode
+}
+
+// Run starts the MCP stdio server with default options.
 func Run(dir string) error {
+	return RunWithOptions(RunOptions{Dir: dir})
+}
+
+// RunWithOptions starts the MCP stdio server with explicit options.
+func RunWithOptions(opts RunOptions) error {
+	dir := opts.Dir
 	if dir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -74,7 +82,7 @@ func Run(dir string) error {
 		server.WithToolCapabilities(false),
 	)
 
-	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine}
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState}
 
 	s.AddTool(searchTool(), h.handleSearch)
 	s.AddTool(graphTool(), h.handleGraph)
@@ -89,10 +97,11 @@ func Run(dir string) error {
 // kept for methods like ReadSymbol that live on *sqlite.Adapter; db
 // is a convenience alias for plain-SQL callers (Lookup, LoadFilePaths).
 type handlers struct {
-	adapter *sqlite.Adapter
-	db      *sql.DB
-	dir     string
-	search  *search.Engine
+	adapter    *sqlite.Adapter
+	db         *sql.DB
+	dir        string
+	search     *search.Engine
+	watchState *mcpio.WatchState
 }
 
 // ---------------------------------------------------------------
@@ -245,7 +254,7 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		Direction: direction,
 	})
 
-	freshness := computeFreshness(ctx, h.db, h.dir, false)
+	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
 
 	out, err := mcpio.MarshalGraph(resp)
@@ -358,7 +367,7 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		resp = resp2
 	}
 
-	freshness := computeFreshness(ctx, h.db, h.dir, false)
+	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
 
 	out, err := mcpio.MarshalBlast(resp)
@@ -506,7 +515,7 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 // ---------------------------------------------------------------
 
 func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	resp, err := buildStatusResponse(ctx, h.db, h.dir)
+	resp, err := buildStatusResponse(ctx, h.db, h.dir, h.watchState)
 	if err != nil {
 		return nil, fmt.Errorf("sense.status: %w", err)
 	}
@@ -518,7 +527,7 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func buildStatusResponse(ctx context.Context, db *sql.DB, dir string) (mcpio.StatusResponse, error) {
+func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.WatchState) (mcpio.StatusResponse, error) {
 	var resp mcpio.StatusResponse
 
 	row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_files`)
@@ -544,7 +553,7 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string) (mcpio.Sta
 	}
 	resp.Languages = langs
 
-	freshness := computeFreshness(ctx, db, dir, true)
+	freshness := computeFreshness(ctx, db, dir, true, ws)
 	if freshness != nil {
 		resp.Freshness = *freshness
 	}
@@ -599,7 +608,7 @@ func queryLanguageBreakdown(ctx context.Context, db *sql.DB) (map[string]mcpio.S
 // Freshness computation
 // ---------------------------------------------------------------
 
-func computeFreshness(ctx context.Context, db *sql.DB, dir string, includeMaxMtime bool) *mcpio.Freshness {
+func computeFreshness(ctx context.Context, db *sql.DB, dir string, includeMaxMtime bool, ws *mcpio.WatchState) *mcpio.Freshness {
 	var lastScanStr sql.NullString
 	row := db.QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`)
 	if err := row.Scan(&lastScanStr); err != nil || !lastScanStr.Valid {
@@ -625,6 +634,15 @@ func computeFreshness(ctx context.Context, db *sql.DB, dir string, includeMaxMti
 	if includeMaxMtime && maxMtime != nil {
 		ts := maxMtime.UTC().Format(time.RFC3339)
 		f.MaxFileMtimeSinceScan = &ts
+	}
+
+	if ws != nil {
+		watching, watchSince := ws.Get()
+		if watching {
+			f.Watching = &watching
+			ts := watchSince.UTC().Format(time.RFC3339)
+			f.WatchSince = &ts
+		}
 	}
 
 	return f
