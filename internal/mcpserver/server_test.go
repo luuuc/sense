@@ -187,8 +187,9 @@ func TestMCPIntegration(t *testing.T) {
 			DirectCallers []any  `json:"direct_callers"`
 			TotalAffected int    `json:"total_affected"`
 			SenseMetrics  struct {
-				SymbolsTraversed          int  `json:"symbols_traversed"`
-				EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
+				SymbolsTraversed          int `json:"symbols_traversed"`
+				EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+				EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
 			} `json:"sense_metrics"`
 		}
 		if err := json.Unmarshal([]byte(text), &blastResp); err != nil {
@@ -205,8 +206,11 @@ func TestMCPIntegration(t *testing.T) {
 		if len(blastResp.DirectCallers) < 5 {
 			t.Errorf("direct_callers = %d, want >= 5", len(blastResp.DirectCallers))
 		}
-		if blastResp.SenseMetrics.EstimatedFileReadsAvoided != nil {
-			t.Error("estimated_file_reads_avoided should be null (stub)")
+		if blastResp.SenseMetrics.EstimatedFileReadsAvoided == 0 {
+			t.Error("expected non-zero estimated_file_reads_avoided")
+		}
+		if blastResp.SenseMetrics.EstimatedTokensSaved == 0 {
+			t.Error("expected non-zero estimated_tokens_saved")
 		}
 	})
 

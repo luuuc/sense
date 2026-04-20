@@ -47,11 +47,11 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		})
 	}
 
-	// Metrics: traversed counts the subject + every caller
-	// discovered. Savings fields stay nil per pitch 01-05 (real
-	// estimation lands in 04-03).
+	uniqueFiles := countUniqueBlastFiles(resp)
 	resp.SenseMetrics = BlastMetrics{
-		SymbolsTraversed: 1 + len(r.DirectCallers) + len(r.IndirectCallers),
+		SymbolsTraversed:          1 + len(r.DirectCallers) + len(r.IndirectCallers),
+		EstimatedFileReadsAvoided: uniqueFiles,
+		EstimatedTokensSaved:      uniqueFiles * AvgTokensPerFile,
 	}
 	return resp
 }
@@ -124,10 +124,26 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 		fmt.Sprintf("%d modified symbols; %d direct callers", len(results), len(resp.DirectCallers)),
 	}
 
+	uniqueFiles := countUniqueBlastFiles(resp)
 	resp.SenseMetrics = BlastMetrics{
-		SymbolsTraversed: len(results) + len(resp.DirectCallers) + len(resp.IndirectCallers),
+		SymbolsTraversed:          len(results) + len(resp.DirectCallers) + len(resp.IndirectCallers),
+		EstimatedFileReadsAvoided: uniqueFiles,
+		EstimatedTokensSaved:      uniqueFiles * AvgTokensPerFile,
 	}
 	return resp
+}
+
+func countUniqueBlastFiles(resp BlastResponse) int {
+	seen := map[string]struct{}{}
+	for _, c := range resp.DirectCallers {
+		if c.File != "" {
+			seen[c.File] = struct{}{}
+		}
+	}
+	for _, t := range resp.AffectedTests {
+		seen[t] = struct{}{}
+	}
+	return len(seen)
 }
 
 // riskRank orders the three classifier tiers so BuildDiffBlastResponse

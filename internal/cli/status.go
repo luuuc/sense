@@ -115,6 +115,7 @@ func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, 
 	resp.Languages = queryLangBreakdown(ctx, db)
 	resp.Freshness = computeCLIFreshness(ctx, db, cio.Dir)
 	resp.Version = buildVersionInfo(ctx, db)
+	resp.Lifetime = queryLifetimeCounters(ctx, db)
 
 	return resp, ExitSuccess
 }
@@ -281,6 +282,42 @@ func renderStatusHuman(cio IO, resp mcpio.StatusResponse) {
 			_, _ = fmt.Fprintf(w, " (mismatch — run 'sense scan --force')\n")
 		}
 	}
+
+	if resp.Lifetime != nil && resp.Lifetime.Queries > 0 {
+		_, _ = fmt.Fprintf(w, "\nLifetime: %d queries, ~%s tokens saved\n",
+			resp.Lifetime.Queries, formatTokens(resp.Lifetime.EstimatedTokensSaved))
+	}
+}
+
+func queryLifetimeCounters(ctx context.Context, db *sql.DB) *mcpio.StatusLifetime {
+	rows, err := db.QueryContext(ctx, `SELECT key, value FROM sense_metrics`)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	var lt mcpio.StatusLifetime
+	found := false
+	for rows.Next() {
+		var key string
+		var value int
+		if err := rows.Scan(&key, &value); err != nil {
+			continue
+		}
+		found = true
+		switch key {
+		case "lifetime_queries":
+			lt.Queries = value
+		case "lifetime_file_reads_avoided":
+			lt.EstimatedFileReadsAvoided = value
+		case "lifetime_tokens_saved":
+			lt.EstimatedTokensSaved = value
+		}
+	}
+	if !found {
+		return nil
+	}
+	return &lt
 }
 
 func sortedLangs(m map[string]mcpio.StatusLanguage) []string {
@@ -306,6 +343,17 @@ func formatAge(ageSeconds *int64) string {
 		return fmt.Sprintf("%d hours ago", secs/3600)
 	default:
 		return fmt.Sprintf("%d days ago", secs/86400)
+	}
+}
+
+func formatTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.0fK", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
 	}
 }
 

@@ -22,6 +22,10 @@ import (
 	"strconv"
 )
 
+// AvgTokensPerFile is the conservative estimate for tokens in a typical
+// source file. Used across all estimation formulas.
+const AvgTokensPerFile = 800
+
 // Confidence is a 0.0-1.0 edge-probability value. It exists as a
 // named type, not a bare float64, solely to pin the wire form: a
 // whole-number value (1.0, 0.0) must render with one decimal place,
@@ -111,15 +115,10 @@ type TestEdgeRef struct {
 }
 
 // GraphMetrics is the observability footer on a graph response.
-// SymbolsReturned counts the entries emitters put in Edges.
-// EstimatedFileReadsAvoided and EstimatedTokensSaved are pointers so
-// the wire can carry `null` — the pitch 01-05 honest-stub rule.
-// Pitch 04-03 replaces `nil` with real estimation numbers; until then,
-// consumers read null and know Sense has no measured answer.
 type GraphMetrics struct {
-	SymbolsReturned           int  `json:"symbols_returned"`
-	EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      *int `json:"estimated_tokens_saved"`
+	SymbolsReturned           int `json:"symbols_returned"`
+	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
 }
 
 // ---------------------------------------------------------------
@@ -162,12 +161,11 @@ type BlastIndirect struct {
 
 // BlastMetrics mirrors GraphMetrics' footer shape but with the
 // blast-specific counter name: symbols_traversed counts the BFS
-// frontier expansions, not just the returned set. Savings fields use
-// the same null-until-04-03 policy as GraphMetrics.
+// frontier expansions, not just the returned set.
 type BlastMetrics struct {
-	SymbolsTraversed          int  `json:"symbols_traversed"`
-	EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      *int `json:"estimated_tokens_saved"`
+	SymbolsTraversed          int `json:"symbols_traversed"`
+	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
 }
 
 // ---------------------------------------------------------------
@@ -196,12 +194,35 @@ type Freshness struct {
 // the future `sense status --json` output). Unlike graph/blast the
 // sense.status schema has no `sense_metrics` footer — status is
 // metadata about the index itself, not the result of a query against
-// it. Session / lifetime counters land in pitch 04-03.
 type StatusResponse struct {
 	Index     StatusIndex               `json:"index"`
 	Languages map[string]StatusLanguage `json:"languages"`
 	Freshness Freshness                 `json:"freshness"`
+	Session   *StatusSession            `json:"session,omitempty"`
+	Lifetime  *StatusLifetime           `json:"lifetime,omitempty"`
 	Version   *StatusVersion            `json:"version,omitempty"`
+}
+
+// StatusSession holds in-memory session-scoped savings counters.
+type StatusSession struct {
+	Queries                   int             `json:"queries"`
+	EstimatedFileReadsAvoided int             `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int             `json:"estimated_tokens_saved"`
+	TopQuery                  *StatusTopQuery `json:"top_query,omitempty"`
+}
+
+// StatusTopQuery is the single highest-saving query this session.
+type StatusTopQuery struct {
+	Tool                 string `json:"tool"`
+	Args                 string `json:"args"`
+	EstimatedTokensSaved int    `json:"estimated_tokens_saved"`
+}
+
+// StatusLifetime holds all-time savings counters (persisted in SQLite).
+type StatusLifetime struct {
+	Queries                   int `json:"queries"`
+	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
 }
 
 // StatusVersion reports schema and embedding-model version state.
@@ -271,10 +292,8 @@ func (s SearchScore) MarshalJSON() ([]byte, error) {
 }
 
 // SearchMetrics is the observability footer on a search response.
-// EstimatedFileReadsAvoided and EstimatedTokensSaved are null stubs
-// until pitch 04-03 provides estimation formulas.
 type SearchMetrics struct {
-	SymbolsSearched           int  `json:"symbols_searched"`
-	EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      *int `json:"estimated_tokens_saved"`
+	SymbolsSearched           int `json:"symbols_searched"`
+	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
 }
