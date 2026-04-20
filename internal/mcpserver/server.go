@@ -1,0 +1,499 @@
+// Package mcpserver implements the `sense mcp` stdio server that
+// exposes graph, blast, and status tools over the Model Context
+// Protocol. Built on github.com/mark3labs/mcp-go — the de-facto Go
+// MCP SDK. Each handler is a thin wrapper around the same engine code
+// the CLI commands call, marshalled through internal/mcpio.
+package mcpserver
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/luuuc/sense/internal/blast"
+	"github.com/luuuc/sense/internal/cli"
+	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/sqlite"
+	"github.com/luuuc/sense/internal/version"
+)
+
+// Run starts the MCP stdio server. It locates .sense/index.db under
+// dir, registers the three tools, and blocks on stdin until the
+// client disconnects or sends a cancel signal. All diagnostic output
+// goes to stderr — stdout is the JSON-RPC channel.
+func Run(dir string) error {
+	if dir == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("sense mcp: getwd: %w", err)
+		}
+		dir = wd
+	}
+
+	ctx := context.Background()
+	adapter, err := cli.OpenIndex(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("sense mcp: %w", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	s := server.NewMCPServer(
+		"sense",
+		version.Version,
+		server.WithToolCapabilities(false),
+	)
+
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir}
+
+	s.AddTool(graphTool(), h.handleGraph)
+	s.AddTool(blastTool(), h.handleBlast)
+	s.AddTool(statusTool(), h.handleStatus)
+
+	return server.ServeStdio(s)
+}
+
+// handlers holds shared state for MCP tool handlers. The adapter is
+// kept for methods like ReadSymbol that live on *sqlite.Adapter; db
+// is a convenience alias for plain-SQL callers (Lookup, LoadFilePaths).
+type handlers struct {
+	adapter *sqlite.Adapter
+	db      *sql.DB
+	dir     string
+}
+
+// ---------------------------------------------------------------
+// Tool schemas
+// ---------------------------------------------------------------
+
+func graphTool() mcp.Tool {
+	return mcp.NewTool("sense.graph",
+		mcp.WithDescription("Symbol relationships — callers, callees, inheritance, tests"),
+		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			Title:           "Sense Graph",
+			ReadOnlyHint:    mcp.ToBoolPtr(true),
+			DestructiveHint: mcp.ToBoolPtr(false),
+			IdempotentHint:  mcp.ToBoolPtr(true),
+			OpenWorldHint:   mcp.ToBoolPtr(false),
+		}),
+		mcp.WithString("symbol",
+			mcp.Required(),
+			mcp.Description("Qualified or unqualified symbol name to look up"),
+		),
+		mcp.WithNumber("depth",
+			mcp.Description("Traversal depth around the subject (default 1)"),
+		),
+		mcp.WithString("direction",
+			mcp.Description("One of: both, callers, callees (default both)"),
+			mcp.Enum("both", "callers", "callees"),
+		),
+	)
+}
+
+func blastTool() mcp.Tool {
+	return mcp.NewTool("sense.blast",
+		mcp.WithDescription("Blast radius for a symbol or diff — what breaks if this changes?"),
+		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			Title:           "Sense Blast Radius",
+			ReadOnlyHint:    mcp.ToBoolPtr(true),
+			DestructiveHint: mcp.ToBoolPtr(false),
+			IdempotentHint:  mcp.ToBoolPtr(true),
+			OpenWorldHint:   mcp.ToBoolPtr(false),
+		}),
+		mcp.WithString("symbol",
+			mcp.Description("Qualified or unqualified symbol name (mutually exclusive with diff)"),
+		),
+		mcp.WithString("diff",
+			mcp.Description("Git ref for diff-based blast (e.g. HEAD~1, main..feature)"),
+		),
+		mcp.WithNumber("max_hops",
+			mcp.Description("Traversal depth (default 3)"),
+		),
+		mcp.WithNumber("min_confidence",
+			mcp.Description("Edge-confidence threshold 0.0–1.0 (default 0.7)"),
+		),
+		mcp.WithBoolean("include_tests",
+			mcp.Description("Include affected test files (default true)"),
+		),
+	)
+}
+
+func statusTool() mcp.Tool {
+	return mcp.NewTool("sense.status",
+		mcp.WithDescription("Index health — file/symbol/edge counts, language breakdown, freshness"),
+		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			Title:           "Sense Status",
+			ReadOnlyHint:    mcp.ToBoolPtr(true),
+			DestructiveHint: mcp.ToBoolPtr(false),
+			IdempotentHint:  mcp.ToBoolPtr(true),
+			OpenWorldHint:   mcp.ToBoolPtr(false),
+		}),
+	)
+}
+
+// ---------------------------------------------------------------
+// sense.graph handler
+// ---------------------------------------------------------------
+
+func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	symbol, err := req.RequireString("symbol")
+	if err != nil {
+		return mcp.NewToolResultError("sense.graph: missing required parameter 'symbol'"), nil
+	}
+
+	depth := req.GetInt("depth", 1)
+	if depth != 1 {
+		return mcp.NewToolResultError("sense.graph: --depth > 1 is not yet supported"), nil
+	}
+
+	direction := req.GetString("direction", "both")
+
+	matches, err := cli.Lookup(ctx, h.db, symbol)
+	if err != nil {
+		return nil, fmt.Errorf("sense.graph: lookup: %w", err)
+	}
+	switch len(matches) {
+	case 0:
+		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: no symbol matches %q", symbol)), nil
+	case 1:
+		// resolved
+	default:
+		var lines []string
+		for _, m := range matches {
+			lines = append(lines, fmt.Sprintf("  %s (%s) %s:%d", m.Qualified, m.Kind, m.File, m.LineStart))
+		}
+		return mcp.NewToolResultError(fmt.Sprintf(
+			"sense.graph: multiple symbols match %q — specify a qualified name:\n%s",
+			symbol, strings.Join(lines, "\n"))), nil
+	}
+
+	sc, err := h.adapter.ReadSymbol(ctx, matches[0].ID)
+	if err != nil {
+		return nil, fmt.Errorf("sense.graph: read symbol: %w", err)
+	}
+
+	fileIDs := cli.CollectFileIDs(sc)
+	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sense.graph: load file paths: %w", err)
+	}
+	lookup := func(id int64) (string, bool) {
+		p, ok := pathByID[id]
+		return p, ok
+	}
+
+	resp := mcpio.BuildGraphResponse(sc, lookup, mcpio.BuildGraphRequest{
+		Direction: direction,
+	})
+
+	freshness := computeFreshness(ctx, h.db, h.dir, false)
+	resp.Freshness = freshness
+
+	out, err := mcpio.MarshalGraph(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense.graph: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// ---------------------------------------------------------------
+// sense.blast handler
+// ---------------------------------------------------------------
+
+func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	symbol := req.GetString("symbol", "")
+	diff := req.GetString("diff", "")
+
+	if symbol == "" && diff == "" {
+		return mcp.NewToolResultError("sense.blast: pass either 'symbol' or 'diff'"), nil
+	}
+	if symbol != "" && diff != "" {
+		return mcp.NewToolResultError("sense.blast: pass either 'symbol' or 'diff', not both"), nil
+	}
+
+	maxHops := req.GetInt("max_hops", 3)
+	minConfidence := req.GetFloat("min_confidence", 0.7)
+	includeTests := req.GetBool("include_tests", true)
+
+	opts := blast.Options{
+		MaxHops:       maxHops,
+		MinConfidence: minConfidence,
+		IncludeTests:  includeTests,
+	}
+
+	var resp mcpio.BlastResponse
+
+	if diff != "" {
+		resp2, err := h.blastDiff(ctx, diff, opts)
+		if err != nil {
+			return nil, err
+		}
+		resp = resp2
+	} else {
+		resp2, err := h.blastSymbol(ctx, symbol, opts)
+		if err != nil {
+			if toolErr, ok := err.(*toolError); ok {
+				return mcp.NewToolResultError(toolErr.msg), nil
+			}
+			return nil, err
+		}
+		resp = resp2
+	}
+
+	freshness := computeFreshness(ctx, h.db, h.dir, false)
+	resp.Freshness = freshness
+
+	out, err := mcpio.MarshalBlast(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense.blast: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+type toolError struct{ msg string }
+
+func (e *toolError) Error() string { return e.msg }
+
+func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options) (mcpio.BlastResponse, error) {
+	matches, err := cli.Lookup(ctx, h.db, symbol)
+	if err != nil {
+		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: lookup: %w", err)
+	}
+	switch len(matches) {
+	case 0:
+		return mcpio.BlastResponse{}, &toolError{fmt.Sprintf("sense.blast: no symbol matches %q", symbol)}
+	case 1:
+		// resolved
+	default:
+		var lines []string
+		for _, m := range matches {
+			lines = append(lines, fmt.Sprintf("  %s (%s) %s:%d", m.Qualified, m.Kind, m.File, m.LineStart))
+		}
+		return mcpio.BlastResponse{}, &toolError{fmt.Sprintf(
+			"sense.blast: multiple symbols match %q — specify a qualified name:\n%s",
+			symbol, strings.Join(lines, "\n"))}
+	}
+
+	result, err := blast.Compute(ctx, h.db, matches[0].ID, opts)
+	if err != nil {
+		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: compute: %w", err)
+	}
+
+	fileIDs := cli.CollectBlastFileIDs(result)
+	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
+	if err != nil {
+		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: load file paths: %w", err)
+	}
+	lookup := func(id int64) (string, bool) {
+		p, ok := pathByID[id]
+		return p, ok
+	}
+
+	return mcpio.BuildBlastResponse(result, lookup), nil
+}
+
+func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options) (mcpio.BlastResponse, error) {
+	paths, err := cli.GitDiffFiles(ctx, h.dir, ref)
+	if err != nil {
+		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: %w", err)
+	}
+
+	symbolIDs, err := cli.SymbolsInFiles(ctx, h.db, paths)
+	if err != nil {
+		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: %w", err)
+	}
+
+	results := make([]blast.Result, 0, len(symbolIDs))
+	for _, sid := range symbolIDs {
+		r, err := blast.Compute(ctx, h.db, sid, opts)
+		if err != nil {
+			return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: %w", err)
+		}
+		results = append(results, r)
+	}
+
+	fileIDs := cli.CollectDiffFileIDs(results)
+	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
+	if err != nil {
+		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: %w", err)
+	}
+	lookup := func(id int64) (string, bool) {
+		p, ok := pathByID[id]
+		return p, ok
+	}
+
+	return mcpio.BuildDiffBlastResponse(ref, results, lookup), nil
+}
+
+// ---------------------------------------------------------------
+// sense.status handler
+// ---------------------------------------------------------------
+
+func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resp, err := buildStatusResponse(ctx, h.db, h.dir)
+	if err != nil {
+		return nil, fmt.Errorf("sense.status: %w", err)
+	}
+
+	out, err := mcpio.MarshalStatus(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense.status: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func buildStatusResponse(ctx context.Context, db *sql.DB, dir string) (mcpio.StatusResponse, error) {
+	var resp mcpio.StatusResponse
+
+	row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_files`)
+	if err := row.Scan(&resp.Index.Files); err != nil {
+		return resp, err
+	}
+	row = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols`)
+	if err := row.Scan(&resp.Index.Symbols); err != nil {
+		return resp, err
+	}
+	row = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_edges`)
+	if err := row.Scan(&resp.Index.Edges); err != nil {
+		return resp, err
+	}
+	row = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_embeddings`)
+	if err := row.Scan(&resp.Index.Embeddings); err != nil {
+		return resp, err
+	}
+
+	langs, err := queryLanguageBreakdown(ctx, db)
+	if err != nil {
+		return resp, err
+	}
+	resp.Languages = langs
+
+	freshness := computeFreshness(ctx, db, dir, true)
+	if freshness != nil {
+		resp.Freshness = *freshness
+	}
+
+	return resp, nil
+}
+
+// ---------------------------------------------------------------
+// Language tier breakdown
+// ---------------------------------------------------------------
+
+var languageTiers = map[string]string{
+	"ruby":       "full",
+	"go":         "full",
+	"typescript": "full",
+	"javascript": "full",
+	"python":     "standard",
+	"java":       "standard",
+	"rust":       "standard",
+}
+
+func queryLanguageBreakdown(ctx context.Context, db *sql.DB) (map[string]mcpio.StatusLanguage, error) {
+	const q = `SELECT f.language, COUNT(DISTINCT f.id), COUNT(s.id)
+	           FROM sense_files f
+	           LEFT JOIN sense_symbols s ON s.file_id = f.id
+	           GROUP BY f.language
+	           ORDER BY f.language`
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]mcpio.StatusLanguage)
+	for rows.Next() {
+		var lang string
+		var sl mcpio.StatusLanguage
+		if err := rows.Scan(&lang, &sl.Files, &sl.Symbols); err != nil {
+			return nil, err
+		}
+		tier, ok := languageTiers[lang]
+		if !ok {
+			tier = "basic"
+		}
+		sl.Tier = tier
+		out[lang] = sl
+	}
+	return out, rows.Err()
+}
+
+// ---------------------------------------------------------------
+// Freshness computation
+// ---------------------------------------------------------------
+
+func computeFreshness(ctx context.Context, db *sql.DB, dir string, includeMaxMtime bool) *mcpio.Freshness {
+	var lastScanStr sql.NullString
+	row := db.QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`)
+	if err := row.Scan(&lastScanStr); err != nil || !lastScanStr.Valid {
+		return nil
+	}
+
+	lastScan, err := time.Parse(time.RFC3339Nano, lastScanStr.String)
+	if err != nil {
+		return nil
+	}
+
+	ageSeconds := int64(time.Since(lastScan).Seconds())
+	lastScanFmt := lastScan.UTC().Format(time.RFC3339)
+
+	f := &mcpio.Freshness{
+		LastScan:        &lastScanFmt,
+		IndexAgeSeconds: &ageSeconds,
+	}
+
+	staleCount, maxMtime := countStaleFiles(ctx, db, dir)
+	f.StaleFilesSeen = &staleCount
+
+	if includeMaxMtime && maxMtime != nil {
+		ts := maxMtime.UTC().Format(time.RFC3339)
+		f.MaxFileMtimeSinceScan = &ts
+	}
+
+	return f
+}
+
+func countStaleFiles(ctx context.Context, db *sql.DB, dir string) (int, *time.Time) {
+	const q = `SELECT path, indexed_at FROM sense_files`
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return 0, nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	var stale int
+	var maxMtime *time.Time
+
+	for rows.Next() {
+		var path, indexedAtStr string
+		if err := rows.Scan(&path, &indexedAtStr); err != nil {
+			continue
+		}
+		indexedAt, err := time.Parse(time.RFC3339Nano, indexedAtStr)
+		if err != nil {
+			continue
+		}
+
+		fullPath := filepath.Join(dir, path)
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue
+		}
+		mtime := info.ModTime()
+		if mtime.After(indexedAt) {
+			stale++
+		}
+		if maxMtime == nil || mtime.After(*maxMtime) {
+			maxMtime = &mtime
+		}
+	}
+	return stale, maxMtime
+}
+

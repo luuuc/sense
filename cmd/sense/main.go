@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 
 	"github.com/luuuc/sense/internal/cli"
+	"github.com/luuuc/sense/internal/mcpserver"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/version"
 )
@@ -21,7 +23,7 @@ Commands:
   blast         Blast radius for a symbol or diff
   conventions   Detected project conventions (not yet implemented)
   status        Index health (not yet implemented)
-  mcp           Start the MCP server (not yet implemented)
+  mcp           Start the MCP server (stdio transport)
   version       Print version
   help          Show this help
 
@@ -55,7 +57,19 @@ func main() {
 	case "blast":
 		os.Exit(cli.RunBlast(os.Args[2:], cli.DefaultIO()))
 
-	case "search", "conventions", "status", "mcp":
+	case "mcp":
+		fs := flag.NewFlagSet("sense mcp", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		dir := fs.String("dir", ".", "project root containing .sense/")
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			os.Exit(1)
+		}
+		if err := mcpserver.Run(*dir); err != nil {
+			fmt.Fprintln(os.Stderr, "sense mcp:", err)
+			os.Exit(1)
+		}
+
+	case "search", "conventions", "status":
 		fmt.Fprintf(os.Stderr,
 			"sense: %q is not yet implemented — see .doc/pitches/ for the build plan\n", cmd)
 		os.Exit(1)
