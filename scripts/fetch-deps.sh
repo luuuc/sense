@@ -84,7 +84,6 @@ if [ "${1:-}" = "--local" ]; then
     fetch_ort "$OS" "$ARCH" "$BUNDLE/${OS}_${ARCH}"
 else
     fetch_ort darwin arm64 "$BUNDLE/darwin_arm64"
-    fetch_ort darwin amd64 "$BUNDLE/darwin_amd64"
     fetch_ort linux amd64 "$BUNDLE/linux_amd64"
     fetch_ort linux arm64 "$BUNDLE/linux_arm64"
 fi
