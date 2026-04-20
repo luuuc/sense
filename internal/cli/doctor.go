@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/sqlite"
 )
@@ -131,11 +132,21 @@ func runDoctorChecks(ctx context.Context, cio IO) doctorResponse {
 	}
 
 	// Check 3: Embedding model
-	checks = append(checks, checkResult{
-		Name:    "embedding_model",
-		Status:  "pass",
-		Message: "Embedding model matches (all-MiniLM-L6-v2)",
-	})
+	storedModel := readMeta(ctx, db, "embedding_model")
+	if storedModel == "" || storedModel == embed.ModelID {
+		checks = append(checks, checkResult{
+			Name:    "embedding_model",
+			Status:  "pass",
+			Message: fmt.Sprintf("Embedding model matches (%s)", embed.ModelID),
+		})
+	} else {
+		checks = append(checks, checkResult{
+			Name:       "embedding_model",
+			Status:     "fail",
+			Message:    fmt.Sprintf("Embedding model mismatch (index: %s, binary: %s)", storedModel, embed.ModelID),
+			Suggestion: "Run `sense scan --force` to re-embed with the new model",
+		})
+	}
 
 	// Check 4: Stale files
 	staleCount := countStaleFilesCLI(ctx, db, cio.Dir)

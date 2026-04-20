@@ -7,8 +7,10 @@ import (
 	"os"
 
 	"github.com/luuuc/sense/internal/cli"
+	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/mcpserver"
 	"github.com/luuuc/sense/internal/scan"
+	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
 	"github.com/luuuc/sense/internal/watch"
 )
@@ -42,7 +44,8 @@ func main() {
 
 	switch cmd := os.Args[1]; cmd {
 	case "version", "--version", "-v":
-		fmt.Println(version.Version)
+		fmt.Printf("sense %s (schema v%d, embeddings: %s)\n",
+			version.Version, sqlite.SchemaVersion, embed.ModelID)
 
 	case "help", "--help", "-h":
 		fmt.Print(helpText)
