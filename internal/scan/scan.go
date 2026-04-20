@@ -403,27 +403,35 @@ func (h *harness) processFile(path, rel string) {
 		return
 	}
 
-	parser, err := h.parserFor(ex)
-	if err != nil {
-		h.warnf("%s: parser setup failed: %v", rel, err)
-		return
-	}
-
-	tree := parser.Parse(source, nil)
-	if tree == nil {
-		h.warnf("%s: parse returned nil tree", rel)
-		return
-	}
-	defer tree.Close()
-
-	if tree.RootNode().HasError() {
-		h.warnf("%s: parse errors present, extracting best-effort", rel)
-	}
-
 	collected := &collector{}
-	if err := safeExtract(ex, tree, source, rel, collected); err != nil {
-		h.warnf("%s: extract failed: %v", rel, err)
-		return
+
+	if raw, ok := ex.(extract.RawExtractor); ok {
+		if err := safeExtractRaw(raw, source, rel, collected); err != nil {
+			h.warnf("%s: extract failed: %v", rel, err)
+			return
+		}
+	} else {
+		parser, err := h.parserFor(ex)
+		if err != nil {
+			h.warnf("%s: parser setup failed: %v", rel, err)
+			return
+		}
+
+		tree := parser.Parse(source, nil)
+		if tree == nil {
+			h.warnf("%s: parse returned nil tree", rel)
+			return
+		}
+		defer tree.Close()
+
+		if tree.RootNode().HasError() {
+			h.warnf("%s: parse errors present, extracting best-effort", rel)
+		}
+
+		if err := safeExtract(ex, tree, source, rel, collected); err != nil {
+			h.warnf("%s: extract failed: %v", rel, err)
+			return
+		}
 	}
 
 	if err := h.writeFile(rel, ex.Language(), source, newHash, collected); err != nil {
@@ -708,6 +716,15 @@ func safeExtract(ex extract.Extractor, tree *sitter.Tree, source []byte, rel str
 		}
 	}()
 	return ex.Extract(tree, source, rel, c)
+}
+
+func safeExtractRaw(ex extract.RawExtractor, source []byte, rel string, c *collector) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("extractor panicked: %v", r)
+		}
+	}()
+	return ex.ExtractRaw(source, rel, c)
 }
 
 // ---- collector (per-file Emitter) ----

@@ -227,28 +227,39 @@ type fixtureEdge struct {
 // realistic shape of bug — we want the fixture that exposed it named
 // in the output, not a stack trace with no file context.
 func runExtractor(ex extract.Extractor, source []byte, path string) (out fixtureOutput, err error) {
-	parser := sitter.NewParser()
-	defer parser.Close()
-
-	if err := parser.SetLanguage(ex.Grammar()); err != nil {
-		return fixtureOutput{}, err
-	}
-	tree := parser.Parse(source, nil)
-	if tree == nil {
-		return fixtureOutput{}, errParseFailed
-	}
-	defer tree.Close()
-
 	em := &collectingEmitter{}
 
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("extractor panicked on %s: %v", path, r)
-			}
+	if raw, ok := ex.(extract.RawExtractor); ok {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("extractor panicked on %s: %v", path, r)
+				}
+			}()
+			err = raw.ExtractRaw(source, path, em)
 		}()
-		err = ex.Extract(tree, source, path, em)
-	}()
+	} else {
+		parser := sitter.NewParser()
+		defer parser.Close()
+
+		if err := parser.SetLanguage(ex.Grammar()); err != nil {
+			return fixtureOutput{}, err
+		}
+		tree := parser.Parse(source, nil)
+		if tree == nil {
+			return fixtureOutput{}, errParseFailed
+		}
+		defer tree.Close()
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("extractor panicked on %s: %v", path, r)
+				}
+			}()
+			err = ex.Extract(tree, source, path, em)
+		}()
+	}
 	if err != nil {
 		return fixtureOutput{}, err
 	}
