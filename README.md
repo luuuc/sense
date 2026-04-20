@@ -8,22 +8,32 @@ One binary, one index, four capabilities. No SaaS account, no API key, no cloud 
 
 ## Status
 
-Pre-alpha. The architecture is specified in `.doc/definition/`; implementation follows once Brain and Beacon are stable.
+Pre-alpha. Graph scanning, symbol queries, blast radius, and MCP server work. Embeddings and semantic search are next.
 
 ## Install
 
-macOS and Linux (amd64 or arm64):
+### With Go (1.25+)
+
+```bash
+go install github.com/luuuc/sense/cmd/sense@latest
+```
+
+### Without Go
+
+Download the binary for your OS from the [latest release](https://github.com/luuuc/sense/releases/latest), unzip, and move `sense` somewhere on your `PATH`.
+
+Or use the install script (macOS and Linux, amd64 or arm64):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/luuuc/sense/main/install.sh | sh
 ```
 
-The script detects your platform, downloads the matching binary from [GitHub Releases](https://github.com/luuuc/sense/releases), verifies its SHA256 checksum, and installs to `/usr/local/bin/sense` (or `~/.local/bin/sense` if `/usr/local/bin` is not writable).
-
-Or with Go:
+### Verify
 
 ```bash
-go install github.com/luuuc/sense/cmd/sense@latest
+sense version
+sense scan        # in any project directory
+sense graph User  # query the symbol graph
 ```
 
 ## How It Works
@@ -105,6 +115,10 @@ Sense doesn't compress answers — it lets your tools ask better questions so th
 - **Not a token optimizer.** Understanding is the identity. Token savings is the side effect.
 - **Not a code editor.** Sense reads the codebase. It does not modify it. Read-only by design.
 - **Not a replacement for grep.** Use ripgrep for exact text. Sense is for meaning.
+
+## Feedback
+
+Pre-alpha — expect rough edges. File issues at [github.com/luuuc/sense/issues](https://github.com/luuuc/sense/issues).
 
 ## Development
 
