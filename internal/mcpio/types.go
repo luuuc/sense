@@ -201,13 +201,26 @@ type StatusResponse struct {
 	Index     StatusIndex               `json:"index"`
 	Languages map[string]StatusLanguage `json:"languages"`
 	Freshness Freshness                 `json:"freshness"`
+	Version   *StatusVersion            `json:"version,omitempty"`
 }
 
-// StatusIndex reports index-level counts. Coverage lands with the
-// embeddings pipeline in cycle 2; this pitch leaves it at the struct
-// zero-value (0.0) so the field appears in the wire shape without
-// claiming a value.
+// StatusVersion reports schema and embedding-model version state.
+// Created and managed by pitch 04-04; this pitch reads whatever is
+// available and displays current/mismatch status.
+type StatusVersion struct {
+	Binary               string `json:"binary"`
+	Schema               int    `json:"schema"`
+	SchemaCurrent        bool   `json:"schema_current"`
+	EmbeddingModel       string `json:"embedding_model"`
+	EmbeddingModelCurrent bool  `json:"embedding_model_current"`
+}
+
+// StatusIndex reports index-level counts and size. Path is the
+// relative path to the index file; SizeBytes is its on-disk size.
+// Coverage is embeddings/symbols as a fraction (0.0–1.0).
 type StatusIndex struct {
+	Path       string  `json:"path"`
+	SizeBytes  int64   `json:"size_bytes"`
 	Files      int     `json:"files"`
 	Symbols    int     `json:"symbols"`
 	Edges      int     `json:"edges"`

@@ -275,11 +275,13 @@ func fixtureStatus() StatusResponse {
 	lastScan := "2026-04-16T14:22:01Z"
 	return StatusResponse{
 		Index: StatusIndex{
+			Path:       ".sense/index.db",
+			SizeBytes:  13000000,
 			Files:      312,
 			Symbols:    2847,
 			Edges:      12304,
-			Embeddings: 0,
-			Coverage:   0,
+			Embeddings: 2847,
+			Coverage:   1.0,
 		},
 		Languages: map[string]StatusLanguage{
 			"go":     {Files: 200, Symbols: 1800, Tier: "full"},
@@ -291,6 +293,13 @@ func fixtureStatus() StatusResponse {
 			IndexAgeSeconds:       int64ptr(3),
 			StaleFilesSeen:        intptr(0),
 			MaxFileMtimeSinceScan: strptr("2026-04-16T14:22:01Z"),
+		},
+		Version: &StatusVersion{
+			Binary:                "0.0.0-dev",
+			Schema:                1,
+			SchemaCurrent:         true,
+			EmbeddingModel:        "all-MiniLM-L6-v2",
+			EmbeddingModelCurrent: true,
 		},
 	}
 }
