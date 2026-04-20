@@ -110,6 +110,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolID int64, opts Options) (Res
 	frontier := []int64{subject.ID}
 
 	for hop := 1; hop <= opts.MaxHops; hop++ {
+		if err := ctx.Err(); err != nil {
+			return Result{}, fmt.Errorf("blast: cancelled at hop %d: %w", hop, err)
+		}
 		pairs, err := expandFrontier(ctx, db, frontier, opts.MinConfidence)
 		if err != nil {
 			return Result{}, fmt.Errorf("blast: hop %d: %w", hop, err)
