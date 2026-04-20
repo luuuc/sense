@@ -80,6 +80,48 @@ const (
 	ConfidenceDynamic    = 0.7
 )
 
+// Synthetic qualified-name prefixes for cross-language resolution.
+// Edges targeting these names connect symbols across language boundaries
+// (e.g., ERB template → JS controller via Turbo channel name matching).
+const (
+	PrefixTurboChannel = "turbo-channel:"
+	PrefixTurboFrame   = "turbo-frame:"
+	PrefixImportmap    = "importmap:"
+)
+
+// StimulusControllerQualified converts a kebab-case Stimulus controller name
+// to its qualified form for cross-language resolution. Both the ERB extractor
+// (emitting edge targets) and the TS/JS extractor (emitting symbols) must
+// produce the same qualified name for resolution to succeed.
+//
+// Namespace separators (--) become :: separators:
+//
+//	"checkout"       → "CheckoutController"
+//	"user-profile"   → "UserProfileController"
+//	"admin--users"   → "Admin::UsersController"
+func StimulusControllerQualified(name string) string {
+	parts := strings.Split(name, "--")
+	for i, part := range parts {
+		parts[i] = kebabToPascal(part)
+	}
+	last := len(parts) - 1
+	parts[last] = parts[last] + "Controller"
+	return strings.Join(parts, "::")
+}
+
+func kebabToPascal(s string) string {
+	words := strings.Split(s, "-")
+	var b strings.Builder
+	for _, w := range words {
+		if w == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(w[:1]))
+		b.WriteString(w[1:])
+	}
+	return b.String()
+}
+
 // EmittedSymbol is the pre-insert form produced by an extractor. Index-
 // assigned fields (ID, FileID, numeric ParentID) are resolved by the
 // scan harness when rows are written; the extractor only sees its own
@@ -140,6 +182,19 @@ type Extractor interface {
 	Language() string
 	Extensions() []string // leading dot, lower-case: ".rb", ".ts"
 	Tier() Tier
+}
+
+// RawExtractor is an optional interface for extractors that operate on source
+// bytes directly without tree-sitter parsing (e.g., regex-based extraction
+// for template files like ERB). When an Extractor also implements RawExtractor,
+// the scan harness calls ExtractRaw and skips tree-sitter parsing entirely.
+// Grammar() should return nil for raw extractors.
+//
+// Callers that invoke extractors directly (outside the scan harness) should
+// type-assert for RawExtractor before calling Extract, since Grammar() returns
+// nil and tree-sitter parsing will fail.
+type RawExtractor interface {
+	ExtractRaw(source []byte, filePath string, emit Emitter) error
 }
 
 // ---------- registry ----------
