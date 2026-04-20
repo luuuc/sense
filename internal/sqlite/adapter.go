@@ -23,11 +23,10 @@ var schemaSQL string
 //go:embed schema_fts.sql
 var schemaFTSSQL string
 
-// schemaVersion is stamped into the database's PRAGMA user_version so a
-// future adapter can detect a stale on-disk schema and rebuild — the
-// "drops the old database, and rebuilds" path described in 04-storage.md.
-// Bump this when schema.sql changes shape incompatibly.
-const schemaVersion = 1
+// SchemaVersion is stamped into the database's PRAGMA user_version.
+// The CLI status/doctor commands compare this against the on-disk value
+// to detect stale schemas. Bump when schema.sql changes incompatibly.
+const SchemaVersion = 1
 
 // maxOpenConns is the connection-pool size Open applies. InTx relies on
 // this being 1 — its raw BEGIN/COMMIT approach shares a transaction
@@ -121,7 +120,7 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 
 	// PRAGMA user_version can't be parameterised; the integer is a trusted
 	// build-time constant so interpolation is safe.
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite set user_version: %w", err)
 	}

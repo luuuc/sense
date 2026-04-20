@@ -22,12 +22,31 @@ import (
 )
 
 // Tier mirrors the language-support tiers from .doc/definition/05-languages.md.
-// Tier-Basic in this pitch means: symbols + intra-file edges only. Standard
-// and Full tier values will be added when 05-0x promotes extractors — we
-// don't define them ahead of any code that uses them.
 type Tier string
 
-const TierBasic Tier = "basic"
+const (
+	TierBasic    Tier = "basic"
+	TierStandard Tier = "standard"
+	TierFull     Tier = "full"
+)
+
+var languageTiers = map[string]Tier{
+	"ruby":       TierFull,
+	"go":         TierFull,
+	"typescript": TierFull,
+	"javascript": TierFull,
+	"python":     TierStandard,
+	"java":       TierStandard,
+	"rust":       TierStandard,
+}
+
+// LanguageTier returns the support tier for a language name.
+func LanguageTier(lang string) string {
+	if t, ok := languageTiers[lang]; ok {
+		return string(t)
+	}
+	return string(TierBasic)
+}
 
 // Confidence constants — the policy numbers the pitch specifies for
 // edge confidence. Centralising them here keeps the emit-side
