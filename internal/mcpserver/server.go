@@ -19,6 +19,7 @@ import (
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/cli"
+	"github.com/luuuc/sense/internal/conventions"
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/search"
@@ -78,6 +79,7 @@ func Run(dir string) error {
 	s.AddTool(searchTool(), h.handleSearch)
 	s.AddTool(graphTool(), h.handleGraph)
 	s.AddTool(blastTool(), h.handleBlast)
+	s.AddTool(conventionsTool(), h.handleConventions)
 	s.AddTool(statusTool(), h.handleStatus)
 
 	return server.ServeStdio(s)
@@ -439,6 +441,64 @@ func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options
 	}
 
 	return mcpio.BuildDiffBlastResponse(ref, results, lookup), nil
+}
+
+// ---------------------------------------------------------------
+// sense.conventions handler
+// ---------------------------------------------------------------
+
+func conventionsTool() mcp.Tool {
+	return mcp.NewTool("sense.conventions",
+		mcp.WithDescription("Detected project conventions — inheritance, naming, structure, composition, testing patterns"),
+		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			Title:           "Sense Conventions",
+			ReadOnlyHint:    mcp.ToBoolPtr(true),
+			DestructiveHint: mcp.ToBoolPtr(false),
+			IdempotentHint:  mcp.ToBoolPtr(true),
+			OpenWorldHint:   mcp.ToBoolPtr(false),
+		}),
+		mcp.WithString("domain",
+			mcp.Description("Scope to files matching this path substring (e.g. \"models\", \"controllers\")"),
+		),
+		mcp.WithNumber("min_strength",
+			mcp.Description("Minimum strength threshold 0.0–1.0 (default 0.5)"),
+		),
+	)
+}
+
+func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	domain := req.GetString("domain", "")
+	minStrength := req.GetFloat("min_strength", 0.5)
+
+	results, symbolCount, err := conventions.Detect(ctx, h.db, conventions.Options{
+		Domain:      domain,
+		MinStrength: minStrength,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sense.conventions: %w", err)
+	}
+
+	resp := mcpio.ConventionsResponse{
+		Conventions: make([]mcpio.ConventionEntry, len(results)),
+		SenseMetrics: mcpio.ConventionsMetrics{
+			SymbolsAnalyzed: symbolCount,
+		},
+	}
+	for i, c := range results {
+		resp.Conventions[i] = mcpio.ConventionEntry{
+			Category:    string(c.Category),
+			Description: c.Description,
+			Instances:   c.Instances,
+			Total:       c.Total,
+			Strength:    mcpio.Confidence(c.Strength),
+		}
+	}
+
+	out, err := mcpio.MarshalConventions(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense.conventions: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
 }
 
 // ---------------------------------------------------------------
