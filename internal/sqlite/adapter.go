@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
@@ -24,9 +25,10 @@ var schemaSQL string
 var schemaFTSSQL string
 
 // SchemaVersion is stamped into the database's PRAGMA user_version.
-// The CLI status/doctor commands compare this against the on-disk value
-// to detect stale schemas. Bump when schema.sql changes incompatibly.
-const SchemaVersion = 1
+// Bump when schema.sql changes incompatibly — a mismatch triggers
+// auto-rebuild (drop all tables, fresh schema, full scan). Never set
+// before a scan completes successfully; see StampSchemaVersion.
+const SchemaVersion = 2
 
 // maxOpenConns is the connection-pool size Open applies. InTx relies on
 // this being 1 — its raw BEGIN/COMMIT approach shares a transaction
@@ -70,6 +72,11 @@ var ftsTriggerStatements = []string{
 // Adapter is the SQLite implementation of index.Index.
 type Adapter struct {
 	db *sql.DB
+	// Rebuilt is true when Open detected a schema version mismatch and
+	// dropped all tables to recreate a fresh schema. Callers that need
+	// a populated index (e.g. the MCP server) should trigger a full
+	// scan before serving.
+	Rebuilt bool
 }
 
 // compile-time contract check.
@@ -99,6 +106,29 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 	// Load-bearing for InTx — see maxOpenConns constant.
 	db.SetMaxOpenConns(maxOpenConns)
 
+	// Check stored schema version. A mismatch (stored > 0 but !=
+	// expected) means the binary was upgraded — drop everything and
+	// rebuild from source. Version 0 means fresh DB (no prior scan).
+	// If PRAGMA user_version itself fails (corrupt file), storedVersion
+	// stays 0 and we proceed as fresh — the schema apply below will
+	// likely fail with a more descriptive error.
+	var storedVersion int
+	_ = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&storedVersion)
+	rebuilt := false
+	if storedVersion != 0 && storedVersion != SchemaVersion {
+		rebuilt = true
+		if err := dropAllSenseTables(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		// Reset user_version so the state is indistinguishable from a
+		// fresh DB until StampSchemaVersion is called after scan.
+		if _, err := db.ExecContext(ctx, "PRAGMA user_version = 0"); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("sqlite reset user_version: %w", err)
+		}
+	}
+
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite schema: %w", err)
@@ -118,14 +148,19 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 		}
 	}
 
-	// PRAGMA user_version can't be parameterised; the integer is a trusted
-	// build-time constant so interpolation is safe.
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("sqlite set user_version: %w", err)
-	}
+	return &Adapter{db: db, Rebuilt: rebuilt}, nil
+}
 
-	return &Adapter{db: db}, nil
+// StampSchemaVersion writes the current SchemaVersion into PRAGMA
+// user_version. Call ONLY after a successful scan completes — this is
+// the invariant that prevents a crash mid-rebuild from leaving an
+// apparently-current but incomplete index.
+func (a *Adapter) StampSchemaVersion(ctx context.Context) error {
+	_, err := a.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion))
+	if err != nil {
+		return fmt.Errorf("sqlite stamp schema version: %w", err)
+	}
+	return nil
 }
 
 // Close releases the underlying database handle and flushes the WAL.
@@ -533,6 +568,31 @@ func (a *Adapter) PrepareEmbeddingStmt(ctx context.Context) (*sql.Stmt, error) {
 	return a.db.PrepareContext(ctx, q)
 }
 
+// WriteMeta upserts a key-value pair into sense_meta.
+func (a *Adapter) WriteMeta(ctx context.Context, key, value string) error {
+	const q = `INSERT INTO sense_meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+	_, err := a.db.ExecContext(ctx, q, key, value)
+	if err != nil {
+		return fmt.Errorf("sqlite WriteMeta: %w", err)
+	}
+	return nil
+}
+
+// ReadMeta returns the value for a key in sense_meta, or "" if not found.
+func (a *Adapter) ReadMeta(ctx context.Context, key string) (string, error) {
+	var value string
+	err := a.db.QueryRowContext(ctx,
+		"SELECT value FROM sense_meta WHERE key = ?", key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("sqlite ReadMeta: %w", err)
+	}
+	return value, nil
+}
+
 func (a *Adapter) Clear(ctx context.Context) error {
 	// Order respects foreign keys even if ON DELETE CASCADE would handle
 	// it — explicit is clearer than clever.
@@ -544,6 +604,40 @@ func (a *Adapter) Clear(ctx context.Context) error {
 	} {
 		if _, err := a.db.ExecContext(ctx, "DELETE FROM "+tbl); err != nil {
 			return fmt.Errorf("sqlite Clear %s: %w", tbl, err)
+		}
+	}
+	return nil
+}
+
+// dropAllSenseTables discovers and drops every sense_* table/view in the
+// database. Using sqlite_master makes this future-proof — new tables added
+// in later schema versions get dropped automatically without maintaining a
+// parallel list.
+func dropAllSenseTables(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx,
+		"SELECT type, name FROM sqlite_master WHERE type IN ('table','view') AND name LIKE 'sense_%'")
+	if err != nil {
+		return fmt.Errorf("sqlite list tables: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type entry struct{ typ, name string }
+	var entries []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.typ, &e.name); err != nil {
+			return fmt.Errorf("sqlite list tables scan: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sqlite list tables iterate: %w", err)
+	}
+
+	for _, e := range entries {
+		stmt := fmt.Sprintf("DROP %s IF EXISTS %s", strings.ToUpper(e.typ), e.name)
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("sqlite drop %s %s: %w", e.typ, e.name, err)
 		}
 	}
 	return nil

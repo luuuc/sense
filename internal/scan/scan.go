@@ -135,6 +135,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	defer func() { _ = idx.Close() }()
 
+	if idx.Rebuilt {
+		_, _ = fmt.Fprintf(out, "schema version mismatch — rebuilding index from source\n")
+	}
+
 	h := &harness{
 		ctx:           ctx,
 		idx:           idx,
@@ -164,6 +168,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		if err := h.embedSymbols(); err != nil {
 			return nil, err
 		}
+	}
+	if err := idx.StampSchemaVersion(ctx); err != nil {
+		return nil, err
 	}
 	elapsed := time.Since(start)
 

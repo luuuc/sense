@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS sense_metrics (
     value INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sense_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- sense_embeddings is created empty now. Cycle 2's embedding pitch will
 -- populate it; having the table upfront means that pitch needs no schema
 -- change, just inserts.
