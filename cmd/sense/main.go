@@ -46,7 +46,9 @@ func main() {
 		fmt.Print(helpText)
 
 	case "scan":
-		if _, err := scan.Run(ctx, scan.Options{}); err != nil {
+		if _, err := scan.Run(ctx, scan.Options{
+			EmbeddingsEnabled: os.Getenv("SENSE_EMBEDDINGS_ENABLED") == "1",
+		}); err != nil {
 			fmt.Fprintln(os.Stderr, "sense scan:", err)
 			os.Exit(1)
 		}
