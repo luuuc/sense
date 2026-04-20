@@ -48,7 +48,7 @@ type Options struct {
 	Sense             string    // sense dir (default: "<Root>/.sense")
 	Output            io.Writer // summary-line sink (default: os.Stderr)
 	Warnings          io.Writer // per-file warning sink (default: os.Stderr)
-	EmbeddingsEnabled bool      // plumbing for Cycle 2; set via SENSE_EMBEDDINGS_ENABLED
+	EmbeddingsEnabled bool      // when true, pass 3 generates embeddings for changed symbols
 }
 
 // Result summarises one scan invocation.
@@ -60,6 +60,7 @@ type Result struct {
 	Removed    int // files deleted from index (no longer on disk or now ignored)
 	Symbols    int // symbols written to the index
 	Edges      int // edges resolved and written to sense_edges
+	Embedded   int // symbols whose embeddings were generated/updated
 	Unresolved int // edges whose target name matched no symbol; dropped
 	Warnings   int // per-file failures logged; scan continues past them
 	Duration   time.Duration
@@ -159,6 +160,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := h.associateTests(); err != nil {
 		return nil, err
 	}
+	if opts.EmbeddingsEnabled {
+		if err := h.embedSymbols(); err != nil {
+			return nil, err
+		}
+	}
 	elapsed := time.Since(start)
 
 	res := &Result{
@@ -169,6 +175,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		Removed:    h.removed,
 		Symbols:    h.symbols,
 		Edges:      h.edges,
+		Embedded:   h.embedded,
 		Unresolved: h.unresolved,
 		Warnings:   h.warnings,
 		Duration:   elapsed,
@@ -229,6 +236,10 @@ type harness struct {
 	// entries can be detected and removed after the walk.
 	seenPaths map[string]bool
 
+	// changedFileIDs collects file IDs that were re-indexed this scan
+	// (new or hash-changed). Used by pass 3 to scope embedding work.
+	changedFileIDs []int64
+
 	// Tallies for Result.
 	files      int
 	indexed    int
@@ -237,6 +248,7 @@ type harness struct {
 	removed    int
 	symbols    int
 	edges      int
+	embedded   int
 	unresolved int
 	warnings   int
 }
@@ -536,6 +548,7 @@ func (h *harness) writeFile(rel, lang string, source []byte, fileHash string, c 
 	h.symbols += symsWritten
 	h.pendingEdges = append(h.pendingEdges, pending...)
 	h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: rel, Language: lang})
+	h.changedFileIDs = append(h.changedFileIDs, fileID)
 	return nil
 }
 
