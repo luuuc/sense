@@ -83,7 +83,7 @@ func seedFusionIndex(t *testing.T, ctx context.Context, a *sqlite.Adapter) {
 	// Two callers → ProcessPayment is a hub
 	for _, callerID := range []int64{caller1, caller2} {
 		if _, err := a.WriteEdge(ctx, &model.Edge{
-			SourceID: callerID, TargetID: sid1,
+			SourceID: &callerID, TargetID: sid1,
 			Kind: model.EdgeCalls, FileID: fid2, Confidence: 1.0,
 		}); err != nil {
 			t.Fatal(err)
@@ -270,7 +270,7 @@ func TestFusionCentralityBreaksTie(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := a.WriteEdge(ctx, &model.Edge{
-			SourceID: callerID, TargetID: sidHub,
+			SourceID: &callerID, TargetID: sidHub,
 			Kind: model.EdgeCalls, FileID: fid2, Confidence: 1.0,
 		}); err != nil {
 			t.Fatal(err)

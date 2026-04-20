@@ -69,9 +69,9 @@ func seedBlastProject(t *testing.T) string {
 	}
 
 	edges := []model.Edge{
-		{SourceID: sids[1], TargetID: sids[0], Kind: model.EdgeCalls, FileID: fids[1], Confidence: 1.0},
-		{SourceID: sids[2], TargetID: sids[1], Kind: model.EdgeCalls, FileID: fids[2], Confidence: 1.0},
-		{SourceID: sids[3], TargetID: sids[0], Kind: model.EdgeTests, FileID: fids[3], Confidence: 0.8},
+		{SourceID: &sids[1], TargetID: sids[0], Kind: model.EdgeCalls, FileID: fids[1], Confidence: 1.0},
+		{SourceID: &sids[2], TargetID: sids[1], Kind: model.EdgeCalls, FileID: fids[2], Confidence: 1.0},
+		{SourceID: &sids[3], TargetID: sids[0], Kind: model.EdgeTests, FileID: fids[3], Confidence: 0.8},
 	}
 	for i := range edges {
 		if _, werr := adapter.WriteEdge(ctx, &edges[i]); werr != nil {

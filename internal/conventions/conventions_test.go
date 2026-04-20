@@ -163,7 +163,7 @@ func setupFixtureIndex(t *testing.T) *sqlite.Adapter {
 		}
 		fid := fileIDs[ed.file]
 		e := &model.Edge{
-			SourceID:   srcID,
+			SourceID:   &srcID,
 			TargetID:   tgtID,
 			Kind:       model.EdgeKind(ed.kind),
 			FileID:     fid,

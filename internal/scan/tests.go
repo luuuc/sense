@@ -84,7 +84,7 @@ func (h *harness) associateTests() error {
 				}
 				for _, implSym := range implSymbols {
 					edge := &model.Edge{
-						SourceID:   sourceID,
+						SourceID:   &sourceID,
 						TargetID:   implSym.ID,
 						Kind:       model.EdgeTests,
 						FileID:     testFileID,

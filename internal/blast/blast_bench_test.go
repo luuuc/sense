@@ -119,7 +119,7 @@ func buildFanInGraph(ctx context.Context, a *sqlite.Adapter, n, branching int) e
 		for i := 2; i <= n; i++ {
 			targetIdx := (i-2)/branching + 1
 			if _, err := a.WriteEdge(ctx, &model.Edge{
-				SourceID:   ids[i],
+				SourceID:   &ids[i],
 				TargetID:   ids[targetIdx],
 				Kind:       model.EdgeCalls,
 				FileID:     fileID,

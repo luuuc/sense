@@ -28,7 +28,7 @@ var schemaFTSSQL string
 // Bump when schema.sql changes incompatibly — a mismatch triggers
 // auto-rebuild (drop all tables, fresh schema, full scan). Never set
 // before a scan completes successfully; see StampSchemaVersion.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // maxOpenConns is the connection-pool size Open applies. InTx relies on
 // this being 1 — its raw BEGIN/COMMIT approach shares a transaction
@@ -316,19 +316,36 @@ func (a *Adapter) WriteSymbol(ctx context.Context, s *model.Symbol) (int64, erro
 }
 
 func (a *Adapter) WriteEdge(ctx context.Context, e *model.Edge) (int64, error) {
-	const q = `
-		INSERT INTO sense_edges (source_id, target_id, kind, file_id, line, confidence)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(source_id, target_id, kind, file_id) DO UPDATE SET
-			line       = excluded.line,
-			confidence = excluded.confidence
-		RETURNING id`
-
-	var id int64
-	err := a.db.QueryRowContext(ctx, q,
-		e.SourceID, e.TargetID, string(e.Kind), e.FileID,
-		nullableInt(e.Line), e.Confidence,
-	).Scan(&id)
+	var (
+		id  int64
+		err error
+	)
+	if e.SourceID != nil {
+		const q = `
+			INSERT INTO sense_edges (source_id, target_id, kind, file_id, line, confidence)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source_id, target_id, kind, file_id) DO UPDATE SET
+				line       = excluded.line,
+				confidence = excluded.confidence
+			RETURNING id`
+		err = a.db.QueryRowContext(ctx, q,
+			*e.SourceID, e.TargetID, string(e.Kind), e.FileID,
+			nullableInt(e.Line), e.Confidence,
+		).Scan(&id)
+	} else {
+		// File-level edge: source_id is NULL. No unique constraint
+		// covers this case (SQLite treats NULLs as distinct), so use
+		// a plain INSERT. Idempotency is handled by the scan harness
+		// deleting stale edges for changed files before re-extracting.
+		const q = `
+			INSERT INTO sense_edges (source_id, target_id, kind, file_id, line, confidence)
+			VALUES (NULL, ?, ?, ?, ?, ?)
+			RETURNING id`
+		err = a.db.QueryRowContext(ctx, q,
+			e.TargetID, string(e.Kind), e.FileID,
+			nullableInt(e.Line), e.Confidence,
+		).Scan(&id)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("sqlite WriteEdge: %w", err)
 	}
@@ -666,11 +683,13 @@ func (a *Adapter) loadEdges(ctx context.Context, symbolID int64, outbound bool) 
 		q = `
 		SELECT
 			e.id, e.source_id, e.target_id, e.kind, e.file_id, e.line, e.confidence,
-			other.id, other.file_id, other.name, other.qualified, other.kind,
-			other.visibility, other.parent_id, other.line_start, other.line_end,
+			COALESCE(other.id, 0), COALESCE(other.file_id, 0),
+			COALESCE(other.name, ''), COALESCE(other.qualified, ''),
+			COALESCE(other.kind, ''), other.visibility, other.parent_id,
+			COALESCE(other.line_start, 0), COALESCE(other.line_end, 0),
 			other.docstring, other.complexity, other.snippet
 		FROM sense_edges   e
-		JOIN sense_symbols other ON other.id = e.source_id
+		LEFT JOIN sense_symbols other ON other.id = e.source_id
 		WHERE e.target_id = ?
 		ORDER BY e.id`
 	}
@@ -686,6 +705,7 @@ func (a *Adapter) loadEdges(ctx context.Context, symbolID int64, outbound bool) 
 		var (
 			e               model.Edge
 			other           model.Symbol
+			sourceID        sql.NullInt64
 			line            sql.NullInt64
 			otherParentID   sql.NullInt64
 			otherComplexity sql.NullInt64
@@ -694,12 +714,15 @@ func (a *Adapter) loadEdges(ctx context.Context, symbolID int64, outbound bool) 
 			otherSnippet    sql.NullString
 		)
 		if err := rows.Scan(
-			&e.ID, &e.SourceID, &e.TargetID, &e.Kind, &e.FileID, &line, &e.Confidence,
+			&e.ID, &sourceID, &e.TargetID, &e.Kind, &e.FileID, &line, &e.Confidence,
 			&other.ID, &other.FileID, &other.Name, &other.Qualified, &other.Kind,
 			&otherVisibility, &otherParentID, &other.LineStart, &other.LineEnd,
 			&otherDocstring, &otherComplexity, &otherSnippet,
 		); err != nil {
 			return nil, err
+		}
+		if sourceID.Valid {
+			e.SourceID = &sourceID.Int64
 		}
 		if line.Valid {
 			l := int(line.Int64)

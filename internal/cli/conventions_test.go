@@ -60,7 +60,7 @@ func seedConventionsProject(t *testing.T) string {
 	}
 	for i := 0; i < 3; i++ {
 		if _, err := adapter.WriteEdge(ctx, &model.Edge{
-			SourceID: symIDs[i], TargetID: baseID,
+			SourceID: &symIDs[i], TargetID: baseID,
 			Kind: "inherits", FileID: fileIDs[files[i].Path], Confidence: 1.0,
 		}); err != nil {
 			t.Fatal(err)

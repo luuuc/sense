@@ -210,10 +210,11 @@ type fixtureSymbol struct {
 }
 
 type fixtureEdge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Kind   string `json:"kind"`
-	Line   int    `json:"line,omitempty"`
+	Source     string  `json:"source"`
+	Target     string  `json:"target"`
+	Kind       string  `json:"kind"`
+	Line       int     `json:"line,omitempty"`
+	Confidence float64 `json:"confidence"`
 }
 
 // runExtractor drives one extractor over one source buffer and returns
@@ -274,9 +275,10 @@ func runExtractor(ex extract.Extractor, source []byte, path string) (out fixture
 	}
 	for _, e := range em.edges {
 		fe := fixtureEdge{
-			Source: e.SourceQualified,
-			Target: e.TargetQualified,
-			Kind:   string(e.Kind),
+			Source:     e.SourceQualified,
+			Target:     e.TargetQualified,
+			Kind:       string(e.Kind),
+			Confidence: e.Confidence,
 		}
 		if e.Line != nil {
 			fe.Line = *e.Line

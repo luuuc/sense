@@ -255,6 +255,7 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfid
 
 		q := `SELECT source_id, target_id FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
+		        AND source_id IS NOT NULL
 		        AND kind = 'calls'
 		        AND confidence >= ?`
 
@@ -353,8 +354,8 @@ func loadTestsTargeting(ctx context.Context, db *sql.DB, ids []int64) ([]string,
 	placeholders = placeholders[:len(placeholders)-1]
 	q := `SELECT DISTINCT f.path
 	      FROM sense_edges e
-	      JOIN sense_symbols s ON s.id = e.source_id
-	      JOIN sense_files   f ON f.id = s.file_id
+	      LEFT JOIN sense_symbols s ON s.id = e.source_id
+	      JOIN sense_files f ON f.id = COALESCE(s.file_id, e.file_id)
 	      WHERE e.target_id IN (` + placeholders + `)
 	        AND e.kind = 'tests'
 	      ORDER BY f.path`

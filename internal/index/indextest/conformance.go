@@ -117,7 +117,7 @@ func sampleSymbol(fileID int64, name, qualified string, kind model.SymbolKind) *
 func sampleEdge(sourceID, targetID, fileID int64, kind model.EdgeKind) *model.Edge {
 	line := 3
 	return &model.Edge{
-		SourceID:   sourceID,
+		SourceID:   &sourceID,
 		TargetID:   targetID,
 		FileID:     fileID,
 		Kind:       kind,
