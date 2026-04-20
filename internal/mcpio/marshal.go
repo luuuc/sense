@@ -33,6 +33,13 @@ func MarshalStatus(r StatusResponse) ([]byte, error) {
 	return marshalPretty(r)
 }
 
+// MarshalSearch renders a SearchResponse with the same normalization +
+// pretty-print contract as MarshalGraph.
+func MarshalSearch(r SearchResponse) ([]byte, error) {
+	normalizeSearchResponse(&r)
+	return marshalPretty(r)
+}
+
 // marshalPretty is the shared encoder: SetEscapeHTML(false) keeps
 // identifier characters like `<`, `>`, `&` literal so goldens in
 // card 3 pin the documented examples byte-for-byte. Two-space indent
@@ -65,6 +72,13 @@ func normalizeGraphResponse(r *GraphResponse) {
 	}
 	if r.Edges.Tests == nil {
 		r.Edges.Tests = []TestEdgeRef{}
+	}
+}
+
+// normalizeSearchResponse replaces nil Results with an empty slice.
+func normalizeSearchResponse(r *SearchResponse) {
+	if r.Results == nil {
+		r.Results = []SearchResultEntry{}
 	}
 }
 
