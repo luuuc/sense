@@ -19,6 +19,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Fetch dependencies (model + ORT)
+        run: ./scripts/fetch-deps.sh --local
+
       - name: Build
         run: go build -v ./...
 
@@ -56,6 +59,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+
+      - name: Fetch dependencies (model + ORT)
+        run: ./scripts/fetch-deps.sh --local
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
