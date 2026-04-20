@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/luuuc/sense/internal/sqlite"
 	_ "modernc.org/sqlite"
 )
 
@@ -149,8 +151,9 @@ func TestDoctorPassesOnHealthyIndex(t *testing.T) {
 		CREATE TABLE sense_symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, qualified TEXT, kind TEXT, visibility TEXT, parent_id INTEGER, line_start INTEGER, line_end INTEGER, docstring TEXT, complexity INTEGER, snippet TEXT, UNIQUE(file_id, qualified));
 		CREATE TABLE sense_edges (id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT, file_id INTEGER, line INTEGER, confidence REAL);
 		CREATE TABLE sense_embeddings (symbol_id INTEGER PRIMARY KEY, vector BLOB);
-		PRAGMA user_version = 1;
+		CREATE TABLE sense_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 	`)
+	_, _ = db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", sqlite.SchemaVersion))
 	_ = db.Close()
 
 	t.Setenv("SENSE_EMBEDDINGS", "false")
