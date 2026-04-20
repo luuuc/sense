@@ -12,12 +12,27 @@ import (
 const DefaultMaxFileSizeKB = 512
 
 type Config struct {
-	Ignore []string `yaml:"ignore"`
-	Scan   ScanConfig `yaml:"scan"`
+	Ignore     []string         `yaml:"ignore"`
+	Scan       ScanConfig       `yaml:"scan"`
+	Embeddings EmbeddingsConfig `yaml:"embeddings"`
 }
 
 type ScanConfig struct {
 	MaxFileSizeKB int `yaml:"max_file_size_kb"`
+}
+
+type EmbeddingsConfig struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// EmbeddingsEnabled returns whether embedding generation is active.
+// Default is true; set embeddings.enabled: false in config.yml or
+// SENSE_EMBEDDINGS=false to disable.
+func (c *Config) EmbeddingsEnabled() bool {
+	if c.Embeddings.Enabled != nil {
+		return *c.Embeddings.Enabled
+	}
+	return true
 }
 
 // Load reads .sense/config.yml under root. A missing file returns

@@ -22,7 +22,7 @@ Commands:
   graph         Symbol relationships — callers, callees, inheritance, tests
   blast         Blast radius for a symbol or diff
   conventions   Detected project conventions (not yet implemented)
-  status        Index health (not yet implemented)
+  status        Index health and embedding coverage
   mcp           Start the MCP server (stdio transport)
   version       Print version
   help          Show this help
@@ -47,7 +47,7 @@ func main() {
 
 	case "scan":
 		if _, err := scan.Run(ctx, scan.Options{
-			EmbeddingsEnabled: os.Getenv("SENSE_EMBEDDINGS_ENABLED") == "1",
+			EmbeddingsEnabled: cli.EmbeddingsEnabled("."),
 		}); err != nil {
 			fmt.Fprintln(os.Stderr, "sense scan:", err)
 			os.Exit(1)
@@ -71,7 +71,10 @@ func main() {
 			os.Exit(1)
 		}
 
-	case "search", "conventions", "status":
+	case "status":
+		os.Exit(cli.RunStatus(os.Args[2:], cli.DefaultIO()))
+
+	case "search", "conventions":
 		fmt.Fprintf(os.Stderr,
 			"sense: %q is not yet implemented — see .doc/pitches/ for the build plan\n", cmd)
 		os.Exit(1)
@@ -81,3 +84,4 @@ func main() {
 		os.Exit(1)
 	}
 }
+
