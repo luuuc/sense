@@ -10,6 +10,7 @@ import (
 	"github.com/luuuc/sense/internal/mcpserver"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/version"
+	"github.com/luuuc/sense/internal/watch"
 )
 
 const helpText = `sense — codebase understanding that any tool can query
@@ -46,11 +47,31 @@ func main() {
 		fmt.Print(helpText)
 
 	case "scan":
-		if _, err := scan.Run(ctx, scan.Options{
-			EmbeddingsEnabled: cli.EmbeddingsEnabled("."),
-		}); err != nil {
-			fmt.Fprintln(os.Stderr, "sense scan:", err)
+		fs := flag.NewFlagSet("sense scan", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
+		dir := fs.String("dir", ".", "project root")
+		if err := fs.Parse(os.Args[2:]); err != nil {
 			os.Exit(1)
+		}
+
+		if *watchFlag {
+			if err := watch.Run(ctx, watch.RunOptions{
+				Root:              *dir,
+				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
+				MCP:               true,
+			}); err != nil {
+				fmt.Fprintln(os.Stderr, "sense scan --watch:", err)
+				os.Exit(1)
+			}
+		} else {
+			if _, err := scan.Run(ctx, scan.Options{
+				Root:              *dir,
+				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
+			}); err != nil {
+				fmt.Fprintln(os.Stderr, "sense scan:", err)
+				os.Exit(1)
+			}
 		}
 
 	case "search":
