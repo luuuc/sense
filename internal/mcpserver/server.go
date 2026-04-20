@@ -21,6 +21,7 @@ import (
 	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/conventions"
 	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -530,6 +531,16 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.WatchState) (mcpio.StatusResponse, error) {
 	var resp mcpio.StatusResponse
 
+	dbPath := filepath.Join(dir, ".sense", "index.db")
+	if relPath, err := filepath.Rel(dir, dbPath); err == nil {
+		resp.Index.Path = relPath
+	} else {
+		resp.Index.Path = dbPath
+	}
+	if info, err := os.Stat(dbPath); err == nil {
+		resp.Index.SizeBytes = info.Size()
+	}
+
 	row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_files`)
 	if err := row.Scan(&resp.Index.Files); err != nil {
 		return resp, err
@@ -547,6 +558,10 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 		return resp, err
 	}
 
+	if resp.Index.Symbols > 0 {
+		resp.Index.Coverage = float64(resp.Index.Embeddings) / float64(resp.Index.Symbols)
+	}
+
 	langs, err := queryLanguageBreakdown(ctx, db)
 	if err != nil {
 		return resp, err
@@ -558,6 +573,17 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 		resp.Freshness = *freshness
 	}
 
+	var schemaVer int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVer); err == nil {
+		resp.Version = &mcpio.StatusVersion{
+			Binary:                version.Version,
+			Schema:                schemaVer,
+			SchemaCurrent:         schemaVer == sqlite.SchemaVersion,
+			EmbeddingModel:        "all-MiniLM-L6-v2",
+			EmbeddingModelCurrent: true,
+		}
+	}
+
 	return resp, nil
 }
 
@@ -565,15 +591,6 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 // Language tier breakdown
 // ---------------------------------------------------------------
 
-var languageTiers = map[string]string{
-	"ruby":       "full",
-	"go":         "full",
-	"typescript": "full",
-	"javascript": "full",
-	"python":     "standard",
-	"java":       "standard",
-	"rust":       "standard",
-}
 
 func queryLanguageBreakdown(ctx context.Context, db *sql.DB) (map[string]mcpio.StatusLanguage, error) {
 	const q = `SELECT f.language, COUNT(DISTINCT f.id), COUNT(s.id)
@@ -594,11 +611,7 @@ func queryLanguageBreakdown(ctx context.Context, db *sql.DB) (map[string]mcpio.S
 		if err := rows.Scan(&lang, &sl.Files, &sl.Symbols); err != nil {
 			return nil, err
 		}
-		tier, ok := languageTiers[lang]
-		if !ok {
-			tier = "basic"
-		}
-		sl.Tier = tier
+		sl.Tier = extract.LanguageTier(lang)
 		out[lang] = sl
 	}
 	return out, rows.Err()

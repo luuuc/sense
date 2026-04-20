@@ -24,6 +24,7 @@ Commands:
   blast         Blast radius for a symbol or diff
   conventions   Detected project conventions
   status        Index health and embedding coverage
+  doctor        Diagnose common index problems
   mcp           Start the MCP server (stdio transport)
   version       Print version
   help          Show this help
@@ -88,6 +89,9 @@ func main() {
 
 	case "status":
 		os.Exit(cli.RunStatus(os.Args[2:], cli.DefaultIO()))
+
+	case "doctor":
+		os.Exit(cli.RunDoctor(os.Args[2:], cli.DefaultIO()))
 
 	case "mcp":
 		fs := flag.NewFlagSet("sense mcp", flag.ContinueOnError)
