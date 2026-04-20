@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS sense_edges (
     source_id   INTEGER NOT NULL REFERENCES sense_symbols(id) ON DELETE CASCADE,
     target_id   INTEGER NOT NULL REFERENCES sense_symbols(id) ON DELETE CASCADE,
     kind        TEXT    NOT NULL,
-    file_id     INTEGER NOT NULL REFERENCES sense_files(id),
+    file_id     INTEGER NOT NULL REFERENCES sense_files(id) ON DELETE CASCADE,
     line        INTEGER,
     confidence  REAL    DEFAULT 1.0
 );
