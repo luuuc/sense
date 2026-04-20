@@ -57,6 +57,9 @@ func (h *harness) embedSymbols() error {
 				return fmt.Errorf("write embedding symbol=%d: %w", syms[i].ID, err)
 			}
 		}
+		if err := h.idx.WriteMeta(h.ctx, "embedding_model", embed.ModelID); err != nil {
+			return fmt.Errorf("write embedding model meta: %w", err)
+		}
 		return nil
 	})
 	if err != nil {

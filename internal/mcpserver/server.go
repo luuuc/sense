@@ -24,6 +24,7 @@ import (
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/metrics"
+	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
@@ -56,7 +57,29 @@ func RunWithOptions(opts RunOptions) error {
 	if err != nil {
 		return fmt.Errorf("sense mcp: %w", err)
 	}
+
+	if adapter.Rebuilt {
+		_ = adapter.Close()
+		fmt.Fprintf(os.Stderr, "sense mcp: schema version mismatch — rebuilding index...\n")
+		if _, err := scan.Run(ctx, scan.Options{
+			Root:              dir,
+			Output:            os.Stderr,
+			Warnings:          os.Stderr,
+			EmbeddingsEnabled: cli.EmbeddingsEnabled(dir),
+		}); err != nil {
+			return fmt.Errorf("sense mcp: rebuild scan: %w", err)
+		}
+		adapter, err = cli.OpenIndex(ctx, dir)
+		if err != nil {
+			return fmt.Errorf("sense mcp: reopen after rebuild: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "sense mcp: rebuild complete\n")
+	}
 	defer func() { _ = adapter.Close() }()
+
+	if storedModel, _ := adapter.ReadMeta(ctx, "embedding_model"); storedModel != "" && storedModel != embed.ModelID {
+		fmt.Fprintf(os.Stderr, "sense mcp: embedding model changed (index: %s, binary: %s). Search results may be degraded. Run `sense scan --force` to re-embed.\n", storedModel, embed.ModelID)
+	}
 
 	var vectorIdx search.VectorIndex
 	var embedder embed.Embedder
@@ -626,12 +649,16 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 
 	var schemaVer int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVer); err == nil {
+		storedModel := readMeta(ctx, db, "embedding_model")
+		if storedModel == "" {
+			storedModel = embed.ModelID
+		}
 		resp.Version = &mcpio.StatusVersion{
 			Binary:                version.Version,
 			Schema:                schemaVer,
 			SchemaCurrent:         schemaVer == sqlite.SchemaVersion,
-			EmbeddingModel:        "all-MiniLM-L6-v2",
-			EmbeddingModelCurrent: true,
+			EmbeddingModel:        storedModel,
+			EmbeddingModelCurrent: storedModel == embed.ModelID,
 		}
 	}
 
@@ -747,5 +774,14 @@ func countStaleFiles(ctx context.Context, db *sql.DB, dir string) (int, *time.Ti
 		}
 	}
 	return stale, maxMtime
+}
+
+func readMeta(ctx context.Context, db *sql.DB, key string) string {
+	var value string
+	err := db.QueryRowContext(ctx, "SELECT value FROM sense_meta WHERE key = ?", key).Scan(&value)
+	if err != nil {
+		return ""
+	}
+	return value
 }
 

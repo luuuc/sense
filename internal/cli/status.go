@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/luuuc/sense/internal/config"
+	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -206,13 +207,27 @@ func buildVersionInfo(ctx context.Context, db *sql.DB) *mcpio.StatusVersion {
 		return nil
 	}
 
+	storedModel := readMeta(ctx, db, "embedding_model")
+	if storedModel == "" {
+		storedModel = embed.ModelID
+	}
+
 	return &mcpio.StatusVersion{
 		Binary:                version.Version,
 		Schema:                schemaVer,
 		SchemaCurrent:         schemaVer == sqlite.SchemaVersion,
-		EmbeddingModel:        "all-MiniLM-L6-v2",
-		EmbeddingModelCurrent: true,
+		EmbeddingModel:        storedModel,
+		EmbeddingModelCurrent: storedModel == embed.ModelID,
 	}
+}
+
+func readMeta(ctx context.Context, db *sql.DB, key string) string {
+	var value string
+	err := db.QueryRowContext(ctx, "SELECT value FROM sense_meta WHERE key = ?", key).Scan(&value)
+	if err != nil {
+		return ""
+	}
+	return value
 }
 
 func renderStatusHuman(cio IO, resp mcpio.StatusResponse) {
@@ -277,9 +292,9 @@ func renderStatusHuman(cio IO, resp mcpio.StatusResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "Embedding model: %s", resp.Version.EmbeddingModel)
 		if resp.Version.EmbeddingModelCurrent {
-			_, _ = fmt.Fprintf(w, " (matches binary)\n")
+			_, _ = fmt.Fprintf(w, " (current)\n")
 		} else {
-			_, _ = fmt.Fprintf(w, " (mismatch — run 'sense scan --force')\n")
+			_, _ = fmt.Fprintf(w, " (mismatch — binary has %s)\n", embed.ModelID)
 		}
 	}
 

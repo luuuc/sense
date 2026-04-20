@@ -14,6 +14,10 @@ type EmbedInput struct {
 	Snippet       string
 }
 
+// ModelID identifies the bundled embedding model. Stored in sense_meta
+// at embed time; compared on index open to detect model changes.
+const ModelID = "all-MiniLM-L6-v2"
+
 // Dimensions is the embedding vector size produced by all-MiniLM-L6-v2.
 const Dimensions = 384
 
