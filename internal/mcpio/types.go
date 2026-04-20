@@ -222,3 +222,44 @@ type StatusLanguage struct {
 	Symbols int    `json:"symbols"`
 	Tier    string `json:"tier"`
 }
+
+// ---------------------------------------------------------------
+// sense.search response
+// ---------------------------------------------------------------
+
+// SearchResponse is the shape of the sense.search tool's reply and the
+// `sense search --json` CLI output. Matches the documented example in
+// .doc/definition/06-mcp-and-cli.md exactly.
+type SearchResponse struct {
+	Results      []SearchResultEntry `json:"results"`
+	SenseMetrics SearchMetrics       `json:"sense_metrics"`
+}
+
+// SearchResultEntry is a single search hit in the wire response.
+type SearchResultEntry struct {
+	Symbol  string      `json:"symbol"`
+	File    string      `json:"file"`
+	Line    int         `json:"line"`
+	Kind    string      `json:"kind"`
+	Score   SearchScore `json:"score"`
+	Snippet string      `json:"snippet"`
+}
+
+// SearchScore is a fused relevance score. It renders with two decimal
+// places on the wire so JSON consumers see `0.03` instead of
+// `0.032786885245901636`. The documented examples show two-decimal
+// scores (`0.92`, `0.87`).
+type SearchScore float64
+
+func (s SearchScore) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.FormatFloat(float64(s), 'f', 2, 64)), nil
+}
+
+// SearchMetrics is the observability footer on a search response.
+// EstimatedFileReadsAvoided and EstimatedTokensSaved are null stubs
+// until pitch 04-03 provides estimation formulas.
+type SearchMetrics struct {
+	SymbolsSearched           int  `json:"symbols_searched"`
+	EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      *int `json:"estimated_tokens_saved"`
+}

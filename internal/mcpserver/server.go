@@ -19,15 +19,18 @@ import (
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/cli"
+	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
 )
 
 // Run starts the MCP stdio server. It locates .sense/index.db under
-// dir, registers the three tools, and blocks on stdin until the
-// client disconnects or sends a cancel signal. All diagnostic output
-// goes to stderr — stdout is the JSON-RPC channel.
+// dir, registers the four tools (search, graph, blast, status), and
+// blocks on stdin until the client disconnects or sends a cancel
+// signal. All diagnostic output goes to stderr — stdout is the
+// JSON-RPC channel.
 func Run(dir string) error {
 	if dir == "" {
 		wd, err := os.Getwd()
@@ -44,14 +47,35 @@ func Run(dir string) error {
 	}
 	defer func() { _ = adapter.Close() }()
 
+	var vectorIdx search.VectorIndex
+	var embedder embed.Embedder
+
+	if cli.EmbeddingsEnabled(dir) {
+		embeddings, err := adapter.LoadEmbeddings(ctx)
+		if err != nil {
+			return fmt.Errorf("sense mcp: load embeddings: %w", err)
+		}
+		if len(embeddings) > 0 {
+			vectorIdx = search.BuildHNSWIndex(embeddings)
+			embedder, err = embed.NewBundledEmbedder()
+			if err != nil {
+				return fmt.Errorf("sense mcp: init embedder: %w", err)
+			}
+			defer func() { _ = embedder.Close() }()
+		}
+	}
+
+	engine := search.NewEngine(adapter, vectorIdx, embedder)
+
 	s := server.NewMCPServer(
 		"sense",
 		version.Version,
 		server.WithToolCapabilities(false),
 	)
 
-	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir}
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine}
 
+	s.AddTool(searchTool(), h.handleSearch)
 	s.AddTool(graphTool(), h.handleGraph)
 	s.AddTool(blastTool(), h.handleBlast)
 	s.AddTool(statusTool(), h.handleStatus)
@@ -66,11 +90,38 @@ type handlers struct {
 	adapter *sqlite.Adapter
 	db      *sql.DB
 	dir     string
+	search  *search.Engine
 }
 
 // ---------------------------------------------------------------
 // Tool schemas
 // ---------------------------------------------------------------
+
+func searchTool() mcp.Tool {
+	return mcp.NewTool("sense.search",
+		mcp.WithDescription("Hybrid semantic + keyword search across all indexed symbols"),
+		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			Title:           "Sense Search",
+			ReadOnlyHint:    mcp.ToBoolPtr(true),
+			DestructiveHint: mcp.ToBoolPtr(false),
+			IdempotentHint:  mcp.ToBoolPtr(true),
+			OpenWorldHint:   mcp.ToBoolPtr(false),
+		}),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description("Natural-language search query"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum results (default 10)"),
+		),
+		mcp.WithString("language",
+			mcp.Description("Filter by language (e.g. \"ruby\", \"go\")"),
+		),
+		mcp.WithNumber("min_score",
+			mcp.Description("Minimum score threshold 0.0–1.0 (default 0.5)"),
+		),
+	)
+}
 
 func graphTool() mcp.Tool {
 	return mcp.NewTool("sense.graph",
@@ -198,6 +249,65 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	out, err := mcpio.MarshalGraph(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense.graph: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// ---------------------------------------------------------------
+// sense.search handler
+// ---------------------------------------------------------------
+
+func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError("sense.search: missing required parameter 'query'"), nil
+	}
+
+	limit := req.GetInt("limit", 10)
+	language := req.GetString("language", "")
+	minScore := req.GetFloat("min_score", 0.5)
+
+	results, symbolCount, err := h.search.Search(ctx, search.Options{
+		Query:    query,
+		Limit:    limit,
+		Language: language,
+		MinScore: minScore,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sense.search: %w", err)
+	}
+
+	fileIDs := make([]int64, len(results))
+	for i, r := range results {
+		fileIDs[i] = r.FileID
+	}
+	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sense.search: load file paths: %w", err)
+	}
+
+	entries := make([]mcpio.SearchResultEntry, len(results))
+	for i, r := range results {
+		entries[i] = mcpio.SearchResultEntry{
+			Symbol:  r.Qualified,
+			File:    pathByID[r.FileID],
+			Line:    r.LineStart,
+			Kind:    r.Kind,
+			Score:   mcpio.SearchScore(r.Score),
+			Snippet: r.Snippet,
+		}
+	}
+
+	resp := mcpio.SearchResponse{
+		Results: entries,
+		SenseMetrics: mcpio.SearchMetrics{
+			SymbolsSearched: symbolCount,
+		},
+	}
+
+	out, err := mcpio.MarshalSearch(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense.search: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
 }

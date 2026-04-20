@@ -105,6 +105,72 @@ func TestParseGraphArgs(t *testing.T) {
 	}
 }
 
+func TestRunSearchHelp(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		cio, _, stderr := newTestIO()
+		if code := RunSearch([]string{flag}, cio); code != ExitSuccess {
+			t.Fatalf("%s: exit code = %d, want %d", flag, code, ExitSuccess)
+		}
+		got := stderr.String()
+		for _, want := range []string{
+			"usage: sense search <query>",
+			"--limit N",
+			"--language LANG",
+			"--min-score F",
+			"--json",
+			"Exit codes:",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: help missing %q\ngot:\n%s", flag, want, got)
+			}
+		}
+	}
+}
+
+func TestParseSearchArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		want    searchOptions
+		wantErr bool
+	}{
+		{
+			name: "query with defaults",
+			args: []string{"payment error handling"},
+			want: searchOptions{Query: "payment error handling", Limit: 10},
+		},
+		{
+			name: "with flags",
+			args: []string{"--limit", "5", "--language", "ruby", "--json", "auth flow"},
+			want: searchOptions{Query: "auth flow", Limit: 5, Language: "ruby", JSON: true},
+		},
+		{
+			name: "min-score flag",
+			args: []string{"--min-score", "0.5", "test query"},
+			want: searchOptions{Query: "test query", Limit: 10, MinScore: 0.5},
+		},
+		{name: "missing query", args: nil, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			got, err := parseSearchArgs(tc.args, &stderr)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil; stderr=%q", stderr.String())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v; stderr=%q", err, stderr.String())
+			}
+			if got != tc.want {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseBlastArgs(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -100,6 +100,28 @@ func withConfidence(label string, c mcpio.Confidence) string {
 	return fmt.Sprintf("%s (%g)", label, float64(c))
 }
 
+// RenderSearchHuman writes the single-column search rendering:
+//
+//	PaymentGateway#rescue_charge_failure  (method)  0.92
+//	  app/services/payment_gateway.rb:45
+//	  def rescue_charge_failure(error)...
+func RenderSearchHuman(w io.Writer, resp mcpio.SearchResponse) {
+	if len(resp.Results) == 0 {
+		_, _ = fmt.Fprintln(w, "no results found")
+		return
+	}
+	for i, r := range resp.Results {
+		if i > 0 {
+			_, _ = fmt.Fprintln(w)
+		}
+		_, _ = fmt.Fprintf(w, "%s  (%s)  %.2f\n", r.Symbol, r.Kind, r.Score)
+		_, _ = fmt.Fprintf(w, "  %s:%d\n", r.File, r.Line)
+		if r.Snippet != "" {
+			_, _ = fmt.Fprintf(w, "  %s\n", r.Snippet)
+		}
+	}
+}
+
 // RenderBlastHuman writes the single-column blast rendering. Risk
 // factors inline into the subject line because they are always
 // short phrases ("hub node", "11 direct callers"); a dedicated
