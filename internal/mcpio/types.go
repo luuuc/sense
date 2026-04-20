@@ -188,6 +188,8 @@ type Freshness struct {
 	IndexAgeSeconds       *int64  `json:"index_age_seconds,omitempty"`
 	StaleFilesSeen        *int    `json:"stale_files_seen,omitempty"`
 	MaxFileMtimeSinceScan *string `json:"max_file_mtime_since_scan,omitempty"`
+	Watching              *bool   `json:"watching,omitempty"`
+	WatchSince            *string `json:"watch_since,omitempty"`
 }
 
 // StatusResponse is the shape of the sense.status tool's reply (and

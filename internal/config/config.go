@@ -18,7 +18,8 @@ type Config struct {
 }
 
 type ScanConfig struct {
-	MaxFileSizeKB int `yaml:"max_file_size_kb"`
+	MaxFileSizeKB   int `yaml:"max_file_size_kb"`
+	WatchDebounceMs int `yaml:"watch_debounce_ms"`
 }
 
 type EmbeddingsConfig struct {
