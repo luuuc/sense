@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/index"
@@ -150,11 +151,10 @@ func TestScanOutputFormat(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// Output is the summary line only — warnings now live on a separate
-	// writer, so the pattern no longer has to tolerate interleaved diagnostics.
-	pattern := regexp.MustCompile(`^2 files, \d+ indexed, \d+ symbols, \d+ edges, \d+ unresolved in \S+\n\z`)
+	// Summary line format: "scanned N files (K changed, M skipped) in Xms"
+	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ changed, \d+ skipped\) in \S+\n\z`)
 	if !pattern.MatchString(buf.String()) {
-		t.Fatalf("output does not match summary pattern\nhave: %q\nwant: 2 files, N indexed, N symbols, N edges, N unresolved in D\\n",
+		t.Fatalf("output does not match summary pattern\nhave: %q\nwant: scanned 2 files (N changed, M skipped) in D\\n",
 			buf.String())
 	}
 }
@@ -726,6 +726,237 @@ func TestScanTolerantOfInvalidSource(t *testing.T) {
 	if strings.Contains(summary.String(), "parse errors") {
 		t.Errorf("summary writer leaked warning text: %q", summary.String())
 	}
+}
+
+// TestScan_IncrementalSkipsUnchanged confirms that a second scan with
+// no file changes skips all files (hash match) and still produces the
+// same index state.
+func TestScan_IncrementalSkipsUnchanged(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc Hello() {}\n")
+
+	ctx := context.Background()
+	first, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if first.Changed != 1 {
+		t.Errorf("first.Changed = %d, want 1", first.Changed)
+	}
+
+	second, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.Skipped != 1 {
+		t.Errorf("second.Skipped = %d, want 1", second.Skipped)
+	}
+	if second.Changed != 0 {
+		t.Errorf("second.Changed = %d, want 0", second.Changed)
+	}
+}
+
+// TestScan_DeletedFileCascade creates a fixture, scans, deletes a file,
+// re-scans, and asserts no orphan rows in sense_symbols or sense_edges
+// pointing at the deleted file.
+func TestScan_DeletedFileCascade(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "base.rb"), "class Base\n  def hello\n  end\nend\n")
+	writeFile(t, filepath.Join(root, "child.rb"), "class Child < Base\n  def greet\n  end\nend\n")
+
+	ctx := context.Background()
+	first, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if first.Symbols == 0 {
+		t.Fatal("no symbols after first scan")
+	}
+
+	// Delete base.rb and re-scan.
+	if err := os.Remove(filepath.Join(root, "base.rb")); err != nil {
+		t.Fatal(err)
+	}
+	second, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.Removed != 1 {
+		t.Errorf("second.Removed = %d, want 1", second.Removed)
+	}
+
+	// Open the index and verify no orphan symbols for base.rb.
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	a, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	all, err := a.Query(ctx, index.Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	for _, s := range all {
+		if s.Qualified == "Base" || s.Qualified == "Base#hello" {
+			t.Errorf("orphan symbol %q still in index after base.rb deleted", s.Qualified)
+		}
+	}
+
+	// Verify no orphan edges — Child→Base inherits should be gone
+	// since the target symbol was cascade-deleted.
+	var child model.Symbol
+	for _, s := range all {
+		if s.Qualified == "Child" {
+			child = s
+		}
+	}
+	if child.ID != 0 {
+		sym, err := a.ReadSymbol(ctx, child.ID)
+		if err != nil {
+			t.Fatalf("ReadSymbol(Child): %v", err)
+		}
+		for _, e := range sym.Outbound {
+			if e.Edge.Kind == model.EdgeInherits {
+				t.Errorf("orphan edge Child→%s still in index", e.Target.Qualified)
+			}
+		}
+	}
+}
+
+// TestScan_IgnoreExcludesFiles confirms that .senseignore and config
+// ignore patterns exclude files from the scan.
+func TestScan_IgnoreExcludesFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app.rb"), "class App\nend\n")
+	writeFile(t, filepath.Join(root, "vendor", "lib.rb"), "class Lib\nend\n")
+	writeFile(t, filepath.Join(root, ".senseignore"), "vendor/\n")
+
+	ctx := context.Background()
+	res, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// vendor/ should be excluded — only app.rb should be indexed.
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	a, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	all, err := a.Query(ctx, index.Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	for _, s := range all {
+		if s.Qualified == "Lib" {
+			t.Error("Lib from vendor/ should not be in the index")
+		}
+	}
+	if res.Indexed != 1 {
+		t.Errorf("Indexed = %d, want 1 (only app.rb)", res.Indexed)
+	}
+}
+
+// TestScan_SenseignoreRemovesFromIndex confirms that adding a path to
+// .senseignore after an initial scan causes that file to be removed from
+// the index on the next scan.
+func TestScan_SenseignoreRemovesFromIndex(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app.rb"), "class App\nend\n")
+	writeFile(t, filepath.Join(root, "vendor", "lib.rb"), "class Lib\nend\n")
+
+	ctx := context.Background()
+	first, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if first.Indexed != 2 {
+		t.Fatalf("first.Indexed = %d, want 2", first.Indexed)
+	}
+
+	// Now add .senseignore and re-scan.
+	writeFile(t, filepath.Join(root, ".senseignore"), "vendor/\n")
+	second, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if second.Removed != 1 {
+		t.Errorf("second.Removed = %d, want 1 (vendor/lib.rb)", second.Removed)
+	}
+}
+
+// TestScan_SizeCapSkipsLargeFiles confirms that files above the
+// configured max_file_size_kb are not indexed.
+func TestScan_SizeCapSkipsLargeFiles(t *testing.T) {
+	root := t.TempDir()
+	// Create config with a tiny size cap (1 KB).
+	senseDir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(senseDir, "config.yml"), "scan:\n  max_file_size_kb: 1\n")
+
+	// Small file — under the cap.
+	writeFile(t, filepath.Join(root, "small.rb"), "class Small\nend\n")
+
+	// Large file — over the 1 KB cap.
+	big := "class Big\n" + strings.Repeat("  # padding\n", 200) + "end\n"
+	writeFile(t, filepath.Join(root, "big.rb"), big)
+
+	ctx := context.Background()
+	var warnings bytes.Buffer
+	res, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: &warnings,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Indexed != 1 {
+		t.Errorf("Indexed = %d, want 1 (only small.rb)", res.Indexed)
+	}
+	if !strings.Contains(warnings.String(), "big.rb: skipped") {
+		t.Errorf("expected size-cap skip warning, got: %q", warnings.String())
+	}
+}
+
+// TestScan_SecondScanIsFast is the acceptance criterion: a second
+// sense scan on an unchanged repo completes in under 500ms.
+func TestScan_SecondScanIsFast(t *testing.T) {
+	root := t.TempDir()
+	// Create a non-trivial fixture: 50 Go files with functions.
+	for i := 0; i < 50; i++ {
+		name := fmt.Sprintf("pkg%d.go", i)
+		src := fmt.Sprintf("package pkg\n\nfunc F%d() {}\n", i)
+		writeFile(t, filepath.Join(root, name), src)
+	}
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+
+	start := time.Now()
+	second, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if second.Skipped != 50 {
+		t.Errorf("Skipped = %d, want 50", second.Skipped)
+	}
+	if second.Changed != 0 {
+		t.Errorf("Changed = %d, want 0", second.Changed)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("second scan took %s, want < 500ms", elapsed)
+	}
+	t.Logf("second scan: %s (skipped=%d changed=%d)", elapsed, second.Skipped, second.Changed)
 }
 
 // ---- helpers ----

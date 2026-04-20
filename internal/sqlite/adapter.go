@@ -135,6 +135,51 @@ func (a *Adapter) InTx(ctx context.Context, fn func() error) (err error) {
 	return fn()
 }
 
+// FileMeta returns the id and hash for the given relative path.
+// Returns (0, "", nil) if the file is not in the index.
+func (a *Adapter) FileMeta(ctx context.Context, path string) (int64, string, error) {
+	var id int64
+	var hash string
+	err := a.db.QueryRowContext(ctx,
+		"SELECT id, hash FROM sense_files WHERE path = ?", path,
+	).Scan(&id, &hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("sqlite FileMeta: %w", err)
+	}
+	return id, hash, nil
+}
+
+// FilePaths returns every path currently tracked in sense_files.
+func (a *Adapter) FilePaths(ctx context.Context) ([]string, error) {
+	rows, err := a.db.QueryContext(ctx, "SELECT path FROM sense_files")
+	if err != nil {
+		return nil, fmt.Errorf("sqlite FilePaths: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("sqlite FilePaths scan: %w", err)
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
+// DeleteFile removes a file and (via FK CASCADE) its symbols from the index.
+func (a *Adapter) DeleteFile(ctx context.Context, path string) error {
+	_, err := a.db.ExecContext(ctx, "DELETE FROM sense_files WHERE path = ?", path)
+	if err != nil {
+		return fmt.Errorf("sqlite DeleteFile: %w", err)
+	}
+	return nil
+}
+
 // -------------------- writes --------------------
 
 func (a *Adapter) WriteFile(ctx context.Context, f *model.File) (int64, error) {

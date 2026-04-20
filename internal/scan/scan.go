@@ -19,13 +19,16 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
+	"github.com/luuuc/sense/internal/config"
 	"github.com/luuuc/sense/internal/extract"
 	_ "github.com/luuuc/sense/internal/extract/languages" // register every extractor
+	"github.com/luuuc/sense/internal/ignore"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/resolve"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -41,16 +44,20 @@ import (
 // default (os.Stderr) and pipe Output on its own; callers that want a
 // quiet run can redirect Warnings to io.Discard.
 type Options struct {
-	Root     string    // working-tree root (default: ".")
-	Sense    string    // sense dir (default: "<Root>/.sense")
-	Output   io.Writer // summary-line sink (default: os.Stderr)
-	Warnings io.Writer // per-file warning sink (default: os.Stderr)
+	Root              string    // working-tree root (default: ".")
+	Sense             string    // sense dir (default: "<Root>/.sense")
+	Output            io.Writer // summary-line sink (default: os.Stderr)
+	Warnings          io.Writer // per-file warning sink (default: os.Stderr)
+	EmbeddingsEnabled bool      // plumbing for Cycle 2; set via SENSE_EMBEDDINGS_ENABLED
 }
 
 // Result summarises one scan invocation.
 type Result struct {
 	Files      int // total files visited (regular files, not directories)
 	Indexed    int // files that had a registered extractor and were processed
+	Changed    int // files whose content hash changed (re-parsed)
+	Skipped    int // files skipped (unchanged hash)
+	Removed    int // files deleted from index (no longer on disk or now ignored)
 	Symbols    int // symbols written to the index
 	Edges      int // edges resolved and written to sense_edges
 	Unresolved int // edges whose target name matched no symbol; dropped
@@ -85,7 +92,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	senseDir := opts.Sense
 	if senseDir == "" {
-		senseDir = filepath.Join(root, ".sense")
+		if env := os.Getenv("SENSE_DIR"); env != "" {
+			senseDir = env
+		} else {
+			senseDir = filepath.Join(root, ".sense")
+		}
 	}
 	out := opts.Output
 	if out == nil {
@@ -94,6 +105,22 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	warn := opts.Warnings
 	if warn == nil {
 		warn = os.Stderr
+	}
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	if env := os.Getenv("SENSE_MAX_FILE_SIZE"); env != "" {
+		if v, err := strconv.Atoi(env); err == nil && v > 0 {
+			cfg.Scan.MaxFileSizeKB = v
+		}
+	}
+
+	matcher, err := ignore.Build(root, cfg.Ignore)
+	if err != nil {
+		return nil, fmt.Errorf("build ignore matcher: %w", err)
 	}
 
 	if err := os.MkdirAll(senseDir, 0o755); err != nil {
@@ -108,16 +135,22 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	defer func() { _ = idx.Close() }()
 
 	h := &harness{
-		ctx:     ctx,
-		idx:     idx,
-		out:     out,
-		warn:    warn,
-		parsers: map[string]*sitter.Parser{},
+		ctx:           ctx,
+		idx:           idx,
+		out:           out,
+		warn:          warn,
+		parsers:       map[string]*sitter.Parser{},
+		matcher:       matcher,
+		maxFileSizeKB: cfg.Scan.MaxFileSizeKB,
+		seenPaths:     map[string]bool{},
 	}
 	defer h.closeParsers()
 
 	start := time.Now()
 	if err := h.walkTree(root); err != nil {
+		return nil, err
+	}
+	if err := h.removeStaleFiles(); err != nil {
 		return nil, err
 	}
 	if err := h.resolveAndWriteEdges(); err != nil {
@@ -131,6 +164,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	res := &Result{
 		Files:      h.files,
 		Indexed:    h.indexed,
+		Changed:    h.changed,
+		Skipped:    h.skipped,
+		Removed:    h.removed,
 		Symbols:    h.symbols,
 		Edges:      h.edges,
 		Unresolved: h.unresolved,
@@ -138,15 +174,8 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		Duration:   elapsed,
 	}
 
-	// Summary line follows the "<data> in <duration>" shape from
-	// bootstrap so the CLI's stderr reads the same across pitches —
-	// just carrying more data now. Unresolved is surfaced so users
-	// know how many emitted edges couldn't be linked to a symbol
-	// (external libraries, unresolvable dynamic dispatch, etc.).
-	// elapsed is printed raw so time.Duration.String picks the right
-	// unit.
-	_, _ = fmt.Fprintf(out, "%d files, %d indexed, %d symbols, %d edges, %d unresolved in %s\n",
-		res.Files, res.Indexed, res.Symbols, res.Edges, res.Unresolved, elapsed)
+	_, _ = fmt.Fprintf(out, "scanned %d files (%d changed, %d skipped) in %s\n",
+		res.Files, res.Changed, res.Skipped, elapsed)
 
 	return res, nil
 }
@@ -182,6 +211,9 @@ type harness struct {
 	warn    io.Writer // per-file warning sink
 	parsers map[string]*sitter.Parser
 
+	matcher       *ignore.Matcher
+	maxFileSizeKB int
+
 	// pendingEdges holds walk-phase output for the resolve phase.
 	// Empty at start, filled by writeFile, drained by
 	// resolveAndWriteEdges.
@@ -193,9 +225,16 @@ type harness struct {
 	// files by naming convention without re-querying sense_files.
 	indexedFiles []indexedFile
 
+	// seenPaths tracks every file path visited this walk so stale
+	// entries can be detected and removed after the walk.
+	seenPaths map[string]bool
+
 	// Tallies for Result.
 	files      int
 	indexed    int
+	changed    int
+	skipped    int
+	removed    int
 	symbols    int
 	edges      int
 	unresolved int
@@ -246,7 +285,8 @@ func (h *harness) warnf(format string, args ...any) {
 }
 
 // walkTree walks root depth-first. Dot-prefixed directories (.git,
-// .sense, .vscode) are skipped — same policy as bootstrap.
+// .vscode) and the .sense directory are always skipped. Paths matched
+// by the ignore matcher are skipped. Symlinks are not followed.
 func (h *harness) walkTree(root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
@@ -255,60 +295,102 @@ func (h *harness) walkTree(root string) error {
 		if cerr := h.ctx.Err(); cerr != nil {
 			return cerr
 		}
+
+		// Never follow symlinks — avoids infinite loops from cyclic links.
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			rel = path
+		}
+
 		if d.IsDir() {
-			if path != root && strings.HasPrefix(d.Name(), ".") {
+			if path == root {
+				return nil
+			}
+			name := d.Name()
+			if strings.HasPrefix(name, ".") {
+				return fs.SkipDir
+			}
+			if h.matcher.Match(rel, true) {
 				return fs.SkipDir
 			}
 			return nil
 		}
+
+		if h.matcher.Match(rel, false) {
+			return nil
+		}
+
 		h.files++
-		h.processFile(root, path)
+		h.processFile(path, rel)
 		return nil
 	})
 }
 
-// processFile is the per-file pipeline: detect language, parse, run
-// the extractor, resolve qualified names to IDs, and write. All
-// per-file failures are soft — they bump h.warnings and return.
-func (h *harness) processFile(root, path string) {
+// processFile is the per-file pipeline: detect language, check size cap,
+// compare hash for incremental skip, parse, run the extractor, and write.
+// All per-file failures are soft — they bump h.warnings and return.
+func (h *harness) processFile(path, rel string) {
+	h.seenPaths[rel] = true
+
 	ext := strings.ToLower(filepath.Ext(path))
 	ex := extract.ForExtension(ext)
 	if ex == nil {
 		return // not a language we know; just counted in h.files
 	}
 
+	// Size cap — skip files above the configured max.
+	if h.maxFileSizeKB > 0 {
+		info, err := os.Stat(path)
+		if err != nil {
+			h.warnf("%s: stat failed: %v", rel, err)
+			return
+		}
+		if info.Size() > int64(h.maxFileSizeKB)*1024 {
+			h.warnf("%s: skipped (%d KB > %d KB max)", rel, info.Size()/1024, h.maxFileSizeKB)
+			return
+		}
+	}
+
 	source, err := os.ReadFile(path)
 	if err != nil {
-		h.warnf("%s: read failed: %v", path, err)
+		h.warnf("%s: read failed: %v", rel, err)
+		return
+	}
+
+	// Incremental: compare hash to skip unchanged files.
+	newHash := hashSource(source)
+	fileID, oldHash, metaErr := h.idx.FileMeta(h.ctx, rel)
+	if metaErr != nil {
+		h.warnf("%s: file meta lookup failed: %v", rel, metaErr)
+		// Fall through to re-parse on error.
+	} else if oldHash == newHash {
+		h.skipped++
+		h.indexed++
+		if fileID > 0 {
+			h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: rel, Language: ex.Language()})
+		}
 		return
 	}
 
 	parser, err := h.parserFor(ex)
 	if err != nil {
-		h.warnf("%s: parser setup failed: %v", path, err)
+		h.warnf("%s: parser setup failed: %v", rel, err)
 		return
 	}
 
 	tree := parser.Parse(source, nil)
 	if tree == nil {
-		// ParseCtx returns nil only when tree-sitter gives up — rare
-		// but possible with pathological inputs or cancelled context.
-		h.warnf("%s: parse returned nil tree", path)
+		h.warnf("%s: parse returned nil tree", rel)
 		return
 	}
 	defer tree.Close()
 
-	// tree-sitter is error-tolerant: even files with syntax errors
-	// produce a usable tree with ERROR nodes. We emit what we can and
-	// note the condition — a user editing a half-written file still
-	// gets meaningful results from `sense scan`.
 	if tree.RootNode().HasError() {
-		h.warnf("%s: parse errors present, extracting best-effort", path)
-	}
-
-	rel, relErr := filepath.Rel(root, path)
-	if relErr != nil {
-		rel = path
+		h.warnf("%s: parse errors present, extracting best-effort", rel)
 	}
 
 	collected := &collector{}
@@ -317,11 +399,12 @@ func (h *harness) processFile(root, path string) {
 		return
 	}
 
-	if err := h.writeFile(rel, ex.Language(), source, collected); err != nil {
+	if err := h.writeFile(rel, ex.Language(), source, newHash, collected); err != nil {
 		h.warnf("%s: write failed: %v", rel, err)
 		return
 	}
 	h.indexed++
+	h.changed++
 }
 
 // parserFor returns a cached parser for the extractor's language. The
@@ -370,12 +453,11 @@ func (h *harness) parserFor(ex extract.Extractor) (*sitter.Parser, error) {
 //
 // Counters for Result.Symbols update after the transaction commits;
 // Result.Edges is updated later when resolveAndWriteEdges writes.
-func (h *harness) writeFile(rel, lang string, source []byte, c *collector) error {
+func (h *harness) writeFile(rel, lang string, source []byte, fileHash string, c *collector) error {
 	var symsWritten int
 	var pending []pendingEdge
 	var fileID int64
 	err := h.idx.InTx(h.ctx, func() error {
-		fileHash := hashSource(source)
 		var err error
 		fileID, err = h.idx.WriteFile(h.ctx, &model.File{
 			Path:      rel,
@@ -454,6 +536,39 @@ func (h *harness) writeFile(rel, lang string, source []byte, c *collector) error
 	h.symbols += symsWritten
 	h.pendingEdges = append(h.pendingEdges, pending...)
 	h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: rel, Language: lang})
+	return nil
+}
+
+// removeStaleFiles deletes index entries for files that were not seen
+// during this walk (deleted from disk, or now excluded by ignore rules).
+// FK CASCADE on sense_symbols cleans up symbols; edges referencing those
+// symbols are also cascaded.
+func (h *harness) removeStaleFiles() error {
+	tracked, err := h.idx.FilePaths(h.ctx)
+	if err != nil {
+		return fmt.Errorf("list tracked files: %w", err)
+	}
+	var stale []string
+	for _, p := range tracked {
+		if !h.seenPaths[p] {
+			stale = append(stale, p)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	err = h.idx.InTx(h.ctx, func() error {
+		for _, p := range stale {
+			if err := h.idx.DeleteFile(h.ctx, p); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("remove stale files: %w", err)
+	}
+	h.removed = len(stale)
 	return nil
 }
 
