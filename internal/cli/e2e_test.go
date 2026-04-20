@@ -133,4 +133,94 @@ func TestE2EGraphAndBlastOnSenseRepo(t *testing.T) {
 		t.Logf("blast extract.Register: risk=%s direct=%d total=%d",
 			parsed.Risk, len(parsed.DirectCallers), parsed.TotalAffected)
 	})
+
+	t.Run("status --json", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunStatus([]string{"--json"},
+			IO{Stdout: &stdout, Stderr: &stderr, Dir: projectDir})
+		if code != ExitSuccess {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var parsed struct {
+			Index struct {
+				Path       string  `json:"path"`
+				SizeBytes  int64   `json:"size_bytes"`
+				Files      int     `json:"files"`
+				Symbols    int     `json:"symbols"`
+				Edges      int     `json:"edges"`
+				Embeddings int     `json:"embeddings"`
+				Coverage   float64 `json:"coverage"`
+			} `json:"index"`
+			Languages map[string]struct {
+				Files   int    `json:"files"`
+				Symbols int    `json:"symbols"`
+				Tier    string `json:"tier"`
+			} `json:"languages"`
+			Freshness struct {
+				LastScan *string `json:"last_scan"`
+			} `json:"freshness"`
+			Version struct {
+				Schema        int  `json:"schema"`
+				SchemaCurrent bool `json:"schema_current"`
+			} `json:"version"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+			t.Fatalf("unmarshal: %v\n%s", err, stdout.String())
+		}
+		if parsed.Index.Path == "" {
+			t.Error("index.path empty")
+		}
+		if parsed.Index.SizeBytes == 0 {
+			t.Error("index.size_bytes == 0")
+		}
+		if parsed.Index.Files == 0 {
+			t.Error("index.files == 0")
+		}
+		if parsed.Index.Symbols == 0 {
+			t.Error("index.symbols == 0")
+		}
+		goLang, ok := parsed.Languages["go"]
+		if !ok {
+			t.Error("languages missing 'go' entry")
+		} else if goLang.Tier != "full" {
+			t.Errorf("go tier = %q, want full", goLang.Tier)
+		}
+		if parsed.Freshness.LastScan == nil {
+			t.Error("freshness.last_scan is nil")
+		}
+		if !parsed.Version.SchemaCurrent {
+			t.Error("version.schema_current should be true")
+		}
+		t.Logf("status: %d files, %d symbols, %d langs, schema v%d",
+			parsed.Index.Files, parsed.Index.Symbols, len(parsed.Languages), parsed.Version.Schema)
+	})
+
+	t.Run("doctor --json", func(t *testing.T) {
+		t.Setenv("SENSE_EMBEDDINGS", "false")
+		var stdout, stderr bytes.Buffer
+		code := RunDoctor([]string{"--json"},
+			IO{Stdout: &stdout, Stderr: &stderr, Dir: projectDir})
+		if code != ExitSuccess {
+			t.Fatalf("exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+		}
+		var parsed struct {
+			Checks []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			} `json:"checks"`
+			Suggestions []string `json:"suggestions"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+			t.Fatalf("unmarshal: %v\n%s", err, stdout.String())
+		}
+		if len(parsed.Checks) < 5 {
+			t.Errorf("expected at least 5 checks, got %d", len(parsed.Checks))
+		}
+		for _, c := range parsed.Checks {
+			if c.Status == "fail" {
+				t.Errorf("check %q failed unexpectedly", c.Name)
+			}
+		}
+		t.Logf("doctor: %d checks, %d suggestions", len(parsed.Checks), len(parsed.Suggestions))
+	})
 }
