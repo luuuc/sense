@@ -69,10 +69,10 @@ func seedGraphProject(t *testing.T) (dir string) {
 	}
 
 	edges := []model.Edge{
-		{SourceID: sids[0], TargetID: sids[1], Kind: model.EdgeCalls, FileID: fids[0], Confidence: 1.0},
-		{SourceID: sids[0], TargetID: sids[2], Kind: model.EdgeCalls, FileID: fids[0], Confidence: 1.0},
-		{SourceID: sids[3], TargetID: sids[0], Kind: model.EdgeCalls, FileID: fids[3], Confidence: 1.0},
-		{SourceID: sids[4], TargetID: sids[0], Kind: model.EdgeTests, FileID: fids[4], Confidence: 0.8},
+		{SourceID: &sids[0], TargetID: sids[1], Kind: model.EdgeCalls, FileID: fids[0], Confidence: 1.0},
+		{SourceID: &sids[0], TargetID: sids[2], Kind: model.EdgeCalls, FileID: fids[0], Confidence: 1.0},
+		{SourceID: &sids[3], TargetID: sids[0], Kind: model.EdgeCalls, FileID: fids[3], Confidence: 1.0},
+		{SourceID: &sids[4], TargetID: sids[0], Kind: model.EdgeTests, FileID: fids[4], Confidence: 0.8},
 	}
 	for i := range edges {
 		if _, werr := adapter.WriteEdge(ctx, &edges[i]); werr != nil {
