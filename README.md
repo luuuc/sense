@@ -69,15 +69,20 @@ Five tools. Focused, composable, no sprawl.
 
 ## MCP Setup
 
-```jsonc
-// .mcp.json
+Add to your `.mcp.json` (Claude Code, Cursor, or any MCP-speaking tool):
+
+```json
 {
-  "sense": {
-    "command": "sense",
-    "args": ["mcp", "--dir", "."]
+  "mcpServers": {
+    "sense": {
+      "command": "sense",
+      "args": ["mcp", "--dir", "."]
+    }
   }
 }
 ```
+
+Cursor users: place the same block in `~/.cursor/mcp.json`.
 
 ## Language Support
 

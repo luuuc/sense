@@ -25,6 +25,29 @@ jobs:
       - name: Test
         run: go test -v ./...
 
+  stdout-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: No bare fmt.Print in internal/ (except MCP transport)
+        run: |
+          # Grep for fmt.Print / fmt.Println / fmt.Printf (not fmt.Fprint*)
+          # in internal/ excluding the MCP transport package and test files.
+          # These would corrupt the stdio JSON-RPC channel when running as
+          # an MCP server. Use fmt.Fprint(writer, ...) instead.
+          hits=$(grep -rn 'fmt\.Print\b\|fmt\.Println\b\|fmt\.Printf\b' \
+            internal/ \
+            --include='*.go' \
+            --exclude-dir='mcpserver' \
+            | grep -v '_test\.go' \
+            | grep -v 'fmt\.Fprint' || true)
+          if [ -n "$hits" ]; then
+            echo "ERROR: bare fmt.Print* found (use fmt.Fprint* with an io.Writer):"
+            echo "$hits"
+            exit 1
+          fi
+
   lint:
     runs-on: ubuntu-latest
     steps:
