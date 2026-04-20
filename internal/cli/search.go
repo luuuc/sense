@@ -130,20 +130,28 @@ func collectSearchFileIDs(results []search.Result) []int64 {
 
 func buildSearchResponse(results []search.Result, pathByID map[int64]string, symbolCount int) mcpio.SearchResponse {
 	entries := make([]mcpio.SearchResultEntry, len(results))
+	uniqueFiles := map[string]struct{}{}
 	for i, r := range results {
+		path := pathByID[r.FileID]
 		entries[i] = mcpio.SearchResultEntry{
 			Symbol:  r.Qualified,
-			File:    pathByID[r.FileID],
+			File:    path,
 			Line:    r.LineStart,
 			Kind:    r.Kind,
 			Score:   mcpio.SearchScore(r.Score),
 			Snippet: r.Snippet,
 		}
+		if path != "" {
+			uniqueFiles[path] = struct{}{}
+		}
 	}
+	filesAvoided := len(uniqueFiles)
 	return mcpio.SearchResponse{
 		Results: entries,
 		SenseMetrics: mcpio.SearchMetrics{
-			SymbolsSearched: symbolCount,
+			SymbolsSearched:           symbolCount,
+			EstimatedFileReadsAvoided: filesAvoided,
+			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 		},
 	}
 }

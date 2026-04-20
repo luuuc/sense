@@ -16,12 +16,11 @@ type ConventionEntry struct {
 	Strength    Confidence `json:"strength"`
 }
 
-// ConventionsMetrics is the observability footer. EstimatedFileReadsAvoided
-// and EstimatedTokensSaved are null stubs until pitch 04-03.
+// ConventionsMetrics is the observability footer.
 type ConventionsMetrics struct {
-	SymbolsAnalyzed           int  `json:"symbols_analyzed"`
-	EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      *int `json:"estimated_tokens_saved"`
+	SymbolsAnalyzed           int `json:"symbols_analyzed"`
+	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
 }
 
 // MarshalConventions renders a ConventionsResponse with the same

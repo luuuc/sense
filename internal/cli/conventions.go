@@ -69,10 +69,13 @@ func RunConventions(args []string, cio IO) int {
 	}
 
 	if opts.JSON {
+		filesAvoided := min(symbolCount/5, 30)
 		resp := mcpio.ConventionsResponse{
 			Conventions: make([]mcpio.ConventionEntry, len(results)),
 			SenseMetrics: mcpio.ConventionsMetrics{
-				SymbolsAnalyzed: symbolCount,
+				SymbolsAnalyzed:           symbolCount,
+				EstimatedFileReadsAvoided: filesAvoided,
+				EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 			},
 		}
 		for i, c := range results {

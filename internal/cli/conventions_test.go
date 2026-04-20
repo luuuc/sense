@@ -97,8 +97,9 @@ func TestRunConventionsJSON(t *testing.T) {
 	if resp.SenseMetrics.SymbolsAnalyzed == 0 {
 		t.Error("expected non-zero symbols_analyzed")
 	}
-	if resp.SenseMetrics.EstimatedFileReadsAvoided != nil {
-		t.Error("estimated_file_reads_avoided should be null")
+	if resp.SenseMetrics.EstimatedFileReadsAvoided != 0 {
+		t.Errorf("estimated_file_reads_avoided = %d, want 0 (4 symbols / 5 rounds down)",
+			resp.SenseMetrics.EstimatedFileReadsAvoided)
 	}
 }
 

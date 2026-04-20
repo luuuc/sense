@@ -98,11 +98,12 @@ func TestRunSearchKeywordFallbackJSON(t *testing.T) {
 	if resp.SenseMetrics.SymbolsSearched < 2 {
 		t.Errorf("expected at least 2 symbols searched, got %d", resp.SenseMetrics.SymbolsSearched)
 	}
-	if resp.SenseMetrics.EstimatedFileReadsAvoided != nil {
-		t.Error("expected estimated_file_reads_avoided to be null stub")
+	if resp.SenseMetrics.EstimatedFileReadsAvoided == 0 {
+		t.Error("expected non-zero estimated_file_reads_avoided")
 	}
-	if resp.SenseMetrics.EstimatedTokensSaved != nil {
-		t.Error("expected estimated_tokens_saved to be null stub")
+	if resp.SenseMetrics.EstimatedTokensSaved != resp.SenseMetrics.EstimatedFileReadsAvoided*mcpio.AvgTokensPerFile {
+		t.Errorf("expected estimated_tokens_saved = files * %d, got %d",
+			mcpio.AvgTokensPerFile, resp.SenseMetrics.EstimatedTokensSaved)
 	}
 }
 

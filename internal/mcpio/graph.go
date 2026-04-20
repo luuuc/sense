@@ -87,13 +87,12 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Tests)
+
+	uniqueFiles := countUniqueEdgeFiles(resp)
 	resp.SenseMetrics = GraphMetrics{
-		SymbolsReturned: symbolsReturned,
-		// EstimatedFileReadsAvoided / EstimatedTokensSaved stay nil —
-		// the wire carries `null`. Pitch 01-05 chose honesty over a
-		// heuristic here: "we do not yet measure this" is better
-		// information for an agent than a plausible-looking number.
-		// Pitch 04-03 replaces nil with real estimation math.
+		SymbolsReturned:           symbolsReturned,
+		EstimatedFileReadsAvoided: uniqueFiles,
+		EstimatedTokensSaved:      uniqueFiles * AvgTokensPerFile,
 	}
 	return resp
 }
@@ -106,6 +105,29 @@ func qualifiedOrName(s model.Symbol) string {
 		return s.Qualified
 	}
 	return s.Name
+}
+
+func countUniqueEdgeFiles(resp GraphResponse) int {
+	seen := map[string]struct{}{}
+	for _, e := range resp.Edges.Calls {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range resp.Edges.CalledBy {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range resp.Edges.Inherits {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range resp.Edges.Tests {
+		seen[e.File] = struct{}{}
+	}
+	return len(seen)
 }
 
 // fileRefOrNil turns a FileID into a *string via FileLookup.

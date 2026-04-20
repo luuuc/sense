@@ -171,7 +171,9 @@ func fixtureGraphCheckoutService() GraphResponse {
 			},
 		},
 		SenseMetrics: GraphMetrics{
-			SymbolsReturned: 7,
+			SymbolsReturned:           7,
+			EstimatedFileReadsAvoided: 6,
+			EstimatedTokensSaved:      4800,
 		},
 	}
 }
@@ -219,7 +221,9 @@ func fixtureBlastDiff() BlastResponse {
 		},
 		TotalAffected: 6,
 		SenseMetrics: BlastMetrics{
-			SymbolsTraversed: 9,
+			SymbolsTraversed:          9,
+			EstimatedFileReadsAvoided: 8,
+			EstimatedTokensSaved:      6400,
 		},
 	}
 }
@@ -248,7 +252,9 @@ func fixtureBlastUserEmailVerified() BlastResponse {
 		},
 		TotalAffected: 11,
 		SenseMetrics: BlastMetrics{
-			SymbolsTraversed: 47,
+			SymbolsTraversed:          47,
+			EstimatedFileReadsAvoided: 10,
+			EstimatedTokensSaved:      8000,
 		},
 	}
 }
