@@ -20,6 +20,9 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+//go:embed schema_fts.sql
+var schemaFTSSQL string
+
 // schemaVersion is stamped into the database's PRAGMA user_version so a
 // future adapter can detect a stale on-disk schema and rebuild — the
 // "drops the old database, and rebuilds" path described in 04-storage.md.
@@ -34,6 +37,36 @@ const schemaVersion = 1
 // InTx entry so a future config change fails loudly instead of silently
 // corrupting transactional semantics.
 const maxOpenConns = 1
+
+// ftsTriggerStatements keep the FTS5 content-sync table in sync with
+// sense_symbols. Each trigger is executed individually because
+// modernc.org/sqlite's multi-statement handling silently drops trigger
+// DDL after virtual-table statements.
+var ftsTriggerStatements = []string{
+	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_insert
+	 AFTER INSERT ON sense_symbols BEGIN
+	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring)
+	     VALUES (new.id, new.name, new.qualified, new.docstring);
+	 END`,
+
+	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_delete
+	 BEFORE DELETE ON sense_symbols BEGIN
+	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring)
+	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring);
+	 END`,
+
+	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_update
+	 BEFORE UPDATE ON sense_symbols BEGIN
+	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring)
+	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring);
+	 END`,
+
+	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_update_after
+	 AFTER UPDATE ON sense_symbols BEGIN
+	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring)
+	     VALUES (new.id, new.name, new.qualified, new.docstring);
+	 END`,
+}
 
 // Adapter is the SQLite implementation of index.Index.
 type Adapter struct {
@@ -70,6 +103,20 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite schema: %w", err)
+	}
+
+	// FTS5 virtual table and triggers are applied separately because
+	// modernc.org/sqlite's ExecContext silently drops virtual-table
+	// statements embedded in a long multi-statement string.
+	if _, err := db.ExecContext(ctx, schemaFTSSQL); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite fts schema: %w", err)
+	}
+	for _, stmt := range ftsTriggerStatements {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("sqlite fts trigger: %w", err)
+		}
 	}
 
 	// PRAGMA user_version can't be parameterised; the integer is a trusted
