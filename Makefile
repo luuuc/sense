@@ -1,10 +1,13 @@
-.PHONY: build test clean install lint ci run
+.PHONY: build test clean install lint ci run fetch-deps
 
 VERSION ?= dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 LDFLAGS := -ldflags="-s -w -X 'github.com/luuuc/sense/internal/version.Version=$(VERSION)'"
 
-build:
+fetch-deps: ## Downloads model + ORT lib on first run; no-ops if already present
+	./scripts/fetch-deps.sh --local
+
+build: fetch-deps
 	go build $(LDFLAGS) -trimpath -o bin/sense ./cmd/sense
 
 test:
