@@ -49,11 +49,14 @@ func (c Confidence) MarshalJSON() ([]byte, error) {
 // ---------------------------------------------------------------
 
 // GraphResponse is the shape of the sense.graph tool's reply and the
-// `sense graph --json` CLI output.
+// `sense graph --json` CLI output. Freshness is a pointer so emitters
+// that do not compute it (the CLI in 01-04) omit the block entirely;
+// the MCP server in 01-05 always populates it.
 type GraphResponse struct {
 	Symbol       GraphSymbol  `json:"symbol"`
 	Edges        GraphEdges   `json:"edges"`
 	SenseMetrics GraphMetrics `json:"sense_metrics"`
+	Freshness    *Freshness   `json:"freshness,omitempty"`
 }
 
 // GraphSymbol is the focal symbol's identity block. File is always
@@ -107,14 +110,16 @@ type TestEdgeRef struct {
 	Confidence Confidence `json:"confidence"`
 }
 
-// GraphMetrics is the observability footer on a graph response. The
-// numbers are honest rather than tuned: "symbols_returned" counts
-// the entries emitters put in Edges; the others are heuristics a
-// consumer can sanity-check but should not treat as contractual.
+// GraphMetrics is the observability footer on a graph response.
+// SymbolsReturned counts the entries emitters put in Edges.
+// EstimatedFileReadsAvoided and EstimatedTokensSaved are pointers so
+// the wire can carry `null` — the pitch 01-05 honest-stub rule.
+// Pitch 04-03 replaces `nil` with real estimation numbers; until then,
+// consumers read null and know Sense has no measured answer.
 type GraphMetrics struct {
-	SymbolsReturned           int `json:"symbols_returned"`
-	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
+	SymbolsReturned           int  `json:"symbols_returned"`
+	EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      *int `json:"estimated_tokens_saved"`
 }
 
 // ---------------------------------------------------------------
@@ -125,7 +130,8 @@ type GraphMetrics struct {
 // `sense blast --json` CLI output. Symbol is the qualified-name
 // string (not a struct like GraphSymbol), mirroring the documented
 // example — blast callers index into affected symbols by name, not
-// by line range.
+// by line range. Freshness follows the same CLI-omits / MCP-populates
+// convention as GraphResponse.
 type BlastResponse struct {
 	Symbol          string          `json:"symbol"`
 	Risk            string          `json:"risk"`
@@ -135,6 +141,7 @@ type BlastResponse struct {
 	AffectedTests   []string        `json:"affected_tests"`
 	TotalAffected   int             `json:"total_affected"`
 	SenseMetrics    BlastMetrics    `json:"sense_metrics"`
+	Freshness       *Freshness      `json:"freshness,omitempty"`
 }
 
 // BlastCaller is the shape of a direct_callers entry.
@@ -155,9 +162,63 @@ type BlastIndirect struct {
 
 // BlastMetrics mirrors GraphMetrics' footer shape but with the
 // blast-specific counter name: symbols_traversed counts the BFS
-// frontier expansions, not just the returned set.
+// frontier expansions, not just the returned set. Savings fields use
+// the same null-until-04-03 policy as GraphMetrics.
 type BlastMetrics struct {
-	SymbolsTraversed          int `json:"symbols_traversed"`
-	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
+	SymbolsTraversed          int  `json:"symbols_traversed"`
+	EstimatedFileReadsAvoided *int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      *int `json:"estimated_tokens_saved"`
+}
+
+// ---------------------------------------------------------------
+// Freshness (shared) + sense.status response
+// ---------------------------------------------------------------
+
+// Freshness tells an agent whether the index it is querying still
+// matches the working tree. All three fields are pointers so
+// emitters can omit cells they did not compute — sense.graph and
+// sense.blast populate only IndexAgeSeconds + StaleFilesSeen;
+// sense.status populates all three plus `last_scan`. The pitch
+// (01-05 rabbit holes) calls out that IndexAgeSeconds alone is
+// misleading: "10 seconds since scan" looks fresh until a single
+// edit bumps StaleFilesSeen to 1. Both fields together tell the
+// whole story.
+type Freshness struct {
+	LastScan              *string `json:"last_scan,omitempty"`
+	IndexAgeSeconds       *int64  `json:"index_age_seconds,omitempty"`
+	StaleFilesSeen        *int    `json:"stale_files_seen,omitempty"`
+	MaxFileMtimeSinceScan *string `json:"max_file_mtime_since_scan,omitempty"`
+}
+
+// StatusResponse is the shape of the sense.status tool's reply (and
+// the future `sense status --json` output). Unlike graph/blast the
+// sense.status schema has no `sense_metrics` footer — status is
+// metadata about the index itself, not the result of a query against
+// it. Session / lifetime counters land in pitch 04-03.
+type StatusResponse struct {
+	Index     StatusIndex               `json:"index"`
+	Languages map[string]StatusLanguage `json:"languages"`
+	Freshness Freshness                 `json:"freshness"`
+}
+
+// StatusIndex reports index-level counts. Coverage lands with the
+// embeddings pipeline in cycle 2; this pitch leaves it at the struct
+// zero-value (0.0) so the field appears in the wire shape without
+// claiming a value.
+type StatusIndex struct {
+	Files      int     `json:"files"`
+	Symbols    int     `json:"symbols"`
+	Edges      int     `json:"edges"`
+	Embeddings int     `json:"embeddings"`
+	Coverage   float64 `json:"coverage"`
+}
+
+// StatusLanguage is the per-language breakdown. Tier mirrors the
+// three-tier vocabulary in 05-languages.md ("full", "standard",
+// "basic"); unrecognised languages report "basic" so the field is
+// always present.
+type StatusLanguage struct {
+	Files   int    `json:"files"`
+	Symbols int    `json:"symbols"`
+	Tier    string `json:"tier"`
 }

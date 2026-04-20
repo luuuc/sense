@@ -48,17 +48,6 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 	wantOutbound := req.Direction != "callers"
 	wantInbound := req.Direction != "callees"
 
-	// Unique files referenced by emitted edges (excluding the
-	// subject's own file) feed the EstimatedFileReadsAvoided metric
-	// below — a ballpark "without Sense you would have opened these
-	// files."
-	filesReferenced := map[int64]struct{}{}
-	note := func(fileID int64) {
-		if fileID != 0 && fileID != sc.File.ID {
-			filesReferenced[fileID] = struct{}{}
-		}
-	}
-
 	if wantOutbound {
 		for _, e := range sc.Outbound {
 			switch e.Edge.Kind {
@@ -68,13 +57,11 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 					File:       fileRefOrNil(e.Target.FileID, files),
 					Confidence: Confidence(e.Edge.Confidence),
 				})
-				note(e.Target.FileID)
 			case model.EdgeInherits:
 				resp.Edges.Inherits = append(resp.Edges.Inherits, InheritEdgeRef{
 					Symbol: qualifiedOrName(e.Target),
 					File:   fileRefOrNil(e.Target.FileID, files),
 				})
-				note(e.Target.FileID)
 			}
 		}
 	}
@@ -87,14 +74,12 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 					File:       fileRefOrNil(e.Target.FileID, files),
 					Confidence: Confidence(e.Edge.Confidence),
 				})
-				note(e.Target.FileID)
 			case model.EdgeTests:
 				if path, ok := files(e.Target.FileID); ok {
 					resp.Edges.Tests = append(resp.Edges.Tests, TestEdgeRef{
 						File:       path,
 						Confidence: Confidence(e.Edge.Confidence),
 					})
-					note(e.Target.FileID)
 				}
 			}
 		}
@@ -103,21 +88,15 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Tests)
 	resp.SenseMetrics = GraphMetrics{
-		SymbolsReturned:           symbolsReturned,
-		EstimatedFileReadsAvoided: len(filesReferenced),
-		// Rough heuristic: each avoided file read is ~1 KB of source
-		// a model would otherwise ingest, ≈ 300 tokens. Callers that
-		// want accurate counts should compute them themselves; the
-		// field exists for ballpark narrative, not contract.
-		EstimatedTokensSaved: len(filesReferenced) * tokensPerAvoidedFile,
+		SymbolsReturned: symbolsReturned,
+		// EstimatedFileReadsAvoided / EstimatedTokensSaved stay nil —
+		// the wire carries `null`. Pitch 01-05 chose honesty over a
+		// heuristic here: "we do not yet measure this" is better
+		// information for an agent than a plausible-looking number.
+		// Pitch 04-03 replaces nil with real estimation math.
 	}
 	return resp
 }
-
-// tokensPerAvoidedFile is the ballpark cost of the file reads Sense
-// saves. Picked once here instead of spread across builders; tune if
-// real usage produces wildly different numbers.
-const tokensPerAvoidedFile = 300
 
 // qualifiedOrName prefers the qualified name but falls back to the
 // bare name when qualified is empty — defensive against extractors

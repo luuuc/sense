@@ -34,7 +34,7 @@ func TestMarshalGraphRoundTrip(t *testing.T) {
 			Inherits: []InheritEdgeRef{{Symbol: "ApplicationService", File: nil}},
 			Tests:    []TestEdgeRef{{File: "test/services/checkout_service_test.rb", Confidence: 0.8}},
 		},
-		SenseMetrics: GraphMetrics{SymbolsReturned: 3, EstimatedFileReadsAvoided: 2, EstimatedTokensSaved: 1500},
+		SenseMetrics: GraphMetrics{SymbolsReturned: 3},
 	}
 
 	raw, err := MarshalGraph(in)
@@ -65,7 +65,7 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 		},
 		AffectedTests: []string{"test/models/user_test.rb"},
 		TotalAffected: 2,
-		SenseMetrics:  BlastMetrics{SymbolsTraversed: 5, EstimatedFileReadsAvoided: 2, EstimatedTokensSaved: 1200},
+		SenseMetrics:  BlastMetrics{SymbolsTraversed: 5},
 	}
 
 	raw, err := MarshalBlast(in)
@@ -86,6 +86,11 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 // in-code version of the slice-nil policy the package comment
 // declares — without this test, a future edit to remove a
 // normalizer would break the contract silently.
+//
+// The savings fields on SenseMetrics render as `null` by policy
+// (pitch 01-05: honest stub until 04-03 lands real estimation),
+// so the test explicitly allows null there and elsewhere — it only
+// enforces that the named slice fields carry `[]`.
 func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	graphBytes, err := MarshalGraph(GraphResponse{})
 	if err != nil {
@@ -96,8 +101,10 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 			t.Errorf("GraphResponse zero-value missing %s\ngot:\n%s", field, graphBytes)
 		}
 	}
-	if strings.Contains(string(graphBytes), "null") {
-		t.Errorf("GraphResponse zero-value should not contain null (slices must be []):\n%s", graphBytes)
+	for _, nullField := range []string{`"calls": null`, `"called_by": null`, `"inherits": null`, `"tests": null`} {
+		if strings.Contains(string(graphBytes), nullField) {
+			t.Errorf("GraphResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, graphBytes)
+		}
 	}
 
 	blastBytes, err := MarshalBlast(BlastResponse{})
@@ -109,8 +116,10 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 			t.Errorf("BlastResponse zero-value missing %s\ngot:\n%s", field, blastBytes)
 		}
 	}
-	if strings.Contains(string(blastBytes), "null") {
-		t.Errorf("BlastResponse zero-value should not contain null (slices must be []):\n%s", blastBytes)
+	for _, nullField := range []string{`"risk_factors": null`, `"direct_callers": null`, `"indirect_callers": null`, `"affected_tests": null`} {
+		if strings.Contains(string(blastBytes), nullField) {
+			t.Errorf("BlastResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, blastBytes)
+		}
 	}
 }
 

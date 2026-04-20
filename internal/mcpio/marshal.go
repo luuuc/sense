@@ -23,6 +23,16 @@ func MarshalBlast(r BlastResponse) ([]byte, error) {
 	return marshalPretty(r)
 }
 
+// MarshalStatus renders a StatusResponse. No slice normalization is
+// required — StatusResponse carries a map (Languages) that json
+// already emits as `{}` for a nil value, and no []-typed fields.
+func MarshalStatus(r StatusResponse) ([]byte, error) {
+	if r.Languages == nil {
+		r.Languages = map[string]StatusLanguage{}
+	}
+	return marshalPretty(r)
+}
+
 // marshalPretty is the shared encoder: SetEscapeHTML(false) keeps
 // identifier characters like `<`, `>`, `&` literal so goldens in
 // card 3 pin the documented examples byte-for-byte. Two-space indent

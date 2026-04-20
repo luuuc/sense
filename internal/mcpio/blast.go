@@ -48,21 +48,10 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 	}
 
 	// Metrics: traversed counts the subject + every caller
-	// discovered; avoided-reads sums unique caller files + every
-	// affected test file (each test file is by construction
-	// distinct in the engine's output).
-	filesReferenced := map[int64]struct{}{}
-	for _, c := range r.DirectCallers {
-		filesReferenced[c.FileID] = struct{}{}
-	}
-	for _, hop := range r.IndirectCallers {
-		filesReferenced[hop.Symbol.FileID] = struct{}{}
-	}
-	uniqueFiles := len(filesReferenced) + len(r.AffectedTests)
+	// discovered. Savings fields stay nil per pitch 01-05 (real
+	// estimation lands in 04-03).
 	resp.SenseMetrics = BlastMetrics{
-		SymbolsTraversed:          1 + len(r.DirectCallers) + len(r.IndirectCallers),
-		EstimatedFileReadsAvoided: uniqueFiles,
-		EstimatedTokensSaved:      uniqueFiles * tokensPerAvoidedFile,
+		SymbolsTraversed: 1 + len(r.DirectCallers) + len(r.IndirectCallers),
 	}
 	return resp
 }
@@ -89,7 +78,6 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 	directSeen := map[int64]struct{}{}
 	indirectSeen := map[int64]struct{}{}
 	testsSeen := map[string]struct{}{}
-	filesSeen := map[int64]struct{}{}
 	risk := blast.RiskLow
 
 	for _, r := range results {
@@ -101,7 +89,6 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 				continue
 			}
 			directSeen[c.ID] = struct{}{}
-			filesSeen[c.FileID] = struct{}{}
 			var file string
 			if path, ok := files(c.FileID); ok {
 				file = path
@@ -116,7 +103,6 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 				continue
 			}
 			indirectSeen[hop.Symbol.ID] = struct{}{}
-			filesSeen[hop.Symbol.FileID] = struct{}{}
 			resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
 				Symbol: qualifiedOrName(hop.Symbol),
 				Via:    qualifiedOrName(hop.Via),
@@ -138,11 +124,8 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 		fmt.Sprintf("%d modified symbols; %d direct callers", len(results), len(resp.DirectCallers)),
 	}
 
-	uniqueFiles := len(filesSeen) + len(resp.AffectedTests)
 	resp.SenseMetrics = BlastMetrics{
-		SymbolsTraversed:          len(results) + len(resp.DirectCallers) + len(resp.IndirectCallers),
-		EstimatedFileReadsAvoided: uniqueFiles,
-		EstimatedTokensSaved:      uniqueFiles * tokensPerAvoidedFile,
+		SymbolsTraversed: len(results) + len(resp.DirectCallers) + len(resp.IndirectCallers),
 	}
 	return resp
 }
