@@ -64,6 +64,11 @@ CREATE INDEX        IF NOT EXISTS idx_sense_edges_target ON sense_edges (target_
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sense_edges_unique ON sense_edges (source_id, target_id, kind, file_id);
 
+CREATE TABLE IF NOT EXISTS sense_metrics (
+    key   TEXT PRIMARY KEY,
+    value INTEGER NOT NULL
+);
+
 -- sense_embeddings is created empty now. Cycle 2's embedding pitch will
 -- populate it; having the table upfront means that pitch needs no schema
 -- change, just inserts.

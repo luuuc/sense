@@ -23,6 +23,7 @@ import (
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/metrics"
 	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
@@ -77,13 +78,16 @@ func RunWithOptions(opts RunOptions) error {
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
 
+	tracker := metrics.NewTracker(adapter.DB())
+	defer tracker.Close()
+
 	s := server.NewMCPServer(
 		"sense",
 		version.Version,
 		server.WithToolCapabilities(false),
 	)
 
-	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState}
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker}
 
 	s.AddTool(searchTool(), h.handleSearch)
 	s.AddTool(graphTool(), h.handleGraph)
@@ -103,6 +107,7 @@ type handlers struct {
 	dir        string
 	search     *search.Engine
 	watchState *mcpio.WatchState
+	tracker    *metrics.Tracker
 }
 
 // ---------------------------------------------------------------
@@ -254,6 +259,8 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	resp := mcpio.BuildGraphResponse(sc, lookup, mcpio.BuildGraphRequest{
 		Direction: direction,
 	})
+	h.tracker.Record("sense.graph", symbol,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
@@ -299,23 +306,33 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	}
 
 	entries := make([]mcpio.SearchResultEntry, len(results))
+	uniqueFiles := map[string]struct{}{}
 	for i, r := range results {
+		path := pathByID[r.FileID]
 		entries[i] = mcpio.SearchResultEntry{
 			Symbol:  r.Qualified,
-			File:    pathByID[r.FileID],
+			File:    path,
 			Line:    r.LineStart,
 			Kind:    r.Kind,
 			Score:   mcpio.SearchScore(r.Score),
 			Snippet: r.Snippet,
 		}
+		if path != "" {
+			uniqueFiles[path] = struct{}{}
+		}
 	}
 
+	filesAvoided := len(uniqueFiles)
 	resp := mcpio.SearchResponse{
 		Results: entries,
 		SenseMetrics: mcpio.SearchMetrics{
-			SymbolsSearched: symbolCount,
+			SymbolsSearched:           symbolCount,
+			EstimatedFileReadsAvoided: filesAvoided,
+			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 		},
 	}
+	h.tracker.Record("sense.search", query,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
 	out, err := mcpio.MarshalSearch(resp)
 	if err != nil {
@@ -367,6 +384,13 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 		resp = resp2
 	}
+
+	blastArgs := symbol
+	if diff != "" {
+		blastArgs = diff
+	}
+	h.tracker.Record("sense.blast", blastArgs,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
@@ -488,10 +512,13 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		return nil, fmt.Errorf("sense.conventions: %w", err)
 	}
 
+	filesAvoided := min(symbolCount/5, 30)
 	resp := mcpio.ConventionsResponse{
 		Conventions: make([]mcpio.ConventionEntry, len(results)),
 		SenseMetrics: mcpio.ConventionsMetrics{
-			SymbolsAnalyzed: symbolCount,
+			SymbolsAnalyzed:           symbolCount,
+			EstimatedFileReadsAvoided: filesAvoided,
+			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 		},
 	}
 	for i, c := range results {
@@ -503,6 +530,9 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 			Strength:    mcpio.Confidence(c.Strength),
 		}
 	}
+
+	h.tracker.Record("sense.conventions", domain,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
 	out, err := mcpio.MarshalConventions(resp)
 	if err != nil {
@@ -519,6 +549,27 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 	resp, err := buildStatusResponse(ctx, h.db, h.dir, h.watchState)
 	if err != nil {
 		return nil, fmt.Errorf("sense.status: %w", err)
+	}
+
+	sess := h.tracker.Session()
+	resp.Session = &mcpio.StatusSession{
+		Queries:                   sess.Queries,
+		EstimatedFileReadsAvoided: sess.FileReadsAvoided,
+		EstimatedTokensSaved:      sess.TokensSaved,
+	}
+	if top := h.tracker.TopQuery(); top != nil {
+		resp.Session.TopQuery = &mcpio.StatusTopQuery{
+			Tool:                 top.Tool,
+			Args:                 top.Args,
+			EstimatedTokensSaved: top.TokensSaved,
+		}
+	}
+
+	lt := h.tracker.Lifetime(ctx)
+	resp.Lifetime = &mcpio.StatusLifetime{
+		Queries:                   lt.Queries,
+		EstimatedFileReadsAvoided: lt.FileReadsAvoided,
+		EstimatedTokensSaved:      lt.TokensSaved,
 	}
 
 	out, err := mcpio.MarshalStatus(resp)
