@@ -53,3 +53,202 @@ type counter struct {
 
 func (c *counter) Symbol(extract.EmittedSymbol) error { c.symbols++; return nil }
 func (c *counter) Edge(extract.EmittedEdge) error     { c.edges++; return nil }
+
+type recorder struct {
+	symbols []extract.EmittedSymbol
+	edges   []extract.EmittedEdge
+}
+
+func (r *recorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
+func (r *recorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
+
+func TestInferStimulusController(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"app/javascript/controllers/checkout_controller.js", "CheckoutController"},
+		{"app/javascript/controllers/user_profile_controller.ts", "UserProfileController"},
+		{"app/javascript/controllers/admin/users_controller.js", "Admin::UsersController"},
+		{"app/javascript/controllers/admin/user_profile_controller.ts", "Admin::UserProfileController"},
+		{"app/javascript/controllers/checkout_controller.mjs", "CheckoutController"},
+		// Non-matches
+		{"app/javascript/application.js", ""},
+		{"app/javascript/controllers/checkout.js", ""},
+		{"app/models/user.rb", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := inferStimulusController(tt.path)
+		if got != tt.want {
+			t.Errorf("inferStimulusController(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestStimulusAnonymousClass(t *testing.T) {
+	src := []byte(`import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  static targets = ["output"]
+
+  greet() {
+    this.outputTarget.textContent = "Hello"
+  }
+}
+`)
+	p := sitter.NewParser()
+	defer p.Close()
+	ex := JavaScript{}
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	r := &recorder{}
+	if err := ex.Extract(tree, src, "app/javascript/controllers/hello_controller.js", r); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	var foundClass bool
+	var foundMethod bool
+	for _, s := range r.symbols {
+		if s.Qualified == "HelloController" && s.Kind == "class" {
+			foundClass = true
+		}
+		if s.Qualified == "HelloController.greet" && s.Kind == "method" {
+			foundMethod = true
+		}
+	}
+	if !foundClass {
+		t.Error("expected symbol HelloController (class) from anonymous Stimulus controller")
+	}
+	if !foundMethod {
+		t.Error("expected symbol HelloController.greet (method)")
+	}
+}
+
+func TestStimulusNamedClass(t *testing.T) {
+	src := []byte(`import { Controller } from "@hotwired/stimulus"
+
+export default class CheckoutController extends Controller {
+  submit() {}
+}
+`)
+	p := sitter.NewParser()
+	defer p.Close()
+	ex := JavaScript{}
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	r := &recorder{}
+	if err := ex.Extract(tree, src, "app/javascript/controllers/checkout_controller.js", r); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	// Named class should still be extracted with its actual name
+	var foundClass bool
+	for _, s := range r.symbols {
+		if s.Qualified == "CheckoutController" && s.Kind == "class" {
+			foundClass = true
+		}
+	}
+	if !foundClass {
+		t.Error("expected symbol CheckoutController from named Stimulus controller")
+	}
+}
+
+func TestStimulusTargetsAndOutlets(t *testing.T) {
+	src := []byte(`import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  static targets = ["output", "name"]
+  static outlets = ["search", "admin--results"]
+
+  greet() {}
+}
+`)
+	p := sitter.NewParser()
+	defer p.Close()
+	ex := JavaScript{}
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	r := &recorder{}
+	if err := ex.Extract(tree, src, "app/javascript/controllers/hello_controller.js", r); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	// Check target symbols
+	wantTargets := map[string]bool{
+		"HelloController.target:output": false,
+		"HelloController.target:name":   false,
+	}
+	for _, s := range r.symbols {
+		if _, ok := wantTargets[s.Qualified]; ok {
+			wantTargets[s.Qualified] = true
+		}
+	}
+	for q, found := range wantTargets {
+		if !found {
+			t.Errorf("missing target symbol %q", q)
+		}
+	}
+
+	// Check outlet edges
+	wantOutlets := map[string]bool{
+		"SearchController":          false,
+		"Admin::ResultsController":  false,
+	}
+	for _, e := range r.edges {
+		if _, ok := wantOutlets[e.TargetQualified]; ok {
+			wantOutlets[e.TargetQualified] = true
+		}
+	}
+	for q, found := range wantOutlets {
+		if !found {
+			t.Errorf("missing outlet edge to %q", q)
+		}
+	}
+}
+
+func TestNonStimulusAnonymousClass(t *testing.T) {
+	src := []byte(`export default class extends Base {}`)
+	p := sitter.NewParser()
+	defer p.Close()
+	ex := JavaScript{}
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	r := &recorder{}
+	if err := ex.Extract(tree, src, "app/javascript/utils/helper.js", r); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	// Non-controller file: anonymous class should NOT produce a symbol
+	if len(r.symbols) != 0 {
+		t.Errorf("expected 0 symbols for anonymous class in non-controller file, got %d", len(r.symbols))
+	}
+}

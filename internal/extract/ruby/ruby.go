@@ -52,8 +52,8 @@ func (Extractor) Language() string          { return "ruby" }
 func (Extractor) Extensions() []string      { return []string{".rb", ".rake", ".gemspec"} }
 func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
-func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
-	w := &walker{source: source, emit: emit}
+func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
+	w := &walker{source: source, emit: emit, filePath: filePath}
 	return w.walk(tree.RootNode(), nil)
 }
 
@@ -62,9 +62,10 @@ func init() { extract.Register(Extractor{}) }
 // ---- walker ----
 
 type walker struct {
-	source  []byte
-	emit    extract.Emitter
-	routeNS []string // namespace stack for route files (e.g. ["Admin"])
+	source   []byte
+	emit     extract.Emitter
+	filePath string
+	routeNS  []string // namespace stack for route files (e.g. ["Admin"])
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -125,6 +126,8 @@ func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 			return false, w.emitIncludeEdge(n, scope)
 		case "has_many", "has_and_belongs_to_many", "belongs_to", "has_one":
 			return false, w.emitAssociationEdge(n, scope, methodName)
+		case "broadcasts_to", "broadcasts":
+			return false, w.emitBroadcastEdge(n, scope)
 		}
 		if railsCallbacks[methodName] {
 			return false, w.emitCallbackEdges(n, scope)
@@ -142,6 +145,10 @@ func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 			return true, w.handleResources(n, true)
 		case "namespace":
 			return true, w.handleRouteNamespace(n)
+		case "pin":
+			return false, w.emitImportmapPin(n)
+		case "pin_all_from":
+			return false, w.emitImportmapPinAll(n)
 		}
 		if routeVerbs[methodName] {
 			return true, w.handleVerbRoute(n)
@@ -423,6 +430,94 @@ func (w *walker) emitIncludeEdge(n *sitter.Node, scope []string) error {
 		}
 	}
 	return nil
+}
+
+// emitBroadcastEdge emits calls edges for Turbo Streams broadcasts_to/broadcasts.
+// The target is a synthetic turbo-channel name that matches what the ERB extractor
+// emits for turbo_stream_from.
+func (w *walker) emitBroadcastEdge(n *sitter.Node, scope []string) error {
+	args := n.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return nil
+	}
+	first := args.NamedChild(0)
+	if first == nil {
+		return nil
+	}
+
+	var channelName string
+	switch first.Kind() {
+	case "simple_symbol":
+		channelName = strings.TrimPrefix(extract.Text(first, w.source), ":")
+	case "string":
+		channelName = extractStringValue(first, w.source)
+	default:
+		return nil
+	}
+	if channelName == "" {
+		return nil
+	}
+
+	source := strings.Join(scope, "::")
+	line := extract.Line(n.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: extract.PrefixTurboChannel + channelName,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      0.8,
+	})
+}
+
+// emitImportmapPin handles `pin "name"` and `pin "name", to: "path"` in importmap.rb.
+func (w *walker) emitImportmapPin(n *sitter.Node) error {
+	return w.emitImportmapEdge(n, true)
+}
+
+// emitImportmapPinAll handles `pin_all_from "dir", under: "prefix"` in importmap.rb.
+func (w *walker) emitImportmapPinAll(n *sitter.Node) error {
+	return w.emitImportmapEdge(n, false)
+}
+
+func (w *walker) emitImportmapEdge(n *sitter.Node, checkToOverride bool) error {
+	if !w.isImportmap() {
+		return nil
+	}
+	args := n.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return nil
+	}
+	first := args.NamedChild(0)
+	if first == nil || first.Kind() != "string" {
+		return nil
+	}
+	target := extractStringValue(first, w.source)
+	if target == "" {
+		return nil
+	}
+
+	if checkToOverride {
+		if toPath := findKeywordArg(args, "to", w.source); toPath != "" {
+			target = toPath
+		}
+	}
+
+	line := extract.Line(n.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: w.filePath,
+		TargetQualified: extract.PrefixImportmap + target,
+		Kind:            model.EdgeImports,
+		Line:            &line,
+		Confidence:      extract.ConfidenceStatic,
+	})
+}
+
+func (w *walker) isImportmap() bool {
+	base := w.filePath
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	return base == "importmap.rb"
 }
 
 // emitAssociationEdge emits composes edges for Rails association macros.

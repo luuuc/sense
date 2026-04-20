@@ -1,0 +1,21 @@
+<div data-controller="checkout">
+  <button data-action="click->checkout#submit">Pay Now</button>
+  <span data-checkout-target="total">$0.00</span>
+  <input data-action="input->checkout#validate change->checkout#update">
+</div>
+
+<div data-controller="admin--users user-profile">
+  <div data-admin--users-target="list"></div>
+  <div data-user-profile-outlet=".sidebar"></div>
+</div>
+
+<%= turbo_frame_tag "cart" do %>
+  <p>Cart contents</p>
+<% end %>
+
+<turbo-frame id="order_details">
+  <p>Order info</p>
+</turbo-frame>
+
+<%= turbo_stream_from @store %>
+<%= turbo_stream_from :orders %>

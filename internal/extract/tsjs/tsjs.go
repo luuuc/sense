@@ -45,6 +45,7 @@
 package tsjs
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -62,8 +63,8 @@ func (TypeScript) Grammar() *sitter.Language { return grammars.TypeScript() }
 func (TypeScript) Language() string          { return "typescript" }
 func (TypeScript) Extensions() []string      { return []string{".ts"} }
 func (TypeScript) Tier() extract.Tier        { return extract.TierBasic }
-func (TypeScript) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
-	return extractAll(tree, source, emit)
+func (TypeScript) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
+	return extractAll(tree, source, filePath, emit)
 }
 
 // TSX handles .tsx files via the TSX grammar (same extractor logic —
@@ -74,8 +75,8 @@ func (TSX) Grammar() *sitter.Language { return grammars.TSX() }
 func (TSX) Language() string          { return "tsx" }
 func (TSX) Extensions() []string      { return []string{".tsx"} }
 func (TSX) Tier() extract.Tier        { return extract.TierBasic }
-func (TSX) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
-	return extractAll(tree, source, emit)
+func (TSX) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
+	return extractAll(tree, source, filePath, emit)
 }
 
 // JavaScript handles .js/.mjs/.cjs/.jsx files. The JS grammar parses
@@ -86,8 +87,8 @@ func (JavaScript) Grammar() *sitter.Language { return grammars.JavaScript() }
 func (JavaScript) Language() string           { return "javascript" }
 func (JavaScript) Extensions() []string       { return []string{".js", ".jsx", ".mjs", ".cjs"} }
 func (JavaScript) Tier() extract.Tier         { return extract.TierBasic }
-func (JavaScript) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
-	return extractAll(tree, source, emit)
+func (JavaScript) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
+	return extractAll(tree, source, filePath, emit)
 }
 
 func init() {
@@ -96,16 +97,21 @@ func init() {
 	extract.Register(JavaScript{})
 }
 
-func extractAll(tree *sitter.Tree, source []byte, emit extract.Emitter) error {
-	w := &walker{source: source, emit: emit}
+func extractAll(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
+	w := &walker{
+		source:       source,
+		emit:         emit,
+		stimulusName: inferStimulusController(filePath),
+	}
 	return w.walk(tree.RootNode(), nil)
 }
 
 // ---- walker ----
 
 type walker struct {
-	source []byte
-	emit   extract.Emitter
+	source       []byte
+	emit         extract.Emitter
+	stimulusName string // non-empty if this file is a Stimulus controller
 }
 
 func (w *walker) walk(n *sitter.Node, scope []string) error {
@@ -119,7 +125,7 @@ func (w *walker) walk(n *sitter.Node, scope []string) error {
 			return w.walk(d, scope)
 		}
 		return w.walkChildren(n, scope)
-	case "class_declaration":
+	case "class_declaration", "class":
 		return w.handleClass(n, scope)
 	case "abstract_class_declaration":
 		return w.handleClass(n, scope)
@@ -153,10 +159,13 @@ func (w *walker) walkChildren(n *sitter.Node, scope []string) error {
 // (public_field_definition) are skipped in Tier-Basic.
 func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 	nameNode := n.ChildByFieldName("name")
-	if nameNode == nil {
-		return w.walkChildren(n, scope)
-	}
 	name := extract.Text(nameNode, w.source)
+
+	// For Stimulus controller files, use the convention-derived name when
+	// the class is anonymous or named differently.
+	if name == "" && w.stimulusName != "" {
+		return w.handleStimulusClass(n, scope)
+	}
 	if name == "" {
 		return w.walkChildren(n, scope)
 	}
@@ -183,25 +192,7 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 		return err
 	}
 
-	// Descend into body for methods. Class body lives under the `body` field.
-	if body := n.ChildByFieldName("body"); body != nil {
-		newScope := append(slices.Clone(scope), name)
-		count := body.NamedChildCount()
-		for i := uint(0); i < count; i++ {
-			child := body.NamedChild(i)
-			if child == nil {
-				continue
-			}
-			if child.Kind() == "method_definition" {
-				if err := w.handleMethod(child, newScope); err != nil {
-					return err
-				}
-			}
-			// public_field_definition, private_field_definition, and
-			// friends are intentionally skipped in Tier-Basic.
-		}
-	}
-	return nil
+	return w.walkClassBody(n, append(slices.Clone(scope), name), qualified)
 }
 
 // emitHeritageEdges walks the class_heritage child (if any) and emits
@@ -590,4 +581,204 @@ func isConstDeclaration(n *sitter.Node, source []byte) bool {
 		return false
 	}
 	return false
+}
+
+// walkClassBody traverses a class body for methods and (in Stimulus controllers)
+// static field declarations. Shared by handleClass and handleStimulusClass.
+func (w *walker) walkClassBody(n *sitter.Node, methodScope []string, classQualified string) error {
+	body := n.ChildByFieldName("body")
+	if body == nil {
+		return nil
+	}
+	count := body.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		child := body.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		switch child.Kind() {
+		case "method_definition":
+			if err := w.handleMethod(child, methodScope); err != nil {
+				return err
+			}
+		case "field_definition":
+			if w.stimulusName != "" {
+				if err := w.handleStimulusField(child, classQualified); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ---- Stimulus controller inference ----
+
+// handleStimulusClass handles anonymous (or oddly-named) default-export classes
+// in Stimulus controller files. Uses the convention-derived name from the file path.
+func (w *walker) handleStimulusClass(n *sitter.Node, scope []string) error {
+	qualified := w.stimulusName
+
+	if err := w.emit.Symbol(extract.EmittedSymbol{
+		Name:       qualified,
+		Qualified:  qualified,
+		Kind:       model.KindClass,
+		LineStart:  extract.Line(n.StartPosition()),
+		LineEnd:    extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+
+	if err := w.emitHeritageEdges(n, qualified); err != nil {
+		return err
+	}
+
+	return w.walkClassBody(n, []string{qualified}, qualified)
+}
+
+// handleStimulusField extracts static targets and outlets declarations from
+// Stimulus controller classes. Emits symbols for target declarations and
+// edges for outlet declarations.
+func (w *walker) handleStimulusField(n *sitter.Node, classQualified string) error {
+	nameNode := n.ChildByFieldName("property")
+	if nameNode == nil {
+		return nil
+	}
+	fieldName := extract.Text(nameNode, w.source)
+
+	switch fieldName {
+	case "targets":
+		return w.emitStimulusTargets(n, classQualified)
+	case "outlets":
+		return w.emitStimulusOutlets(n, classQualified)
+	}
+	return nil
+}
+
+func (w *walker) emitStimulusTargets(n *sitter.Node, classQualified string) error {
+	for _, name := range extractStringArray(n, w.source) {
+		line := extract.Line(n.StartPosition())
+		if err := w.emit.Symbol(extract.EmittedSymbol{
+			Name:            "target:" + name,
+			Qualified:       classQualified + ".target:" + name,
+			Kind:            model.KindConstant,
+			ParentQualified: classQualified,
+			LineStart:       line,
+			LineEnd:         line,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *walker) emitStimulusOutlets(n *sitter.Node, classQualified string) error {
+	for _, name := range extractStringArray(n, w.source) {
+		target := extract.StimulusControllerQualified(name)
+		line := extract.Line(n.StartPosition())
+		if err := w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: classQualified,
+			TargetQualified: target,
+			Kind:            model.EdgeCalls,
+			Line:            &line,
+			Confidence:      extract.ConfidenceConvention,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractStringArray extracts string values from a field_definition's array value.
+// Handles: static targets = ["output", "name"]
+func extractStringArray(fieldDef *sitter.Node, source []byte) []string {
+	// Find the array child (value of the field).
+	var arr *sitter.Node
+	count := fieldDef.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		child := fieldDef.NamedChild(i)
+		if child != nil && child.Kind() == "array" {
+			arr = child
+			break
+		}
+	}
+	if arr == nil {
+		return nil
+	}
+
+	var result []string
+	arrCount := arr.NamedChildCount()
+	for i := uint(0); i < arrCount; i++ {
+		child := arr.NamedChild(i)
+		if child == nil || child.Kind() != "string" {
+			continue
+		}
+		// String node contains string_fragment child with the actual text.
+		frag := child.NamedChild(0)
+		if frag != nil {
+			result = append(result, extract.Text(frag, source))
+		}
+	}
+	return result
+}
+
+
+// inferStimulusController derives a Stimulus controller qualified name from a
+// file path. Returns "" if the file doesn't match the Stimulus convention.
+//
+// Convention: **/controllers/**_controller.{js,ts,jsx,tsx}
+// Examples:
+//
+//	"app/javascript/controllers/checkout_controller.js" → "CheckoutController"
+//	"app/javascript/controllers/admin/users_controller.ts" → "Admin::UsersController"
+func inferStimulusController(filePath string) string {
+	if filePath == "" {
+		return ""
+	}
+
+	// Normalize separators for matching.
+	normalized := filepath.ToSlash(filePath)
+
+	// Find the controllers/ directory segment.
+	const marker = "/controllers/"
+	idx := strings.LastIndex(normalized, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := normalized[idx+len(marker):]
+
+	// Strip extension and _controller suffix.
+	ext := filepath.Ext(rest)
+	switch ext {
+	case ".js", ".ts", ".jsx", ".tsx", ".mjs":
+	default:
+		return ""
+	}
+	rest = strings.TrimSuffix(rest, ext)
+	if !strings.HasSuffix(rest, "_controller") {
+		return ""
+	}
+	rest = strings.TrimSuffix(rest, "_controller")
+
+	// Split into path segments: "admin/users" → ["admin", "users"]
+	segments := strings.Split(rest, "/")
+	for i, seg := range segments {
+		segments[i] = snakeToPascal(seg)
+	}
+	last := len(segments) - 1
+	segments[last] = segments[last] + "Controller"
+	return strings.Join(segments, "::")
+}
+
+func snakeToPascal(s string) string {
+	words := strings.Split(s, "_")
+	var b strings.Builder
+	for _, w := range words {
+		if w == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(w[:1]))
+		b.WriteString(w[1:])
+	}
+	return b.String()
 }
