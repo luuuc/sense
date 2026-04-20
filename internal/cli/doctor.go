@@ -264,7 +264,7 @@ func builddoctorResponse(checks []checkResult) doctorResponse {
 
 func countOrphanedEdges(ctx context.Context, db *sql.DB) int {
 	const q = `SELECT COUNT(*) FROM sense_edges e
-	           WHERE NOT EXISTS (SELECT 1 FROM sense_symbols s WHERE s.id = e.source_id)
+	           WHERE (e.source_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sense_symbols s WHERE s.id = e.source_id))
 	              OR NOT EXISTS (SELECT 1 FROM sense_symbols s WHERE s.id = e.target_id)`
 	var count int
 	_ = db.QueryRowContext(ctx, q).Scan(&count)

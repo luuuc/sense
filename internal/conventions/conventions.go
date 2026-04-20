@@ -208,10 +208,14 @@ func queryEdges(ctx context.Context, db *sql.DB, q string, args []any) ([]edgeRo
 	defer func() { _ = rows.Close() }()
 	var out []edgeRow
 	for rows.Next() {
-		var e edgeRow
-		if err := rows.Scan(&e.sourceID, &e.targetID, &e.kind); err != nil {
+		var (
+			e        edgeRow
+			sourceID sql.NullInt64
+		)
+		if err := rows.Scan(&sourceID, &e.targetID, &e.kind); err != nil {
 			return nil, err
 		}
+		e.sourceID = sourceID.Int64 // 0 when NULL; convention detectors skip unknown IDs
 		out = append(out, e)
 	}
 	return out, rows.Err()

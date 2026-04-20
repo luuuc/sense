@@ -296,6 +296,14 @@ func (h *harness) closeParsers() {
 	}
 }
 
+// int64Ptr returns a pointer to v, or nil if v is 0 (sentinel for file-level edges).
+func int64Ptr(v int64) *int64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
 // warnf logs a per-file warning to h.warn and increments the counter.
 // Warnings are non-fatal: scan continues past them.
 func (h *harness) warnf(format string, args ...any) {
@@ -529,13 +537,7 @@ func (h *harness) writeFile(rel, lang string, source []byte, fileHash string, c 
 		}
 
 		for _, e := range c.edges {
-			sourceID, ok := idByQualified[e.SourceQualified]
-			if !ok {
-				// The source qualified name wasn't written as a symbol
-				// in this file — extractor bug if it ever fires. Skip
-				// defensively rather than writing a dangling edge.
-				continue
-			}
+			sourceID := idByQualified[e.SourceQualified] // 0 if not found (file-level edge)
 			pending = append(pending, pendingEdge{
 				SourceID:              sourceID,
 				SourceQualified:       e.SourceQualified,
@@ -669,7 +671,7 @@ func (h *harness) resolveAndWriteEdges() error {
 				)
 			}
 			edge := &model.Edge{
-				SourceID:   pe.SourceID,
+				SourceID:   int64Ptr(pe.SourceID),
 				TargetID:   r.SymbolID,
 				Kind:       pe.Kind,
 				FileID:     pe.FileID,
