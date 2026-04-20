@@ -1,0 +1,330 @@
+package search_test
+
+import (
+	"context"
+	"encoding/binary"
+	"fmt"
+	"math"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/search"
+	"github.com/luuuc/sense/internal/sqlite"
+)
+
+// seedFusionIndex creates a small index with symbols, edges, and
+// embeddings suitable for testing RRF fusion behavior.
+func seedFusionIndex(t *testing.T, ctx context.Context, a *sqlite.Adapter) {
+	t.Helper()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "payment.go", Language: "go",
+		Hash: "a1", Symbols: 3, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Symbol 1: matches keyword "payment" AND has a payment-related embedding
+	sid1, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "ProcessPayment", Qualified: "pkg.ProcessPayment",
+		Kind: "function", LineStart: 1, LineEnd: 20,
+		Docstring: "processes payment transactions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Symbol 2: matches keyword "payment" but NOT semantically related
+	sid2, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "PaymentConfig", Qualified: "pkg.PaymentConfig",
+		Kind: "type", LineStart: 25, LineEnd: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Symbol 3: semantically related to payment but no keyword match
+	sid3, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "ChargeCard", Qualified: "pkg.ChargeCard",
+		Kind: "function", LineStart: 35, LineEnd: 50,
+		Docstring: "charges a credit card via Stripe",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add edges to make ProcessPayment a hub node
+	fid2, err := a.WriteFile(ctx, &model.File{
+		Path: "caller.go", Language: "go",
+		Hash: "b1", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller1, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid2, Name: "HandleOrder", Qualified: "pkg.HandleOrder",
+		Kind: "function", LineStart: 1, LineEnd: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller2, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid2, Name: "HandleRefund", Qualified: "pkg.HandleRefund",
+		Kind: "function", LineStart: 15, LineEnd: 25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two callers → ProcessPayment is a hub
+	for _, callerID := range []int64{caller1, caller2} {
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: callerID, TargetID: sid1,
+			Kind: model.EdgeCalls, FileID: fid2, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Write embeddings: sid1 and sid3 are semantically close (payment-related),
+	// sid2 is distant (config, not payment processing)
+	paymentVec := make([]float32, 384)
+	paymentVec[0] = 0.9
+	paymentVec[1] = 0.1
+
+	configVec := make([]float32, 384)
+	configVec[100] = 0.9
+	configVec[101] = 0.1
+
+	chargeVec := make([]float32, 384)
+	chargeVec[0] = 0.85
+	chargeVec[1] = 0.15
+	chargeVec[2] = 0.1
+
+	for id, vec := range map[int64][]float32{sid1: paymentVec, sid2: configVec, sid3: chargeVec} {
+		blob := vectorToBlob(vec)
+		if err := a.WriteEmbedding(ctx, id, blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func vectorToBlob(vec []float32) []byte {
+	buf := make([]byte, len(vec)*4)
+	for i, v := range vec {
+		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
+	}
+	return buf
+}
+
+// paymentQueryEmbedder returns vectors close to the payment embedding
+// and distant from the config embedding.
+type paymentQueryEmbedder struct{}
+
+func (p *paymentQueryEmbedder) Embed(_ context.Context, inputs []embed.EmbedInput) ([][]float32, error) {
+	vecs := make([][]float32, len(inputs))
+	for i := range inputs {
+		vec := make([]float32, 384)
+		vec[0] = 0.9
+		vec[1] = 0.1
+		vecs[i] = vec
+	}
+	return vecs, nil
+}
+
+func (p *paymentQueryEmbedder) Close() error { return nil }
+
+func TestFusionBothBackendsRankHigher(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+
+	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
+
+	results, symbolCount, err := engine.Search(ctx, search.Options{
+		Query: "payment",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if symbolCount < 3 {
+		t.Errorf("expected at least 3 symbols searched, got %d", symbolCount)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("expected results, got none")
+	}
+
+	// ProcessPayment should rank highest: it matches keyword AND vector,
+	// and has graph centrality (2 callers).
+	if results[0].Qualified != "pkg.ProcessPayment" {
+		t.Errorf("expected ProcessPayment to rank first, got %q", results[0].Qualified)
+	}
+
+	t.Logf("results:")
+	for i, r := range results {
+		t.Logf("  %d. %s (score=%.6f)", i+1, r.Qualified, r.Score)
+	}
+}
+
+func TestFusionKeywordOnly(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	// No vector index, no embedder → keyword-only
+	engine := search.NewEngine(a, nil, nil)
+
+	results, _, err := engine.Search(ctx, search.Options{
+		Query: "payment",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("expected keyword results, got none")
+	}
+
+	// All results should have "payment" in name or docstring
+	for _, r := range results {
+		t.Logf("keyword-only: %s (score=%.6f)", r.Qualified, r.Score)
+	}
+}
+
+func TestFusionCentralityBreaksTie(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "tie.go", Language: "go",
+		Hash: "t1", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two symbols with identical keyword relevance (both match "handler")
+	sidHub, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "HubHandler", Qualified: "pkg.HubHandler",
+		Kind: "function", LineStart: 1, LineEnd: 10,
+		Docstring: "handler with many callers",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidLeaf, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "LeafHandler", Qualified: "pkg.LeafHandler",
+		Kind: "function", LineStart: 15, LineEnd: 25,
+		Docstring: "handler with no callers",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Give HubHandler 5 callers, LeafHandler gets none.
+	fid2, err := a.WriteFile(ctx, &model.File{
+		Path: "callers.go", Language: "go",
+		Hash: "c1", Symbols: 5, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 5 {
+		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid2, Name: fmt.Sprintf("Caller%d", i),
+			Qualified: fmt.Sprintf("pkg.Caller%d", i),
+			Kind: "function", LineStart: i * 10, LineEnd: i*10 + 5,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: callerID, TargetID: sidHub,
+			Kind: model.EdgeCalls, FileID: fid2, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = sidLeaf // used via keyword search match
+
+	engine := search.NewEngine(a, nil, nil)
+
+	results, _, err := engine.Search(ctx, search.Options{
+		Query: "handler",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// Both match "handler" equally in FTS5, but HubHandler has centrality.
+	if results[0].Qualified != "pkg.HubHandler" {
+		t.Errorf("expected HubHandler to rank first due to centrality, got %q", results[0].Qualified)
+	}
+
+	t.Logf("centrality tie-break:")
+	for i, r := range results {
+		t.Logf("  %d. %s (score=%.6f)", i+1, r.Qualified, r.Score)
+	}
+}
+
+func TestFusionMinScore(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	engine := search.NewEngine(a, nil, nil)
+
+	results, _, err := engine.Search(ctx, search.Options{
+		Query:    "payment",
+		Limit:    10,
+		MinScore: 999, // absurdly high — should filter everything
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results with high min_score, got %d", len(results))
+	}
+}
