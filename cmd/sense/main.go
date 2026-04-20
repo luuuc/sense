@@ -18,7 +18,7 @@ Usage: sense <command> [args]
 
 Commands:
   scan          Build or refresh the index
-  search        Hybrid semantic + keyword search (not yet implemented)
+  search        Hybrid semantic + keyword search
   graph         Symbol relationships — callers, callees, inheritance, tests
   blast         Blast radius for a symbol or diff
   conventions   Detected project conventions (not yet implemented)
@@ -53,11 +53,22 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "search":
+		os.Exit(cli.RunSearch(os.Args[2:], cli.DefaultIO()))
+
 	case "graph":
 		os.Exit(cli.RunGraph(os.Args[2:], cli.DefaultIO()))
 
 	case "blast":
 		os.Exit(cli.RunBlast(os.Args[2:], cli.DefaultIO()))
+
+	case "conventions":
+		fmt.Fprintf(os.Stderr,
+			"sense: %q is not yet implemented — see .doc/pitches/ for the build plan\n", cmd)
+		os.Exit(1)
+
+	case "status":
+		os.Exit(cli.RunStatus(os.Args[2:], cli.DefaultIO()))
 
 	case "mcp":
 		fs := flag.NewFlagSet("sense mcp", flag.ContinueOnError)
@@ -70,14 +81,6 @@ func main() {
 			fmt.Fprintln(os.Stderr, "sense mcp:", err)
 			os.Exit(1)
 		}
-
-	case "status":
-		os.Exit(cli.RunStatus(os.Args[2:], cli.DefaultIO()))
-
-	case "search", "conventions":
-		fmt.Fprintf(os.Stderr,
-			"sense: %q is not yet implemented — see .doc/pitches/ for the build plan\n", cmd)
-		os.Exit(1)
 
 	default:
 		fmt.Fprintf(os.Stderr, "sense: unknown command %q. Run 'sense help'.\n", cmd)
