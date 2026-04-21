@@ -256,7 +256,7 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfid
 		q := `SELECT source_id, target_id FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
-		        AND kind = 'calls'
+		        AND kind IN ('calls', 'composes', 'includes')
 		        AND confidence >= ?`
 
 		args := make([]any, 0, len(batch)+1)
