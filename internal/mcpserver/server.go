@@ -307,7 +307,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 
 	limit := req.GetInt("limit", 10)
 	language := req.GetString("language", "")
-	minScore := req.GetFloat("min_score", 0.5)
+	minScore := req.GetFloat("min_score", 0.0)
 
 	results, symbolCount, err := h.search.Search(ctx, search.Options{
 		Query:    query,
