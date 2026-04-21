@@ -30,6 +30,10 @@
 //     are emitted as regular calls. `new X()` is a `new_expression`,
 //     not a call_expression; constructors aren't emitted in Tier-Basic.
 //     Subscript / dynamic callees (`obj[k]()`, `f()()`) are skipped.
+//   - JSX elements with PascalCase tags emit calls edges to the component
+//     name (`<UserProfile>` → calls UserProfile). Lowercase tags (HTML)
+//     and fragments (`<>`, `<React.Fragment>`) are skipped. Namespaced
+//     tags emit the full surface text (`<Form.Input>` → calls Form.Input).
 //
 // Qualified-name rules (per 05-languages.md, "pkg.module.Class.method"):
 //   Class/Interface/Enum/Type: Name or Outer.Inner
@@ -38,9 +42,6 @@
 //
 // What Tier-Basic skips:
 //   - class fields (public_field_definition)
-//   - import/export edges (01-03)
-//   - JSX component usage (Full tier)
-//   - default-export-names-from-filename (Full tier)
 //   - let / var bindings — only `const` counts
 package tsjs
 
@@ -101,9 +102,13 @@ func extractAll(tree *sitter.Tree, source []byte, filePath string, emit extract.
 	w := &walker{
 		source:       source,
 		emit:         emit,
+		filePath:     filePath,
 		stimulusName: inferStimulusController(filePath),
 	}
-	return w.walk(tree.RootNode(), nil)
+	if err := w.walk(tree.RootNode(), nil); err != nil {
+		return err
+	}
+	return w.walkDynamicImports(tree.RootNode())
 }
 
 // ---- walker ----
@@ -111,6 +116,7 @@ func extractAll(tree *sitter.Tree, source []byte, filePath string, emit extract.
 type walker struct {
 	source       []byte
 	emit         extract.Emitter
+	filePath     string
 	stimulusName string // non-empty if this file is a Stimulus controller
 }
 
@@ -120,9 +126,27 @@ func (w *walker) walk(n *sitter.Node, scope []string) error {
 	}
 	switch n.Kind() {
 	case "export_statement":
-		// `export <decl>` unwraps to its declaration child.
 		if d := n.ChildByFieldName("declaration"); d != nil {
+			if hasDefaultKeyword(n, w.source) {
+				if handled, err := w.handleDefaultExport(d, scope); handled || err != nil {
+					return err
+				}
+			}
 			return w.walk(d, scope)
+		}
+		if hasDefaultKeyword(n, w.source) {
+			for i := uint(0); i < n.NamedChildCount(); i++ {
+				child := n.NamedChild(i)
+				if child == nil {
+					continue
+				}
+				if handled, err := w.handleDefaultExport(child, scope); handled || err != nil {
+					return err
+				}
+			}
+		}
+		if modulePath := reexportSource(n, w.source); modulePath != "" {
+			return w.handleReexport(n, modulePath)
 		}
 		return w.walkChildren(n, scope)
 	case "class_declaration", "class":
@@ -161,15 +185,18 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 	nameNode := n.ChildByFieldName("name")
 	name := extract.Text(nameNode, w.source)
 
-	// For Stimulus controller files, use the convention-derived name when
-	// the class is anonymous or named differently.
 	if name == "" && w.stimulusName != "" {
 		return w.handleStimulusClass(n, scope)
 	}
 	if name == "" {
 		return w.walkChildren(n, scope)
 	}
+	return w.emitClassWithBody(n, name, scope)
+}
 
+// emitClassWithBody emits a class symbol, heritage edges, and descends
+// into methods. Shared by handleClass and handleDefaultExport.
+func (w *walker) emitClassWithBody(n *sitter.Node, name string, scope []string) error {
 	parent := strings.Join(scope, ".")
 	qualified := name
 	if parent != "" {
@@ -187,7 +214,6 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 		return err
 	}
 
-	// class_heritage is an unnamed-field child carrying extends + implements.
 	if err := w.emitHeritageEdges(n, qualified); err != nil {
 		return err
 	}
@@ -320,9 +346,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string) error {
 	}); err != nil {
 		return err
 	}
-	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified)
-	})
+	return w.walkBodyEdges(n.ChildByFieldName("body"), qualified)
 }
 
 // handleInterface emits an interface symbol and inherits edges for
@@ -368,9 +392,8 @@ func (w *walker) handleInterface(n *sitter.Node, scope []string) error {
 	return nil
 }
 
-// handleTypeAlias emits a KindType symbol. Tier-Basic records the
-// name + location; the alias's RHS isn't emitted as separate edges
-// (that's a structural-edge job for Full tier).
+// handleTypeAlias emits a KindType symbol and composes edges for
+// intersection types (A & B → composes edges to A and B).
 func (w *walker) handleTypeAlias(n *sitter.Node, scope []string) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -385,14 +408,110 @@ func (w *walker) handleTypeAlias(n *sitter.Node, scope []string) error {
 	if parent != "" {
 		qualified = parent + "." + name
 	}
-	return w.emit.Symbol(extract.EmittedSymbol{
+	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindType,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+	}); err != nil {
+		return err
+	}
+	if valueNode := n.ChildByFieldName("value"); valueNode != nil {
+		return w.emitIntersectionEdges(valueNode, qualified)
+	}
+	return nil
+}
+
+// emitIntersectionEdges recursively walks an intersection_type node and
+// emits composes edges for each identifiable type name.
+func (w *walker) emitIntersectionEdges(n *sitter.Node, source string) error {
+	if n.Kind() != "intersection_type" {
+		return nil
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		switch child.Kind() {
+		case "type_identifier":
+			if err := w.emitComposesEdge(source, extract.Text(child, w.source), child); err != nil {
+				return err
+			}
+		case "generic_type":
+			if err := w.emitComposesEdge(source, resolveHeritageName(child, w.source), child); err != nil {
+				return err
+			}
+		case "intersection_type":
+			if err := w.emitIntersectionEdges(child, source); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (w *walker) emitComposesEdge(source, target string, n *sitter.Node) error {
+	if target == "" {
+		return nil
+	}
+	line := extract.Line(n.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: target,
+		Kind:            model.EdgeComposes,
+		Line:            &line,
+		Confidence:      extract.ConfidenceStatic,
 	})
+}
+
+// walkDynamicImports scans the entire file for import() expressions
+// and emits imports edges. This is a separate pass from the body walk
+// because dynamic imports can appear at any nesting level, including
+// inside non-function const initializers (e.g., React.lazy wrappers).
+// Note: this revisits call_expression nodes already seen by walkBodyEdges.
+// emitDynamicImport filters to import-callee only, so no duplicate edges,
+// but the traversal overlaps. Combine with walkBodyEdges if profiling
+// shows extraction is hot.
+func (w *walker) walkDynamicImports(root *sitter.Node) error {
+	return extract.WalkNamedDescendants(root, "call_expression", func(c *sitter.Node) error {
+		return w.emitDynamicImport(c)
+	})
+}
+
+func (w *walker) emitDynamicImport(call *sitter.Node) error {
+	fn := call.ChildByFieldName("function")
+	if fn == nil || fn.Kind() != "import" {
+		return nil
+	}
+	args := call.ChildByFieldName("arguments")
+	if args == nil {
+		return nil
+	}
+	for i := uint(0); i < args.NamedChildCount(); i++ {
+		child := args.NamedChild(i)
+		if child == nil || child.Kind() != "string" {
+			continue
+		}
+		frag := child.NamedChild(0)
+		if frag == nil {
+			continue
+		}
+		path := extract.Text(frag, w.source)
+		if path == "" {
+			continue
+		}
+		line := extract.Line(call.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			TargetQualified: path,
+			Kind:            model.EdgeImports,
+			Line:            &line,
+			Confidence:      extract.ConfidenceAmbiguous,
+		})
+	}
+	return nil
 }
 
 // handleEnum emits an enum as KindClass (the data model has no enum
@@ -436,6 +555,12 @@ func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	if name == "" {
 		return nil
 	}
+	return w.emitFunctionWithBody(n, name, scope)
+}
+
+// emitFunctionWithBody emits a function symbol and walks the body for
+// edges. Shared by handleFunction and handleDefaultExport.
+func (w *walker) emitFunctionWithBody(n *sitter.Node, name string, scope []string) error {
 	parent := strings.Join(scope, ".")
 	qualified := name
 	if parent != "" {
@@ -451,9 +576,7 @@ func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	}); err != nil {
 		return err
 	}
-	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified)
-	})
+	return w.walkBodyEdges(n.ChildByFieldName("body"), qualified)
 }
 
 // handleLexicalDeclaration walks the variable_declarator children of
@@ -523,11 +646,61 @@ func (w *walker) handleVariableDeclarator(decl *sitter.Node, scope []string) err
 	// bound to a const doesn't get its methods emitted here — that
 	// gap predates this card and remains a known limitation.
 	if kind == model.KindFunction && valueNode != nil {
-		return extract.WalkNamedDescendants(valueNode.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
-			return w.emitCall(c, qualified)
-		})
+		return w.walkBodyEdges(valueNode.ChildByFieldName("body"), qualified)
 	}
 	return nil
+}
+
+// walkBodyEdges walks a function/method body for call expressions and
+// JSX component usage, emitting edges for both.
+func (w *walker) walkBodyEdges(body *sitter.Node, sourceQualified string) error {
+	if err := extract.WalkNamedDescendants(body, "call_expression", func(c *sitter.Node) error {
+		return w.emitCall(c, sourceQualified)
+	}); err != nil {
+		return err
+	}
+	if err := extract.WalkNamedDescendants(body, "jsx_opening_element", func(c *sitter.Node) error {
+		return w.emitJSXComponent(c, sourceQualified)
+	}); err != nil {
+		return err
+	}
+	return extract.WalkNamedDescendants(body, "jsx_self_closing_element", func(c *sitter.Node) error {
+		return w.emitJSXComponent(c, sourceQualified)
+	})
+}
+
+// emitJSXComponent emits a calls edge for a PascalCase JSX element.
+// Lowercase tags (HTML elements) and fragments are skipped.
+func (w *walker) emitJSXComponent(n *sitter.Node, sourceQualified string) error {
+	var tag string
+	count := n.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		switch child.Kind() {
+		case "identifier", "member_expression":
+			tag = extract.Text(child, w.source)
+		}
+		if tag != "" {
+			break
+		}
+	}
+	if tag == "" || (tag[0] >= 'a' && tag[0] <= 'z') {
+		return nil
+	}
+	if tag == "React.Fragment" {
+		return nil
+	}
+	line := extract.Line(n.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: sourceQualified,
+		TargetQualified: tag,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      extract.ConfidenceStatic,
+	})
 }
 
 // emitCall produces one calls edge. Identifier and member_expression
@@ -560,6 +733,134 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 		Line:            &line,
 		Confidence:      1.0,
 	})
+}
+
+// handleDefaultExport handles anonymous default exports by synthesizing
+// a symbol name from the filename. Returns (true, err) if the node was
+// handled, (false, nil) if it should fall through to normal processing.
+func (w *walker) handleDefaultExport(n *sitter.Node, scope []string) (bool, error) {
+	nameNode := n.ChildByFieldName("name")
+	if nameNode != nil && extract.Text(nameNode, w.source) != "" {
+		return false, nil
+	}
+	defName := w.fileBasedName()
+	if defName == "" {
+		return false, nil
+	}
+	switch n.Kind() {
+	case "class", "class_expression":
+		if w.stimulusName != "" {
+			return false, nil
+		}
+		return true, w.emitClassWithBody(n, defName, scope)
+	case "function_expression", "arrow_function":
+		return true, w.emitFunctionWithBody(n, defName, scope)
+	}
+	return false, nil
+}
+
+// reexportSource returns the module path from a re-export statement
+// (e.g., `export { Button } from "./Button"` → "./Button").
+// Returns "" if this isn't a re-export.
+func reexportSource(n *sitter.Node, source []byte) string {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		child := n.NamedChild(i)
+		if child != nil && child.Kind() == "string" {
+			if frag := child.NamedChild(0); frag != nil {
+				return extract.Text(frag, source)
+			}
+		}
+	}
+	return ""
+}
+
+// handleReexport processes `export { X } from "./X"` and `export * from "./X"`.
+// Emits an imports edge to the module path and symbols for each named
+// re-export so they're discoverable in the barrel file.
+func (w *walker) handleReexport(n *sitter.Node, modulePath string) error {
+	line := extract.Line(n.StartPosition())
+	if err := w.emit.Edge(extract.EmittedEdge{
+		TargetQualified: modulePath,
+		Kind:            model.EdgeImports,
+		Line:            &line,
+		Confidence:      extract.ConfidenceStatic,
+	}); err != nil {
+		return err
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		clause := n.NamedChild(i)
+		if clause == nil || clause.Kind() != "export_clause" {
+			continue
+		}
+		for j := uint(0); j < clause.NamedChildCount(); j++ {
+			spec := clause.NamedChild(j)
+			if spec == nil || spec.Kind() != "export_specifier" {
+				continue
+			}
+			name := w.reexportName(spec)
+			if name == "" || name == "default" {
+				continue
+			}
+			if err := w.emit.Symbol(extract.EmittedSymbol{
+				Name:      name,
+				Qualified: name,
+				Kind:      model.KindConstant,
+				LineStart: extract.Line(spec.StartPosition()),
+				LineEnd:   extract.Line(spec.EndPosition()),
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// reexportName extracts the exported name from an export_specifier.
+// For `export { X }` returns "X". For `export { default as Y }` returns "Y".
+func (w *walker) reexportName(spec *sitter.Node) string {
+	count := spec.NamedChildCount()
+	if count == 0 {
+		return ""
+	}
+	last := spec.NamedChild(count - 1)
+	if last == nil {
+		return ""
+	}
+	return extract.Text(last, w.source)
+}
+
+// hasDefaultKeyword checks if an export_statement node contains the
+// "default" keyword token.
+func hasDefaultKeyword(n *sitter.Node, source []byte) bool {
+	count := n.ChildCount()
+	for i := uint(0); i < count; i++ {
+		c := n.Child(i)
+		if c == nil || c.IsNamed() {
+			continue
+		}
+		if c.Utf8Text(source) == "default" {
+			return true
+		}
+	}
+	return false
+}
+
+// fileBasedName derives a PascalCase symbol name from the file path.
+// Returns "" if the path is empty or the file is an index file.
+func (w *walker) fileBasedName() string {
+	if w.filePath == "" {
+		return ""
+	}
+	base := filepath.Base(w.filePath)
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	if name == "" || name == "index" {
+		return ""
+	}
+	if idx := strings.Index(name, "."); idx > 0 {
+		name = name[:idx]
+	}
+	name = strings.ReplaceAll(name, "-", "_")
+	return snakeToPascal(name)
 }
 
 // isConstDeclaration returns true when the lexical_declaration begins
