@@ -5,6 +5,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,6 +35,19 @@ func (c *Config) EmbeddingsEnabled() bool {
 		return *c.Embeddings.Enabled
 	}
 	return true
+}
+
+// IsEmbeddingsEnabled checks the SENSE_EMBEDDINGS env var first, then
+// falls back to the config file. Used by packages that can't import cli.
+func IsEmbeddingsEnabled(root string) bool {
+	if env := os.Getenv("SENSE_EMBEDDINGS"); env != "" {
+		return !strings.EqualFold(env, "false") && env != "0"
+	}
+	cfg, err := Load(root)
+	if err != nil {
+		return true
+	}
+	return cfg.EmbeddingsEnabled()
 }
 
 // Load reads .sense/config.yml under root. A missing file returns

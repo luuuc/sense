@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/luuuc/sense/internal/config"
@@ -385,16 +384,6 @@ func formatBytes(b int64) string {
 	}
 }
 
-// EmbeddingsEnabled resolves whether embeddings are active by checking
-// the SENSE_EMBEDDINGS env var first, then falling back to config.yml.
-// Default is true (embeddings on).
 func EmbeddingsEnabled(root string) bool {
-	if env := os.Getenv("SENSE_EMBEDDINGS"); env != "" {
-		return !strings.EqualFold(env, "false") && env != "0"
-	}
-	cfg, err := config.Load(root)
-	if err != nil {
-		return true
-	}
-	return cfg.EmbeddingsEnabled()
+	return config.IsEmbeddingsEnabled(root)
 }

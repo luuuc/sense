@@ -22,7 +22,7 @@ func testLayout() *Layout {
 
 func TestModel_QuitKeys(t *testing.T) {
 	for _, key := range []string{"q", "ctrl+c", "esc"} {
-		m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout())
+		m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
 		var updated tea.Model
 		var cmd tea.Cmd
 		switch key {
@@ -45,7 +45,7 @@ func TestModel_QuitKeys(t *testing.T) {
 }
 
 func TestModel_WindowSize(t *testing.T) {
-	m := newModel(graphStats{}, testLayout())
+	m := newModel(graphStats{}, testLayout(), nil)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	um := updated.(model)
 	if um.width != 80 || um.height != 24 {
@@ -54,7 +54,7 @@ func TestModel_WindowSize(t *testing.T) {
 }
 
 func TestModel_ViewRendersGraph(t *testing.T) {
-	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout())
+	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout(), nil)
 	m.width = 80
 	m.height = 24
 	v := m.View()
@@ -64,7 +64,7 @@ func TestModel_ViewRendersGraph(t *testing.T) {
 }
 
 func TestModel_ViewLoading(t *testing.T) {
-	m := newModel(graphStats{}, testLayout())
+	m := newModel(graphStats{}, testLayout(), nil)
 	v := m.View()
 	if v != "loading..." {
 		t.Errorf("zero-size view should show loading, got: %q", v)
@@ -72,7 +72,7 @@ func TestModel_ViewLoading(t *testing.T) {
 }
 
 func TestModel_PanKeys(t *testing.T) {
-	m := newModel(graphStats{}, testLayout())
+	m := newModel(graphStats{}, testLayout(), nil)
 	m.width = 80
 	m.height = 24
 
@@ -90,7 +90,7 @@ func TestModel_PanKeys(t *testing.T) {
 }
 
 func TestModel_ZoomKeys(t *testing.T) {
-	m := newModel(graphStats{}, testLayout())
+	m := newModel(graphStats{}, testLayout(), nil)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
 	um := updated.(model)
@@ -106,7 +106,7 @@ func TestModel_ZoomKeys(t *testing.T) {
 }
 
 func TestModel_TabCyclesLens(t *testing.T) {
-	m := newModel(graphStats{}, testLayout())
+	m := newModel(graphStats{}, testLayout(), nil)
 	if m.renderer.Lens != LensLanguage {
 		t.Fatalf("initial lens should be language, got %v", m.renderer.Lens)
 	}
@@ -118,7 +118,7 @@ func TestModel_TabCyclesLens(t *testing.T) {
 }
 
 func TestStatusBar_ContainsStats(t *testing.T) {
-	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout())
+	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout(), nil)
 	m.width = 120
 	m.height = 24
 	bar := m.statusBar()
@@ -131,7 +131,7 @@ func TestStatusBar_ContainsStats(t *testing.T) {
 }
 
 func TestStatusBar_ContainsLensAndZoom(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout())
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
 	m.width = 120
 	m.height = 24
 	bar := m.statusBar()
@@ -144,7 +144,7 @@ func TestStatusBar_ContainsLensAndZoom(t *testing.T) {
 }
 
 func TestStatusBar_NarrowWidth(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout())
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
 	m.width = 50
 	m.height = 24
 	bar := m.statusBar()
@@ -157,7 +157,7 @@ func TestStatusBar_NarrowWidth(t *testing.T) {
 }
 
 func TestStatusBar_InView(t *testing.T) {
-	m := newModel(graphStats{Symbols: 5, Edges: 3}, testLayout())
+	m := newModel(graphStats{Symbols: 5, Edges: 3}, testLayout(), nil)
 	m.width = 80
 	m.height = 24
 	v := m.View()
