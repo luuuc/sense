@@ -367,6 +367,61 @@ func TestTarget(t *testing.T) {
 	}
 }
 
+// TestComputeWalksComposesEdges verifies that the BFS traverses
+// composes edges (Rails associations like has_many/belongs_to), not
+// just calls edges.
+func TestComputeWalksComposesEdges(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "user.rb"), `class User
+  has_many :orders
+end
+`)
+	writeFile(t, filepath.Join(root, "order.rb"), `class Order
+  belongs_to :user
+end
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	userID := idOf(t, adapter, "User")
+	res, err := blast.Compute(ctx, db, userID, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if res.TotalAffected == 0 {
+		t.Error("TotalAffected = 0, want >= 1 (Order composes User via belongs_to)")
+	}
+	// Order should appear as a direct caller via the composes edge.
+	found := false
+	for _, c := range res.DirectCallers {
+		if c.Qualified == "Order" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("DirectCallers = %+v, want Order (via belongs_to composes edge)", res.DirectCallers)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

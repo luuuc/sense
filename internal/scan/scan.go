@@ -53,17 +53,18 @@ type Options struct {
 
 // Result summarises one scan invocation.
 type Result struct {
-	Files      int // total files visited (regular files, not directories)
-	Indexed    int // files that had a registered extractor and were processed
-	Changed    int // files whose content hash changed (re-parsed)
-	Skipped    int // files skipped (unchanged hash)
-	Removed    int // files deleted from index (no longer on disk or now ignored)
-	Symbols    int // symbols written to the index
-	Edges      int // edges resolved and written to sense_edges
-	Embedded   int // symbols whose embeddings were generated/updated
-	Unresolved int // edges whose target name matched no symbol; dropped
-	Warnings   int // per-file failures logged; scan continues past them
-	Duration   time.Duration
+	Files          int // total files visited (regular files, not directories)
+	Indexed        int // files that had a registered extractor and were processed
+	Changed        int // files whose content hash changed (re-parsed)
+	Skipped        int // files skipped (unchanged hash)
+	Removed        int // files deleted from index (no longer on disk or now ignored)
+	Symbols        int // symbols written to the index
+	Edges          int // edges resolved and written to sense_edges
+	Embedded       int // symbols whose embeddings were generated/updated
+	Unresolved     int // edges whose target name matched no symbol; dropped
+	Warnings       int // per-file failures logged; scan continues past them
+	DefaultIgnored int // directories skipped by default ignore patterns
+	Duration       time.Duration
 }
 
 // snippetMaxBytes caps the single-line snippet we store per symbol.
@@ -79,6 +80,7 @@ const snippetMaxBytes = 200
 // available on Result.Unresolved; after the cap is reached a single
 // "... and N more omitted" summary line closes the stream.
 const maxUnresolvedWarnings = 20
+const maxAmbiguousWarnings = 20
 
 // Run ensures the .sense directory and index.db exist, walks the
 // working tree, parses each file with a registered extractor, and
@@ -140,14 +142,15 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	h := &harness{
-		ctx:           ctx,
-		idx:           idx,
-		out:           out,
-		warn:          warn,
-		parsers:       map[string]*sitter.Parser{},
-		matcher:       matcher,
-		maxFileSizeKB: cfg.Scan.MaxFileSizeKB,
-		seenPaths:     map[string]bool{},
+		ctx:            ctx,
+		idx:            idx,
+		out:            out,
+		warn:           warn,
+		parsers:        map[string]*sitter.Parser{},
+		matcher:        matcher,
+		defaultMatcher: ignore.New(ignore.DefaultPatterns()...),
+		maxFileSizeKB:  cfg.Scan.MaxFileSizeKB,
+		seenPaths:      map[string]bool{},
 	}
 	defer h.closeParsers()
 
@@ -178,21 +181,26 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	elapsed := time.Since(start)
 
 	res := &Result{
-		Files:      h.files,
-		Indexed:    h.indexed,
-		Changed:    h.changed,
-		Skipped:    h.skipped,
-		Removed:    h.removed,
-		Symbols:    h.symbols,
-		Edges:      h.edges,
-		Embedded:   h.embedded,
-		Unresolved: h.unresolved,
-		Warnings:   h.warnings,
-		Duration:   elapsed,
+		Files:          h.files,
+		Indexed:        h.indexed,
+		Changed:        h.changed,
+		Skipped:        h.skipped,
+		Removed:        h.removed,
+		Symbols:        h.symbols,
+		Edges:          h.edges,
+		Embedded:       h.embedded,
+		Unresolved:     h.unresolved,
+		Warnings:       h.warnings,
+		DefaultIgnored: h.defaultIgnored,
+		Duration:       elapsed,
 	}
 
-	_, _ = fmt.Fprintf(out, "scanned %d files (%d changed, %d skipped) in %s\n",
-		res.Files, res.Changed, res.Skipped, elapsed)
+	_, _ = fmt.Fprintf(out, "scanned %d files (%d indexed, %d changed, %d skipped) in %s\n",
+		res.Files, res.Indexed, res.Changed, res.Skipped, elapsed)
+	if res.DefaultIgnored > 0 {
+		_, _ = fmt.Fprintf(out, "skipped %d directories (default ignores: %s)\n",
+			res.DefaultIgnored, strings.Join(ignore.DefaultPatterns(), ", "))
+	}
 
 	return res, nil
 }
@@ -228,8 +236,9 @@ type harness struct {
 	warn    io.Writer // per-file warning sink
 	parsers map[string]*sitter.Parser
 
-	matcher       *ignore.Matcher
-	maxFileSizeKB int
+	matcher        *ignore.Matcher
+	defaultMatcher *ignore.Matcher
+	maxFileSizeKB  int
 
 	// pendingEdges holds walk-phase output for the resolve phase.
 	// Empty at start, filled by writeFile, drained by
@@ -251,16 +260,17 @@ type harness struct {
 	changedFileIDs []int64
 
 	// Tallies for Result.
-	files      int
-	indexed    int
-	changed    int
-	skipped    int
-	removed    int
-	symbols    int
-	edges      int
-	embedded   int
-	unresolved int
-	warnings   int
+	files          int
+	indexed        int
+	changed        int
+	skipped        int
+	removed        int
+	symbols        int
+	edges          int
+	embedded       int
+	unresolved     int
+	warnings       int
+	defaultIgnored int
 }
 
 // indexedFile is the minimum the test-association pass needs to know
@@ -345,6 +355,9 @@ func (h *harness) walkTree(root string) error {
 				return fs.SkipDir
 			}
 			if h.matcher.Match(rel, true) {
+				if h.defaultMatcher.Match(rel, true) {
+					h.defaultIgnored++
+				}
 				return fs.SkipDir
 			}
 			return nil
@@ -639,7 +652,7 @@ func (h *harness) resolveAndWriteEdges() error {
 	}
 	resolver := resolve.NewIndex(refs)
 
-	var written, unresolved int
+	var written, unresolved, ambiguous int
 	err = h.idx.InTx(h.ctx, func() error {
 		for _, pe := range h.pendingEdges {
 			r, ok := resolver.Resolve(resolve.Request{
@@ -651,13 +664,6 @@ func (h *harness) resolveAndWriteEdges() error {
 				BaseConfidence:        pe.Confidence,
 			})
 			if !ok {
-				// Unresolved edge: the extractor emitted it but no
-				// symbol matched the target name. Typical causes are
-				// external calls (stdlib, imported packages) or
-				// dynamic dispatch we can't statically resolve. Log
-				// the first N so a user debugging a sparse graph can
-				// see a sample; the rest roll into the count only
-				// (surfaced via Result.Unresolved).
 				if unresolved < maxUnresolvedWarnings {
 					_, _ = fmt.Fprintf(h.warn,
 						"warn: unresolved target %q from %q\n",
@@ -668,18 +674,13 @@ func (h *harness) resolveAndWriteEdges() error {
 				continue
 			}
 			if r.Ambiguous {
-				// Ambiguous resolution picked a candidate from more
-				// than one option at the same qualified-name key.
-				// The pitch requires a warning so a user debugging
-				// surprising graph output can see which edges were
-				// guess-resolved. The Warnings counter deliberately
-				// is NOT bumped — that counter tracks per-file
-				// failures; ambiguity is a successful resolution
-				// with reduced confidence, not a failure.
-				_, _ = fmt.Fprintf(h.warn,
-					"warn: ambiguous target %q from %q → picked id=%d confidence=%.2f\n",
-					pe.TargetName, pe.SourceQualified, r.SymbolID, r.Confidence,
-				)
+				if ambiguous < maxAmbiguousWarnings {
+					_, _ = fmt.Fprintf(h.warn,
+						"warn: ambiguous target %q from %q → picked id=%d confidence=%.2f\n",
+						pe.TargetName, pe.SourceQualified, r.SymbolID, r.Confidence,
+					)
+				}
+				ambiguous++
 			}
 			edge := &model.Edge{
 				SourceID:   int64Ptr(pe.SourceID),
@@ -702,6 +703,11 @@ func (h *harness) resolveAndWriteEdges() error {
 	if extra := unresolved - maxUnresolvedWarnings; extra > 0 {
 		_, _ = fmt.Fprintf(h.warn,
 			"warn: ... and %d more unresolved targets omitted\n", extra,
+		)
+	}
+	if extra := ambiguous - maxAmbiguousWarnings; extra > 0 {
+		_, _ = fmt.Fprintf(h.warn,
+			"warn: ... and %d more ambiguous targets omitted\n", extra,
 		)
 	}
 	h.edges += written

@@ -124,7 +124,7 @@ func parseConventionsArgs(args []string, stderr io.Writer) (conventionsOptions, 
 
 	var opts conventionsOptions
 	fs.StringVar(&opts.Domain, "domain", "", "")
-	fs.Float64Var(&opts.MinStrength, "min-strength", 0.5, "")
+	fs.Float64Var(&opts.MinStrength, "min-strength", 0.0, "")
 	fs.BoolVar(&opts.JSON, "json", false, "")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "")
 

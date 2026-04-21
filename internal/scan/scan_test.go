@@ -151,10 +151,10 @@ func TestScanOutputFormat(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// Summary line format: "scanned N files (K changed, M skipped) in Xms"
-	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ changed, \d+ skipped\) in \S+\n\z`)
+	// Summary line format: "scanned N files (I indexed, K changed, M skipped) in Xms"
+	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ indexed, \d+ changed, \d+ skipped\) in \S+\n\z`)
 	if !pattern.MatchString(buf.String()) {
-		t.Fatalf("output does not match summary pattern\nhave: %q\nwant: scanned 2 files (N changed, M skipped) in D\\n",
+		t.Fatalf("output does not match summary pattern\nhave: %q\nwant: scanned 2 files (I indexed, K changed, M skipped) in D\\n",
 			buf.String())
 	}
 }
@@ -866,7 +866,7 @@ func TestScan_IgnoreExcludesFiles(t *testing.T) {
 func TestScan_SenseignoreRemovesFromIndex(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "app.rb"), "class App\nend\n")
-	writeFile(t, filepath.Join(root, "vendor", "lib.rb"), "class Lib\nend\n")
+	writeFile(t, filepath.Join(root, "extras", "lib.rb"), "class Lib\nend\n")
 
 	ctx := context.Background()
 	first, err := scan.Run(ctx, quietOpts(root))
@@ -878,13 +878,13 @@ func TestScan_SenseignoreRemovesFromIndex(t *testing.T) {
 	}
 
 	// Now add .senseignore and re-scan.
-	writeFile(t, filepath.Join(root, ".senseignore"), "vendor/\n")
+	writeFile(t, filepath.Join(root, ".senseignore"), "extras/\n")
 	second, err := scan.Run(ctx, quietOpts(root))
 	if err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
 	if second.Removed != 1 {
-		t.Errorf("second.Removed = %d, want 1 (vendor/lib.rb)", second.Removed)
+		t.Errorf("second.Removed = %d, want 1 (extras/lib.rb)", second.Removed)
 	}
 }
 
