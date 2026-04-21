@@ -120,6 +120,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 		return nil, 0, fmt.Errorf("search centrality: %w", err)
 	}
 	applyGraphCentrality(fused, centrality)
+	normalizeScores(fused)
 
 	// Sort by final score descending.
 	sort.Slice(fused, func(i, j int) bool {
@@ -229,6 +230,36 @@ func (e *Engine) hydrateResults(ctx context.Context, results []Result) error {
 		}
 	}
 	return nil
+}
+
+// normalizeScores applies min-max normalization to map scores into [0, 1].
+// Preserves rank order. Single result gets 1.0; tied scores all get 1.0.
+func normalizeScores(results []Result) {
+	if len(results) <= 1 {
+		for i := range results {
+			results[i].Score = 1.0
+		}
+		return
+	}
+	minScore, maxScore := results[0].Score, results[0].Score
+	for _, r := range results[1:] {
+		if r.Score < minScore {
+			minScore = r.Score
+		}
+		if r.Score > maxScore {
+			maxScore = r.Score
+		}
+	}
+	span := maxScore - minScore
+	if span == 0 {
+		for i := range results {
+			results[i].Score = 1.0
+		}
+		return
+	}
+	for i := range results {
+		results[i].Score = (results[i].Score - minScore) / span
+	}
 }
 
 // applyGraphCentrality boosts scores by graph importance. Symbols with

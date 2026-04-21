@@ -328,3 +328,47 @@ func TestFusionMinScore(t *testing.T) {
 		t.Errorf("expected 0 results with high min_score, got %d", len(results))
 	}
 }
+
+func TestNormalizeScoresSpread(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
+
+	results, _, err := engine.Search(ctx, search.Options{
+		Query: "payment",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) < 2 {
+		t.Fatal("need at least 2 results to test normalization")
+	}
+
+	// Top result should be close to 1.0 after normalization.
+	if results[0].Score < 0.9 {
+		t.Errorf("top result score = %.4f, want >= 0.9 after normalization", results[0].Score)
+	}
+	// Scores should be differentiated (not all 0.02 like before normalization).
+	if results[0].Score == results[len(results)-1].Score {
+		t.Error("normalized scores should be differentiated, but top == bottom")
+	}
+
+	t.Logf("normalized scores:")
+	for i, r := range results {
+		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)
+	}
+}
