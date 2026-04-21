@@ -39,12 +39,18 @@ type GraphRenderer struct {
 	// VisibleCount controls how many nodes are visible (for animation).
 	// 0 or >= len(Layout.Nodes) means all visible.
 	VisibleCount int
+	// SelectedID highlights a specific node (0 = none).
+	SelectedID int64
+	// NodeColorOverride maps node IDs to special color indices (blast hop colors, faded).
+	// Nil = no overrides. Overrides take priority over lens-based coloring.
+	NodeColorOverride map[int64]uint8
 
 	// Cached state, rebuilt on each Render call.
-	nodeIndex    map[int64]int // ID → index into Layout.Nodes
-	colorMap     map[int64]uint8
-	colorMapLens Lens
-	styles       []lipgloss.Style
+	nodeIndex         map[int64]int // ID → index into Layout.Nodes
+	colorMap          map[int64]uint8
+	colorMapLens      Lens
+	styles            []lipgloss.Style
+	specialColorIndex map[uint8]int // color index → style array position
 }
 
 // Render draws the graph onto a canvas sized for the given terminal dimensions.
@@ -83,7 +89,14 @@ func (g *GraphRenderer) Render(cols, rows int) string {
 	for _, n := range visible {
 		x, y := g.toCanvas(n.X, n.Y, c.Width, c.Height, scale)
 		radius := nodeRadius(n.Centrality)
-		c.DrawCircleColored(x, y, radius, colorMap[n.ID])
+		if n.ID == g.SelectedID {
+			radius += 2
+			c.DrawCircleColored(x, y, radius, colorSelectedIdx)
+		} else if override, ok := g.NodeColorOverride[n.ID]; ok {
+			c.DrawCircleColored(x, y, radius, override)
+		} else {
+			c.DrawCircleColored(x, y, radius, colorMap[n.ID])
+		}
 	}
 
 	if g.Viewport.Zoom >= ZoomMedium {
@@ -122,24 +135,23 @@ func (g *GraphRenderer) cachedColorMap(nodes []LayoutNode) map[int64]uint8 {
 	return m
 }
 
+const (
+	colorSelectedIdx uint8 = 254
+	colorSentinel    uint8 = 255 // never-used value for run-length encoding init
+)
+
 func (g *GraphRenderer) renderColored(c *Canvas) string {
 	if len(c.dots) == 0 {
 		return ""
 	}
-	if len(g.styles) != len(g.Palette.Colors)+1 {
-		g.styles = make([]lipgloss.Style, len(g.Palette.Colors)+1)
-		g.styles[0] = lipgloss.NewStyle()
-		for i, color := range g.Palette.Colors {
-			g.styles[i+1] = lipgloss.NewStyle().Foreground(color)
-		}
-	}
+	g.ensureStyles()
 
 	var b strings.Builder
 	lastNonEmpty := -1
 	lines := make([]string, len(c.dots))
 	for row, cells := range c.dots {
 		var line strings.Builder
-		runColor := uint8(255)
+		runColor := colorSentinel
 		var runBuf strings.Builder
 		rowHasContent := false
 		for col, bits := range cells {
@@ -149,11 +161,7 @@ func (g *GraphRenderer) renderColored(c *Canvas) string {
 			cidx := c.CellColor(col, row)
 			if cidx != runColor {
 				if runBuf.Len() > 0 {
-					si := int(runColor)
-					if si >= len(g.styles) {
-						si = 0
-					}
-					line.WriteString(g.styles[si].Render(runBuf.String()))
+					line.WriteString(g.styles[g.styleIndex(runColor)].Render(runBuf.String()))
 					runBuf.Reset()
 				}
 				runColor = cidx
@@ -161,10 +169,7 @@ func (g *GraphRenderer) renderColored(c *Canvas) string {
 			runBuf.WriteRune(rune(brailleBase + int(bits)))
 		}
 		if runBuf.Len() > 0 {
-			si := int(runColor)
-			if si >= len(g.styles) {
-				si = 0
-			}
+			si := g.styleIndex(runColor)
 			line.WriteString(g.styles[si].Render(runBuf.String()))
 		}
 		if rowHasContent {
@@ -182,6 +187,60 @@ func (g *GraphRenderer) renderColored(c *Canvas) string {
 		b.WriteString(lines[i])
 	}
 	return b.String()
+}
+
+// ensureStyles builds the style lookup table: palette colors [1..N],
+// then special indices for blast/faded/selection mapped to the end.
+func (g *GraphRenderer) ensureStyles() {
+	paletteLen := len(g.Palette.Colors)
+	expectedLen := paletteLen + 1 + len(specialColors)
+	if len(g.styles) == expectedLen {
+		return
+	}
+	g.styles = make([]lipgloss.Style, expectedLen)
+	g.styles[0] = lipgloss.NewStyle()
+	for i, color := range g.Palette.Colors {
+		g.styles[i+1] = lipgloss.NewStyle().Foreground(color)
+	}
+	dark := g.Palette.Dark
+	base := paletteLen + 1
+	g.specialColorIndex = make(map[uint8]int, len(specialColors))
+	for i, sc := range specialColors {
+		color := sc.dark
+		if !dark {
+			color = sc.light
+		}
+		g.styles[base+i] = lipgloss.NewStyle().Foreground(color)
+		g.specialColorIndex[sc.idx] = base + i
+	}
+}
+
+type specialColor struct {
+	idx   uint8
+	dark  lipgloss.Color
+	light lipgloss.Color
+}
+
+// specialColors maps special color indices to their styles.
+// Order matters: the offset from palette end determines the style slot.
+var specialColors = []specialColor{
+	{colorFaded, "#3B4048", "#C8CCD4"},
+	{colorBlastSubject, "#FFFFFF", "#000000"},
+	{colorBlastHop1, "#E5C07B", "#B08800"},
+	{colorBlastHop2, "#D19A66", "#E36209"},
+	{colorBlastHop3, "#E06C75", "#D73A49"},
+	{colorSelectedIdx, "#FFFFFF", "#000000"},
+}
+
+func (g *GraphRenderer) styleIndex(colorIdx uint8) int {
+	if si, ok := g.specialColorIndex[colorIdx]; ok {
+		return si
+	}
+	si := int(colorIdx)
+	if si >= len(g.styles) {
+		si = 0
+	}
+	return si
 }
 
 func (g *GraphRenderer) buildNodeIndex() {
