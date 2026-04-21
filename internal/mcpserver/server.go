@@ -108,6 +108,19 @@ func RunWithOptions(opts RunOptions) error {
 		"sense",
 		version.Version,
 		server.WithToolCapabilities(false),
+		server.WithInstructions("Sense provides pre-indexed codebase understanding. "+
+			"Its tools query a semantic graph built from static analysis — "+
+			"faster and more complete than reading files.\n\n"+
+			"WHEN TO USE SENSE TOOLS:\n"+
+			"- Symbol relationships, callers, dependencies → sense.graph\n"+
+			"- \"What would break if I changed X?\", impact analysis → sense.blast\n"+
+			"- Conceptual/semantic code search (not exact string match) → sense.search\n"+
+			"- Project patterns and conventions → sense.conventions\n"+
+			"- Index health, what's indexed → sense.status\n\n"+
+			"WHEN NOT TO USE SENSE TOOLS:\n"+
+			"- Exact text/string search → use grep\n"+
+			"- Reading file contents → use your file reading tool\n"+
+			"- Editing code → Sense is read-only"),
 	)
 
 	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker}
@@ -139,7 +152,10 @@ type handlers struct {
 
 func searchTool() mcp.Tool {
 	return mcp.NewTool("sense.search",
-		mcp.WithDescription("Hybrid semantic + keyword search across all indexed symbols"),
+		mcp.WithDescription("Find symbols by semantic and keyword matching across all indexed code. "+
+			"Use this instead of grep when the question is about concepts, functionality, or behavior — "+
+			"not exact strings. Returns ranked symbols with file locations, kinds, and relevance scores, "+
+			"without reading any source files into context."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Search",
 			ReadOnlyHint:    mcp.ToBoolPtr(true),
@@ -149,23 +165,27 @@ func searchTool() mcp.Tool {
 		}),
 		mcp.WithString("query",
 			mcp.Required(),
-			mcp.Description("Natural-language search query"),
+			mcp.Description("Natural language description of what you're looking for, e.g. 'how does auth work', 'payment error handling', 'user validation'"),
 		),
 		mcp.WithNumber("limit",
-			mcp.Description("Maximum results (default 10)"),
+			mcp.Description("Maximum number of results to return (default 10)"),
 		),
 		mcp.WithString("language",
-			mcp.Description("Filter by language (e.g. \"ruby\", \"go\")"),
+			mcp.Description("Filter results to a specific language, e.g. 'ruby', 'go', 'typescript'"),
 		),
 		mcp.WithNumber("min_score",
-			mcp.Description("Minimum score threshold 0.0–1.0 (default 0.5)"),
+			mcp.Description("Minimum relevance score threshold 0.0–1.0 (default 0.0). Raise to filter weak matches."),
 		),
 	)
 }
 
 func graphTool() mcp.Tool {
 	return mcp.NewTool("sense.graph",
-		mcp.WithDescription("Symbol relationships — callers, callees, inheritance, tests"),
+		mcp.WithDescription("Look up the structural relationships of a symbol: callers, callees, "+
+			"inheritance, composition, includes, imports, and test coverage. "+
+			"Use this instead of grep or file reading when the user asks about relationships, dependencies, "+
+			"callers, or how a symbol connects to the rest of the codebase. "+
+			"Returns a pre-computed graph from the Sense index with no context window cost for file contents."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Graph",
 			ReadOnlyHint:    mcp.ToBoolPtr(true),
@@ -175,13 +195,13 @@ func graphTool() mcp.Tool {
 		}),
 		mcp.WithString("symbol",
 			mcp.Required(),
-			mcp.Description("Qualified or unqualified symbol name to look up"),
+			mcp.Description("Qualified or unqualified symbol name, e.g. 'User', 'Checkout::Order', 'HandleRequest'"),
 		),
 		mcp.WithNumber("depth",
-			mcp.Description("Traversal depth around the subject (default 1)"),
+			mcp.Description("How many hops to traverse from the symbol (default 1)"),
 		),
 		mcp.WithString("direction",
-			mcp.Description("One of: both, callers, callees (default both)"),
+			mcp.Description("Which edges to follow: 'both' (default), 'callers' (who calls this), or 'callees' (what this calls)"),
 			mcp.Enum("both", "callers", "callees"),
 		),
 	)
@@ -189,7 +209,11 @@ func graphTool() mcp.Tool {
 
 func blastTool() mcp.Tool {
 	return mcp.NewTool("sense.blast",
-		mcp.WithDescription("Blast radius for a symbol or diff — what breaks if this changes?"),
+		mcp.WithDescription("Compute what would break if a symbol or diff changed. "+
+			"Follows the chain of callers and dependents multiple hops deep, including affected tests. "+
+			"Use this instead of manually tracing callers when the user asks about impact, risk, "+
+			"safe-to-change analysis, or what would break. Accepts a symbol name or a git ref for "+
+			"diff-based analysis. Returns affected files, symbols, and test coverage with confidence scores."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Blast Radius",
 			ReadOnlyHint:    mcp.ToBoolPtr(true),
@@ -198,26 +222,30 @@ func blastTool() mcp.Tool {
 			OpenWorldHint:   mcp.ToBoolPtr(false),
 		}),
 		mcp.WithString("symbol",
-			mcp.Description("Qualified or unqualified symbol name (mutually exclusive with diff)"),
+			mcp.Description("Symbol to analyze, e.g. 'User', 'Checkout::Order'. Mutually exclusive with diff."),
 		),
 		mcp.WithString("diff",
-			mcp.Description("Git ref for diff-based blast (e.g. HEAD~1, main..feature)"),
+			mcp.Description("Git ref for diff-based blast, e.g. 'HEAD~1', 'main..feature'. Mutually exclusive with symbol."),
 		),
 		mcp.WithNumber("max_hops",
-			mcp.Description("Traversal depth (default 3)"),
+			mcp.Description("How many dependency hops to follow (default 3). Higher values find more distant impacts."),
 		),
 		mcp.WithNumber("min_confidence",
-			mcp.Description("Edge-confidence threshold 0.0–1.0 (default 0.7)"),
+			mcp.Description("Minimum edge confidence 0.0–1.0 (default 0.7). Lower values include weaker relationships."),
 		),
 		mcp.WithBoolean("include_tests",
-			mcp.Description("Include affected test files (default true)"),
+			mcp.Description("Include affected test files in the results (default true)"),
 		),
 	)
 }
 
 func statusTool() mcp.Tool {
 	return mcp.NewTool("sense.status",
-		mcp.WithDescription("Index health — file/symbol/edge counts, language breakdown, freshness"),
+		mcp.WithDescription("Check Sense index health and coverage. "+
+			"Returns file, symbol, edge, and embedding counts, language breakdown by tier, "+
+			"index freshness, and cumulative session metrics. "+
+			"Use this to verify what is indexed and whether the index is stale. "+
+			"Also useful for reporting how Sense has been used in the current session."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Status",
 			ReadOnlyHint:    mcp.ToBoolPtr(true),
@@ -506,7 +534,11 @@ func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options
 
 func conventionsTool() mcp.Tool {
 	return mcp.NewTool("sense.conventions",
-		mcp.WithDescription("Detected project conventions — inheritance, naming, structure, composition, testing patterns"),
+		mcp.WithDescription("Detect project conventions and recurring patterns: inheritance hierarchies, "+
+			"naming conventions, structural patterns, composition styles, and testing approaches. "+
+			"Use this instead of reading multiple files to understand how existing code is structured "+
+			"or what patterns to follow when writing new code. "+
+			"Returns conventions with strength scores and instance counts, scoped by domain if specified."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Conventions",
 			ReadOnlyHint:    mcp.ToBoolPtr(true),
@@ -515,10 +547,10 @@ func conventionsTool() mcp.Tool {
 			OpenWorldHint:   mcp.ToBoolPtr(false),
 		}),
 		mcp.WithString("domain",
-			mcp.Description("Scope to files matching this path substring (e.g. \"models\", \"controllers\")"),
+			mcp.Description("Filter conventions by domain, e.g. 'models', 'controllers', 'services', 'test'. Matches path substrings."),
 		),
 		mcp.WithNumber("min_strength",
-			mcp.Description("Minimum strength threshold 0.0–1.0 (default 0.0 — show all)"),
+			mcp.Description("Minimum convention strength 0.0–1.0 (default 0.0). Raise to see only strong, well-established patterns."),
 		),
 	)
 }
