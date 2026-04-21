@@ -94,6 +94,34 @@ Add to your `.mcp.json` (Claude Code, Cursor, or any MCP-speaking tool):
 
 Cursor users: place the same block in `~/.cursor/mcp.json`.
 
+## Claude Code Setup
+
+After connecting Sense via `.mcp.json`, add the following to your project's `CLAUDE.md` so Claude Code uses Sense proactively:
+
+```markdown
+## Sense (codebase understanding)
+
+Sense is connected as an MCP server. Load its tools via ToolSearch at the start
+of any code exploration task. Call `sense.status` first to confirm the index is
+healthy; fall back to grep/glob only if Sense is unavailable or the index is stale.
+
+### Before writing code
+
+1. `sense.status` — confirm index health.
+2. `sense.conventions` — check patterns for the domain you're working in.
+3. `sense.search` — look for prior art before creating new code.
+4. `sense.blast` — check scope of the symbols you're about to change.
+
+### While writing code
+
+- `sense.graph` — check callers before modifying a symbol's signature.
+- `sense.search` — check for existing implementations before creating new ones.
+
+### After completing work
+
+- `sense.blast --diff HEAD~1` — verify the scope of your changes.
+```
+
 ## Language Support
 
 | Tier | Languages | Coverage |
