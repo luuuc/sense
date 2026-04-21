@@ -84,6 +84,9 @@ type GraphEdges struct {
 	Calls    []CallEdgeRef    `json:"calls"`
 	CalledBy []CallEdgeRef    `json:"called_by"`
 	Inherits []InheritEdgeRef `json:"inherits"`
+	Composes []ComposeEdgeRef `json:"composes"`
+	Includes []IncludeEdgeRef `json:"includes"`
+	Imports  []ImportEdgeRef  `json:"imports"`
 	Tests    []TestEdgeRef    `json:"tests"`
 }
 
@@ -102,6 +105,31 @@ type CallEdgeRef struct {
 // syntactically explicit, so there is no probability to report);
 // leaving the field off keeps the on-wire shape honest.
 type InheritEdgeRef struct {
+	Symbol string  `json:"symbol"`
+	File   *string `json:"file"`
+}
+
+// ComposeEdgeRef is the shape of a composes edge entry (has_many,
+// belongs_to, has_one in Ruby; field composition in other languages).
+// Like InheritEdgeRef, confidence is omitted — associations are
+// syntactically explicit.
+type ComposeEdgeRef struct {
+	Symbol string  `json:"symbol"`
+	File   *string `json:"file"`
+}
+
+// IncludeEdgeRef is the shape of an includes edge entry (Ruby
+// `include SoftDeletable`, mixin inclusion). Like InheritEdgeRef,
+// confidence is omitted — includes are syntactically explicit.
+type IncludeEdgeRef struct {
+	Symbol string  `json:"symbol"`
+	File   *string `json:"file"`
+}
+
+// ImportEdgeRef is the shape of an imports edge entry (JS/TS
+// `import { foo } from './bar'`, Python `from x import y`).
+// Confidence is omitted — imports are syntactically explicit.
+type ImportEdgeRef struct {
 	Symbol string  `json:"symbol"`
 	File   *string `json:"file"`
 }

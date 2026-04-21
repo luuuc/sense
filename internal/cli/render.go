@@ -36,6 +36,15 @@ func RenderGraphHuman(w io.Writer, resp mcpio.GraphResponse) {
 	if s := renderInherits(resp.Edges.Inherits); s != "" {
 		_, _ = fmt.Fprintf(w, label, "inherits", s)
 	}
+	if s := renderComposes(resp.Edges.Composes); s != "" {
+		_, _ = fmt.Fprintf(w, label, "composes", s)
+	}
+	if s := renderIncludes(resp.Edges.Includes); s != "" {
+		_, _ = fmt.Fprintf(w, label, "includes", s)
+	}
+	if s := renderImports(resp.Edges.Imports); s != "" {
+		_, _ = fmt.Fprintf(w, label, "imports", s)
+	}
 	if s := renderCalls(resp.Edges.Calls); s != "" {
 		_, _ = fmt.Fprintf(w, label, "calls", s)
 	}
@@ -66,6 +75,39 @@ func renderCalls(edges []mcpio.CallEdgeRef) string {
 // confidence on the wire (the schema omits it), so entries are
 // bare symbol names.
 func renderInherits(edges []mcpio.InheritEdgeRef) string {
+	if len(edges) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(edges))
+	for _, e := range edges {
+		parts = append(parts, e.Symbol)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func renderComposes(edges []mcpio.ComposeEdgeRef) string {
+	if len(edges) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(edges))
+	for _, e := range edges {
+		parts = append(parts, e.Symbol)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func renderIncludes(edges []mcpio.IncludeEdgeRef) string {
+	if len(edges) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(edges))
+	for _, e := range edges {
+		parts = append(parts, e.Symbol)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func renderImports(edges []mcpio.ImportEdgeRef) string {
 	if len(edges) == 0 {
 		return ""
 	}

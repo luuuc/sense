@@ -70,6 +70,15 @@ func normalizeGraphResponse(r *GraphResponse) {
 	if r.Edges.Inherits == nil {
 		r.Edges.Inherits = []InheritEdgeRef{}
 	}
+	if r.Edges.Composes == nil {
+		r.Edges.Composes = []ComposeEdgeRef{}
+	}
+	if r.Edges.Includes == nil {
+		r.Edges.Includes = []IncludeEdgeRef{}
+	}
+	if r.Edges.Imports == nil {
+		r.Edges.Imports = []ImportEdgeRef{}
+	}
 	if r.Edges.Tests == nil {
 		r.Edges.Tests = []TestEdgeRef{}
 	}
