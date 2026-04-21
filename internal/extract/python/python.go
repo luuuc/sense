@@ -1,5 +1,5 @@
-// Package python extracts Tier-Basic symbols and intra-file edges from
-// Python source via tree-sitter-python.
+// Package python extracts symbols and intra-file edges from Python
+// source via tree-sitter-python.
 //
 // Symbol kinds:
 //   - class / dataclass      → KindClass
@@ -19,17 +19,24 @@
 //   - `getattr(obj, "name")` with a literal string second argument is
 //     emitted with confidence 0.7; non-literal `getattr` is skipped.
 //
+// Framework edges (see framework.go for details):
+//   - Django model fields (ForeignKey, etc.) → composes edges
+//   - Django URL patterns (path, re_path)    → calls edges to views
+//   - FastAPI route decorators               → calls edges from routes
+//   - FastAPI Depends()                      → calls edges to deps
+//   - Dataclass / Pydantic field types       → composes edges
+//   - Type annotations referencing classes    → composes edges
+//
 // Qualified-name rules (per 05-languages.md):
 //   - Class:      A  or  Outer.Inner
 //   - Method:     A.method  (Python has no syntactic instance/class
 //                            split at def-site; decorators identify
 //                            classmethods but we don't emit a separate
-//                            qualified form in Tier-Basic).
+//                            qualified form).
 //   - Function:   f  (top-level only; nested defs are closures, skipped)
 //   - Constant:   NAME  or  Outer.NAME
 //
-// What Tier-Basic skips (lives in Full-tier promotion):
-//   - decorators (framework inference: Django models, FastAPI routes)
+// What is still skipped:
 //   - imports (edge resolution; handled in 01-03)
 //   - visibility (leading underscore convention)
 package python
@@ -85,14 +92,7 @@ func (w *walker) walk(n *sitter.Node, scope []string) error {
 	case "function_definition":
 		return w.handleFunction(n, scope)
 	case "decorated_definition":
-		// Unwrap the decoration — the decorator itself is metadata, not
-		// a symbol. Tier-Full will use decorators for framework inference.
-		// A malformed `decorated_definition` with no `definition` field
-		// falls through to walkChildren so the walker stays resilient.
-		if def := n.ChildByFieldName("definition"); def != nil {
-			return w.walk(def, scope)
-		}
-		return w.walkChildren(n, scope)
+		return w.handleDecoratedDefinition(n, scope)
 	case "expression_statement":
 		// Assignments at module or class scope are wrapped in
 		// expression_statement nodes; descend.
@@ -192,6 +192,13 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 // attributed to the enclosing function, which is the symbol callers
 // observe.
 func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
+	return w.emitFunctionAndWalkBody(n, scope, nil)
+}
+
+// emitFunctionAndWalkBody is the shared path for both plain and
+// decorated functions. It emits the symbol, optionally processes
+// decorators (FastAPI routes, Depends), and walks the body for calls.
+func (w *walker) emitFunctionAndWalkBody(n *sitter.Node, scope []string, decorators []*sitter.Node) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
 		return w.walkChildren(n, scope)
@@ -219,6 +226,18 @@ func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 	}); err != nil {
 		return err
 	}
+
+	for _, dec := range decorators {
+		if err := w.emitFastapiRouteEdge(dec, qualified); err != nil {
+			return err
+		}
+	}
+	if len(decorators) > 0 {
+		if err := w.emitDependsEdges(n, qualified); err != nil {
+			return err
+		}
+	}
+
 	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call", func(c *sitter.Node) error {
 		return w.emitCall(c, qualified)
 	})
@@ -294,16 +313,28 @@ func literalGetattrTarget(call *sitter.Node, source []byte) (string, bool) {
 	return "", false
 }
 
-// handleAssignment emits KindConstant when the LHS is a plain
-// identifier that matches Python's convention for module-level
-// constants (ALL_CAPS / ALL_CAPS_WITH_UNDERSCORES). Class-body and
-// top-level assignments are both candidates — class-level constants
-// qualify through the class scope, top-level ones don't.
-//
-// Attribute assignments (`self.x = …`), subscripts (`d["k"] = …`),
-// and tuple/list targets (`a, b = …`) are all skipped — they're not
-// identifier LHS.
+// handleAssignment handles assignment nodes at module or class scope.
+// It emits KindConstant for ALL_CAPS identifiers, Django model field
+// composes edges, Django URL pattern edges, and type annotation edges.
 func (w *walker) handleAssignment(n *sitter.Node, scope []string) error {
+	if len(scope) > 0 {
+		if err := w.emitDjangoModelField(n, scope); err != nil {
+			return err
+		}
+		typeNode := n.ChildByFieldName("type")
+		if typeNode != nil {
+			classQualified := strings.Join(scope, ".")
+			line := extract.Line(n.StartPosition())
+			if err := w.emitTypeAnnotationEdge(typeNode, classQualified, line); err != nil {
+				return err
+			}
+		}
+	} else {
+		if err := w.emitURLPatternEdges(n); err != nil {
+			return err
+		}
+	}
+
 	lhs := n.ChildByFieldName("left")
 	if lhs == nil || lhs.Kind() != "identifier" {
 		return nil
