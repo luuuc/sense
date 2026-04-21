@@ -493,6 +493,62 @@ func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
 	return refs, nil
 }
 
+// EdgesOfKind returns all edges of a given kind. Used by post-extraction
+// passes (e.g. interface satisfaction) that need to query relationship
+// data across the entire index.
+func (a *Adapter) EdgesOfKind(ctx context.Context, kind model.EdgeKind) ([]model.Edge, error) {
+	const q = `SELECT id, source_id, target_id, kind, file_id, line, confidence
+		FROM sense_edges WHERE kind = ? ORDER BY id ASC`
+	rows, err := a.db.QueryContext(ctx, q, string(kind))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite EdgesOfKind: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []model.Edge
+	for rows.Next() {
+		var e model.Edge
+		var sourceID, line sql.NullInt64
+		if err := rows.Scan(&e.ID, &sourceID, &e.TargetID, &e.Kind, &e.FileID, &line, &e.Confidence); err != nil {
+			return nil, fmt.Errorf("sqlite EdgesOfKind scan: %w", err)
+		}
+		if sourceID.Valid {
+			v := sourceID.Int64
+			e.SourceID = &v
+		}
+		if line.Valid {
+			v := int(line.Int64)
+			e.Line = &v
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite EdgesOfKind iterate: %w", err)
+	}
+	return out, nil
+}
+
+// FileIDsByLanguage returns the IDs of all files with the given language.
+func (a *Adapter) FileIDsByLanguage(ctx context.Context, lang string) (map[int64]bool, error) {
+	const q = `SELECT id FROM sense_files WHERE language = ?`
+	rows, err := a.db.QueryContext(ctx, q, lang)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite FileIDsByLanguage: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sqlite FileIDsByLanguage scan: %w", err)
+		}
+		out[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite FileIDsByLanguage iterate: %w", err)
+	}
+	return out, nil
+}
+
 // symbolsForFilesChunkSize caps the number of placeholders per IN clause
 // to stay well within SQLite's variable limit.
 const symbolsForFilesChunkSize = 500

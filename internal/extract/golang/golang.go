@@ -35,6 +35,10 @@
 package golang
 
 import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/luuuc/sense/internal/extract"
@@ -134,11 +138,12 @@ func (w *walker) emitConstSpec(spec *sitter.Node) error {
 			continue
 		}
 		if err := w.emit.Symbol(extract.EmittedSymbol{
-			Name:      name,
-			Qualified: w.qualify(name),
-			Kind:      model.KindConstant,
-			LineStart: extract.Line(spec.StartPosition()),
-			LineEnd:   extract.Line(spec.EndPosition()),
+			Name:       name,
+			Qualified:  w.qualify(name),
+			Kind:       model.KindConstant,
+			Visibility: visibility(name),
+			LineStart:  extract.Line(spec.StartPosition()),
+			LineEnd:    extract.Line(spec.EndPosition()),
 		}); err != nil {
 			return err
 		}
@@ -179,26 +184,123 @@ func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool) error {
 	}
 
 	kind := model.KindType
+	var structNode, ifaceNode *sitter.Node
 	if !isAlias {
-		// `type X struct {}` → class, `type X interface {}` → interface,
-		// anything else (`type X []int`, `type X Other`) → KindType.
 		if t := spec.ChildByFieldName("type"); t != nil {
 			switch t.Kind() {
 			case "struct_type":
 				kind = model.KindClass
+				structNode = t
 			case "interface_type":
 				kind = model.KindInterface
+				ifaceNode = t
 			}
 		}
 	}
 
-	return w.emit.Symbol(extract.EmittedSymbol{
-		Name:      name,
-		Qualified: w.qualify(name),
-		Kind:      kind,
-		LineStart: extract.Line(spec.StartPosition()),
-		LineEnd:   extract.Line(spec.EndPosition()),
-	})
+	qualified := w.qualify(name)
+	if err := w.emit.Symbol(extract.EmittedSymbol{
+		Name:       name,
+		Qualified:  qualified,
+		Kind:       kind,
+		Visibility: visibility(name),
+		LineStart:  extract.Line(spec.StartPosition()),
+		LineEnd:    extract.Line(spec.EndPosition()),
+	}); err != nil {
+		return err
+	}
+
+	if structNode != nil {
+		if err := w.emitEmbeddings(structNode, qualified); err != nil {
+			return err
+		}
+	}
+	if ifaceNode != nil {
+		if err := w.emitInterfaceMethods(ifaceNode, qualified); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// emitInterfaceMethods walks an interface_type's method_elem children
+// and emits each as a KindMethod symbol parented to the interface.
+func (w *walker) emitInterfaceMethods(ifaceNode *sitter.Node, ifaceQualified string) error {
+	for i := uint(0); i < ifaceNode.NamedChildCount(); i++ {
+		me := ifaceNode.NamedChild(i)
+		if me == nil || me.Kind() != "method_elem" {
+			continue
+		}
+		nameNode := me.ChildByFieldName("name")
+		if nameNode == nil {
+			continue
+		}
+		name := extract.Text(nameNode, w.source)
+		if name == "" {
+			continue
+		}
+		if err := w.emit.Symbol(extract.EmittedSymbol{
+			Name:            name,
+			Qualified:       ifaceQualified + "." + name,
+			Kind:            model.KindMethod,
+			Visibility:      visibility(name),
+			ParentQualified: ifaceQualified,
+			LineStart:       extract.Line(me.StartPosition()),
+			LineEnd:         extract.Line(me.EndPosition()),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// emitEmbeddings walks a struct_type's field declarations and emits
+// includes edges for embedded fields (fields with no explicit name).
+func (w *walker) emitEmbeddings(structNode *sitter.Node, structQualified string) error {
+	fdl := structNode.NamedChild(0)
+	if fdl == nil || fdl.Kind() != "field_declaration_list" {
+		return nil
+	}
+	for i := uint(0); i < fdl.NamedChildCount(); i++ {
+		fd := fdl.NamedChild(i)
+		if fd == nil || fd.Kind() != "field_declaration" {
+			continue
+		}
+		if fd.ChildByFieldName("name") != nil {
+			continue
+		}
+		typeNode := fd.ChildByFieldName("type")
+		if typeNode == nil {
+			continue
+		}
+		var target string
+		switch typeNode.Kind() {
+		case "type_identifier":
+			target = w.qualify(extract.Text(typeNode, w.source))
+		case "qualified_type":
+			target = extract.Text(typeNode, w.source)
+		case "generic_type":
+			if base := typeNode.ChildByFieldName("type"); base != nil {
+				target = w.qualify(extract.Text(base, w.source))
+			}
+		default:
+			continue
+		}
+		if target == "" {
+			continue
+		}
+		line := extract.Line(fd.StartPosition())
+		if err := w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: structQualified,
+			TargetQualified: target,
+			Kind:            model.EdgeIncludes,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // handleFunction emits a top-level function (no receiver) and walks
@@ -214,16 +316,18 @@ func (w *walker) handleFunction(n *sitter.Node) error {
 	}
 	qualified := w.qualify(name)
 	if err := w.emit.Symbol(extract.EmittedSymbol{
-		Name:      name,
-		Qualified: qualified,
-		Kind:      model.KindFunction,
-		LineStart: extract.Line(n.StartPosition()),
-		LineEnd:   extract.Line(n.EndPosition()),
+		Name:       name,
+		Qualified:  qualified,
+		Kind:       model.KindFunction,
+		Visibility: visibility(name),
+		LineStart:  extract.Line(n.StartPosition()),
+		LineEnd:    extract.Line(n.EndPosition()),
 	}); err != nil {
 		return err
 	}
+	types, locals := w.buildTypeMap(n)
 	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified)
+		return w.emitCall(c, qualified, types, locals)
 	})
 }
 
@@ -252,32 +356,35 @@ func (w *walker) handleMethod(n *sitter.Node) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindMethod,
+		Visibility:      visibility(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
 	}); err != nil {
 		return err
 	}
+	types, locals := w.buildTypeMap(n)
 	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified)
+		return w.emitCall(c, qualified, types, locals)
 	})
 }
 
-// emitCall produces an EdgeCalls edge for one call_expression. The
-// callee text is pulled from the `function` field: an identifier for
-// bare calls, a selector_expression for dotted calls, or anything else
-// (rare: literal function calls, type assertions with method). We emit
-// the surface text for the simple cases and skip the complex ones —
-// `(*p).M()` and `f()()` produce unresolvable garbage otherwise.
-func (w *walker) emitCall(call *sitter.Node, source string) error {
+// emitCall produces an EdgeCalls edge for one call_expression. When
+// the callee is a selector_expression (e.g. `x.Method()`), the type
+// map is consulted to resolve the receiver — if `x` has a known type,
+// the target becomes `pkg.Type.Method` instead of the raw `x.Method`.
+func (w *walker) emitCall(call *sitter.Node, source string, types map[string]localType, locals map[string]bool) error {
 	fn := call.ChildByFieldName("function")
 	if fn == nil {
 		return nil
 	}
 	var target string
+	confidence := extract.ConfidenceStatic
 	switch fn.Kind() {
-	case "identifier", "selector_expression":
+	case "identifier":
 		target = extract.Text(fn, w.source)
+	case "selector_expression":
+		target, confidence = w.resolveSelector(fn, types, locals)
 	default:
 		return nil
 	}
@@ -290,11 +397,311 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 		TargetQualified: target,
 		Kind:            model.EdgeCalls,
 		Line:            &line,
-		Confidence:      1.0,
+		Confidence:      confidence,
 	})
 }
 
+// resolveSelector attempts to resolve a selector_expression callee
+// (e.g. `x.Method`) using the local type map. Returns the target
+// qualified name and confidence. When the operand is a known local
+// variable without a resolved type, confidence drops to 0.8;
+// unknown operands (likely package references like `fmt`) stay at 1.0.
+func (w *walker) resolveSelector(sel *sitter.Node, types map[string]localType, locals map[string]bool) (string, float64) {
+	operand := sel.ChildByFieldName("operand")
+	field := sel.ChildByFieldName("field")
+	if operand == nil || field == nil {
+		return extract.Text(sel, w.source), extract.ConfidenceStatic
+	}
+	if operand.Kind() != "identifier" {
+		return extract.Text(sel, w.source), extract.ConfidenceStatic
+	}
+	varName := extract.Text(operand, w.source)
+	methodName := extract.Text(field, w.source)
+	if varName == "" || methodName == "" {
+		return "", 0
+	}
+	lt, ok := types[varName]
+	if !ok || lt.name == "" {
+		confidence := extract.ConfidenceStatic
+		if locals[varName] || ok {
+			confidence = extract.ConfidenceAmbiguous
+		}
+		return varName + "." + methodName, confidence
+	}
+	return w.qualify(lt.name) + "." + methodName, lt.confidence
+}
+
+// localType tracks a variable's resolved type within a function body.
+type localType struct {
+	name       string  // unqualified type name (e.g. "Order")
+	elemName   string  // element type for slices/arrays (for range resolution)
+	confidence float64 // 1.0 for explicit declarations, 0.8 for inferred
+}
+
+// buildTypeMap scans a function/method declaration for local variable
+// type information and builds a set of all known local variable names.
+// Type sources: parameters, receiver, var declarations, short
+// declarations with composite literals or constructor calls, range
+// variables. The locals set tracks every declared variable name
+// (even those with unknown types) so callers can distinguish
+// unresolved locals from package references.
+func (w *walker) buildTypeMap(funcNode *sitter.Node) (map[string]localType, map[string]bool) {
+	types := map[string]localType{}
+	locals := map[string]bool{}
+
+	// Receiver (for methods)
+	if recv := funcNode.ChildByFieldName("receiver"); recv != nil {
+		for i := uint(0); i < recv.NamedChildCount(); i++ {
+			pd := recv.NamedChild(i)
+			if pd == nil || pd.Kind() != "parameter_declaration" {
+				continue
+			}
+			name := extract.Text(pd.ChildByFieldName("name"), w.source)
+			typeName := unwrapTypeName(pd.ChildByFieldName("type"), w.source)
+			if name != "" && typeName != "" {
+				types[name] = localType{typeName, "", extract.ConfidenceStatic}
+				locals[name] = true
+			}
+		}
+	}
+
+	// Parameters
+	if params := funcNode.ChildByFieldName("parameters"); params != nil {
+		for i := uint(0); i < params.NamedChildCount(); i++ {
+			pd := params.NamedChild(i)
+			if pd == nil || pd.Kind() != "parameter_declaration" {
+				continue
+			}
+			typeNode := pd.ChildByFieldName("type")
+			typeName, elemName := resolveTypeAndElem(typeNode, w.source)
+			if typeName == "" && elemName == "" {
+				continue
+			}
+			for j := uint(0); j < pd.NamedChildCount(); j++ {
+				ch := pd.NamedChild(j)
+				if ch.Kind() == "identifier" {
+					name := extract.Text(ch, w.source)
+					types[name] = localType{typeName, elemName, extract.ConfidenceStatic}
+					locals[name] = true
+				}
+			}
+		}
+	}
+
+	// Body: var declarations, short var declarations, range clauses
+	body := funcNode.ChildByFieldName("body")
+	if body == nil {
+		return types, locals
+	}
+	_ = extract.WalkNamedDescendants(body, "var_declaration", func(n *sitter.Node) error {
+		w.collectVarDecl(n, types, locals)
+		return nil
+	})
+	_ = extract.WalkNamedDescendants(body, "short_var_declaration", func(n *sitter.Node) error {
+		w.collectShortVarDecl(n, types, locals)
+		return nil
+	})
+	_ = extract.WalkNamedDescendants(body, "range_clause", func(n *sitter.Node) error {
+		w.collectRangeVars(n, types, locals)
+		return nil
+	})
+	return types, locals
+}
+
+// collectVarDecl handles `var x Type` and `var x []Type` declarations.
+func (w *walker) collectVarDecl(n *sitter.Node, types map[string]localType, locals map[string]bool) {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		spec := n.NamedChild(i)
+		if spec == nil || spec.Kind() != "var_spec" {
+			continue
+		}
+		typeNode := spec.ChildByFieldName("type")
+		typeName, elemName := resolveTypeAndElem(typeNode, w.source)
+		for j := uint(0); j < spec.NamedChildCount(); j++ {
+			ch := spec.NamedChild(j)
+			if ch.Kind() == "identifier" {
+				name := extract.Text(ch, w.source)
+				locals[name] = true
+				if typeName != "" || elemName != "" {
+					types[name] = localType{typeName, elemName, extract.ConfidenceStatic}
+				}
+			}
+		}
+	}
+}
+
+// collectShortVarDecl handles `x := expr` — extracts type from
+// composite literals (Order{...}) and constructor calls (NewOrder()).
+func (w *walker) collectShortVarDecl(n *sitter.Node, types map[string]localType, locals map[string]bool) {
+	left := n.ChildByFieldName("left")
+	right := n.ChildByFieldName("right")
+	if left == nil || right == nil {
+		return
+	}
+	lhsCount := left.NamedChildCount()
+	rhsCount := right.NamedChildCount()
+	if lhsCount == 0 || rhsCount == 0 {
+		return
+	}
+	for i := uint(0); i < lhsCount; i++ {
+		varNode := left.NamedChild(i)
+		if varNode == nil || varNode.Kind() != "identifier" {
+			continue
+		}
+		varName := extract.Text(varNode, w.source)
+		locals[varName] = true
+		if i < rhsCount {
+			valNode := right.NamedChild(i)
+			if lt, ok := w.inferType(valNode); ok {
+				types[varName] = lt
+			}
+		}
+	}
+}
+
+// collectRangeVars handles `for _, v := range src` — assigns the
+// element type of the range source to the value variable.
+func (w *walker) collectRangeVars(rc *sitter.Node, types map[string]localType, locals map[string]bool) {
+	left := rc.ChildByFieldName("left")
+	right := rc.ChildByFieldName("right")
+	if left == nil || right == nil {
+		return
+	}
+	// Register all loop variables as locals
+	for i := uint(0); i < left.NamedChildCount(); i++ {
+		ch := left.NamedChild(i)
+		if ch != nil && ch.Kind() == "identifier" {
+			locals[extract.Text(ch, w.source)] = true
+		}
+	}
+	// The value variable is the second identifier in the left list
+	// (first is key/index). For `for v := range src`, it's the first.
+	var valueNode *sitter.Node
+	count := uint(0)
+	for i := uint(0); i < left.NamedChildCount(); i++ {
+		ch := left.NamedChild(i)
+		if ch != nil && ch.Kind() == "identifier" {
+			count++
+			if count == 2 {
+				valueNode = ch
+				break
+			}
+		}
+	}
+	if valueNode == nil {
+		return
+	}
+	valueName := extract.Text(valueNode, w.source)
+	if valueName == "" || valueName == "_" {
+		return
+	}
+	// Determine element type from the range source
+	if right.Kind() == "identifier" {
+		srcName := extract.Text(right, w.source)
+		if lt, ok := types[srcName]; ok && lt.elemName != "" {
+			types[valueName] = localType{lt.elemName, "", extract.ConfidenceStatic}
+		}
+	} else if right.Kind() == "composite_literal" {
+		if typeNode := right.ChildByFieldName("type"); typeNode != nil {
+			if elemName := sliceElemType(typeNode, w.source); elemName != "" {
+				types[valueName] = localType{elemName, "", extract.ConfidenceStatic}
+			}
+		}
+	}
+}
+
+// resolveTypeAndElem extracts the type name and optional element type
+// from a type node. For slice/array types, elemName is the element
+// type; for plain types, elemName is empty.
+func resolveTypeAndElem(typeNode *sitter.Node, source []byte) (typeName, elemName string) {
+	if typeNode == nil {
+		return "", ""
+	}
+	if typeNode.Kind() == "slice_type" || typeNode.Kind() == "array_type" {
+		elem := sliceElemType(typeNode, source)
+		return "", elem
+	}
+	return unwrapTypeName(typeNode, source), ""
+}
+
+// sliceElemType extracts the element type from a slice_type or
+// array_type node via the `element` field.
+func sliceElemType(typeNode *sitter.Node, source []byte) string {
+	elem := typeNode.ChildByFieldName("element")
+	return unwrapTypeName(elem, source)
+}
+
+// inferType attempts to determine the type of a value expression.
+func (w *walker) inferType(val *sitter.Node) (localType, bool) {
+	if val == nil {
+		return localType{}, false
+	}
+	switch val.Kind() {
+	case "composite_literal":
+		typeNode := val.ChildByFieldName("type")
+		if typeNode == nil {
+			typeNode = val.NamedChild(0)
+		}
+		if typeNode != nil {
+			if typeNode.Kind() == "slice_type" || typeNode.Kind() == "array_type" {
+				elemName := sliceElemType(typeNode, w.source)
+				if elemName != "" {
+					return localType{"", elemName, extract.ConfidenceStatic}, true
+				}
+			}
+			typeName := unwrapTypeName(typeNode, w.source)
+			if typeName != "" {
+				return localType{typeName, "", extract.ConfidenceStatic}, true
+			}
+		}
+	case "unary_expression":
+		// &Order{...} — operand is a composite literal
+		if operand := val.ChildByFieldName("operand"); operand != nil && operand.Kind() == "composite_literal" {
+			typeName := unwrapTypeName(operand.NamedChild(0), w.source)
+			if typeName != "" {
+				return localType{typeName, "", extract.ConfidenceStatic}, true
+			}
+		}
+	case "call_expression":
+		// NewOrder() → infer "Order" from "NewOrder" constructor pattern
+		fn := val.ChildByFieldName("function")
+		if fn != nil && fn.Kind() == "identifier" {
+			funcName := extract.Text(fn, w.source)
+			if typeName := constructorType(funcName); typeName != "" {
+				return localType{typeName, "", extract.ConfidenceAmbiguous}, true
+			}
+		}
+	}
+	return localType{}, false
+}
+
+// constructorType extracts "Order" from "NewOrder" or "newOrder".
+func constructorType(funcName string) string {
+	if len(funcName) <= 3 {
+		return ""
+	}
+	if !strings.HasPrefix(funcName, "New") && !strings.HasPrefix(funcName, "new") {
+		return ""
+	}
+	typeName := funcName[3:]
+	r, _ := utf8.DecodeRuneInString(typeName)
+	if r == utf8.RuneError || !unicode.IsUpper(r) {
+		return ""
+	}
+	return typeName
+}
+
 // ---- helpers ----
+
+// visibility returns "public" for exported names (PascalCase) and
+// "private" for unexported names, following Go's naming convention.
+func visibility(name string) string {
+	r, _ := utf8.DecodeRuneInString(name)
+	if r != utf8.RuneError && unicode.IsUpper(r) {
+		return "public"
+	}
+	return "private"
+}
 
 // qualify prepends the package name. If no package clause was found
 // (unusual — a Go file almost always has one), fall back to the bare
