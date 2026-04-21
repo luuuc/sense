@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/luuuc/sense/internal/cli"
@@ -64,9 +65,15 @@ func main() {
 		fs := flag.NewFlagSet("sense scan", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
+		quietFlag := fs.Bool("quiet", false, "suppress warnings")
 		dir := fs.String("dir", ".", "project root")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			os.Exit(1)
+		}
+
+		var warnSink io.Writer
+		if *quietFlag {
+			warnSink = io.Discard
 		}
 
 		if *watchFlag {
@@ -80,6 +87,7 @@ func main() {
 		} else {
 			if _, err := scan.Run(ctx, scan.Options{
 				Root:              *dir,
+				Warnings:          warnSink,
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, "sense scan:", err)
