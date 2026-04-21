@@ -10,7 +10,7 @@ import (
 // The result is a single Matcher that respects nested .gitignore rules the
 // same way git does: a .gitignore in sub/dir/ applies to paths under sub/dir/.
 func Build(root string, extra []string) (*Matcher, error) {
-	m := New()
+	m := New(defaultPatterns...)
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {

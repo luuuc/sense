@@ -10,6 +10,23 @@ import (
 	"strings"
 )
 
+var defaultPatterns = []string{
+	"vendor/",
+	"node_modules/",
+	"dist/",
+	"build/",
+	"*.min.js",
+	"*.bundle.js",
+	"*.min.css",
+}
+
+// DefaultPatterns returns a copy of the built-in ignore patterns.
+func DefaultPatterns() []string {
+	out := make([]string, len(defaultPatterns))
+	copy(out, defaultPatterns)
+	return out
+}
+
 // Matcher tests whether a path should be excluded from the scan.
 type Matcher struct {
 	rules []rule

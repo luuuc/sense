@@ -89,6 +89,58 @@ func TestBuildExtraPatterns(t *testing.T) {
 	}
 }
 
+func TestBuildDefaultPatterns(t *testing.T) {
+	root := t.TempDir()
+
+	m, err := Build(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dirTests := []string{"vendor", "node_modules", "dist", "build"}
+	for _, d := range dirTests {
+		if !m.Match(d, true) {
+			t.Errorf("%s dir should be ignored by defaults", d)
+		}
+		if !m.Match(d+"/lib/foo.rb", false) {
+			t.Errorf("%s children should be ignored by defaults", d)
+		}
+	}
+
+	fileTests := []struct {
+		path string
+		want bool
+	}{
+		{"app.min.js", true},
+		{"app.bundle.js", true},
+		{"theme.min.css", true},
+		{"app.js", false},
+		{"main.go", false},
+	}
+	for _, tt := range fileTests {
+		if got := m.Match(tt.path, false); got != tt.want {
+			t.Errorf("Match(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestBuildDefaultNegation(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, ".senseignore"), "!vendor/\n")
+
+	m, err := Build(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m.Match("vendor", true) {
+		t.Error("vendor dir should be un-ignored via .senseignore negation")
+	}
+	if m.Match("vendor/lib/foo.rb", false) {
+		t.Error("vendor children should be un-ignored via .senseignore negation")
+	}
+}
+
 func TestBuildSkipsSenseDir(t *testing.T) {
 	root := t.TempDir()
 	senseDir := filepath.Join(root, ".sense")
