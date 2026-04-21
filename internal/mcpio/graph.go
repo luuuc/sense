@@ -23,9 +23,9 @@ type BuildGraphRequest struct {
 // adapter's SymbolContext plus a file-path lookup. Direction
 // semantics:
 //
-//   - "callers"  — inbound only (called_by + tests)
-//   - "callees"  — outbound only (calls + inherits)
-//   - "both"/"" — all four kinds
+//   - "callers"  — inbound only (called_by + composes + tests)
+//   - "callees"  — outbound only (calls + inherits + composes)
+//   - "both"/"" — all edge kinds
 //
 // The builder never returns an error: every miss maps to a
 // defensible default. Call / inherit edges with an unknown file
@@ -62,6 +62,21 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 					Symbol: qualifiedOrName(e.Target),
 					File:   fileRefOrNil(e.Target.FileID, files),
 				})
+			case model.EdgeComposes:
+				resp.Edges.Composes = append(resp.Edges.Composes, ComposeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeIncludes:
+				resp.Edges.Includes = append(resp.Edges.Includes, IncludeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeImports:
+				resp.Edges.Imports = append(resp.Edges.Imports, ImportEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
 			}
 		}
 	}
@@ -73,6 +88,21 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 					Symbol:     qualifiedOrName(e.Target),
 					File:       fileRefOrNil(e.Target.FileID, files),
 					Confidence: Confidence(e.Edge.Confidence),
+				})
+			case model.EdgeComposes:
+				resp.Edges.Composes = append(resp.Edges.Composes, ComposeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeIncludes:
+				resp.Edges.Includes = append(resp.Edges.Includes, IncludeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeImports:
+				resp.Edges.Imports = append(resp.Edges.Imports, ImportEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
 				})
 			case model.EdgeTests:
 				if path, ok := files(e.Target.FileID); ok {
@@ -86,7 +116,8 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 	}
 
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) +
-		len(resp.Edges.Inherits) + len(resp.Edges.Tests)
+		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
+		len(resp.Edges.Includes) + len(resp.Edges.Imports) + len(resp.Edges.Tests)
 
 	uniqueFiles := countUniqueEdgeFiles(resp)
 	resp.SenseMetrics = GraphMetrics{
@@ -120,6 +151,21 @@ func countUniqueEdgeFiles(resp GraphResponse) int {
 		}
 	}
 	for _, e := range resp.Edges.Inherits {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range resp.Edges.Composes {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range resp.Edges.Includes {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range resp.Edges.Imports {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}

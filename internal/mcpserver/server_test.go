@@ -214,7 +214,30 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// 4. tools/call: sense.status
+	// 4. tools/call: sense.search (no min_score — regression for B2 blocker)
+	t.Run("sense.search_default_min_score", func(t *testing.T) {
+		resp := send("tools/call", map[string]any{
+			"name":      "sense.search",
+			"arguments": map[string]any{"query": "extract register"},
+		})
+		assertToolResult(t, resp, "sense.search")
+		text := extractToolText(t, resp)
+
+		var searchResp struct {
+			Results []struct {
+				Symbol string  `json:"symbol"`
+				Score  float64 `json:"score"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(text), &searchResp); err != nil {
+			t.Fatalf("parse search JSON: %v\n%s", err, text)
+		}
+		if len(searchResp.Results) == 0 {
+			t.Fatal("search returned 0 results with default min_score (was 0.5, should be 0.0)")
+		}
+	})
+
+	// 5. tools/call: sense.status
 	t.Run("sense.status", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{
 			"name":      "sense.status",
