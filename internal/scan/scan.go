@@ -161,6 +161,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := h.resolveAndWriteEdges(); err != nil {
 		return nil, err
 	}
+	if err := h.satisfyInterfaces(); err != nil {
+		return nil, err
+	}
 	if err := h.associateTests(); err != nil {
 		return nil, err
 	}
@@ -529,7 +532,7 @@ func (h *harness) writeFile(rel, lang string, source []byte, fileHash string, c 
 				Name:       s.Name,
 				Qualified:  s.Qualified,
 				Kind:       s.Kind,
-				Visibility: "public", // placeholder; pitch defers real extraction
+				Visibility: s.Visibility,
 				ParentID:   parentID,
 				LineStart:  s.LineStart,
 				LineEnd:    s.LineEnd,
