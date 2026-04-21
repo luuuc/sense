@@ -30,6 +30,20 @@ import (
 	"github.com/luuuc/sense/internal/version"
 )
 
+const serverInstructions = "When Sense is available and indexed, prefer Sense tools over grep, glob, " +
+	"and file-walking agents for structural and semantic code questions. " +
+	"Sense provides pre-indexed results that are faster and more complete.\n\n" +
+	"WHEN TO USE SENSE TOOLS:\n" +
+	"- Symbol relationships, callers, dependencies → sense.graph\n" +
+	"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
+	"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
+	"- Project patterns and conventions → sense.conventions\n" +
+	"- Index health, what's indexed → sense.status\n\n" +
+	"WHEN NOT TO USE SENSE TOOLS:\n" +
+	"- Exact text/string search → use grep\n" +
+	"- Reading file contents → use your file reading tool\n" +
+	"- Editing code → Sense is read-only"
+
 // RunOptions configures the MCP server.
 type RunOptions struct {
 	Dir        string
@@ -108,19 +122,7 @@ func RunWithOptions(opts RunOptions) error {
 		"sense",
 		version.Version,
 		server.WithToolCapabilities(false),
-		server.WithInstructions("Sense provides pre-indexed codebase understanding. "+
-			"Its tools query a semantic graph built from static analysis — "+
-			"faster and more complete than reading files.\n\n"+
-			"WHEN TO USE SENSE TOOLS:\n"+
-			"- Symbol relationships, callers, dependencies → sense.graph\n"+
-			"- \"What would break if I changed X?\", impact analysis → sense.blast\n"+
-			"- Conceptual/semantic code search (not exact string match) → sense.search\n"+
-			"- Project patterns and conventions → sense.conventions\n"+
-			"- Index health, what's indexed → sense.status\n\n"+
-			"WHEN NOT TO USE SENSE TOOLS:\n"+
-			"- Exact text/string search → use grep\n"+
-			"- Reading file contents → use your file reading tool\n"+
-			"- Editing code → Sense is read-only"),
+		server.WithInstructions(serverInstructions),
 	)
 
 	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker}

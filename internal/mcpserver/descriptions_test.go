@@ -20,6 +20,7 @@ func TestToolDescriptionsContainRoutingKeywords(t *testing.T) {
 		"instead of",
 		"use this",
 		"Use this",
+		"prefer",
 	}
 
 	for _, tool := range tools {
