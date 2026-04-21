@@ -228,7 +228,7 @@ export default class extends Controller {
 	}
 }
 
-func TestNonStimulusAnonymousClass(t *testing.T) {
+func TestDefaultExportNaming(t *testing.T) {
 	src := []byte(`export default class extends Base {}`)
 	p := sitter.NewParser()
 	defer p.Close()
@@ -247,8 +247,122 @@ func TestNonStimulusAnonymousClass(t *testing.T) {
 		t.Fatalf("Extract: %v", err)
 	}
 
-	// Non-controller file: anonymous class should NOT produce a symbol
+	var found bool
+	for _, s := range r.symbols {
+		if s.Qualified == "Helper" && s.Kind == "class" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected symbol Helper (class) from anonymous default export named after file")
+	}
+
+	// Inherits edge should still be emitted.
+	var hasEdge bool
+	for _, e := range r.edges {
+		if e.SourceQualified == "Helper" && e.TargetQualified == "Base" && e.Kind == "inherits" {
+			hasEdge = true
+		}
+	}
+	if !hasEdge {
+		t.Error("expected inherits edge Helper → Base")
+	}
+}
+
+func TestDefaultExportFunctionNaming(t *testing.T) {
+	src := []byte(`export default function({ user }) {
+  return process(user)
+}`)
+	p := sitter.NewParser()
+	defer p.Close()
+	ex := TSX{}
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	r := &recorder{}
+	if err := ex.Extract(tree, src, "app/components/UserProfile.tsx", r); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	var found bool
+	for _, s := range r.symbols {
+		if s.Qualified == "UserProfile" && s.Kind == "function" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected symbol UserProfile (function) from anonymous default export")
+	}
+
+	var hasCall bool
+	for _, e := range r.edges {
+		if e.SourceQualified == "UserProfile" && e.TargetQualified == "process" && e.Kind == "calls" {
+			hasCall = true
+		}
+	}
+	if !hasCall {
+		t.Error("expected calls edge UserProfile → process")
+	}
+}
+
+func TestDefaultExportArrowFunctionNaming(t *testing.T) {
+	src := []byte(`export default ({ items }) => {
+  return items.map(format)
+}`)
+	p := sitter.NewParser()
+	defer p.Close()
+	ex := TSX{}
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	r := &recorder{}
+	if err := ex.Extract(tree, src, "app/components/OrderSummary.tsx", r); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	var found bool
+	for _, s := range r.symbols {
+		if s.Qualified == "OrderSummary" && s.Kind == "function" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected symbol OrderSummary (function) from arrow function default export")
+	}
+}
+
+func TestDefaultExportIndexFileSkipped(t *testing.T) {
+	src := []byte(`export default function() {}`)
+	p := sitter.NewParser()
+	defer p.Close()
+	ex := TypeScript{}
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	r := &recorder{}
+	if err := ex.Extract(tree, src, "app/components/index.ts", r); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
 	if len(r.symbols) != 0 {
-		t.Errorf("expected 0 symbols for anonymous class in non-controller file, got %d", len(r.symbols))
+		t.Errorf("expected 0 symbols for anonymous default export in index file, got %d", len(r.symbols))
 	}
 }

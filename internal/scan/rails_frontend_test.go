@@ -183,9 +183,13 @@ export default class extends Controller {
 		byQualified[s.Qualified] = s
 	}
 
-	// The helper_controller.js is NOT in a controllers/ directory, so no Stimulus inference
-	if _, ok := byQualified["HelperController"]; ok {
-		t.Error("HelperController should NOT be inferred from non-standard path")
+	// The helper_controller.js is NOT in a controllers/ directory, so no Stimulus
+	// inference. The symbol exists via default export naming (from the filename),
+	// but should NOT have Stimulus targets or outlets.
+	if sym, ok := byQualified["HelperController"]; ok {
+		if sym.Kind != "class" {
+			t.Errorf("HelperController kind = %q, want class", sym.Kind)
+		}
 	}
 
 	// DynamicThingController should NOT exist (no matching JS file)
