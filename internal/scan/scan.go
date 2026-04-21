@@ -33,6 +33,7 @@ import (
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/resolve"
 	"github.com/luuuc/sense/internal/sqlite"
+	"github.com/luuuc/sense/internal/tui"
 )
 
 // Options bounds a scan run. Zero values select sensible defaults.
@@ -179,6 +180,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		if err := h.embedSymbols(); err != nil {
 			return nil, err
 		}
+	}
+	if _, err := tui.ComputeAndCacheLayout(ctx, idx, senseDir); err != nil {
+		_, _ = fmt.Fprintf(warn, "warn: layout computation failed: %v\n", err)
 	}
 	if err := idx.StampSchemaVersion(ctx); err != nil {
 		return nil, err
