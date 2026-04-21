@@ -20,6 +20,8 @@ jobs:
     name: Smoke-test released binary (linux/amd64)
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+
       - name: Download release archive and checksums
         env:
           TAG: ${{ github.event.release.tag_name }}
@@ -65,3 +67,15 @@ jobs:
           for sub in scan search graph blast conventions status mcp version; do
             echo "$out" | grep -qE "^\s*${sub}\b" || { echo "help missing: ${sub}" >&2; exit 1; }
           done
+
+      - name: sense scan builds an index from the repo
+        run: |
+          set -euo pipefail
+          SENSE_EMBEDDINGS=false ./sense scan
+          ./sense status
+
+      - name: sense graph resolves a known symbol
+        run: |
+          set -euo pipefail
+          out="$(./sense graph Symbol)"
+          echo "$out"
