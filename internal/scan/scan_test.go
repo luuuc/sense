@@ -987,6 +987,83 @@ func buildTree(t *testing.T, root string, files []string) {
 	}
 }
 
+func TestScan_AddSenseToGitignore(t *testing.T) {
+	t.Run("adds .sense/ when .gitignore exists without it", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "app.rb"), "class App; end\n")
+		writeFile(t, filepath.Join(root, ".gitignore"), "*.log\n")
+		var out bytes.Buffer
+		_, err := scan.Run(context.Background(), scan.Options{
+			Root:     root,
+			Output:   &out,
+			Warnings: io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		content, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
+		if !strings.Contains(string(content), ".sense/") {
+			t.Error(".gitignore should contain .sense/")
+		}
+		if !strings.Contains(out.String(), "added .sense/ to .gitignore") {
+			t.Error("expected message about adding .sense/ to .gitignore")
+		}
+	})
+
+	t.Run("no double blank line when .gitignore ends with newline", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "app.rb"), "class App; end\n")
+		writeFile(t, filepath.Join(root, ".gitignore"), "*.log\n")
+		_, err := scan.Run(context.Background(), scan.Options{
+			Root:     root,
+			Output:   io.Discard,
+			Warnings: io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		content, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
+		if strings.Contains(string(content), "\n\n#") {
+			t.Error(".gitignore should not have double blank line before comment")
+		}
+	})
+
+	t.Run("skips when .sense/ already present", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "app.rb"), "class App; end\n")
+		writeFile(t, filepath.Join(root, ".gitignore"), "*.log\n.sense/\n")
+		before, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
+		_, err := scan.Run(context.Background(), scan.Options{
+			Root:     root,
+			Output:   io.Discard,
+			Warnings: io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		after, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
+		if string(before) != string(after) {
+			t.Error(".gitignore should not be modified when .sense/ already present")
+		}
+	})
+
+	t.Run("no-op when .gitignore absent", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "app.rb"), "class App; end\n")
+		_, err := scan.Run(context.Background(), scan.Options{
+			Root:     root,
+			Output:   io.Discard,
+			Warnings: io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, ".gitignore")); err == nil {
+			t.Error(".gitignore should not be created when absent")
+		}
+	})
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
