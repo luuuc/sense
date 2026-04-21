@@ -12,6 +12,7 @@ import (
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
+	"github.com/luuuc/sense/internal/versioncheck"
 	"github.com/luuuc/sense/internal/watch"
 )
 
@@ -42,7 +43,16 @@ func main() {
 
 	ctx := context.Background()
 
-	switch cmd := os.Args[1]; cmd {
+	cmd := os.Args[1]
+
+	switch cmd {
+	case "version", "--version", "-v", "help", "--help", "-h", "mcp":
+		// no version check for these
+	default:
+		versioncheck.CheckAndNotify(os.Stderr)
+	}
+
+	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("sense %s (schema v%d, embeddings: %s)\n",
 			version.Version, sqlite.SchemaVersion, embed.ModelID)

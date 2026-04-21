@@ -30,32 +30,68 @@ esac
 
 echo "Detected platform: ${OS}/${ARCH}"
 
-# --- Resolve latest version -----------------------------------------------
+# --- HTTP helpers ---------------------------------------------------------
 
-echo "Fetching latest sense release..."
+AUTH_HEADER=""
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"
+fi
 
 if command -v curl >/dev/null 2>&1; then
-  fetch() { curl -fsSL "$1"; }
-  download() { curl -fsSL -o "$1" "$2"; }
+  fetch() {
+    if [ -n "$AUTH_HEADER" ]; then
+      curl -fsSL -H "$AUTH_HEADER" "$1"
+    else
+      curl -fsSL "$1"
+    fi
+  }
+  download() {
+    if [ -n "$AUTH_HEADER" ]; then
+      curl -fsSL -H "$AUTH_HEADER" -o "$1" "$2"
+    else
+      curl -fsSL -o "$1" "$2"
+    fi
+  }
 elif command -v wget >/dev/null 2>&1; then
-  fetch() { wget -qO- "$1"; }
-  download() { wget -qO "$1" "$2"; }
+  fetch() {
+    if [ -n "$AUTH_HEADER" ]; then
+      wget -qO- --header="$AUTH_HEADER" "$1"
+    else
+      wget -qO- "$1"
+    fi
+  }
+  download() {
+    if [ -n "$AUTH_HEADER" ]; then
+      wget -qO "$1" --header="$AUTH_HEADER" "$2"
+    else
+      wget -qO "$1" "$2"
+    fi
+  }
 else
   echo "Error: curl or wget is required" >&2
   exit 1
 fi
 
-# Extract tag_name from the JSON response without requiring jq.
-TAG="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
-  | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+# --- Resolve version ------------------------------------------------------
 
-if [ -z "$TAG" ]; then
-  echo "Error: could not determine latest release" >&2
-  exit 1
+if [ -n "${VERSION:-}" ]; then
+  # Caller pinned a version: VERSION=0.8.0 or VERSION=v0.8.0
+  TAG="v${VERSION#v}"
+  VERSION="${TAG#v}"
+  echo "Pinned version: ${VERSION}"
+else
+  echo "Fetching latest sense release..."
+  TAG="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
+    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+
+  if [ -z "$TAG" ]; then
+    echo "Error: could not determine latest release" >&2
+    exit 1
+  fi
+
+  VERSION="${TAG#v}"
+  echo "Latest version: ${VERSION}"
 fi
-
-VERSION="${TAG#v}"
-echo "Latest version: ${VERSION}"
 
 # --- Download archive and checksums ---------------------------------------
 
@@ -121,4 +157,9 @@ echo "sense ${VERSION} installed to ${INSTALL_DIR}/sense"
 if [ "${PATH_HINT:-}" = "1" ]; then
   echo ""
   echo "Note: add ${INSTALL_DIR} to your PATH if it's not already there."
+fi
+
+if [ "$OS" = "darwin" ]; then
+  # Unsigned binaries trigger macOS Gatekeeper warnings on first run.
+  xattr -d com.apple.quarantine "${INSTALL_DIR}/sense" 2>/dev/null || true
 fi
