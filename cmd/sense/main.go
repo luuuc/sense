@@ -73,7 +73,6 @@ func main() {
 			if err := watch.Run(ctx, watch.RunOptions{
 				Root:              *dir,
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
-				MCP:               true,
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, "sense scan --watch:", err)
 				os.Exit(1)
