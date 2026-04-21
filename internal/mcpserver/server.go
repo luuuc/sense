@@ -518,14 +518,14 @@ func conventionsTool() mcp.Tool {
 			mcp.Description("Scope to files matching this path substring (e.g. \"models\", \"controllers\")"),
 		),
 		mcp.WithNumber("min_strength",
-			mcp.Description("Minimum strength threshold 0.0–1.0 (default 0.5)"),
+			mcp.Description("Minimum strength threshold 0.0–1.0 (default 0.0 — show all)"),
 		),
 	)
 }
 
 func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	domain := req.GetString("domain", "")
-	minStrength := req.GetFloat("min_strength", 0.5)
+	minStrength := req.GetFloat("min_strength", 0.0)
 
 	results, symbolCount, err := conventions.Detect(ctx, h.db, conventions.Options{
 		Domain:      domain,

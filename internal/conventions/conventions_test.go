@@ -334,6 +334,35 @@ func TestDetectStrengthScoring(t *testing.T) {
 	}
 }
 
+func TestDetectDefaultOptionsShowLowStrength(t *testing.T) {
+	adapter := setupFixtureIndex(t)
+	ctx := context.Background()
+
+	// Zero-value Options (the CLI/MCP default) must not hide conventions.
+	all, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	filtered, _, err := Detect(ctx, adapter.DB(), Options{MinStrength: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var belowHalf int
+	for _, c := range all {
+		if c.Strength < 0.5 {
+			belowHalf++
+		}
+	}
+	if belowHalf == 0 {
+		t.Fatal("fixture must contain at least one convention with strength < 0.5 to exercise this regression test")
+	}
+	if len(all) <= len(filtered) {
+		t.Errorf("zero-value Options should return more conventions than MinStrength=0.5: got all=%d filtered=%d", len(all), len(filtered))
+	}
+}
+
 func TestDetectEmptyIndex(t *testing.T) {
 	dir := t.TempDir()
 	senseDir := filepath.Join(dir, ".sense")
