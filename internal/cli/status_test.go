@@ -3,8 +3,22 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestRunStatus_LiveNoIndex(t *testing.T) {
+	dir := t.TempDir()
+	cio := IO{
+		Dir:    dir,
+		Stdout: &strings.Builder{},
+		Stderr: &strings.Builder{},
+	}
+	code := RunStatus([]string{"--live"}, cio)
+	if code != ExitIndexMissing {
+		t.Errorf("expected exit code %d for missing index, got %d", ExitIndexMissing, code)
+	}
+}
 
 func TestFormatTokens(t *testing.T) {
 	tests := []struct {

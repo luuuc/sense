@@ -77,7 +77,7 @@ func TestAnimation_InactiveStartReturnsNil(t *testing.T) {
 
 func TestAnimation_VisibleCountIntegration(t *testing.T) {
 	layout := testLayout()
-	m := newModel(graphStats{}, layout, nil)
+	m := newModel(graphStats{}, layout, nil, nil)
 
 	if !m.anim.active {
 		t.Error("animation should be active for non-empty layout")
