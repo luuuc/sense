@@ -105,7 +105,7 @@ func TestSearchState_ScheduleSearch(t *testing.T) {
 }
 
 func TestEnterSearchMode_NilEngine(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -120,7 +120,7 @@ func TestEnterSearchMode_NilEngine(t *testing.T) {
 }
 
 func TestExitSearchMode(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.mode = ModeSearch
 	m.searchState = &searchState{query: "test"}
 	m.renderer.NodeColorOverride = map[int64]uint8{1: colorSearchHigh}
@@ -143,7 +143,7 @@ func TestExitSearchMode(t *testing.T) {
 }
 
 func TestHandleSearchKey_Backspace_ClearsOverrides(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeSearch
@@ -162,7 +162,7 @@ func TestHandleSearchKey_Backspace_ClearsOverrides(t *testing.T) {
 }
 
 func TestHandleSearchKey_CursorNavigation(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeSearch
@@ -197,7 +197,7 @@ func TestHandleSearchKey_CursorNavigation(t *testing.T) {
 }
 
 func TestUpdate_SearchEscReturnsToNormal(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeSearch
@@ -211,7 +211,7 @@ func TestUpdate_SearchEscReturnsToNormal(t *testing.T) {
 }
 
 func TestUpdate_SearchResultMsg(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeSearch
@@ -242,7 +242,7 @@ func TestUpdate_SearchResultMsg(t *testing.T) {
 }
 
 func TestUpdate_SearchResultMsg_StaleID(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeSearch
@@ -260,7 +260,7 @@ func TestUpdate_SearchResultMsg_StaleID(t *testing.T) {
 }
 
 func TestStatusBar_SearchMode(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil, nil)
 	m.width = 120
 	m.height = 24
 	m.mode = ModeSearch
@@ -275,7 +275,7 @@ func TestStatusBar_SearchMode(t *testing.T) {
 }
 
 func TestStatusBar_NormalMode_ShowsSearch(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil, nil)
 	m.width = 120
 	m.height = 24
 
@@ -286,7 +286,7 @@ func TestStatusBar_NormalMode_ShowsSearch(t *testing.T) {
 }
 
 func TestSelectNodeByID(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.selectNodeByID(2)
 
 	if m.mode != ModeSelection {
@@ -298,7 +298,7 @@ func TestSelectNodeByID(t *testing.T) {
 }
 
 func TestSearchEnter_TriggersBlastTransition_NilDB(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeSearch
@@ -330,7 +330,7 @@ func TestSearchEnter_TriggersBlastTransition_NilDB(t *testing.T) {
 }
 
 func TestSearchEnter_NoResults(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeSearch
@@ -345,7 +345,7 @@ func TestSearchEnter_NoResults(t *testing.T) {
 }
 
 func TestSelectNodeByID_NotFound(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.mode = ModeNormal
 	m.selectNodeByID(999)
 

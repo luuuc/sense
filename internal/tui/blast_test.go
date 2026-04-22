@@ -80,7 +80,7 @@ func TestApplyBlastOverrides_Normal(t *testing.T) {
 			{ID: 3, Name: "Unrelated"},
 		},
 	}
-	m := newModel(graphStats{}, layout, nil)
+	m := newModel(graphStats{}, layout, nil, nil)
 	m.blast = &blastState{
 		hopMap: map[int64]int{1: 0, 2: 1},
 		frame:  blastFrames,
@@ -107,7 +107,7 @@ func TestApplyBlastOverrides_HubNode(t *testing.T) {
 			{ID: 3, Name: "B"},
 		},
 	}
-	m := newModel(graphStats{}, layout, nil)
+	m := newModel(graphStats{}, layout, nil, nil)
 	m.blast = &blastState{
 		hopMap:  map[int64]int{1: 0, 2: 1, 3: 2},
 		frame:   blastFrames,
@@ -133,7 +133,7 @@ func TestApplyBlastOverrides_AnimationProgression(t *testing.T) {
 			{ID: 4, Name: "Hop3"},
 		},
 	}
-	m := newModel(graphStats{}, layout, nil)
+	m := newModel(graphStats{}, layout, nil, nil)
 	m.blast = &blastState{
 		hopMap: map[int64]int{1: 0, 2: 1, 3: 2, 4: 3},
 		frame:  0,
@@ -155,7 +155,7 @@ func TestApplyBlastOverrides_AnimationProgression(t *testing.T) {
 }
 
 func TestExitBlastMode_ReturnsToSelection(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.mode = ModeBlast
 	m.selection.selectedIdx = 0
 	m.blast = &blastState{
@@ -180,7 +180,7 @@ func TestExitBlastMode_ReturnsToSelection(t *testing.T) {
 }
 
 func TestUpdate_BlastEscReturnsToSelection(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeBlast
@@ -201,7 +201,7 @@ func TestUpdate_BlastEscReturnsToSelection(t *testing.T) {
 }
 
 func TestTriggerBlast_NilDB(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.enterSelectionMode()
@@ -261,7 +261,7 @@ func TestVisibleHops_PerFrameProgression(t *testing.T) {
 }
 
 func TestStatusBar_BlastMode(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil, nil)
 	m.width = 120
 	m.height = 24
 	m.mode = ModeBlast

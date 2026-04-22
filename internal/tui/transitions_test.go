@@ -105,7 +105,7 @@ func TestTransitionTable(t *testing.T) {
 
 	for _, tt := range transitions {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel(graphStats{}, testLayout(), nil)
+			m := newModel(graphStats{}, testLayout(), nil, nil)
 			m.width = 80
 			m.height = 24
 			m.mode = tt.from
@@ -181,7 +181,7 @@ func TestTransition_NoOrphanedOverrides(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel(graphStats{}, testLayout(), nil)
+			m := newModel(graphStats{}, testLayout(), nil, nil)
 			m.width = 80
 			m.height = 24
 			tt.setup(&m)
@@ -200,7 +200,7 @@ func TestTransition_NoOrphanedOverrides(t *testing.T) {
 }
 
 func TestTransition_BlastToSearch_ClearsBlastState(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	m.mode = ModeBlast
@@ -236,7 +236,7 @@ func TestTransition_EscAlwaysGoesBack(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.from.String()+"→"+tt.want.String(), func(t *testing.T) {
-			m := newModel(graphStats{}, testLayout(), nil)
+			m := newModel(graphStats{}, testLayout(), nil, nil)
 			m.width = 80
 			m.height = 24
 			m.mode = tt.from

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +15,7 @@ import (
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
+	"github.com/luuuc/sense/internal/version"
 )
 
 // Mode represents the TUI interaction mode.
@@ -48,7 +50,7 @@ type graphStats struct {
 
 // Run launches the TUI using the given adapter. The caller must ensure
 // stdout is a TTY before calling this. The caller owns the adapter lifetime.
-func Run(ctx context.Context, adapter *sqlite.Adapter, senseDir string) error {
+func Run(ctx context.Context, adapter *sqlite.Adapter, senseDir string, opts ...ModelOption) error {
 	stats, err := loadStats(ctx, adapter)
 	if err != nil {
 		return fmt.Errorf("load graph stats: %w", err)
@@ -66,7 +68,11 @@ func Run(ctx context.Context, adapter *sqlite.Adapter, senseDir string) error {
 	}
 
 	se := buildSearchEngine(ctx, adapter, senseDir)
-	m := newModel(stats, layout, adapter.DB(), se)
+	root := filepath.Dir(senseDir)
+	allOpts := append([]ModelOption{
+		WithEcosystemPrompts(senseDir, root, parseMajorVersion(version.Version)),
+	}, opts...)
+	m := newModel(stats, layout, adapter.DB(), se, allOpts...)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err = p.Run()
 	return err
@@ -137,9 +143,36 @@ type model struct {
 	blast        *blastState
 	searchEngine *search.Engine
 	searchState  *searchState
+	status       StatusData
+	statusCh     <-chan StatusData
+	pulse        pulseState
+	nudge        nudgeState
+	prompt       promptState
+	majorVersion int
 }
 
-func newModel(stats graphStats, layout *Layout, db *sql.DB, searchEngine ...*search.Engine) model {
+// ModelOption configures optional model dependencies.
+type ModelOption func(*model)
+
+// WithStatusChannel sets a channel for receiving live status updates.
+func WithStatusChannel(ch <-chan StatusData) ModelOption {
+	return func(m *model) {
+		m.statusCh = ch
+	}
+}
+
+// WithEcosystemPrompts enables ecosystem prompts with persistence in senseDir.
+func WithEcosystemPrompts(senseDir, projectRoot string, majorVersion int) ModelOption {
+	return func(m *model) {
+		m.majorVersion = majorVersion
+		m.prompt = newPromptState(senseDir, majorVersion, promptContext{
+			ProjectRoot: projectRoot,
+			Symbols:     m.status.Symbols,
+		})
+	}
+}
+
+func newModel(stats graphStats, layout *Layout, db *sql.DB, searchEngine *search.Engine, opts ...ModelOption) model {
 	nodeCount := 0
 	if layout != nil {
 		nodeCount = len(layout.Nodes)
@@ -158,22 +191,33 @@ func newModel(stats graphStats, layout *Layout, db *sql.DB, searchEngine ...*sea
 			Mode:    DetectRenderMode(),
 			Palette: palette,
 		},
-		anim:      newAnimation(nodeCount),
-		dimStyle:  dim,
-		accentStyle: accent,
-		mode:      ModeNormal,
-		selection: newSelectionState(),
-		db:        db,
-		cache:     newNodeCache(),
+		anim:         newAnimation(nodeCount),
+		dimStyle:     dim,
+		accentStyle:  accent,
+		mode:         ModeNormal,
+		selection:    newSelectionState(),
+		db:           db,
+		cache:        newNodeCache(),
+		searchEngine: searchEngine,
+		status: StatusData{
+			Symbols: stats.Symbols,
+			Edges:   stats.Edges,
+		},
+		pulse: newPulseState(palette.Dark),
+		nudge: newNudgeState(),
 	}
-	if len(searchEngine) > 0 {
-		m.searchEngine = searchEngine[0]
+	for _, opt := range opts {
+		opt(&m)
 	}
 	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return m.anim.start()
+	cmds := []tea.Cmd{m.anim.start(), pulseTick(), nudgeCheck()}
+	if m.statusCh != nil {
+		cmds = append(cmds, listenForStatusUpdates(m.statusCh))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -199,6 +243,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.searchState != nil && msg.id == m.searchState.debounceID && m.searchEngine != nil {
 			return m, executeSearch(m.searchEngine, m.searchState.query, msg.id)
 		}
+	case pulseTickMsg:
+		m.pulse.render(time.Time(msg))
+		return m, pulseTick()
+	case nudgeCheckMsg:
+		m.nudge.evaluate(m.status, time.Time(msg))
+		return m, nudgeCheck()
+	case statusUpdateMsg:
+		m.status = StatusData(msg)
+		m.pulse.event()
+		if m.statusCh != nil {
+			return m, listenForStatusUpdates(m.statusCh)
+		}
 	case searchResultMsg:
 		if m.searchState != nil && msg.id == m.searchState.debounceID {
 			m.searchState.results = msg.results
@@ -216,6 +272,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.nudge.dismiss()
+
 	if msg.String() == "ctrl+c" {
 		m.quit = true
 		return m, tea.Quit
@@ -231,8 +289,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModeBlast:
 		return m.handleBlastKey(msg)
 	case ModeSelection:
+		if msg.String() == "x" && m.prompt.hasActive() {
+			m.prompt.dismiss(m.majorVersion)
+			return m, nil
+		}
 		return m.handleSelectionKey(msg)
 	default:
+		if msg.String() == "x" && m.prompt.hasActive() {
+			m.prompt.dismiss(m.majorVersion)
+			return m, nil
+		}
 		return m.handleNormalKey(msg)
 	}
 }
@@ -620,18 +686,26 @@ func (m model) View() string {
 		return "loading..."
 	}
 
+	hasNudge := m.nudge.active != nil
+	hasPrompt := m.prompt.hasActive()
 	reservedRows := 1
+	if hasNudge {
+		reservedRows++
+	}
+	if hasPrompt {
+		reservedRows++
+	}
 	if m.mode == ModeSelection && m.nodeInfo != nil {
-		reservedRows = 2
+		reservedRows++
 	}
 	if m.mode == ModeBlast && m.blast != nil {
-		reservedRows = 2
+		reservedRows++
 	}
 	if m.mode == ModeSearch && m.searchState != nil {
-		reservedRows = 2 + searchMaxVisible
+		reservedRows += 1 + searchMaxVisible
 	}
 	if m.selection.filterMode {
-		reservedRows = 2
+		reservedRows++
 	}
 
 	graphRows := m.height - reservedRows
@@ -640,33 +714,41 @@ func (m model) View() string {
 	}
 
 	graph := m.renderer.Render(m.width, graphRows)
-	var bottom string
+
+	var panels []string
 	if m.selection.filterMode {
-		bottom = renderFilterOverlay(m.selection, m.dimStyle, m.accentStyle) + "\n" + m.statusBar()
+		panels = append(panels, renderFilterOverlay(m.selection, m.dimStyle, m.accentStyle))
 	} else if m.mode == ModeSearch && m.searchState != nil {
 		searchInput := renderSearchInput(m.searchState, m.dimStyle, m.accentStyle)
 		results := renderSearchResults(m.searchState, searchMaxVisible, m.width, m.dimStyle, m.accentStyle)
 		if results != "" {
-			bottom = searchInput + "\n" + results + "\n" + m.statusBar()
+			panels = append(panels, searchInput, results)
 		} else {
-			bottom = searchInput + "\n" + m.statusBar()
+			panels = append(panels, searchInput)
 		}
 	} else if m.mode == ModeBlast && m.blast != nil {
 		blastInfo := m.blast.statusText()
 		if m.blast.hubNode {
 			blastInfo += "  (hub node — affects most of the graph)"
 		}
-		bottom = m.accentStyle.Render(blastInfo) + "\n" + m.statusBar()
+		panels = append(panels, m.accentStyle.Render(blastInfo))
 	} else if m.mode == ModeSelection && m.nodeInfo != nil {
-		bottom = renderInfoPanel(*m.nodeInfo, m.dimStyle, m.accentStyle) + "\n" + m.statusBar()
-	} else {
-		bottom = m.statusBar()
+		panels = append(panels, renderInfoPanel(*m.nodeInfo, m.dimStyle, m.accentStyle))
 	}
+
+	if hasPrompt {
+		panels = append(panels, m.prompt.render(m.width, m.dimStyle, m.accentStyle))
+	}
+	if hasNudge {
+		panels = append(panels, m.nudge.render(m.width, m.dimStyle, m.accentStyle))
+	}
+	panels = append(panels, m.statusBar())
+	bottom := strings.Join(panels, "\n")
 	return graph + "\n" + bottom
 }
 
 func (m model) statusBar() string {
-	left := fmt.Sprintf("%d symbols  %d edges", m.stats.Symbols, m.stats.Edges)
+	left := m.pulse.render(time.Now()) + " " + renderSessionStatus(m.status, m.width, m.dimStyle)
 	center := fmt.Sprintf("lens:%s  zoom:%s", m.renderer.Lens, m.renderer.Viewport.Zoom)
 
 	var hints string
@@ -691,10 +773,10 @@ func (m model) statusBar() string {
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(center) - lipgloss.Width(hints)
 	if gap < 2 {
-		return m.dimStyle.Render(left) + "  " + m.accentStyle.Render(center)
+		return left + "  " + m.accentStyle.Render(center)
 	}
 
 	leftPad := gap / 2
 	rightPad := gap - leftPad
-	return m.dimStyle.Render(left) + strings.Repeat(" ", leftPad) + m.accentStyle.Render(center) + strings.Repeat(" ", rightPad) + m.dimStyle.Render(hints)
+	return left + strings.Repeat(" ", leftPad) + m.accentStyle.Render(center) + strings.Repeat(" ", rightPad) + m.dimStyle.Render(hints)
 }

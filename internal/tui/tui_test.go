@@ -22,7 +22,7 @@ func testLayout() *Layout {
 
 func TestModel_QuitKeys(t *testing.T) {
 	for _, key := range []string{"q", "ctrl+c", "esc"} {
-		m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
+		m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil, nil)
 		var updated tea.Model
 		var cmd tea.Cmd
 		switch key {
@@ -45,7 +45,7 @@ func TestModel_QuitKeys(t *testing.T) {
 }
 
 func TestModel_WindowSize(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	um := updated.(model)
 	if um.width != 80 || um.height != 24 {
@@ -54,7 +54,7 @@ func TestModel_WindowSize(t *testing.T) {
 }
 
 func TestModel_ViewRendersGraph(t *testing.T) {
-	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	v := m.View()
@@ -64,7 +64,7 @@ func TestModel_ViewRendersGraph(t *testing.T) {
 }
 
 func TestModel_ViewLoading(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	v := m.View()
 	if v != "loading..." {
 		t.Errorf("zero-size view should show loading, got: %q", v)
@@ -72,7 +72,7 @@ func TestModel_ViewLoading(t *testing.T) {
 }
 
 func TestModel_PanKeys(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -90,7 +90,7 @@ func TestModel_PanKeys(t *testing.T) {
 }
 
 func TestModel_ZoomKeys(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("+")})
 	um := updated.(model)
@@ -106,7 +106,7 @@ func TestModel_ZoomKeys(t *testing.T) {
 }
 
 func TestModel_TabCyclesLens(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	if m.renderer.Lens != LensLanguage {
 		t.Fatalf("initial lens should be language, got %v", m.renderer.Lens)
 	}
@@ -118,20 +118,17 @@ func TestModel_TabCyclesLens(t *testing.T) {
 }
 
 func TestStatusBar_ContainsStats(t *testing.T) {
-	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 42, Edges: 17}, testLayout(), nil, nil)
 	m.width = 120
 	m.height = 24
 	bar := m.statusBar()
-	if !containsText(bar, "42 symbols") {
-		t.Errorf("status bar should contain symbol count, got %q", bar)
-	}
-	if !containsText(bar, "17 edges") {
-		t.Errorf("status bar should contain edge count, got %q", bar)
+	if !containsText(bar, "index: 42 sym 17 edges") {
+		t.Errorf("status bar should contain index vitals, got %q", bar)
 	}
 }
 
 func TestStatusBar_ContainsLensAndZoom(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil, nil)
 	m.width = 120
 	m.height = 24
 	bar := m.statusBar()
@@ -144,12 +141,12 @@ func TestStatusBar_ContainsLensAndZoom(t *testing.T) {
 }
 
 func TestStatusBar_NarrowWidth(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil, nil)
 	m.width = 50
 	m.height = 24
 	bar := m.statusBar()
-	if !containsText(bar, "q:quit") {
-		t.Errorf("narrow status bar should at least show quit hint, got %q", bar)
+	if !containsText(bar, "index:") {
+		t.Errorf("narrow status bar should show index vitals, got %q", bar)
 	}
 	if containsText(bar, "hjkl:pan") {
 		t.Error("narrow status bar should not show full key hints")
@@ -157,12 +154,12 @@ func TestStatusBar_NarrowWidth(t *testing.T) {
 }
 
 func TestStatusBar_InView(t *testing.T) {
-	m := newModel(graphStats{Symbols: 5, Edges: 3}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 5, Edges: 3}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 	v := m.View()
-	if !containsText(v, "5 symbols") {
-		t.Error("View() should contain the status bar with symbol count")
+	if !containsText(v, "index: 5 sym 3 edges") {
+		t.Error("View() should contain the status bar with index vitals")
 	}
 }
 

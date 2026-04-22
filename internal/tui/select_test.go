@@ -147,7 +147,7 @@ func TestSelectionState_SelectedNode(t *testing.T) {
 }
 
 func TestMode_EnterAndExit(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -187,7 +187,7 @@ func TestModel_SelectionKeyNavigation(t *testing.T) {
 			{SourceID: 1, TargetID: 2, Kind: "calls", Confidence: 1.0},
 		},
 	}
-	m := newModel(graphStats{Symbols: 3, Edges: 1}, layout, nil)
+	m := newModel(graphStats{Symbols: 3, Edges: 1}, layout, nil, nil)
 	m.width = 80
 	m.height = 24
 
@@ -203,7 +203,7 @@ func TestModel_SelectionKeyNavigation(t *testing.T) {
 }
 
 func TestStatusBar_SelectionMode(t *testing.T) {
-	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 10, Edges: 5}, testLayout(), nil, nil)
 	m.width = 120
 	m.height = 24
 	m.enterSelectionMode()
@@ -218,7 +218,7 @@ func TestStatusBar_SelectionMode(t *testing.T) {
 }
 
 func TestRefreshNodeInfo_NilDB(t *testing.T) {
-	m := newModel(graphStats{}, testLayout(), nil)
+	m := newModel(graphStats{}, testLayout(), nil, nil)
 	m.enterSelectionMode()
 
 	if m.nodeInfo == nil {
@@ -233,7 +233,7 @@ func TestRefreshNodeInfo_NilDB(t *testing.T) {
 }
 
 func TestUpdate_EndToEnd_ModeDispatch(t *testing.T) {
-	m := newModel(graphStats{Symbols: 2, Edges: 1}, testLayout(), nil)
+	m := newModel(graphStats{Symbols: 2, Edges: 1}, testLayout(), nil, nil)
 	m.width = 80
 	m.height = 24
 
