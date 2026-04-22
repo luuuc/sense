@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 
 	"github.com/mattn/go-isatty"
 
@@ -104,8 +105,24 @@ func main() {
 		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
 		quietFlag := fs.Bool("quiet", false, "suppress warnings")
 		dir := fs.String("dir", ".", "project root")
+		cpuprofile := fs.String("cpuprofile", "", "write CPU profile to file")
+		memprofile := fs.String("memprofile", "", "write heap profile to file on exit")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			os.Exit(1)
+		}
+
+		if *cpuprofile != "" {
+			f, err := os.Create(*cpuprofile)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "sense scan: create cpuprofile:", err)
+				os.Exit(1)
+			}
+			if err := pprof.StartCPUProfile(f); err != nil {
+				fmt.Fprintln(os.Stderr, "sense scan: start cpuprofile:", err)
+				_ = f.Close()
+				os.Exit(1)
+			}
+			defer func() { pprof.StopCPUProfile(); _ = f.Close() }()
 		}
 
 		var warnSink io.Writer
@@ -130,6 +147,18 @@ func main() {
 				fmt.Fprintln(os.Stderr, "sense scan:", err)
 				os.Exit(1)
 			}
+		}
+
+		if *memprofile != "" {
+			f, err := os.Create(*memprofile)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "sense scan: create memprofile:", err)
+				os.Exit(1)
+			}
+			if err := pprof.WriteHeapProfile(f); err != nil {
+				fmt.Fprintln(os.Stderr, "sense scan: write memprofile:", err)
+			}
+			_ = f.Close()
 		}
 
 	case "search":
