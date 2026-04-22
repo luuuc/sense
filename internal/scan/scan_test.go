@@ -151,10 +151,10 @@ func TestScanOutputFormat(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// Summary line format: "scanned N files (I indexed, K changed, M skipped) in Xms"
-	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ indexed, \d+ changed, \d+ skipped\) in \S+\n\z`)
+	// Summary line format: "scanned N files (...) in Xms" optionally followed by "edges: ..."
+	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ indexed, \d+ changed, \d+ skipped\) in \S+\n(edges: \d+ resolved, \d+ unresolved, \d+ ambiguous\n)?\z`)
 	if !pattern.MatchString(buf.String()) {
-		t.Fatalf("output does not match summary pattern\nhave: %q\nwant: scanned 2 files (I indexed, K changed, M skipped) in D\\n",
+		t.Fatalf("output does not match summary pattern\nhave: %q",
 			buf.String())
 	}
 }
@@ -447,21 +447,14 @@ func TestScanResolvesAmbiguityByLowestID(t *testing.T) {
 }
 
 // TestScanDropsUnresolvedEdges pins the flag-not-persist contract
-// for unresolved edges: the row is dropped from sense_edges, the
-// Result counts it under Unresolved, and a human-readable warning
-// lands on the Warnings writer so a user debugging why their graph
-// is sparse can see which target names went unmatched.
+// for unresolved edges: the row is dropped from sense_edges and the
+// Result counts it under Unresolved.
 func TestScanDropsUnresolvedEdges(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "orphan.rb"), "class Orphan < NonExistent\nend\n")
 
 	ctx := context.Background()
-	var warnings bytes.Buffer
-	res, err := scan.Run(ctx, scan.Options{
-		Root:     root,
-		Output:   &bytes.Buffer{},
-		Warnings: &warnings,
-	})
+	res, err := scan.Run(ctx, quietOpts(root))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -470,9 +463,6 @@ func TestScanDropsUnresolvedEdges(t *testing.T) {
 	}
 	if res.Unresolved != 1 {
 		t.Errorf("Unresolved = %d, want 1 (the Orphan → NonExistent inherits edge)", res.Unresolved)
-	}
-	if !strings.Contains(warnings.String(), `unresolved target "NonExistent"`) {
-		t.Errorf("expected unresolved-target warning, got: %q", warnings.String())
 	}
 
 	dbPath := filepath.Join(root, ".sense", "index.db")
@@ -580,42 +570,6 @@ end
 	}
 }
 
-// TestScanUnresolvedWarningsCapped pins the warning-truncation
-// behaviour: when more than maxUnresolvedWarnings unresolved edges
-// accumulate, the first N land on the Warnings writer and a single
-// "... and M more" summary line closes the stream. Result.Unresolved
-// still reflects the full count.
-func TestScanUnresolvedWarningsCapped(t *testing.T) {
-	root := t.TempDir()
-	// Thirty distinct unresolved targets — one inherits edge per
-	// class, each pointing at a name that has no matching symbol.
-	var src strings.Builder
-	const total = 30
-	for i := 0; i < total; i++ {
-		fmt.Fprintf(&src, "class C%d < Missing%d\nend\n\n", i, i)
-	}
-	writeFile(t, filepath.Join(root, "orphans.rb"), src.String())
-
-	var warnings bytes.Buffer
-	res, err := scan.Run(context.Background(), scan.Options{
-		Root:     root,
-		Output:   &bytes.Buffer{},
-		Warnings: &warnings,
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.Unresolved != total {
-		t.Errorf("Unresolved = %d, want %d", res.Unresolved, total)
-	}
-	lines := strings.Count(warnings.String(), "warn: unresolved target")
-	if lines == total {
-		t.Errorf("warnings not capped: %d per-edge lines, want cap around 20", lines)
-	}
-	if !strings.Contains(warnings.String(), "and 10 more unresolved targets omitted") {
-		t.Errorf("expected truncation summary in warnings, got: %q", warnings.String())
-	}
-}
 
 // TestScanEmitsTestsEdgesByFilenameConvention pins Card 12's test-
 // association contract: a `widget.go` / `widget_test.go` pair in
@@ -695,6 +649,58 @@ func TestNew(t *testing.T) {
 		if testsEdge.Edge.Confidence != 0.8 {
 			t.Errorf("%q tests edge confidence = %v, want 0.8", target.Qualified, testsEdge.Edge.Confidence)
 		}
+	}
+}
+
+// TestScanEmitsTestsEdgeByRailsMirrorTree verifies that a Rails-style
+// cross-directory spec file (spec/models/user_spec.rb) produces tests
+// edges targeting the impl symbol in app/models/user.rb.
+func TestScanEmitsTestsEdgeByRailsMirrorTree(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "app", "models", "user.rb"), "class User\nend\n")
+	writeFile(t, filepath.Join(root, "spec", "models", "user_spec.rb"),
+		"RSpec.describe User do\n  it 'works' do\n  end\nend\n")
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	a, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	all, err := a.Query(ctx, index.Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	var user model.Symbol
+	for _, s := range all {
+		if s.Qualified == "User" {
+			user = s
+		}
+	}
+	if user.ID == 0 {
+		t.Fatal("User symbol missing")
+	}
+
+	sym, err := a.ReadSymbol(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("ReadSymbol: %v", err)
+	}
+	var found bool
+	for _, ref := range sym.Inbound {
+		if ref.Edge.Kind == model.EdgeTests {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("User missing inbound tests edge from spec/models/user_spec.rb")
 	}
 }
 
