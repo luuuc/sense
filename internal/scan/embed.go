@@ -1,12 +1,19 @@
 package scan
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"path/filepath"
+	"runtime"
+	"sync"
 
 	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/search"
 )
+
+const maxEmbedWorkers = 8
 
 // embedSymbols is pass 3: generate embeddings for symbols in changed files.
 // Only symbols whose file was re-indexed this scan get new embeddings.
@@ -24,12 +31,6 @@ func (h *harness) embedSymbols() error {
 		return nil
 	}
 
-	embedder, err := embed.NewBundledEmbedder()
-	if err != nil {
-		return fmt.Errorf("create embedder: %w", err)
-	}
-	defer func() { _ = embedder.Close() }()
-
 	inputs := make([]embed.EmbedInput, len(syms))
 	for i, s := range syms {
 		inputs[i] = embed.EmbedInput{
@@ -40,7 +41,7 @@ func (h *harness) embedSymbols() error {
 		}
 	}
 
-	vecs, err := embedder.Embed(h.ctx, inputs)
+	vecs, err := parallelEmbed(h.ctx, inputs)
 	if err != nil {
 		return fmt.Errorf("generate embeddings: %w", err)
 	}
@@ -68,6 +69,107 @@ func (h *harness) embedSymbols() error {
 
 	h.embedded = len(vecs)
 	return nil
+}
+
+// buildHNSWIndex loads all embeddings from the DB and saves a prebuilt
+// HNSW index to .sense/hnsw.bin so search can load it directly instead
+// of rebuilding from raw vectors on every invocation.
+func (h *harness) buildHNSWIndex(senseDir string) error {
+	embeddings, err := h.idx.LoadEmbeddings(h.ctx)
+	if err != nil {
+		return fmt.Errorf("load embeddings for hnsw: %w", err)
+	}
+	if len(embeddings) == 0 {
+		return nil
+	}
+	path := filepath.Join(senseDir, "hnsw.bin")
+	if err := search.SaveHNSWIndex(path, embeddings); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(h.out, "saved hnsw index (%d vectors) to %s\n", len(embeddings), filepath.Base(path))
+	return nil
+}
+
+// parallelEmbed fans inputs across multiple ONNXEmbedder instances to
+// saturate available CPU cores. Each embedder owns an independent ONNX
+// session and pre-allocated buffers — no shared mutable state.
+func parallelEmbed(ctx context.Context, inputs []embed.EmbedInput) ([][]float32, error) {
+	batches := (len(inputs) + embed.BatchSize - 1) / embed.BatchSize
+	workers := runtime.NumCPU()
+	if workers > batches {
+		workers = batches
+	}
+	if workers > maxEmbedWorkers {
+		workers = maxEmbedWorkers
+	}
+	if workers <= 1 {
+		emb, err := embed.NewBundledEmbedder()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = emb.Close() }()
+		return emb.Embed(ctx, inputs)
+	}
+
+	embedders := make([]*embed.ONNXEmbedder, workers)
+	for i := range embedders {
+		emb, err := embed.NewBundledEmbedder()
+		if err != nil {
+			for j := 0; j < i; j++ {
+				_ = embedders[j].Close()
+			}
+			return nil, fmt.Errorf("create embedder %d: %w", i, err)
+		}
+		embedders[i] = emb
+	}
+	defer func() {
+		for _, emb := range embedders {
+			_ = emb.Close()
+		}
+	}()
+
+	chunkSize := (len(inputs) + workers - 1) / workers
+	type result struct {
+		vecs [][]float32
+		err  error
+	}
+	results := make([]result, workers)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		start := w * chunkSize
+		if start >= len(inputs) {
+			break
+		}
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		wg.Add(1)
+		go func(idx int, chunk []embed.EmbedInput) {
+			defer wg.Done()
+			vecs, err := embedders[idx].Embed(ctx, chunk)
+			if err != nil {
+				results[idx] = result{err: err}
+				cancel()
+				return
+			}
+			results[idx] = result{vecs: vecs}
+		}(w, inputs[start:end])
+	}
+	wg.Wait()
+
+	all := make([][]float32, 0, len(inputs))
+	for _, r := range results {
+		if r.err != nil {
+			return nil, r.err
+		}
+		all = append(all, r.vecs...)
+	}
+	return all, nil
 }
 
 // vectorToBlob serializes a float32 slice to a little-endian byte slice.

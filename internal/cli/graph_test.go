@@ -199,6 +199,57 @@ func TestRunGraphAmbiguousExit2(t *testing.T) {
 	}
 }
 
+func TestRunGraphDisambiguateByLanguage(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+	f1, _ := adapter.WriteFile(ctx, &model.File{Path: "app/models/project.rb", Language: "ruby", Hash: "a", IndexedAt: time.Now()})
+	f2, _ := adapter.WriteFile(ctx, &model.File{Path: "src/project.js", Language: "javascript", Hash: "b", IndexedAt: time.Now()})
+	_, _ = adapter.WriteSymbol(ctx, &model.Symbol{FileID: f1, Name: "Project", Qualified: "Project", Kind: "class", LineStart: 1, LineEnd: 10})
+	_, _ = adapter.WriteSymbol(ctx, &model.Symbol{FileID: f2, Name: "Project", Qualified: "Project", Kind: "function", LineStart: 1, LineEnd: 5})
+
+	t.Run("ambiguous without filter", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"Project"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSymbolIssue {
+			t.Errorf("exit = %d, want %d", code, ExitSymbolIssue)
+		}
+		if !strings.Contains(stderr.String(), "--language") {
+			t.Errorf("hint should mention --language:\n%s", stderr.String())
+		}
+	})
+
+	t.Run("resolved by --language", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"Project", "--language", "ruby"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSuccess {
+			t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "Project  (class)") {
+			t.Errorf("expected ruby class in output:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("resolved by --file", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"Project", "--file", "project.js"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSuccess {
+			t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "Project  (function)") {
+			t.Errorf("expected JS function in output:\n%s", stdout.String())
+		}
+	})
+}
+
 // TestRunGraphJSONRoundTripsCanonical proves the CLI's --json output
 // IS the canonical mcpio wire shape — not just a shape that happens
 // to unmarshal cleanly. A byte-by-byte equality after an unmarshal +

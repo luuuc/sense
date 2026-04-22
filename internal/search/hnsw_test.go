@@ -3,6 +3,7 @@ package search_test
 import (
 	"math"
 	"math/rand/v2"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -102,6 +103,50 @@ func TestHNSWPerformance1K(t *testing.T) {
 	}
 	if searchTime > 50*time.Millisecond {
 		t.Errorf("search time %v exceeds 50ms budget", searchTime)
+	}
+}
+
+func TestHNSWSaveLoadRoundTrip(t *testing.T) {
+	embeddings := map[int64][]float32{
+		1: normalize([]float32{1, 0, 0}),
+		2: normalize([]float32{0, 1, 0}),
+		3: normalize([]float32{0, 0, 1}),
+		4: normalize([]float32{0.9, 0.1, 0}),
+	}
+
+	path := filepath.Join(t.TempDir(), "hnsw.bin")
+	if err := search.SaveHNSWIndex(path, embeddings); err != nil {
+		t.Fatalf("SaveHNSWIndex: %v", err)
+	}
+
+	loaded, err := search.LoadHNSWIndex(path)
+	if err != nil {
+		t.Fatalf("LoadHNSWIndex: %v", err)
+	}
+	if loaded.Len() != 4 {
+		t.Fatalf("loaded index has %d vectors, want 4", loaded.Len())
+	}
+
+	results := loaded.Search(normalize([]float32{1, 0, 0}), 2)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	ids := map[int64]bool{}
+	for _, r := range results {
+		ids[r.SymbolID] = true
+	}
+	if !ids[1] || !ids[4] {
+		t.Errorf("expected symbols 1 and 4 in top-2, got %v", ids)
+	}
+}
+
+func TestLoadHNSWIndexMissing(t *testing.T) {
+	idx, err := search.LoadHNSWIndex(filepath.Join(t.TempDir(), "nonexistent.bin"))
+	if err != nil {
+		t.Fatalf("expected nil error for missing file, got: %v", err)
+	}
+	if idx != nil {
+		t.Fatalf("expected nil index for missing file, got: %v", idx)
 	}
 }
 

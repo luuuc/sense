@@ -17,6 +17,7 @@ type Match struct {
 	Qualified string
 	Kind      string
 	File      string
+	Language  string
 	LineStart int
 }
 
@@ -82,7 +83,7 @@ const fuzzyMaxResults = 5
 
 // lookupByQualified resolves tier 1 — an exact `qualified` match.
 func lookupByQualified(ctx context.Context, db *sql.DB, value string) ([]Match, error) {
-	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.line_start
+	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, f.language, s.line_start
 	           FROM sense_symbols s
 	           JOIN sense_files   f ON f.id = s.file_id
 	           WHERE s.qualified = ?
@@ -95,7 +96,7 @@ func lookupByQualified(ctx context.Context, db *sql.DB, value string) ([]Match, 
 // same short name (`App::User`, `Admin::User`), this is the tier
 // that typically produces an ambiguity list.
 func lookupByName(ctx context.Context, db *sql.DB, value string) ([]Match, error) {
-	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.line_start
+	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, f.language, s.line_start
 	           FROM sense_symbols s
 	           JOIN sense_files   f ON f.id = s.file_id
 	           WHERE s.name = ?
@@ -112,7 +113,7 @@ func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error)
 	if len(query) < fuzzyMinQueryLen {
 		return nil, nil
 	}
-	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.line_start
+	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, f.language, s.line_start
 	           FROM sense_symbols s
 	           JOIN sense_files   f ON f.id = s.file_id`
 	rows, err := db.QueryContext(ctx, q)
@@ -128,7 +129,7 @@ func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error)
 	var hits []scored
 	for rows.Next() {
 		var m Match
-		if err := rows.Scan(&m.ID, &m.Name, &m.Qualified, &m.Kind, &m.File, &m.LineStart); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Qualified, &m.Kind, &m.File, &m.Language, &m.LineStart); err != nil {
 			return nil, fmt.Errorf("lookup fuzzy scan: %w", err)
 		}
 		dq := levenshtein(query, m.Qualified)
@@ -175,7 +176,7 @@ func scanMatches(ctx context.Context, db *sql.DB, q string, args ...any) ([]Matc
 	var out []Match
 	for rows.Next() {
 		var m Match
-		if err := rows.Scan(&m.ID, &m.Name, &m.Qualified, &m.Kind, &m.File, &m.LineStart); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Qualified, &m.Kind, &m.File, &m.Language, &m.LineStart); err != nil {
 			return nil, fmt.Errorf("lookup scan: %w", err)
 		}
 		out = append(out, m)
@@ -183,18 +184,38 @@ func scanMatches(ctx context.Context, db *sql.DB, q string, args ...any) ([]Matc
 	return out, rows.Err()
 }
 
+// FilterMatches narrows a match list by file path substring and/or
+// language. Returns the original slice unmodified when both filters
+// are empty.
+func filterMatches(matches []Match, file, language string) []Match {
+	if file == "" && language == "" {
+		return matches
+	}
+	var out []Match
+	for _, m := range matches {
+		if file != "" && !strings.Contains(m.File, file) {
+			continue
+		}
+		if language != "" && !strings.EqualFold(m.Language, language) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // PrintDisambiguation writes the "multiple candidates" list the
 // pitch's example shows: a numbered list of candidates with kind +
-// file:line, followed by a hint to specify the qualified name.
+// file:line, followed by a hint to narrow with --file or --language.
 // Written to stderr by the CLI so a user piping --json still sees
 // the hint on their terminal.
 func PrintDisambiguation(w io.Writer, query, commandHint string, matches []Match) {
 	_, _ = fmt.Fprintf(w, "Multiple symbols match %q:\n", query)
 	for i, m := range matches {
-		_, _ = fmt.Fprintf(w, "  %d. %s  (%s)  %s:%d\n", i+1, m.Qualified, m.Kind, m.File, m.LineStart)
+		_, _ = fmt.Fprintf(w, "  %d. %s  (%s, %s)  %s:%d\n", i+1, m.Qualified, m.Kind, m.Language, m.File, m.LineStart)
 	}
 	if commandHint != "" {
-		_, _ = fmt.Fprintf(w, "Specify a qualified name: %s %q\n", commandHint, firstQualified(matches))
+		_, _ = fmt.Fprintf(w, "Narrow with: %s %q --file <path> or --language <lang>\n", commandHint, query)
 	}
 }
 
@@ -205,16 +226,6 @@ func PrintDisambiguation(w io.Writer, query, commandHint string, matches []Match
 // the fallback tier, not by a different render.
 func PrintNotFound(w io.Writer, query string) {
 	_, _ = fmt.Fprintf(w, "No symbol matches %q. Run 'sense scan' if the index is stale.\n", query)
-}
-
-// firstQualified returns the first match's qualified name or "" for
-// an empty slice. Extracted so the hint string in PrintDisambiguation
-// stays a single Fprintf.
-func firstQualified(matches []Match) string {
-	if len(matches) == 0 {
-		return ""
-	}
-	return matches[0].Qualified
 }
 
 // ---------------------------------------------------------------

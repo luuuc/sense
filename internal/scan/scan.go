@@ -64,6 +64,7 @@ type Result struct {
 	Edges          int // edges resolved and written to sense_edges
 	Embedded       int // symbols whose embeddings were generated/updated
 	Unresolved     int // edges whose target name matched no symbol; dropped
+	Ambiguous      int // edges resolved via ambiguous (multi-match) fallback
 	Warnings       int // per-file failures logged; scan continues past them
 	DefaultIgnored int // directories skipped by default ignore patterns
 	Duration       time.Duration
@@ -73,16 +74,6 @@ type Result struct {
 // Large minified lines (bundled JS, generated protos) would otherwise
 // balloon the index with source text that nobody reads.
 const snippetMaxBytes = 200
-
-// maxUnresolvedWarnings caps the per-edge unresolved-target warnings
-// printed to the Warnings sink. A real repo produces thousands of
-// unresolved edges (stdlib calls, third-party imports, dynamic
-// dispatch) — printing one line each drowns the legitimate
-// parse-error warnings users need to see. The accurate count stays
-// available on Result.Unresolved; after the cap is reached a single
-// "... and N more omitted" summary line closes the stream.
-const maxUnresolvedWarnings = 20
-const maxAmbiguousWarnings = 20
 
 // Run ensures the .sense directory and index.db exist, walks the
 // working tree, parses each file with a registered extractor, and
@@ -180,6 +171,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		if err := h.embedSymbols(); err != nil {
 			return nil, err
 		}
+		if err := h.buildHNSWIndex(senseDir); err != nil {
+			_, _ = fmt.Fprintf(warn, "warn: hnsw index build failed: %v\n", err)
+		}
 	}
 	if _, err := tui.ComputeAndCacheLayout(ctx, idx, senseDir); err != nil {
 		_, _ = fmt.Fprintf(warn, "warn: layout computation failed: %v\n", err)
@@ -199,6 +193,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		Edges:          h.edges,
 		Embedded:       h.embedded,
 		Unresolved:     h.unresolved,
+		Ambiguous:      h.ambiguous,
 		Warnings:       h.warnings,
 		DefaultIgnored: h.defaultIgnored,
 		Duration:       elapsed,
@@ -206,6 +201,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	_, _ = fmt.Fprintf(out, "scanned %d files (%d indexed, %d changed, %d skipped) in %s\n",
 		res.Files, res.Indexed, res.Changed, res.Skipped, elapsed)
+	if res.Edges > 0 || res.Unresolved > 0 {
+		_, _ = fmt.Fprintf(out, "edges: %d resolved, %d unresolved, %d ambiguous\n",
+			res.Edges, res.Unresolved, res.Ambiguous)
+	}
 	if res.DefaultIgnored > 0 {
 		_, _ = fmt.Fprintf(out, "skipped %d directories (default ignores: %s)\n",
 			res.DefaultIgnored, strings.Join(ignore.DefaultPatterns(), ", "))
@@ -310,6 +309,7 @@ type harness struct {
 	edges          int
 	embedded       int
 	unresolved     int
+	ambiguous      int
 	warnings       int
 	defaultIgnored int
 }
@@ -705,22 +705,10 @@ func (h *harness) resolveAndWriteEdges() error {
 				BaseConfidence:        pe.Confidence,
 			})
 			if !ok {
-				if unresolved < maxUnresolvedWarnings {
-					_, _ = fmt.Fprintf(h.warn,
-						"warn: unresolved target %q from %q\n",
-						pe.TargetName, pe.SourceQualified,
-					)
-				}
 				unresolved++
 				continue
 			}
 			if r.Ambiguous {
-				if ambiguous < maxAmbiguousWarnings {
-					_, _ = fmt.Fprintf(h.warn,
-						"warn: ambiguous target %q from %q → picked id=%d confidence=%.2f\n",
-						pe.TargetName, pe.SourceQualified, r.SymbolID, r.Confidence,
-					)
-				}
 				ambiguous++
 			}
 			edge := &model.Edge{
@@ -741,18 +729,9 @@ func (h *harness) resolveAndWriteEdges() error {
 	if err != nil {
 		return err
 	}
-	if extra := unresolved - maxUnresolvedWarnings; extra > 0 {
-		_, _ = fmt.Fprintf(h.warn,
-			"warn: ... and %d more unresolved targets omitted\n", extra,
-		)
-	}
-	if extra := ambiguous - maxAmbiguousWarnings; extra > 0 {
-		_, _ = fmt.Fprintf(h.warn,
-			"warn: ... and %d more ambiguous targets omitted\n", extra,
-		)
-	}
 	h.edges += written
 	h.unresolved += unresolved
+	h.ambiguous += ambiguous
 	return nil
 }
 

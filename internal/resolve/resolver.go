@@ -90,9 +90,8 @@ const ambiguousConfidence = extract.ConfidenceAmbiguous
 //  2. Exact match via byQualified. Single hit ⇒ BaseConfidence.
 //     Multiple ⇒ same-file preferred, else lowest-id; confidence
 //     clamped to ambiguousConfidence.
-//  3. For calls edges only, fall back to unqualified-name match via
-//     byName (pitch: "fall back to unqualified name, lower
-//     confidence"). Same scope preference; confidence clamped to
+//  3. For calls and tests edges, fall back to unqualified-name match
+//     via byName. Same scope preference; confidence clamped to
 //     ambiguousConfidence.
 //  4. No match ⇒ ok=false.
 func (ix *Index) Resolve(req Request) (Result, bool) {
@@ -102,7 +101,7 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 		return pickBest(matches, req.SourceFileID, req.BaseConfidence), true
 	}
 
-	if req.Kind == model.EdgeCalls {
+	if req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests {
 		// Unqualified fallback: find symbols whose trailing segment
 		// matches the target's trailing segment. Applies to bare
 		// targets ("say" ⇒ byName["say"]) as well as dotted targets

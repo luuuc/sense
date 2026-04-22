@@ -162,22 +162,64 @@ func TestLookupShortQueryNoFuzzy(t *testing.T) {
 
 func TestPrintDisambiguation(t *testing.T) {
 	matches := []Match{
-		{Qualified: "Admin::User", Kind: "class", File: "app/models/admin/user.rb", LineStart: 2},
-		{Qualified: "App::User", Kind: "class", File: "app/models/user.rb", LineStart: 3},
+		{Qualified: "Admin::User", Kind: "class", Language: "ruby", File: "app/models/admin/user.rb", LineStart: 2},
+		{Qualified: "App::User", Kind: "class", Language: "ruby", File: "app/models/user.rb", LineStart: 3},
 	}
 	var buf bytes.Buffer
 	PrintDisambiguation(&buf, "User", "sense graph", matches)
 	got := buf.String()
 	for _, want := range []string{
 		`Multiple symbols match "User":`,
-		`  1. Admin::User  (class)  app/models/admin/user.rb:2`,
-		`  2. App::User  (class)  app/models/user.rb:3`,
-		`Specify a qualified name: sense graph "Admin::User"`,
+		`  1. Admin::User  (class, ruby)  app/models/admin/user.rb:2`,
+		`  2. App::User  (class, ruby)  app/models/user.rb:3`,
+		`Narrow with: sense graph "User" --file <path> or --language <lang>`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("disambiguation missing %q\ngot:\n%s", want, got)
 		}
 	}
+}
+
+func Test_filterMatches(t *testing.T) {
+	matches := []Match{
+		{ID: 1, Qualified: "Project", Kind: "class", Language: "ruby", File: "app/models/project.rb"},
+		{ID: 2, Qualified: "Project", Kind: "function", Language: "javascript", File: "src/Project.js"},
+	}
+
+	t.Run("no filter returns all", func(t *testing.T) {
+		got := filterMatches(matches, "", "")
+		if len(got) != 2 {
+			t.Fatalf("want 2 matches, got %d", len(got))
+		}
+	})
+
+	t.Run("filter by language", func(t *testing.T) {
+		got := filterMatches(matches, "", "ruby")
+		if len(got) != 1 || got[0].ID != 1 {
+			t.Fatalf("want ruby match (id=1), got %+v", got)
+		}
+	})
+
+	t.Run("filter by language case-insensitive", func(t *testing.T) {
+		got := filterMatches(matches, "", "Ruby")
+		if len(got) != 1 || got[0].ID != 1 {
+			t.Fatalf("want ruby match (id=1), got %+v", got)
+		}
+	})
+
+	t.Run("filter by file substring", func(t *testing.T) {
+		got := filterMatches(matches, "Project.js", "")
+		if len(got) != 1 || got[0].ID != 2 {
+			t.Fatalf("want JS match (id=2), got %+v", got)
+		}
+	})
+
+	t.Run("both filters narrow to zero", func(t *testing.T) {
+		got := filterMatches(matches, "Project.js", "ruby")
+		if len(got) != 0 {
+			t.Fatalf("want 0 matches, got %d", len(got))
+		}
+	})
 }
 
 func TestLevenshtein(t *testing.T) {

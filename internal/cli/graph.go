@@ -21,6 +21,8 @@ Print a symbol's relationships — inheritance, calls, callers, tests.
 Flags:
   --depth N                 Traversal depth around the subject (default 1)
   --direction DIR           One of: both, callers, callees (default both)
+  --file PATH               Disambiguate by file path substring
+  --language LANG           Disambiguate by language (e.g. "ruby", "go")
   --json                    Emit JSON matching the sense.graph MCP schema
   --no-color                Disable ANSI color (NO_COLOR env var is also respected)
   -h, --help                Show this help
@@ -29,6 +31,7 @@ Examples:
   sense graph "CheckoutService"
   sense graph "User#email_verified?" --depth 2
   sense graph "OrdersController#create" --direction callers
+  sense graph "Project" --language ruby
   sense graph "CheckoutService" --json | jq '.edges.calls[].symbol'
 
 Exit codes:
@@ -58,6 +61,8 @@ type graphOptions struct {
 	Symbol    string
 	Depth     int
 	Direction GraphDirection
+	File      string
+	Language  string
 	JSON      bool
 	NoColor   bool
 }
@@ -96,6 +101,7 @@ func RunGraph(args []string, cio IO) int {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense graph:", err)
 		return ExitGeneralError
 	}
+	matches = filterMatches(matches, opts.File, opts.Language)
 	switch len(matches) {
 	case 0:
 		PrintNotFound(cio.Stderr, opts.Symbol)
@@ -170,6 +176,8 @@ func parseGraphArgs(args []string, stderr io.Writer) (graphOptions, error) {
 	var direction string
 	fs.IntVar(&opts.Depth, "depth", 1, "traversal depth around the subject")
 	fs.StringVar(&direction, "direction", string(DirectionBoth), "both|callers|callees")
+	fs.StringVar(&opts.File, "file", "", "disambiguate by file path substring")
+	fs.StringVar(&opts.Language, "language", "", "disambiguate by language")
 	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense.graph MCP schema")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "disable ANSI color")
 

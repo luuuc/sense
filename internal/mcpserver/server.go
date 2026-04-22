@@ -99,12 +99,20 @@ func RunWithOptions(opts RunOptions) error {
 	var embedder embed.Embedder
 
 	if cli.EmbeddingsEnabled(dir) {
-		embeddings, err := adapter.LoadEmbeddings(ctx)
-		if err != nil {
-			return fmt.Errorf("sense mcp: load embeddings: %w", err)
+		hnswPath := filepath.Join(dir, ".sense", "hnsw.bin")
+		idx, loadErr := search.LoadHNSWIndex(hnswPath)
+		if loadErr == nil && idx != nil {
+			vectorIdx = idx
+		} else {
+			embeddings, err := adapter.LoadEmbeddings(ctx)
+			if err != nil {
+				return fmt.Errorf("sense mcp: load embeddings: %w", err)
+			}
+			if len(embeddings) > 0 {
+				vectorIdx = search.BuildHNSWIndex(embeddings)
+			}
 		}
-		if len(embeddings) > 0 {
-			vectorIdx = search.BuildHNSWIndex(embeddings)
+		if vectorIdx != nil && vectorIdx.Len() > 0 {
 			embedder, err = embed.NewBundledEmbedder()
 			if err != nil {
 				return fmt.Errorf("sense mcp: init embedder: %w", err)

@@ -230,11 +230,11 @@ type edgePair struct {
 	target int64
 }
 
-// expandFrontier runs the BFS hop query against the covering
-// idx_sense_edges_target index: "which symbols call anything in
-// frontier via a `calls` edge at or above MinConfidence?" Returns
-// (caller_id, called_id) pairs so the outer loop can track
-// predecessors for the Via reconstruction.
+// expandFrontier runs the BFS hop query: "which symbols reference
+// anything in frontier via calls, composes, includes, or inherits
+// edges at or above MinConfidence?" Returns (source_id, target_id)
+// pairs so the outer loop can track predecessors for Via
+// reconstruction.
 //
 // Large frontiers are chunked to stay under SQLite's default
 // SQLITE_MAX_VARIABLE_NUMBER (999) — at pitch scale (~30K symbols)
@@ -256,7 +256,7 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfid
 		q := `SELECT source_id, target_id FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
-		        AND kind IN ('calls', 'composes', 'includes')
+		        AND kind IN ('calls', 'composes', 'includes', 'inherits')
 		        AND confidence >= ?`
 
 		args := make([]any, 0, len(batch)+1)
