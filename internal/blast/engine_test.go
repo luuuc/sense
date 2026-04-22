@@ -422,6 +422,56 @@ end
 	}
 }
 
+func TestComputeWalksInheritsEdges(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "base.rb"), `class ApplicationController
+  def before_action
+  end
+end
+`)
+	writeFile(t, filepath.Join(root, "child.rb"), `class UsersController < ApplicationController
+  def index
+  end
+end
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	baseID := idOf(t, adapter, "ApplicationController")
+	res, err := blast.Compute(ctx, db, baseID, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	found := false
+	for _, c := range res.DirectCallers {
+		if c.Qualified == "UsersController" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("DirectCallers = %+v, want UsersController (via inherits edge)", res.DirectCallers)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
