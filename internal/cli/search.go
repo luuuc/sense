@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/mcpio"
@@ -66,13 +67,21 @@ func RunSearch(args []string, cio IO) int {
 	var embedder embed.Embedder
 
 	if EmbeddingsEnabled(cio.Dir) {
-		embeddings, err := adapter.LoadEmbeddings(ctx)
-		if err != nil {
-			_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)
-			return ExitGeneralError
+		hnswPath := filepath.Join(cio.Dir, ".sense", "hnsw.bin")
+		idx, loadErr := search.LoadHNSWIndex(hnswPath)
+		if loadErr == nil && idx != nil {
+			vectorIdx = idx
+		} else {
+			embeddings, err := adapter.LoadEmbeddings(ctx)
+			if err != nil {
+				_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)
+				return ExitGeneralError
+			}
+			if len(embeddings) > 0 {
+				vectorIdx = search.BuildHNSWIndex(embeddings)
+			}
 		}
-		if len(embeddings) > 0 {
-			vectorIdx = search.BuildHNSWIndex(embeddings)
+		if vectorIdx != nil && vectorIdx.Len() > 0 {
 			embedder, err = embed.NewBundledEmbedder()
 			if err != nil {
 				_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)

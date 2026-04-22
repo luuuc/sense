@@ -26,6 +26,8 @@ Flags:
   --min-confidence F        Edge-confidence threshold 0.0–1.0 (default 0.7)
   --include-tests           Include affected test files (default true)
   --diff REF                Compute blast for symbols modified in git diff REF
+  --file PATH               Disambiguate by file path substring
+  --language LANG           Disambiguate by language (e.g. "ruby", "go")
   --json                    Emit JSON matching the sense.blast MCP schema
   --no-color                Disable ANSI color (NO_COLOR env var is also respected)
   -h, --help                Show this help
@@ -33,6 +35,7 @@ Flags:
 Examples:
   sense blast "User#email_verified?"
   sense blast "CheckoutService" --max-hops 3
+  sense blast "Project" --language ruby
   sense blast --diff HEAD~1
   sense blast --diff main..feature-branch
   sense blast --diff HEAD~1 --json
@@ -55,6 +58,8 @@ type blastOptions struct {
 	MaxHops       int
 	MinConfidence float64
 	IncludeTests  bool
+	File          string
+	Language      string
 	JSON          bool
 	NoColor       bool
 }
@@ -194,6 +199,7 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
 	}
+	matches = filterMatches(matches, opts.File, opts.Language)
 	switch len(matches) {
 	case 0:
 		PrintNotFound(cio.Stderr, opts.Symbol)
@@ -272,6 +278,8 @@ func parseBlastArgs(args []string, stderr io.Writer) (blastOptions, error) {
 	fs.Float64Var(&opts.MinConfidence, "min-confidence", 0.7, "edge-confidence threshold 0.0–1.0")
 	fs.BoolVar(&opts.IncludeTests, "include-tests", true, "include affected test files")
 	fs.StringVar(&opts.Diff, "diff", "", "compute blast for symbols modified in git diff REF")
+	fs.StringVar(&opts.File, "file", "", "disambiguate by file path substring")
+	fs.StringVar(&opts.Language, "language", "", "disambiguate by language")
 	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense.blast MCP schema")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "disable ANSI color")
 
