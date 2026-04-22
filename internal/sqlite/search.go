@@ -121,6 +121,68 @@ func (a *Adapter) LoadEmbeddings(ctx context.Context) (map[int64][]float32, erro
 	return out, nil
 }
 
+// EmbeddingsForFiles returns embeddings for symbols belonging to the given
+// file IDs. Used for incremental HNSW updates after re-indexing changed files.
+func (a *Adapter) EmbeddingsForFiles(ctx context.Context, fileIDs []int64) (map[int64][]float32, error) {
+	if len(fileIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat(",?", len(fileIDs))[1:]
+	q := `SELECT e.symbol_id, e.vector
+		FROM sense_embeddings e
+		JOIN sense_symbols s ON s.id = e.symbol_id
+		WHERE s.file_id IN (` + placeholders + `)`
+	args := make([]any, len(fileIDs))
+	for i, id := range fileIDs {
+		args[i] = id
+	}
+	rows, err := a.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite EmbeddingsForFiles: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[int64][]float32)
+	for rows.Next() {
+		var id int64
+		var blob []byte
+		if err := rows.Scan(&id, &blob); err != nil {
+			return nil, fmt.Errorf("sqlite EmbeddingsForFiles scan: %w", err)
+		}
+		out[id] = blobToVector(blob)
+	}
+	return out, rows.Err()
+}
+
+// SymbolIDsForPaths returns all symbol IDs belonging to files at the given
+// paths. Used to track which HNSW entries must be deleted before file removal.
+func (a *Adapter) SymbolIDsForPaths(ctx context.Context, paths []string) ([]int64, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat(",?", len(paths))[1:]
+	q := `SELECT s.id FROM sense_symbols s
+		JOIN sense_files f ON f.id = s.file_id
+		WHERE f.path IN (` + placeholders + `)`
+	args := make([]any, len(paths))
+	for i, p := range paths {
+		args[i] = p
+	}
+	rows, err := a.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite SymbolIDsForPaths: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sqlite SymbolIDsForPaths scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func blobToVector(blob []byte) []float32 {
 	n := len(blob) / 4
 	vec := make([]float32, n)

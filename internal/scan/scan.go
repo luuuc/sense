@@ -33,7 +33,6 @@ import (
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/resolve"
 	"github.com/luuuc/sense/internal/sqlite"
-	"github.com/luuuc/sense/internal/tui"
 )
 
 // Options bounds a scan run. Zero values select sensible defaults.
@@ -175,9 +174,6 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			_, _ = fmt.Fprintf(warn, "warn: hnsw index build failed: %v\n", err)
 		}
 	}
-	if _, err := tui.ComputeAndCacheLayout(ctx, idx, senseDir); err != nil {
-		_, _ = fmt.Fprintf(warn, "warn: layout computation failed: %v\n", err)
-	}
 	if err := idx.StampSchemaVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -298,6 +294,10 @@ type harness struct {
 	// changedFileIDs collects file IDs that were re-indexed this scan
 	// (new or hash-changed). Used by pass 3 to scope embedding work.
 	changedFileIDs []int64
+
+	// removedSymbolIDs records symbol IDs from stale files before they
+	// are cascade-deleted. Used for incremental HNSW index updates.
+	removedSymbolIDs []int64
 
 	// Tallies for Result.
 	files          int
@@ -644,6 +644,11 @@ func (h *harness) removeStaleFiles() error {
 	if len(stale) == 0 {
 		return nil
 	}
+	symIDs, err := h.idx.SymbolIDsForPaths(h.ctx, stale)
+	if err != nil {
+		return fmt.Errorf("collect stale symbol IDs: %w", err)
+	}
+	h.removedSymbolIDs = symIDs
 	err = h.idx.InTx(h.ctx, func() error {
 		for _, p := range stale {
 			if err := h.idx.DeleteFile(h.ctx, p); err != nil {

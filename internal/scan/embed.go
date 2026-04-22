@@ -71,10 +71,19 @@ func (h *harness) embedSymbols() error {
 	return nil
 }
 
-// buildHNSWIndex loads all embeddings from the DB and saves a prebuilt
-// HNSW index to .sense/hnsw.bin so search can load it directly instead
-// of rebuilding from raw vectors on every invocation.
+// buildHNSWIndex updates the prebuilt HNSW index at .sense/hnsw.bin.
+// On incremental scans it loads the existing index, deletes stale vectors,
+// and inserts fresh ones — avoiding a full O(n log n) rebuild. Falls back
+// to a full build when no existing index is found (first scan).
 func (h *harness) buildHNSWIndex(senseDir string) error {
+	path := filepath.Join(senseDir, "hnsw.bin")
+
+	if updated, err := h.tryIncrementalHNSW(path); updated {
+		return nil
+	} else if err != nil {
+		_, _ = fmt.Fprintf(h.out, "warn: incremental hnsw update failed, rebuilding: %v\n", err)
+	}
+
 	embeddings, err := h.idx.LoadEmbeddings(h.ctx)
 	if err != nil {
 		return fmt.Errorf("load embeddings for hnsw: %w", err)
@@ -82,12 +91,42 @@ func (h *harness) buildHNSWIndex(senseDir string) error {
 	if len(embeddings) == 0 {
 		return nil
 	}
-	path := filepath.Join(senseDir, "hnsw.bin")
 	if err := search.SaveHNSWIndex(path, embeddings); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(h.out, "saved hnsw index (%d vectors) to %s\n", len(embeddings), filepath.Base(path))
 	return nil
+}
+
+// tryIncrementalHNSW attempts an incremental HNSW update. Returns true if
+// the update succeeded, false if a full rebuild is needed instead.
+// Pure-deletion (files removed, nothing changed) skips the incremental path
+// because the hnsw library's Delete can corrupt small graphs.
+func (h *harness) tryIncrementalHNSW(path string) (bool, error) {
+	fresh, err := h.idx.EmbeddingsForFiles(h.ctx, h.changedFileIDs)
+	if err != nil {
+		return false, fmt.Errorf("load changed embeddings: %w", err)
+	}
+	if len(fresh) == 0 {
+		return false, nil
+	}
+
+	updated, err := search.UpdateHNSWIndex(path, h.removedSymbolIDs, fresh)
+	if err != nil {
+		return false, err
+	}
+	if !updated {
+		return false, nil
+	}
+
+	delta := len(fresh) - len(h.removedSymbolIDs)
+	sign := "+"
+	if delta < 0 {
+		sign = ""
+	}
+	_, _ = fmt.Fprintf(h.out, "updated hnsw index (%s%d vectors, %d deleted) at %s\n",
+		sign, delta, len(h.removedSymbolIDs), filepath.Base(path))
+	return true, nil
 }
 
 // parallelEmbed fans inputs across multiple ONNXEmbedder instances to
