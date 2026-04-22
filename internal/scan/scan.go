@@ -295,6 +295,10 @@ type harness struct {
 	// (new or hash-changed). Used by pass 3 to scope embedding work.
 	changedFileIDs []int64
 
+	// removedSymbolIDs records symbol IDs from stale files before they
+	// are cascade-deleted. Used for incremental HNSW index updates.
+	removedSymbolIDs []int64
+
 	// Tallies for Result.
 	files          int
 	indexed        int
@@ -640,6 +644,11 @@ func (h *harness) removeStaleFiles() error {
 	if len(stale) == 0 {
 		return nil
 	}
+	symIDs, err := h.idx.SymbolIDsForPaths(h.ctx, stale)
+	if err != nil {
+		return fmt.Errorf("collect stale symbol IDs: %w", err)
+	}
+	h.removedSymbolIDs = symIDs
 	err = h.idx.InTx(h.ctx, func() error {
 		for _, p := range stale {
 			if err := h.idx.DeleteFile(h.ctx, p); err != nil {
