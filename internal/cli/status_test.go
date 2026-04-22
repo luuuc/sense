@@ -1,11 +1,53 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/sqlite"
 )
+
+func TestRunStatusJSONProducesValidJSON(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.WriteFile(ctx, &model.File{
+		Path: "main.go", Language: "go", Hash: "abc", Symbols: 1,
+		IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = adapter.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := RunStatus([]string{"--json"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+
+	raw := bytes.TrimSpace(stdout.Bytes())
+	if !json.Valid(raw) {
+		t.Fatalf("stdout is not valid JSON:\n%s", raw)
+	}
+	if raw[0] != '{' {
+		t.Errorf("stdout starts with %q, want '{'  — preamble is leaking into JSON output", string(raw[:1]))
+	}
+}
 
 func TestRunStatus_LiveNoIndex(t *testing.T) {
 	dir := t.TempDir()

@@ -75,7 +75,19 @@ func main() {
 	case "version", "--version", "-v", "help", "--help", "-h", "mcp":
 		// no version check for these
 	default:
-		versioncheck.CheckAndNotify(os.Stderr)
+		jsonMode := false
+		for _, a := range os.Args[2:] {
+			if a == "--" {
+				break
+			}
+			if a == "--json" || a == "-json" {
+				jsonMode = true
+				break
+			}
+		}
+		if !jsonMode {
+			versioncheck.CheckAndNotify(os.Stderr)
+		}
 	}
 
 	switch cmd {
@@ -155,4 +167,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-
