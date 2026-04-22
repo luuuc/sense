@@ -23,11 +23,10 @@ import (
 // scope-aware same-file preference picking a re-opened class in the
 // test file over the intended implementation class.
 //
-// Conventions are deliberately conservative (same-directory only) —
-// Rails-style mirror trees (`test/models/user_test.rb` matching
-// `app/models/user.rb`) are cross-directory and left to a future
-// framework-inference cycle. The rabbit-hole note in the pitch is
-// explicit about this scope.
+// Same-directory pairing is handled by implSibling; cross-directory
+// mirror trees (Rails: spec/models/user_spec.rb → app/models/user.rb)
+// are handled by mirrorImpl. Other frameworks (Django, etc.) remain
+// same-directory only until a real case demands it.
 func (h *harness) associateTests() error {
 	if len(h.indexedFiles) == 0 {
 		return nil
@@ -43,6 +42,9 @@ func (h *harness) associateTests() error {
 		idByPath[f.Path] = f.ID
 		if implPath, ok := implSibling(f.Path, f.Language); ok {
 			testsForImpl[implPath] = append(testsForImpl[implPath], f.ID)
+		}
+		for _, mp := range mirrorImpl(f.Path, f.Language) {
+			testsForImpl[mp] = append(testsForImpl[mp], f.ID)
 		}
 	}
 	if len(testsForImpl) == 0 {
@@ -161,6 +163,49 @@ func implSibling(path, language string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// mirrorImpl handles cross-directory test conventions where test and
+// implementation files live in parallel directory trees. Returns all
+// candidate impl paths (caller checks which exist in the index).
+//
+// Supported conventions:
+//   - Ruby/Rails: spec/models/user_spec.rb → app/models/user.rb
+//   - Ruby/Rails: test/models/user_test.rb → app/models/user.rb
+func mirrorImpl(path, language string) []string {
+	if language != "ruby" {
+		return nil
+	}
+	base := filepath.Base(path)
+	var stem string
+	for _, suffix := range []string{"_spec.rb", "_test.rb"} {
+		if strings.HasSuffix(base, suffix) {
+			stem = strings.TrimSuffix(base, suffix) + ".rb"
+			break
+		}
+	}
+	if stem == "" {
+		return nil
+	}
+
+	// Normalise to forward-slash for prefix matching.
+	norm := filepath.ToSlash(path)
+	for _, prefix := range []string{"spec/", "test/"} {
+		if !strings.HasPrefix(norm, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(norm, prefix)
+		dir := filepath.Dir(rest)
+		if dir == "." {
+			dir = ""
+		} else {
+			dir += "/"
+		}
+		return []string{
+			filepath.FromSlash("app/" + dir + stem),
+		}
+	}
+	return nil
 }
 
 // representativeTestSymbol picks the topmost symbol (by line_start,

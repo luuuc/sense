@@ -202,11 +202,27 @@ func TestResolveUnqualifiedFallbackForCalls(t *testing.T) {
 	}
 }
 
-func TestResolveUnqualifiedFallbackGatedToCallsOnly(t *testing.T) {
+func TestResolveUnqualifiedFallbackForTests(t *testing.T) {
 	ix := resolve.NewIndex(refs())
-	// Same `whatever.Sprintf` target, but this time it's an inherits
-	// edge. Inherits does not fall back to unqualified; the edge
-	// drops cleanly.
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "whatever.Sprintf",
+		Kind:           model.EdgeTests,
+		SourceFileID:   10,
+		BaseConfidence: 1.0,
+	})
+	if !ok {
+		t.Fatal("expected unqualified fallback resolution for tests edges")
+	}
+	if r.SymbolID != 9 {
+		t.Errorf("SymbolID = %d, want 9 (fmt.Sprintf)", r.SymbolID)
+	}
+	if r.Confidence != 0.8 {
+		t.Errorf("Confidence = %v, want 0.8", r.Confidence)
+	}
+}
+
+func TestResolveUnqualifiedFallbackGatedByKind(t *testing.T) {
+	ix := resolve.NewIndex(refs())
 	_, ok := ix.Resolve(resolve.Request{
 		Target:         "whatever.Sprintf",
 		Kind:           model.EdgeInherits,
@@ -214,7 +230,7 @@ func TestResolveUnqualifiedFallbackGatedToCallsOnly(t *testing.T) {
 		BaseConfidence: 1.0,
 	})
 	if ok {
-		t.Error("unqualified fallback should not fire for non-calls kinds")
+		t.Error("unqualified fallback should not fire for inherits edges")
 	}
 }
 

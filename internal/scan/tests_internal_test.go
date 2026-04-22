@@ -1,6 +1,8 @@
 package scan
 
-import "testing"
+import (
+	"testing"
+)
 
 // TestImplSibling pins the test-association naming conventions for
 // every supported language. Internal test because `implSibling` is
@@ -57,6 +59,40 @@ func TestImplSibling(t *testing.T) {
 		}
 		if gotImpl != c.wantImpl {
 			t.Errorf("implSibling(%q, %q) impl = %q, want %q", c.path, c.language, gotImpl, c.wantImpl)
+		}
+	}
+}
+
+func TestMirrorImpl(t *testing.T) {
+	cases := []struct {
+		path     string
+		language string
+		want     []string
+	}{
+		{"spec/models/user_spec.rb", "ruby", []string{"app/models/user.rb"}},
+		{"spec/controllers/users_controller_spec.rb", "ruby", []string{"app/controllers/users_controller.rb"}},
+		{"test/models/user_test.rb", "ruby", []string{"app/models/user.rb"}},
+		{"spec/user_spec.rb", "ruby", []string{"app/user.rb"}},
+		{"test/user_test.rb", "ruby", []string{"app/user.rb"}},
+
+		// Not under spec/ or test/ — no mirror.
+		{"app/user_spec.rb", "ruby", nil},
+		// Not Ruby — no mirror.
+		{"spec/models/user_spec.rb", "go", nil},
+		// Not a test file.
+		{"spec/models/user.rb", "ruby", nil},
+	}
+
+	for _, c := range cases {
+		got := mirrorImpl(c.path, c.language)
+		if len(got) != len(c.want) {
+			t.Errorf("mirrorImpl(%q, %q) = %v, want %v", c.path, c.language, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("mirrorImpl(%q, %q)[%d] = %q, want %q", c.path, c.language, i, got[i], c.want[i])
+			}
 		}
 	}
 }
