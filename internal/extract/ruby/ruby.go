@@ -20,13 +20,13 @@
 //     dispatch via `send` / `public_send` / `__send__` is emitted with
 //     confidence 0.7 only when the first argument is a literal symbol or
 //     string; anything else is skipped (unresolvable).
-//   - Known Tier-Basic gap: bare receiverless Ruby method calls without
-//     parentheses (`def self.find; new; end`) are parsed as `identifier`
-//     nodes rather than `call` nodes by tree-sitter-ruby, so they're
-//     silently dropped. The testdata/ruby/basic_class.rb fixture is the
-//     canonical record of this behaviour — its bare `new` produces no
-//     calls edge. Reaching those calls would require local-scope
-//     disambiguation, which Tier-Basic is not interested in.
+//   - Bare receiverless Ruby method calls without parentheses
+//     (`create_topic`, `save_post`) are parsed as `identifier` nodes
+//     rather than `call` nodes by tree-sitter-ruby.
+//     emitBareIdentifierCalls picks up identifiers in statement position
+//     (direct children of body_statement/then/else/begin/ensure) and
+//     emits them as calls edges with ConfidenceDynamic. The resolver
+//     drops any that don't match a known symbol.
 //
 // Qualified names follow 05-languages.md: A::B::C for classes/modules,
 // A::B#m for instance methods, A::B.m for singleton methods, A::B::CONST
@@ -281,9 +281,13 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	// are produced separately at the class-body level in handleIncludeCall,
 	// and a dynamic include at runtime is rare enough that a bare calls
 	// edge is an accurate record of what was written.
-	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call", func(c *sitter.Node) error {
+	body := n.ChildByFieldName("body")
+	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
 		return w.emitCall(c, qualified)
-	})
+	}); err != nil {
+		return err
+	}
+	return w.emitBareIdentifierCalls(body, qualified)
 }
 
 // emitCall produces a calls edge for one `call` node. The target is
@@ -330,6 +334,44 @@ func (w *walker) emitCall(n *sitter.Node, source string) error {
 		Kind:            model.EdgeCalls,
 		Line:            &line,
 		Confidence:      1.0,
+	})
+}
+
+// statementParents is the set of tree-sitter-ruby node kinds whose
+// direct identifier children are in statement position — bare method
+// calls rather than variable references or subexpressions.
+var statementParents = map[string]bool{
+	"body_statement": true,
+	"then":           true,
+	"else":           true,
+	"begin":          true,
+	"ensure":         true,
+}
+
+// emitBareIdentifierCalls walks a method body for identifier nodes in
+// statement position (direct children of body_statement, then, else,
+// begin, ensure). Tree-sitter-ruby parses bare receiverless method
+// calls without parentheses as identifier nodes rather than call
+// nodes; this picks them up so the resolver can match them to methods
+// defined in the same class.
+func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string) error {
+	return extract.WalkNamedDescendants(body, "identifier", func(ident *sitter.Node) error {
+		parent := ident.Parent()
+		if parent == nil || !statementParents[parent.Kind()] {
+			return nil
+		}
+		name := extract.Text(ident, w.source)
+		if name == "" {
+			return nil
+		}
+		line := extract.Line(ident.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: sourceQualified,
+			TargetQualified: name,
+			Kind:            model.EdgeCalls,
+			Line:            &line,
+			Confidence:      extract.ConfidenceDynamic,
+		})
 	})
 }
 
@@ -534,9 +576,12 @@ func (w *walker) emitAssociationEdge(n *sitter.Node, scope []string, methodName 
 	}
 	assocName := strings.TrimPrefix(extract.Text(first, w.source), ":")
 
-	// Check for class_name: override in keyword arguments.
+	// Check for serializer: override (AMS pattern — value is a constant).
+	// Check for class_name: override (ActiveRecord pattern — value is a string).
 	target := ""
-	if cn := findKeywordArg(args, "class_name", w.source); cn != "" {
+	if st := findKeywordConstantArg(args, "serializer", w.source); st != "" {
+		target = st
+	} else if cn := findKeywordArg(args, "class_name", w.source); cn != "" {
 		target = cn
 	} else if needsSingularize {
 		target = classify(assocName)
@@ -786,6 +831,32 @@ func findKeywordArg(args *sitter.Node, key string, source []byte) string {
 		}
 		if extract.Text(k, source) == key {
 			return extractStringValue(v, source)
+		}
+	}
+	return ""
+}
+
+// findKeywordConstantArg scans an argument list for a hash pair with
+// the given key and returns the value when it's a constant or scope
+// resolution (e.g. `serializer: TopicViewDetailsSerializer`).
+func findKeywordConstantArg(args *sitter.Node, key string, source []byte) string {
+	count := args.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		arg := args.NamedChild(i)
+		if arg == nil || arg.Kind() != "pair" {
+			continue
+		}
+		k := arg.ChildByFieldName("key")
+		v := arg.ChildByFieldName("value")
+		if k == nil || v == nil {
+			continue
+		}
+		if extract.Text(k, source) != key {
+			continue
+		}
+		switch v.Kind() {
+		case "constant", "scope_resolution":
+			return extract.Text(v, source)
 		}
 	}
 	return ""

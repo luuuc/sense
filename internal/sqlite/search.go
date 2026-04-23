@@ -292,6 +292,52 @@ func (a *Adapter) InboundEdgeCounts(ctx context.Context, symbolIDs []int64) (map
 	return out, nil
 }
 
+// FilePathsByIDs returns the file path for each of the given file IDs.
+// Used by search re-ranking to apply path-based score weights.
+func (a *Adapter) FilePathsByIDs(ctx context.Context, fileIDs []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(fileIDs))
+	if len(fileIDs) == 0 {
+		return out, nil
+	}
+	const chunk = 500
+	for start := 0; start < len(fileIDs); start += chunk {
+		end := start + chunk
+		if end > len(fileIDs) {
+			end = len(fileIDs)
+		}
+		batch := fileIDs[start:end]
+		placeholders := make([]byte, 0, len(batch)*2-1)
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			if i > 0 {
+				placeholders = append(placeholders, ',')
+			}
+			placeholders = append(placeholders, '?')
+			args[i] = id
+		}
+		q := `SELECT id, path FROM sense_files WHERE id IN (` + string(placeholders) + `)`
+		rows, err := a.db.QueryContext(ctx, q, args...)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite FilePathsByIDs: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var path string
+			if err := rows.Scan(&id, &path); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("sqlite FilePathsByIDs scan: %w", err)
+			}
+			out[id] = path
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+	return out, nil
+}
+
 // sanitizeFTS5Query quotes each whitespace-delimited token so that
 // FTS5 operator characters (*, ", OR, AND, NOT, NEAR, ^, :) in user
 // input are treated as literals. Embedded double-quotes are escaped

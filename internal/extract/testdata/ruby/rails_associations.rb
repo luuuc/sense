@@ -11,6 +11,13 @@ class Product
   has_many :variants
 end
 
+# AMS serializer composition: serializer: keyword overrides inflection.
+class TopicViewSerializer
+  has_one :details, serializer: TopicViewDetailsSerializer, root: false
+  has_many :posts, serializer: PostStreamSerializer
+  has_one :category, serializer: SuggestedCategorySerializer, embed: :objects
+end
+
 # Negative cases: should NOT produce composes edges.
 
 class DynamicModel
