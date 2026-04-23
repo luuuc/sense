@@ -1,8 +1,4 @@
-# Sense
-
-    ●    ●      ● ●      ●    ●
-  ●        ●      ●    ●        ●
-  ●             ●      ●
+# Sense ⠎⠑⠝⠎⠑
 
 **Codebase understanding that any tool can query.**
 
