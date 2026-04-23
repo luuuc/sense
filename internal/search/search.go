@@ -291,29 +291,83 @@ func applyKindWeights(results []Result) {
 	}
 }
 
-// demotedPathPrefixes lists path prefixes for infrastructure code that
-// should be ranked below application code in search results. Migrations
-// and import scripts contain domain keywords in their names but are
-// rarely what users search for.
-var demotedPathPrefixes = []string{
-	"db/migrate/",
-	"db/post_migrate/",
-	"script/",
-	"scripts/",
+// demotedPathSegments lists path segments for infrastructure and test
+// code that should be ranked below application code. Matched with
+// strings.Contains to catch nested paths (e.g. plugins/chat/spec/).
+var demotedPathSegments = []struct {
+	segment string
+	penalty float64
+}{
+	{"db/migrate/", 0.3},
+	{"db/post_migrate/", 0.3},
+	{"script/", 0.3},
+	{"scripts/", 0.3},
+	{"/test/", 0.5},
+	{"/tests/", 0.5},
+	{"/spec/", 0.5},
+	{"/mock/", 0.5},
+	{"/mocks/", 0.5},
+	{"/fixture/", 0.5},
+	{"/fixtures/", 0.5},
+	{"/generated/", 0.4},
+	{"/testdata/", 0.5},
+	{"_test.rb", 0.5},
+	{"_spec.rb", 0.5},
+	{"_test.go", 0.5},
 }
 
-// applyPathWeights demotes symbols in infrastructure paths (migrations,
-// scripts) that match domain keywords but aren't application code.
+// demotedPathPrefixes lists root-level test/spec directories that should
+// be demoted. Separate from demotedPathSegments because these must use
+// HasPrefix to avoid false positives (e.g. "spec/" inside "specification/").
+var demotedPathPrefixes = []struct {
+	prefix  string
+	penalty float64
+}{
+	{"spec/", 0.5},
+	{"test/", 0.5},
+}
+
+// boostedPathPrefixes lists path prefixes for primary source directories
+// that get a mild ranking boost.
+var boostedPathPrefixes = []string{
+	"app/",
+	"lib/",
+	"src/",
+}
+
+const sourceBoost = 1.1
+
+// applyPathWeights demotes symbols in infrastructure/test paths and
+// boosts symbols in primary source directories.
 func applyPathWeights(results []Result, pathByID map[int64]string) {
 	for i := range results {
 		path, ok := pathByID[results[i].FileID]
 		if !ok {
 			continue
 		}
-		for _, prefix := range demotedPathPrefixes {
-			if strings.HasPrefix(path, prefix) {
-				results[i].Score *= 0.3
+		demoted := false
+		for _, d := range demotedPathPrefixes {
+			if strings.HasPrefix(path, d.prefix) {
+				results[i].Score *= d.penalty
+				demoted = true
 				break
+			}
+		}
+		if !demoted {
+			for _, d := range demotedPathSegments {
+				if strings.Contains(path, d.segment) {
+					results[i].Score *= d.penalty
+					demoted = true
+					break
+				}
+			}
+		}
+		if !demoted {
+			for _, prefix := range boostedPathPrefixes {
+				if strings.HasPrefix(path, prefix) {
+					results[i].Score *= sourceBoost
+					break
+				}
 			}
 		}
 	}

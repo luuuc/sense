@@ -344,6 +344,43 @@ func TestLoadHNSWIndexMissing(t *testing.T) {
 	}
 }
 
+func makeEmbeddings(n, dims int, rng *rand.Rand) map[int64][]float32 {
+	embeddings := make(map[int64][]float32, n)
+	for i := range n {
+		vec := make([]float32, dims)
+		for j := range dims {
+			vec[j] = rng.Float32()
+		}
+		embeddings[int64(i+1)] = normalize(vec)
+	}
+	return embeddings
+}
+
+func BenchmarkHNSWSearch10K(b *testing.B) {
+	const dims = 384
+	rng := rand.New(rand.NewPCG(42, 0))
+	embeddings := makeEmbeddings(10_000, dims, rng)
+
+	idx := search.BuildHNSWIndex(embeddings)
+	query := normalize(embeddings[1])
+
+	b.ResetTimer()
+	for range b.N {
+		idx.Search(query, 10)
+	}
+}
+
+func BenchmarkHNSWBuild10K(b *testing.B) {
+	const dims = 384
+	rng := rand.New(rand.NewPCG(42, 0))
+	embeddings := makeEmbeddings(10_000, dims, rng)
+
+	b.ResetTimer()
+	for range b.N {
+		search.BuildHNSWIndex(embeddings)
+	}
+}
+
 func normalize(v []float32) []float32 {
 	var sum float64
 	for _, x := range v {

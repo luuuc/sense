@@ -9,6 +9,8 @@ import (
 	"github.com/coder/hnsw"
 )
 
+const hnswEfSearch = 200
+
 // hnswIndex wraps coder/hnsw as a VectorIndex. The graph is keyed by
 // symbol ID (int64) and uses cosine distance. It is built eagerly from
 // all embeddings in the database and rebuilt on scan completion.
@@ -19,6 +21,7 @@ type hnswIndex struct {
 func buildGraph(embeddings map[int64][]float32) *hnsw.Graph[int64] {
 	g := hnsw.NewGraph[int64]()
 	g.Distance = hnsw.CosineDistance
+	g.EfSearch = hnswEfSearch
 	nodes := make([]hnsw.Node[int64], 0, len(embeddings))
 	for id, vec := range embeddings {
 		nodes = append(nodes, hnsw.MakeNode(id, vec))
@@ -115,6 +118,7 @@ func UpdateHNSWIndex(path string, toRemove []int64, toUpsert map[int64][]float32
 	}
 	g := hnsw.NewGraph[int64]()
 	g.Distance = hnsw.CosineDistance
+	g.EfSearch = hnswEfSearch
 	if err := g.Import(bufio.NewReader(f)); err != nil {
 		_ = f.Close()
 		return false, fmt.Errorf("import hnsw index for update: %w", err)
@@ -144,6 +148,7 @@ func UpdateHNSWIndex(path string, toRemove []int64, toUpsert map[int64][]float32
 		}
 		check := hnsw.NewGraph[int64]()
 		check.Distance = hnsw.CosineDistance
+		check.EfSearch = hnswEfSearch
 		if err := check.Import(&buf); err != nil {
 			return false, nil
 		}
@@ -191,6 +196,7 @@ func LoadHNSWIndex(path string) (VectorIndex, error) {
 	defer func() { _ = f.Close() }()
 	g := hnsw.NewGraph[int64]()
 	g.Distance = hnsw.CosineDistance
+	g.EfSearch = hnswEfSearch
 	if err := g.Import(bufio.NewReader(f)); err != nil {
 		return nil, fmt.Errorf("import hnsw index: %w", err)
 	}
