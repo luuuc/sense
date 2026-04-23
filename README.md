@@ -8,20 +8,18 @@ One binary, one index, four capabilities. No SaaS account, no API key, no cloud 
 
 ## Install
 
-### With Go (1.25+)
-
-```bash
-go install github.com/luuuc/sense/cmd/sense@latest
-```
-
-### Without Go
-
 Download the binary for your OS from the [latest release](https://github.com/luuuc/sense/releases/latest), unzip, and move `sense` somewhere on your `PATH`.
 
 Or use the install script (macOS and Linux, amd64 or arm64):
 
 ```bash
 curl -fsSL https://luuuc.github.io/sense/install.sh | sh
+```
+
+### With Go (1.25+)
+
+```bash
+go install github.com/luuuc/sense/cmd/sense@latest
 ```
 
 ### Verify
@@ -82,7 +80,7 @@ Add to your `.mcp.json` (Claude Code, Cursor, or any MCP-speaking tool):
   "mcpServers": {
     "sense": {
       "command": "sense",
-      "args": ["mcp", "--dir", "."]
+      "args": ["mcp"]
     }
   }
 }
