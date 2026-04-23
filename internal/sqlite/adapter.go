@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,9 +93,16 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 	// synchronous=NORMAL is durable under WAL for crash recovery; it can
 	// lose the last few seconds under a power cut. That's the right
 	// trade-off for a derived index — `sense scan` rebuilds from source.
+	mmapSize := "0"
+	if strconv.IntSize == 64 {
+		mmapSize = "134217728" // 128MB on 64-bit platforms
+	}
 	dsn := "file:" + path + "?_pragma=foreign_keys(1)" +
 		"&_pragma=journal_mode(wal)" +
-		"&_pragma=synchronous(normal)"
+		"&_pragma=synchronous(normal)" +
+		"&_pragma=temp_store(memory)" +
+		"&_pragma=cache_size(-8000)" +
+		"&_pragma=mmap_size(" + mmapSize + ")"
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -233,6 +241,33 @@ func (a *Adapter) FileMeta(ctx context.Context, path string) (int64, string, err
 	return id, hash, nil
 }
 
+// CachedFile holds pre-loaded file metadata for bulk hash comparison.
+type CachedFile struct {
+	ID   int64
+	Hash string
+}
+
+// FileHashMap loads all file paths and hashes into a map for bulk
+// incremental comparison. One query replaces N per-file FileMeta calls.
+func (a *Adapter) FileHashMap(ctx context.Context) (map[string]CachedFile, error) {
+	rows, err := a.db.QueryContext(ctx, "SELECT id, path, hash FROM sense_files")
+	if err != nil {
+		return nil, fmt.Errorf("sqlite FileHashMap: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	m := make(map[string]CachedFile)
+	for rows.Next() {
+		var id int64
+		var path, hash string
+		if err := rows.Scan(&id, &path, &hash); err != nil {
+			return nil, fmt.Errorf("sqlite FileHashMap scan: %w", err)
+		}
+		m[path] = CachedFile{ID: id, Hash: hash}
+	}
+	return m, rows.Err()
+}
+
 // FilePaths returns every path currently tracked in sense_files.
 func (a *Adapter) FilePaths(ctx context.Context) ([]string, error) {
 	rows, err := a.db.QueryContext(ctx, "SELECT path FROM sense_files")
@@ -348,6 +383,73 @@ func (a *Adapter) WriteEdge(ctx context.Context, e *model.Edge) (int64, error) {
 	}
 	if err != nil {
 		return 0, fmt.Errorf("sqlite WriteEdge: %w", err)
+	}
+	return id, nil
+}
+
+// PrepareSymbolStmt returns a prepared statement for batch-writing
+// symbols within a transaction. Use ExecSymbolStmt to bind parameters
+// and scan the returned id. The caller must close the statement.
+func (a *Adapter) PrepareSymbolStmt(ctx context.Context) (*sql.Stmt, error) {
+	const q = `
+		INSERT INTO sense_symbols
+			(file_id, name, qualified, kind, visibility, parent_id,
+			 line_start, line_end, docstring, complexity, snippet)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_id, qualified) DO UPDATE SET
+			name       = excluded.name,
+			kind       = excluded.kind,
+			visibility = excluded.visibility,
+			parent_id  = excluded.parent_id,
+			line_start = excluded.line_start,
+			line_end   = excluded.line_end,
+			docstring  = excluded.docstring,
+			complexity = excluded.complexity,
+			snippet    = excluded.snippet
+		RETURNING id`
+	return a.db.PrepareContext(ctx, q)
+}
+
+// ExecSymbolStmt writes a symbol using a prepared statement and returns
+// the row id. The statement must have been created by PrepareSymbolStmt.
+func ExecSymbolStmt(ctx context.Context, stmt *sql.Stmt, s *model.Symbol) (int64, error) {
+	var id int64
+	err := stmt.QueryRowContext(ctx,
+		s.FileID, s.Name, s.Qualified, string(s.Kind), s.Visibility,
+		nullableInt64(s.ParentID), s.LineStart, s.LineEnd,
+		s.Docstring, nullableInt(s.Complexity), s.Snippet,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite WriteSymbol (prepared): %w", err)
+	}
+	return id, nil
+}
+
+// PrepareEdgeStmt returns a prepared statement for batch-writing edges
+// with a non-nil source_id within a transaction. The caller must close
+// the statement.
+func (a *Adapter) PrepareEdgeStmt(ctx context.Context) (*sql.Stmt, error) {
+	const q = `
+		INSERT INTO sense_edges (source_id, target_id, kind, file_id, line, confidence)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source_id, target_id, kind, file_id) DO UPDATE SET
+			line       = excluded.line,
+			confidence = excluded.confidence
+		RETURNING id`
+	return a.db.PrepareContext(ctx, q)
+}
+
+// ExecEdgeStmt writes an edge using a prepared statement and returns
+// the row id. The statement must have been created by PrepareEdgeStmt.
+// Only for edges with a non-nil SourceID.
+func ExecEdgeStmt(ctx context.Context, stmt *sql.Stmt, e *model.Edge) (int64, error) {
+	var id int64
+	err := stmt.QueryRowContext(ctx,
+		*e.SourceID, e.TargetID, string(e.Kind), e.FileID,
+		nullableInt(e.Line), e.Confidence,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite WriteEdge (prepared): %w", err)
 	}
 	return id, nil
 }
