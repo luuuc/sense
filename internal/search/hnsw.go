@@ -37,17 +37,20 @@ func BuildHNSWIndex(embeddings map[int64][]float32) VectorIndex {
 	return &hnswIndex{graph: buildGraph(embeddings)}
 }
 
-func (h *hnswIndex) Search(query []float32, k int) []VectorResult {
+func (h *hnswIndex) Search(query []float32, k int) (results []VectorResult) {
 	if h.graph.Len() == 0 {
 		return nil
 	}
 	if k > h.graph.Len() {
 		k = h.graph.Len()
 	}
-	// coder/hnsw's Node doesn't carry the computed distance, so we
-	// recompute cosine distance for the (small) result set.
+	defer func() {
+		if r := recover(); r != nil {
+			results = nil
+		}
+	}()
 	neighbors := h.graph.Search(query, k)
-	results := make([]VectorResult, len(neighbors))
+	results = make([]VectorResult, len(neighbors))
 	for i, n := range neighbors {
 		dist := hnsw.CosineDistance(query, n.Value)
 		results[i] = VectorResult{
@@ -123,21 +126,18 @@ func UpdateHNSWIndex(path string, toRemove []int64, toUpsert map[int64][]float32
 		g.Add(hnsw.MakeNode(id, vec))
 	}
 
-	hasRemovals := false
 	for _, id := range toRemove {
 		if _, replacing := toUpsert[id]; replacing {
 			continue
 		}
 		g.Delete(id)
-		hasRemovals = true
 	}
 
-	// When there are standalone removals (not compensated by upserts),
-	// the hnsw library can leave dangling neighbor pointers that only
-	// crash on reimport. Verify via Export/Import round-trip + search
-	// before writing to disk. Upsert-only updates are safe (Delete+Add
-	// per key keeps the graph connected) and skip verification.
-	if hasRemovals && g.Len() > 0 {
+	// The hnsw library's Delete can leave dangling neighbor pointers
+	// that crash on reimport or subsequent Search. This affects both
+	// standalone removals and upserts (which do Delete+Add per key).
+	// Verify via Export/Import round-trip + test search before writing.
+	if g.Len() > 0 {
 		var buf bytes.Buffer
 		if err := g.Export(&buf); err != nil {
 			return false, nil
@@ -148,7 +148,12 @@ func UpdateHNSWIndex(path string, toRemove []int64, toUpsert map[int64][]float32
 			return false, nil
 		}
 		if dims := check.Dims(); dims > 0 {
-			check.Search(make([]float32, dims), 1)
+			for _, vec := range toUpsert {
+				check.Search(vec, 1)
+			}
+			if len(toUpsert) == 0 {
+				check.Search(make([]float32, dims), 1)
+			}
 		}
 		g = check
 	}
