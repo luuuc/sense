@@ -47,26 +47,26 @@ const maxOpenConns = 1
 var ftsTriggerStatements = []string{
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_insert
 	 AFTER INSERT ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring)
-	     VALUES (new.id, new.name, new.qualified, new.docstring);
+	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring, snippet)
+	     VALUES (new.id, new.name, new.qualified, new.docstring, new.snippet);
 	 END`,
 
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_delete
 	 BEFORE DELETE ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring)
-	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring);
+	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring, snippet)
+	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring, old.snippet);
 	 END`,
 
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_update
 	 BEFORE UPDATE ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring)
-	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring);
+	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring, snippet)
+	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring, old.snippet);
 	 END`,
 
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_update_after
 	 AFTER UPDATE ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring)
-	     VALUES (new.id, new.name, new.qualified, new.docstring);
+	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring, snippet)
+	     VALUES (new.id, new.name, new.qualified, new.docstring, new.snippet);
 	 END`,
 }
 
@@ -78,6 +78,10 @@ type Adapter struct {
 	// a populated index (e.g. the MCP server) should trigger a full
 	// scan before serving.
 	Rebuilt bool
+	// FTSMigrated is true when Open detected a stale FTS5 table
+	// (missing columns) and dropped+recreated it. Keyword search
+	// results will be incomplete until the next scan repopulates them.
+	FTSMigrated bool
 }
 
 // compile-time contract check.
@@ -145,6 +149,21 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 	// FTS5 virtual table and triggers are applied separately because
 	// modernc.org/sqlite's ExecContext silently drops virtual-table
 	// statements embedded in a long multi-statement string.
+	//
+	// Migration: if the FTS table exists but is missing the snippet
+	// column (added in search-quality pitch), drop it and its triggers
+	// so the CREATE IF NOT EXISTS below picks up the new schema.
+	ftsMigrated := ftsNeedsMigration(ctx, db)
+	if ftsMigrated {
+		for _, name := range []string{
+			"sense_symbols_fts_insert", "sense_symbols_fts_delete",
+			"sense_symbols_fts_update", "sense_symbols_fts_update_after",
+		} {
+			_, _ = db.ExecContext(ctx, "DROP TRIGGER IF EXISTS "+name)
+		}
+		_, _ = db.ExecContext(ctx, "DROP TABLE IF EXISTS sense_symbols_fts")
+	}
+
 	if _, err := db.ExecContext(ctx, schemaFTSSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite fts schema: %w", err)
@@ -156,7 +175,37 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 		}
 	}
 
-	return &Adapter{db: db, Rebuilt: rebuilt}, nil
+	return &Adapter{db: db, Rebuilt: rebuilt, FTSMigrated: ftsMigrated}, nil
+}
+
+// ftsNeedsMigration returns true if the FTS5 table exists but is
+// missing the snippet column. This happens when upgrading from a
+// database created before the search-quality pitch added snippet
+// to the FTS index.
+func ftsNeedsMigration(ctx context.Context, db *sql.DB) bool {
+	var count int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master
+		 WHERE type='table' AND name='sense_symbols_fts'`).Scan(&count)
+	if err != nil || count == 0 {
+		return false
+	}
+	// FTS5 content tables expose column names via a zero-row SELECT.
+	rows, err := db.QueryContext(ctx, "SELECT * FROM sense_symbols_fts LIMIT 0")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rows.Close() }()
+	cols, err := rows.Columns()
+	if err != nil {
+		return false
+	}
+	for _, c := range cols {
+		if c == "snippet" {
+			return false
+		}
+	}
+	return true
 }
 
 // StampSchemaVersion writes the current SchemaVersion into PRAGMA
@@ -688,7 +737,8 @@ func (a *Adapter) symbolsForFilesChunk(ctx context.Context, fileIDs []int64) ([]
 		placeholders = append(placeholders, '?')
 		args[i] = id
 	}
-	q := `SELECT s.id, s.qualified, s.kind, COALESCE(p.name, ''), s.snippet
+	q := `SELECT s.id, s.file_id, s.qualified, s.kind, COALESCE(p.name, ''),
+		       s.snippet, s.line_start, s.line_end
 		FROM sense_symbols s
 		LEFT JOIN sense_symbols p ON s.parent_id = p.id
 		WHERE s.file_id IN (` + string(placeholders) + `)
@@ -704,7 +754,8 @@ func (a *Adapter) symbolsForFilesChunk(ctx context.Context, fileIDs []int64) ([]
 	for rows.Next() {
 		var s EmbedSymbol
 		var snippet sql.NullString
-		if err := rows.Scan(&s.ID, &s.Qualified, &s.Kind, &s.ParentName, &snippet); err != nil {
+		if err := rows.Scan(&s.ID, &s.FileID, &s.Qualified, &s.Kind, &s.ParentName,
+			&snippet, &s.LineStart, &s.LineEnd); err != nil {
 			return nil, fmt.Errorf("sqlite SymbolsForFiles scan: %w", err)
 		}
 		s.Snippet = snippet.String
@@ -716,10 +767,13 @@ func (a *Adapter) symbolsForFilesChunk(ctx context.Context, fileIDs []int64) ([]
 // EmbedSymbol is the minimal shape needed to build an embedding input.
 type EmbedSymbol struct {
 	ID         int64
+	FileID     int64
 	Qualified  string
 	Kind       string
 	ParentName string
 	Snippet    string
+	LineStart  int
+	LineEnd    int
 }
 
 // WriteEmbedding upserts a single embedding vector into sense_embeddings.
