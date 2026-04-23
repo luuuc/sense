@@ -64,7 +64,7 @@ func setupEmbedder(t *testing.T) *ONNXEmbedder {
 		t.Fatalf("read vocab: %v", err)
 	}
 
-	emb, err := NewONNXEmbedder(modelBytes, vocabBytes)
+	emb, err := NewONNXEmbedder(modelBytes, vocabBytes, 0)
 	if err != nil {
 		t.Fatalf("create embedder: %v", err)
 	}
@@ -266,6 +266,104 @@ func TestTokenizer(t *testing.T) {
 	}
 	if result.AttentionMask[lastNonPad+1] != 0 {
 		t.Error("padding positions should have attention mask = 0")
+	}
+}
+
+func TestEmbedDeterminism(t *testing.T) {
+	dir := testdataDir()
+	modelPath := filepath.Join(dir, "model.onnx")
+	vocabPath := filepath.Join(dir, "vocab.txt")
+	if _, err := os.Stat(modelPath); err != nil {
+		t.Skip("model not downloaded; run internal/embed/testdata/download.sh")
+	}
+
+	libPath := ortLibPath()
+	if _, err := os.Stat(libPath); err != nil && !filepath.IsAbs(libPath) {
+		t.Skipf("ONNX Runtime not found at %s", libPath)
+	}
+	if err := InitORTLibrary(libPath); err != nil {
+		t.Fatalf("init ORT: %v", err)
+	}
+
+	mb, _ := os.ReadFile(modelPath)
+	vb, _ := os.ReadFile(vocabPath)
+
+	inputs := []EmbedInput{
+		{QualifiedName: "Auth::Login#call", Kind: "method", ParentName: "Auth::Login", Snippet: "def call(email, password)"},
+		{QualifiedName: "CSV::Parser#parse", Kind: "method", ParentName: "CSV::Parser", Snippet: "def parse(stream)"},
+		{QualifiedName: "HTTP::Router#dispatch", Kind: "function", Snippet: "func dispatch(req, res)"},
+	}
+
+	// 1-worker: all cores
+	emb1, err := NewONNXEmbedder(mb, vb, 0)
+	if err != nil {
+		t.Fatalf("create 1-worker embedder: %v", err)
+	}
+	vecs1, err := emb1.Embed(context.Background(), inputs)
+	_ = emb1.Close()
+	if err != nil {
+		t.Fatalf("embed (1 worker): %v", err)
+	}
+
+	// N-worker: 1 thread per session (simulates parallelEmbed's thread partitioning)
+	emb2, err := NewONNXEmbedder(mb, vb, 1)
+	if err != nil {
+		t.Fatalf("create N-worker embedder: %v", err)
+	}
+	vecs2, err := emb2.Embed(context.Background(), inputs)
+	_ = emb2.Close()
+	if err != nil {
+		t.Fatalf("embed (N worker): %v", err)
+	}
+
+	for i := range vecs1 {
+		for j := range vecs1[i] {
+			if vecs1[i][j] != vecs2[i][j] {
+				t.Fatalf("determinism violation: vec[%d][%d] = %v (all-cores) vs %v (1-thread)",
+					i, j, vecs1[i][j], vecs2[i][j])
+			}
+		}
+	}
+}
+
+func BenchmarkEmbed(b *testing.B) {
+	dir := testdataDir()
+	modelPath := filepath.Join(dir, "model.onnx")
+	vocabPath := filepath.Join(dir, "vocab.txt")
+	if _, err := os.Stat(modelPath); err != nil {
+		b.Skip("model not downloaded; run internal/embed/testdata/download.sh")
+	}
+
+	libPath := ortLibPath()
+	if _, err := os.Stat(libPath); err != nil && !filepath.IsAbs(libPath) {
+		b.Skipf("ONNX Runtime not found at %s", libPath)
+	}
+	if err := InitORTLibrary(libPath); err != nil {
+		b.Fatalf("init ORT: %v", err)
+	}
+
+	mb, _ := os.ReadFile(modelPath)
+	vb, _ := os.ReadFile(vocabPath)
+	emb, err := NewONNXEmbedder(mb, vb, 0)
+	if err != nil {
+		b.Fatalf("create embedder: %v", err)
+	}
+	defer func() { _ = emb.Close() }()
+
+	inputs := make([]EmbedInput, BatchSize)
+	for i := range inputs {
+		inputs[i] = EmbedInput{
+			QualifiedName: "Pkg::Method",
+			Kind:          "method",
+			Snippet:       "def method_body(arg1, arg2)",
+		}
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		if _, err := emb.Embed(context.Background(), inputs); err != nil {
+			b.Fatalf("embed: %v", err)
+		}
 	}
 }
 

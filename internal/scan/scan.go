@@ -13,18 +13,22 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/luuuc/sense/internal/config"
 	"github.com/luuuc/sense/internal/extract"
@@ -52,6 +56,17 @@ type Options struct {
 	EmbeddingsEnabled bool      // when true, pass 3 generates embeddings for changed symbols
 }
 
+// PhaseTiming records how long each scan phase took.
+type PhaseTiming struct {
+	Walk              time.Duration
+	RemoveStale       time.Duration
+	ResolveEdges      time.Duration
+	SatisfyInterfaces time.Duration
+	AssociateTests    time.Duration
+	Embed             time.Duration
+	BuildHNSW         time.Duration
+}
+
 // Result summarises one scan invocation.
 type Result struct {
 	Files          int // total files visited (regular files, not directories)
@@ -67,6 +82,7 @@ type Result struct {
 	Warnings       int // per-file failures logged; scan continues past them
 	DefaultIgnored int // directories skipped by default ignore patterns
 	Duration       time.Duration
+	Phases         PhaseTiming
 }
 
 // snippetMaxBytes caps the single-line snippet we store per symbol.
@@ -151,28 +167,50 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	defer h.closeParsers()
 
 	start := time.Now()
+	var phases PhaseTiming
+
+	t0 := start
 	if err := h.walkTree(root); err != nil {
 		return nil, err
 	}
+	phases.Walk = time.Since(t0)
+
+	t0 = time.Now()
 	if err := h.removeStaleFiles(); err != nil {
 		return nil, err
 	}
+	phases.RemoveStale = time.Since(t0)
+
+	t0 = time.Now()
 	if err := h.resolveAndWriteEdges(); err != nil {
 		return nil, err
 	}
+	phases.ResolveEdges = time.Since(t0)
+
+	t0 = time.Now()
 	if err := h.satisfyInterfaces(); err != nil {
 		return nil, err
 	}
+	phases.SatisfyInterfaces = time.Since(t0)
+
+	t0 = time.Now()
 	if err := h.associateTests(); err != nil {
 		return nil, err
 	}
+	phases.AssociateTests = time.Since(t0)
+
 	if opts.EmbeddingsEnabled {
+		t0 = time.Now()
 		if err := h.embedSymbols(); err != nil {
 			return nil, err
 		}
+		phases.Embed = time.Since(t0)
+
+		t0 = time.Now()
 		if err := h.buildHNSWIndex(senseDir); err != nil {
 			_, _ = fmt.Fprintf(warn, "warn: hnsw index build failed: %v\n", err)
 		}
+		phases.BuildHNSW = time.Since(t0)
 	}
 	if err := idx.StampSchemaVersion(ctx); err != nil {
 		return nil, err
@@ -193,6 +231,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		Warnings:       h.warnings,
 		DefaultIgnored: h.defaultIgnored,
 		Duration:       elapsed,
+		Phases:         phases,
 	}
 
 	_, _ = fmt.Fprintf(out, "scanned %d files (%d indexed, %d changed, %d skipped) in %s\n",
@@ -205,8 +244,32 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		_, _ = fmt.Fprintf(out, "skipped %d directories (default ignores: %s)\n",
 			res.DefaultIgnored, strings.Join(ignore.DefaultPatterns(), ", "))
 	}
+	if elapsed > time.Second {
+		printPhaseBreakdown(out, elapsed, phases)
+	}
 
 	return res, nil
+}
+
+func printPhaseBreakdown(out io.Writer, total time.Duration, p PhaseTiming) {
+	pct := func(d time.Duration) int {
+		if total == 0 {
+			return 0
+		}
+		return int(100 * d / total)
+	}
+	_, _ = fmt.Fprintf(out, "phases: walk %s (%d%%), stale %s (%d%%), edges %s (%d%%), interfaces %s (%d%%), tests %s (%d%%)",
+		p.Walk, pct(p.Walk),
+		p.RemoveStale, pct(p.RemoveStale),
+		p.ResolveEdges, pct(p.ResolveEdges),
+		p.SatisfyInterfaces, pct(p.SatisfyInterfaces),
+		p.AssociateTests, pct(p.AssociateTests))
+	if p.Embed > 0 || p.BuildHNSW > 0 {
+		_, _ = fmt.Fprintf(out, ", embed %s (%d%%), hnsw %s (%d%%)",
+			p.Embed, pct(p.Embed),
+			p.BuildHNSW, pct(p.BuildHNSW))
+	}
+	_, _ = fmt.Fprintln(out)
 }
 
 func addSenseToGitignore(root string) bool {
@@ -275,6 +338,10 @@ type harness struct {
 	matcher        *ignore.Matcher
 	defaultMatcher *ignore.Matcher
 	maxFileSizeKB  int
+
+	// symbolStmt is a prepared statement for WriteSymbol, created at
+	// the start of walkTree and closed when walkTree returns.
+	symbolStmt *sql.Stmt
 
 	// pendingEdges holds walk-phase output for the resolve phase.
 	// Empty at start, filled by writeFile, drained by
@@ -365,19 +432,32 @@ func (h *harness) warnf(format string, args ...any) {
 	_, _ = fmt.Fprintf(h.warn, "warn: "+format+"\n", args...)
 }
 
+type walkEntry struct {
+	path string
+	rel  string
+}
+
 // walkTree walks root depth-first. Dot-prefixed directories (.git,
 // .vscode) and the .sense directory are always skipped. Paths matched
 // by the ignore matcher are skipped. Symlinks are not followed.
 func (h *harness) walkTree(root string) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
+	stmt, err := h.idx.PrepareSymbolStmt(h.ctx)
+	if err != nil {
+		return fmt.Errorf("prepare symbol stmt: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+	h.symbolStmt = stmt
+	defer func() { h.symbolStmt = nil }()
+
+	// Phase 1: collect file paths.
+	var entries []walkEntry
+	werr := filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
 			return werr
 		}
 		if cerr := h.ctx.Err(); cerr != nil {
 			return cerr
 		}
-
-		// Never follow symlinks — avoids infinite loops from cyclic links.
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
@@ -409,94 +489,325 @@ func (h *harness) walkTree(root string) error {
 		}
 
 		h.files++
-		h.processFile(path, rel)
+		h.seenPaths[rel] = true
+		entries = append(entries, walkEntry{path, rel})
 		return nil
 	})
+	if werr != nil {
+		return werr
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Phase 2: pre-load file hashes for incremental skip.
+	hashMap, err := h.idx.FileHashMap(h.ctx)
+	if err != nil {
+		return fmt.Errorf("load file hashes: %w", err)
+	}
+
+	// Phase 3: parallel parse+extract.
+	results := make([]*fileResult, len(entries))
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(h.ctx)
+	g.SetLimit(runtime.NumCPU())
+
+	for i, entry := range entries {
+		g.Go(func() error {
+			fr := parseFileStandalone(gctx, entry.path, entry.rel, hashMap, h.maxFileSizeKB, &mu, h.warn, &h.warnings)
+			results[i] = fr
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// Phase 4: serial accounting + batched write.
+	var batch []*fileResult
+	for i, fr := range results {
+		rel := entries[i].rel
+		ext := strings.ToLower(filepath.Ext(rel))
+		ex := extract.ForExtension(ext)
+
+		if fr == nil {
+			if ex != nil {
+				cached, ok := hashMap[rel]
+				if ok && cached.ID > 0 {
+					h.skipped++
+					h.indexed++
+					h.indexedFiles = append(h.indexedFiles, indexedFile{
+						ID: cached.ID, Path: rel, Language: ex.Language(),
+					})
+				}
+			}
+			continue
+		}
+
+		batch = append(batch, fr)
+		if len(batch) >= batchSize {
+			if err := h.flushBatch(batch); err != nil {
+				return err
+			}
+			batch = batch[:0]
+		}
+	}
+	if len(batch) > 0 {
+		return h.flushBatch(batch)
+	}
+	return nil
 }
+
+// flushBatch writes a batch of parsed file results in a single transaction.
+// If any file's write fails, the entire batch rolls back and the failing
+// file is excluded; remaining files are retried in a new batch.
+func (h *harness) flushBatch(batch []*fileResult) error {
+	// Snapshot slice lengths so we can undo in-memory appends on rollback.
+	snapEdges := len(h.pendingEdges)
+	snapIndexed := len(h.indexedFiles)
+	snapChanged := len(h.changedFileIDs)
+
+	var totalSyms int
+	failedIdx := -1
+	err := h.idx.InTx(h.ctx, func() error {
+		for i, fr := range batch {
+			syms, err := h.writeFileInner(fr)
+			if err != nil {
+				failedIdx = i
+				return fmt.Errorf("%s: %w", fr.Rel, err)
+			}
+			totalSyms += syms
+		}
+		return nil
+	})
+	if err != nil && failedIdx >= 0 {
+		// Transaction rolled back — undo in-memory appends from writeFileInner.
+		h.pendingEdges = h.pendingEdges[:snapEdges]
+		h.indexedFiles = h.indexedFiles[:snapIndexed]
+		h.changedFileIDs = h.changedFileIDs[:snapChanged]
+
+		h.warnf("%s: write failed, retrying batch without it: %v", batch[failedIdx].Rel, err)
+		retry := make([]*fileResult, 0, len(batch)-1)
+		for i, fr := range batch {
+			if i != failedIdx {
+				retry = append(retry, fr)
+			}
+		}
+		if len(retry) > 0 {
+			return h.flushBatch(retry)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	h.symbols += totalSyms
+	h.indexed += len(batch)
+	h.changed += len(batch)
+	return nil
+}
+
+// fileResult holds the output of parseFile — everything needed to
+// persist a file's symbols and edges without re-reading or re-parsing.
+type fileResult struct {
+	Rel       string
+	Language  string
+	Source    []byte
+	Hash     string
+	Symbols  []extract.EmittedSymbol
+	Edges    []extract.EmittedEdge
+}
+
+// 100 files per SQLite transaction amortizes BEGIN/COMMIT overhead (~10x
+// throughput gain) without risking large rollbacks on mid-batch failure.
+const batchSize = 100
 
 // processFile is the per-file pipeline: detect language, check size cap,
 // compare hash for incremental skip, parse, run the extractor, and write.
 // All per-file failures are soft — they bump h.warnings and return.
+// Used by RunIncremental for small change sets.
 func (h *harness) processFile(path, rel string) {
 	h.seenPaths[rel] = true
+	fr := h.parseFile(path, rel)
+	if fr == nil {
+		return
+	}
+	if err := h.writeFileResult(fr); err != nil {
+		h.warnf("%s: write failed: %v", rel, err)
+		return
+	}
+	h.indexed++
+	h.changed++
+}
 
+// parseOpts controls how parseFileCore reports warnings and obtains a
+// tree-sitter parser. The two callers (parallel walkTree, sequential
+// RunIncremental) supply different implementations.
+type parseOpts struct {
+	ctx           context.Context
+	maxFileSizeKB int
+	warnf         func(string, ...any)
+	parserFor     func(extract.Extractor) (*sitter.Parser, bool)
+}
+
+// parseFileCore is the shared parse+extract body. Returns nil for files
+// that should be skipped (unknown language, read/parse/extract failure,
+// or when skip returns true for the computed hash).
+func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) *fileResult {
 	ext := strings.ToLower(filepath.Ext(path))
 	ex := extract.ForExtension(ext)
 	if ex == nil {
-		return // not a language we know; just counted in h.files
+		return nil
 	}
 
-	// Size cap — skip files above the configured max.
-	if h.maxFileSizeKB > 0 {
+	if po.maxFileSizeKB > 0 {
 		info, err := os.Stat(path)
 		if err != nil {
-			h.warnf("%s: stat failed: %v", rel, err)
-			return
+			po.warnf("%s: stat failed: %v", rel, err)
+			return nil
 		}
-		if info.Size() > int64(h.maxFileSizeKB)*1024 {
-			h.warnf("%s: skipped (%d KB > %d KB max)", rel, info.Size()/1024, h.maxFileSizeKB)
-			return
+		if info.Size() > int64(po.maxFileSizeKB)*1024 {
+			po.warnf("%s: skipped (%d KB > %d KB max)", rel, info.Size()/1024, po.maxFileSizeKB)
+			return nil
 		}
+	}
+
+	if po.ctx.Err() != nil {
+		return nil
 	}
 
 	source, err := os.ReadFile(path)
 	if err != nil {
-		h.warnf("%s: read failed: %v", rel, err)
-		return
+		po.warnf("%s: read failed: %v", rel, err)
+		return nil
 	}
 
-	// Incremental: compare hash to skip unchanged files.
 	newHash := hashSource(source)
-	fileID, oldHash, metaErr := h.idx.FileMeta(h.ctx, rel)
-	if metaErr != nil {
-		h.warnf("%s: file meta lookup failed: %v", rel, metaErr)
-		// Fall through to re-parse on error.
-	} else if oldHash == newHash {
-		h.skipped++
-		h.indexed++
-		if fileID > 0 {
-			h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: rel, Language: ex.Language()})
-		}
-		return
+	if skip(newHash) {
+		return nil
 	}
 
 	collected := &collector{}
 
 	if raw, ok := ex.(extract.RawExtractor); ok {
 		if err := safeExtractRaw(raw, source, rel, collected); err != nil {
-			h.warnf("%s: extract failed: %v", rel, err)
-			return
+			po.warnf("%s: extract failed: %v", rel, err)
+			return nil
 		}
 	} else {
-		parser, err := h.parserFor(ex)
-		if err != nil {
-			h.warnf("%s: parser setup failed: %v", rel, err)
-			return
+		parser, owned := po.parserFor(ex)
+		if parser == nil {
+			return nil
+		}
+		if owned {
+			defer parser.Close()
 		}
 
 		tree := parser.Parse(source, nil)
 		if tree == nil {
-			h.warnf("%s: parse returned nil tree", rel)
-			return
+			po.warnf("%s: parse returned nil tree", rel)
+			return nil
 		}
 		defer tree.Close()
 
 		if tree.RootNode().HasError() {
-			h.warnf("%s: parse errors present, extracting best-effort", rel)
+			po.warnf("%s: parse errors present, extracting best-effort", rel)
 		}
 
 		if err := safeExtract(ex, tree, source, rel, collected); err != nil {
-			h.warnf("%s: extract failed: %v", rel, err)
-			return
+			po.warnf("%s: extract failed: %v", rel, err)
+			return nil
 		}
 	}
 
-	if err := h.writeFile(rel, ex.Language(), source, newHash, collected); err != nil {
-		h.warnf("%s: write failed: %v", rel, err)
-		return
+	sort.SliceStable(collected.symbols, func(i, j int) bool {
+		return len(collected.symbols[i].Qualified) < len(collected.symbols[j].Qualified)
+	})
+
+	return &fileResult{
+		Rel:      rel,
+		Language: ex.Language(),
+		Source:   source,
+		Hash:     newHash,
+		Symbols:  collected.symbols,
+		Edges:    collected.edges,
 	}
-	h.indexed++
-	h.changed++
+}
+
+// parseFileStandalone is the goroutine-safe parse function used by the
+// parallel walkTree. It creates a fresh parser per call (no shared state).
+func parseFileStandalone(
+	ctx context.Context,
+	path, rel string,
+	hashMap map[string]sqlite.CachedFile,
+	maxFileSizeKB int,
+	warnMu *sync.Mutex,
+	warnOut io.Writer,
+	warnCount *int,
+) *fileResult {
+	wf := func(format string, args ...any) {
+		warnMu.Lock()
+		*warnCount++
+		_, _ = fmt.Fprintf(warnOut, "warn: "+format+"\n", args...)
+		warnMu.Unlock()
+	}
+	po := parseOpts{
+		ctx:           ctx,
+		maxFileSizeKB: maxFileSizeKB,
+		warnf:         wf,
+		parserFor: func(ex extract.Extractor) (*sitter.Parser, bool) {
+			p := sitter.NewParser()
+			if err := p.SetLanguage(ex.Grammar()); err != nil {
+				p.Close()
+				wf("%s: parser setup failed: %v", rel, err)
+				return nil, false
+			}
+			return p, true // caller owns — parseFileCore will defer Close
+		},
+	}
+	return parseFileCore(po, path, rel, func(hash string) bool {
+		cached, ok := hashMap[rel]
+		return ok && cached.Hash == hash
+	})
+}
+
+// parseFile is the sequential parse function used by RunIncremental.
+// It uses the harness's cached parsers and per-file DB lookups.
+func (h *harness) parseFile(path, rel string) *fileResult {
+	po := parseOpts{
+		ctx:           h.ctx,
+		maxFileSizeKB: h.maxFileSizeKB,
+		warnf:         h.warnf,
+		parserFor: func(ex extract.Extractor) (*sitter.Parser, bool) {
+			p, err := h.parserFor(ex)
+			if err != nil {
+				h.warnf("%s: parser setup failed: %v", rel, err)
+				return nil, false
+			}
+			return p, false // harness owns — do not close
+		},
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	ex := extract.ForExtension(ext)
+
+	return parseFileCore(po, path, rel, func(hash string) bool {
+		fileID, oldHash, metaErr := h.idx.FileMeta(h.ctx, rel)
+		if metaErr != nil {
+			h.warnf("%s: file meta lookup failed: %v", rel, metaErr)
+			return false
+		}
+		if oldHash != hash {
+			return false
+		}
+		h.skipped++
+		h.indexed++
+		if fileID > 0 && ex != nil {
+			h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: rel, Language: ex.Language()})
+		}
+		return true
+	})
 }
 
 // parserFor returns a cached parser for the extractor's language. The
@@ -515,115 +826,95 @@ func (h *harness) parserFor(ex extract.Extractor) (*sitter.Parser, error) {
 	return p, nil
 }
 
-// writeFile persists one file's symbols atomically and buffers its
-// edges for the post-walk resolution pass.
-//
-// The per-file SQLite transaction still wraps the symbol writes so a
-// mid-file failure (write error, context cancellation) rolls back
-// cleanly — the index never contains a half-written file's symbols.
-// Edges are deliberately excluded from the file-scoped transaction:
-// they're cross-file by nature (the pitch-01-03 design point), so
-// their transaction boundary is the scan as a whole, handled by
-// resolveAndWriteEdges after walkTree completes.
-//
-// The steps inside the transaction:
-//
-//  1. Upsert the sense_files row; the symbols column is set to the
-//     extracted symbol count so status queries don't need a COUNT(*).
-//  2. Sort symbols so parents precede children (by Qualified length).
-//     This guarantees every ParentQualified lookup finds its target
-//     in the already-inserted map without a second pass.
-//  3. For each symbol, resolve ParentQualified → ParentID (may be nil
-//     when the parent lives in another file — legitimate state, not
-//     an error) and WriteSymbol.
-//  4. For each edge, look up the source qualified name in the
-//     file-local map — the source always lives in the emitting file,
-//     so a local lookup is definitive. Buffer the edge into
-//     h.pendingEdges with its target name still as a string.
-//     resolveAndWriteEdges will turn that string into a symbol_id
-//     once every file has been scanned and global names are visible.
-//
-// Counters for Result.Symbols update after the transaction commits;
-// Result.Edges is updated later when resolveAndWriteEdges writes.
-func (h *harness) writeFile(rel, lang string, source []byte, fileHash string, c *collector) error {
+// writeFileResult wraps writeFileInner in its own transaction.
+// Used by processFile (RunIncremental) where per-file transactions
+// are appropriate for small change sets.
+func (h *harness) writeFileResult(fr *fileResult) error {
 	var symsWritten int
-	var pending []pendingEdge
-	var fileID int64
 	err := h.idx.InTx(h.ctx, func() error {
-		var err error
-		fileID, err = h.idx.WriteFile(h.ctx, &model.File{
-			Path:      rel,
-			Language:  lang,
-			Hash:      fileHash,
-			Symbols:   len(c.symbols),
-			IndexedAt: time.Now().UTC(),
-		})
+		n, err := h.writeFileInner(fr)
 		if err != nil {
-			return fmt.Errorf("write file: %w", err)
+			return err
 		}
-
-		// Stable: at equal length, preserve extraction order so repeated
-		// scans write in the same order (determinism helps debugging).
-		sort.SliceStable(c.symbols, func(i, j int) bool {
-			return len(c.symbols[i].Qualified) < len(c.symbols[j].Qualified)
-		})
-
-		idByQualified := make(map[string]int64, len(c.symbols))
-		parentByQualified := make(map[string]string, len(c.symbols))
-		for _, s := range c.symbols {
-			var parentID *int64
-			if s.ParentQualified != "" {
-				if pid, ok := idByQualified[s.ParentQualified]; ok {
-					parentID = &pid
-				}
-				// parent not found → leave nil. Cross-file parents
-				// stay unresolved in Tier-Basic; a later card can
-				// backfill them through the global symbol table.
-			}
-
-			row := &model.Symbol{
-				FileID:     fileID,
-				Name:       s.Name,
-				Qualified:  s.Qualified,
-				Kind:       s.Kind,
-				Visibility: s.Visibility,
-				ParentID:   parentID,
-				LineStart:  s.LineStart,
-				LineEnd:    s.LineEnd,
-				Snippet:    snippetForLine(source, s.LineStart),
-			}
-			id, werr := h.idx.WriteSymbol(h.ctx, row)
-			if werr != nil {
-				return fmt.Errorf("write symbol %q: %w", s.Qualified, werr)
-			}
-			idByQualified[s.Qualified] = id
-			parentByQualified[s.Qualified] = s.ParentQualified
-			symsWritten++
-		}
-
-		for _, e := range c.edges {
-			sourceID := idByQualified[e.SourceQualified] // 0 if not found (file-level edge)
-			pending = append(pending, pendingEdge{
-				SourceID:              sourceID,
-				SourceQualified:       e.SourceQualified,
-				SourceParentQualified: parentByQualified[e.SourceQualified],
-				TargetName:            e.TargetQualified,
-				Kind:                  e.Kind,
-				FileID:                fileID,
-				Line:                  e.Line,
-				Confidence:            e.Confidence,
-			})
-		}
+		symsWritten = n
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 	h.symbols += symsWritten
-	h.pendingEdges = append(h.pendingEdges, pending...)
-	h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: rel, Language: lang})
-	h.changedFileIDs = append(h.changedFileIDs, fileID)
 	return nil
+}
+
+// writeFileInner persists one file's symbols and buffers its edges.
+// Must be called inside an active transaction. Returns the number of
+// symbols written.
+func (h *harness) writeFileInner(fr *fileResult) (int, error) {
+	fileID, err := h.idx.WriteFile(h.ctx, &model.File{
+		Path:      fr.Rel,
+		Language:  fr.Language,
+		Hash:      fr.Hash,
+		Symbols:   len(fr.Symbols),
+		IndexedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("write file: %w", err)
+	}
+
+	idByQualified := make(map[string]int64, len(fr.Symbols))
+	parentByQualified := make(map[string]string, len(fr.Symbols))
+	var symsWritten int
+	for _, s := range fr.Symbols {
+		var parentID *int64
+		if s.ParentQualified != "" {
+			if pid, ok := idByQualified[s.ParentQualified]; ok {
+				parentID = &pid
+			}
+		}
+
+		row := &model.Symbol{
+			FileID:     fileID,
+			Name:       s.Name,
+			Qualified:  s.Qualified,
+			Kind:       s.Kind,
+			Visibility: s.Visibility,
+			ParentID:   parentID,
+			LineStart:  s.LineStart,
+			LineEnd:    s.LineEnd,
+			Snippet:    snippetForLine(fr.Source, s.LineStart),
+		}
+		var id int64
+		var werr error
+		if h.symbolStmt != nil {
+			id, werr = sqlite.ExecSymbolStmt(h.ctx, h.symbolStmt, row)
+		} else {
+			id, werr = h.idx.WriteSymbol(h.ctx, row)
+		}
+		if werr != nil {
+			return 0, fmt.Errorf("write symbol %q: %w", s.Qualified, werr)
+		}
+		idByQualified[s.Qualified] = id
+		parentByQualified[s.Qualified] = s.ParentQualified
+		symsWritten++
+	}
+
+	for _, e := range fr.Edges {
+		sourceID := idByQualified[e.SourceQualified]
+		h.pendingEdges = append(h.pendingEdges, pendingEdge{
+			SourceID:              sourceID,
+			SourceQualified:       e.SourceQualified,
+			SourceParentQualified: parentByQualified[e.SourceQualified],
+			TargetName:            e.TargetQualified,
+			Kind:                  e.Kind,
+			FileID:                fileID,
+			Line:                  e.Line,
+			Confidence:            e.Confidence,
+		})
+	}
+
+	h.indexedFiles = append(h.indexedFiles, indexedFile{ID: fileID, Path: fr.Rel, Language: fr.Language})
+	h.changedFileIDs = append(h.changedFileIDs, fileID)
+	return symsWritten, nil
 }
 
 // removeStaleFiles deletes index entries for files that were not seen
@@ -700,6 +991,12 @@ func (h *harness) resolveAndWriteEdges() error {
 
 	var written, unresolved, ambiguous int
 	err = h.idx.InTx(h.ctx, func() error {
+		edgeStmt, serr := h.idx.PrepareEdgeStmt(h.ctx)
+		if serr != nil {
+			return fmt.Errorf("prepare edge stmt: %w", serr)
+		}
+		defer func() { _ = edgeStmt.Close() }()
+
 		for _, pe := range h.pendingEdges {
 			r, ok := resolver.Resolve(resolve.Request{
 				Target:                pe.TargetName,
@@ -724,8 +1021,14 @@ func (h *harness) resolveAndWriteEdges() error {
 				Line:       pe.Line,
 				Confidence: r.Confidence,
 			}
-			if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
-				return fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
+			if edge.SourceID != nil {
+				if _, werr := sqlite.ExecEdgeStmt(h.ctx, edgeStmt, edge); werr != nil {
+					return fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
+				}
+			} else {
+				if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
+					return fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
+				}
 			}
 			written++
 		}

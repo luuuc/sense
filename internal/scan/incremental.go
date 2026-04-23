@@ -60,13 +60,25 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 	}
 
 	start := time.Now()
+	var phases PhaseTiming
 
+	symStmt, err := opts.Idx.PrepareSymbolStmt(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("prepare symbol stmt: %w", err)
+	}
+	defer func() { _ = symStmt.Close() }()
+	h.symbolStmt = symStmt
+	defer func() { h.symbolStmt = nil }()
+
+	t0 := time.Now()
 	for _, rel := range opts.Changed {
 		abs := filepath.Join(opts.Root, rel)
 		h.processFile(abs, rel)
 	}
+	phases.Walk = time.Since(t0)
 
 	if len(opts.Removed) > 0 {
+		t0 = time.Now()
 		err := h.idx.InTx(ctx, func() error {
 			for _, rel := range opts.Removed {
 				if err := h.idx.DeleteFile(ctx, rel); err != nil {
@@ -79,20 +91,27 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 			return nil, fmt.Errorf("remove deleted files: %w", err)
 		}
 		h.removed = len(opts.Removed)
+		phases.RemoveStale = time.Since(t0)
 	}
 
+	t0 = time.Now()
 	if err := h.resolveAndWriteEdges(); err != nil {
 		return nil, fmt.Errorf("resolve edges: %w", err)
 	}
+	phases.ResolveEdges = time.Since(t0)
 
+	t0 = time.Now()
 	if err := h.associateTests(); err != nil {
 		return nil, fmt.Errorf("associate tests: %w", err)
 	}
+	phases.AssociateTests = time.Since(t0)
 
 	if opts.EmbeddingsEnabled {
+		t0 = time.Now()
 		if err := h.embedSymbols(); err != nil {
 			return nil, fmt.Errorf("embed symbols: %w", err)
 		}
+		phases.Embed = time.Since(t0)
 	}
 
 	elapsed := time.Since(start)
@@ -109,6 +128,7 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 		Unresolved: h.unresolved,
 		Warnings:   h.warnings,
 		Duration:   elapsed,
+		Phases:     phases,
 	}
 
 	return res, nil

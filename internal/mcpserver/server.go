@@ -113,7 +113,7 @@ func RunWithOptions(opts RunOptions) error {
 			}
 		}
 		if vectorIdx != nil && vectorIdx.Len() > 0 {
-			embedder, err = embed.NewBundledEmbedder()
+			embedder, err = embed.NewBundledEmbedder(0)
 			if err != nil {
 				return fmt.Errorf("sense mcp: init embedder: %w", err)
 			}

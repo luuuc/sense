@@ -134,7 +134,8 @@ func (h *harness) tryIncrementalHNSW(path string) (bool, error) {
 // session and pre-allocated buffers — no shared mutable state.
 func parallelEmbed(ctx context.Context, inputs []embed.EmbedInput) ([][]float32, error) {
 	batches := (len(inputs) + embed.BatchSize - 1) / embed.BatchSize
-	workers := runtime.NumCPU()
+	ncpu := runtime.NumCPU()
+	workers := ncpu
 	if workers > batches {
 		workers = batches
 	}
@@ -142,7 +143,7 @@ func parallelEmbed(ctx context.Context, inputs []embed.EmbedInput) ([][]float32,
 		workers = maxEmbedWorkers
 	}
 	if workers <= 1 {
-		emb, err := embed.NewBundledEmbedder()
+		emb, err := embed.NewBundledEmbedder(0)
 		if err != nil {
 			return nil, err
 		}
@@ -150,9 +151,14 @@ func parallelEmbed(ctx context.Context, inputs []embed.EmbedInput) ([][]float32,
 		return emb.Embed(ctx, inputs)
 	}
 
+	threadsPerWorker := ncpu / workers
+	if threadsPerWorker < 1 {
+		threadsPerWorker = 1
+	}
+
 	embedders := make([]*embed.ONNXEmbedder, workers)
 	for i := range embedders {
-		emb, err := embed.NewBundledEmbedder()
+		emb, err := embed.NewBundledEmbedder(threadsPerWorker)
 		if err != nil {
 			for j := 0; j < i; j++ {
 				_ = embedders[j].Close()

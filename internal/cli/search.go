@@ -82,7 +82,7 @@ func RunSearch(args []string, cio IO) int {
 			}
 		}
 		if vectorIdx != nil && vectorIdx.Len() > 0 {
-			embedder, err = embed.NewBundledEmbedder()
+			embedder, err = embed.NewBundledEmbedder(0)
 			if err != nil {
 				_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)
 				return ExitGeneralError
