@@ -965,6 +965,70 @@ func TestScan_SecondScanIsFast(t *testing.T) {
 	t.Logf("second scan: %s (skipped=%d changed=%d)", elapsed, second.Skipped, second.Changed)
 }
 
+func TestScanParallelDeterminism(t *testing.T) {
+	root := t.TempDir()
+
+	// Build a non-trivial tree with multiple languages so the parallel
+	// parse exercises different extractors concurrently.
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\nfunc helper() {}\n")
+	writeFile(t, filepath.Join(root, "lib/math.go"), "package lib\n\nfunc Add(a, b int) int { return a + b }\nfunc Sub(a, b int) int { return a - b }\n")
+	writeFile(t, filepath.Join(root, "lib/strings.go"), "package lib\n\nfunc Concat(a, b string) string { return a + b }\n")
+	writeFile(t, filepath.Join(root, "app.rb"), "class App\n  def run; end\n  def stop; end\nend\n")
+	writeFile(t, filepath.Join(root, "models/user.rb"), "class User\n  def name; end\n  def email; end\nend\n")
+	writeFile(t, filepath.Join(root, "index.ts"), "export function greet(name: string): string { return name; }\nexport function farewell(): void {}\n")
+	writeFile(t, filepath.Join(root, "utils.py"), "def parse(data):\n    pass\n\ndef validate(data):\n    pass\n")
+
+	ctx := context.Background()
+	snapshots := make([]string, 2)
+
+	for i := range snapshots {
+		senseDir := filepath.Join(root, fmt.Sprintf(".sense-%d", i))
+		_, err := scan.Run(ctx, scan.Options{
+			Root:     root,
+			Sense:    senseDir,
+			Output:   io.Discard,
+			Warnings: io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("scan %d: %v", i, err)
+		}
+
+		idx, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+		if err != nil {
+			t.Fatalf("open %d: %v", i, err)
+		}
+		rows, err := idx.DB().QueryContext(ctx,
+			`SELECT s.qualified, s.kind, f.path
+			 FROM sense_symbols s JOIN sense_files f ON s.file_id = f.id
+			 ORDER BY s.qualified, s.kind`)
+		if err != nil {
+			_ = idx.Close()
+			t.Fatalf("query %d: %v", i, err)
+		}
+		var buf bytes.Buffer
+		for rows.Next() {
+			var qualified, kind, path string
+			if err := rows.Scan(&qualified, &kind, &path); err != nil {
+				_ = rows.Close()
+				_ = idx.Close()
+				t.Fatalf("scan row %d: %v", i, err)
+			}
+			fmt.Fprintf(&buf, "%s\t%s\t%s\n", qualified, kind, path)
+		}
+		_ = rows.Close()
+		_ = idx.Close()
+		snapshots[i] = buf.String()
+	}
+
+	if snapshots[0] != snapshots[1] {
+		t.Errorf("parallel scan produced non-deterministic results:\n--- scan 0 ---\n%s\n--- scan 1 ---\n%s",
+			snapshots[0], snapshots[1])
+	}
+	if snapshots[0] == "" {
+		t.Error("expected symbols to be extracted, got empty result")
+	}
+}
+
 // ---- helpers ----
 
 // buildTree creates the given relative file paths under root. Go

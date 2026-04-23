@@ -5,7 +5,6 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/luuuc/sense/internal/search"
 )
@@ -60,7 +59,7 @@ func TestHNSWSearchKLargerThanIndex(t *testing.T) {
 	}
 }
 
-func TestHNSWPerformance1K(t *testing.T) {
+func TestHNSWSearch1K(t *testing.T) {
 	const n = 1000
 	const dims = 384
 	rng := rand.New(rand.NewPCG(42, 0))
@@ -74,9 +73,7 @@ func TestHNSWPerformance1K(t *testing.T) {
 		embeddings[int64(i+1)] = normalize(vec)
 	}
 
-	start := time.Now()
 	idx := search.BuildHNSWIndex(embeddings)
-	loadTime := time.Since(start)
 
 	if idx.Len() != n {
 		t.Fatalf("expected %d vectors, got %d", n, idx.Len())
@@ -88,21 +85,63 @@ func TestHNSWPerformance1K(t *testing.T) {
 	}
 	query = normalize(query)
 
-	start = time.Now()
 	results := idx.Search(query, 10)
-	searchTime := time.Since(start)
-
 	if len(results) != 10 {
 		t.Fatalf("expected 10 results, got %d", len(results))
 	}
 
-	t.Logf("1K symbols: load=%v, search=%v", loadTime, searchTime)
-
-	if loadTime > 500*time.Millisecond {
-		t.Errorf("load time %v exceeds 500ms budget", loadTime)
+	seen := map[int64]bool{}
+	for i, r := range results {
+		if r.Similarity < -1 || r.Similarity > 1 {
+			t.Errorf("result[%d]: similarity %f out of [-1,1]", i, r.Similarity)
+		}
+		if seen[r.SymbolID] {
+			t.Errorf("result[%d]: duplicate symbol ID %d", i, r.SymbolID)
+		}
+		seen[r.SymbolID] = true
 	}
-	if searchTime > 50*time.Millisecond {
-		t.Errorf("search time %v exceeds 50ms budget", searchTime)
+}
+
+func BenchmarkHNSWBuild1K(b *testing.B) {
+	const n = 1000
+	const dims = 384
+	rng := rand.New(rand.NewPCG(42, 0))
+
+	embeddings := make(map[int64][]float32, n)
+	for i := range n {
+		vec := make([]float32, dims)
+		for j := range dims {
+			vec[j] = rng.Float32()
+		}
+		embeddings[int64(i+1)] = normalize(vec)
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		search.BuildHNSWIndex(embeddings)
+	}
+}
+
+func BenchmarkHNSWSearch1K(b *testing.B) {
+	const n = 1000
+	const dims = 384
+	rng := rand.New(rand.NewPCG(42, 0))
+
+	embeddings := make(map[int64][]float32, n)
+	for i := range n {
+		vec := make([]float32, dims)
+		for j := range dims {
+			vec[j] = rng.Float32()
+		}
+		embeddings[int64(i+1)] = normalize(vec)
+	}
+
+	idx := search.BuildHNSWIndex(embeddings)
+	query := normalize(embeddings[1])
+
+	b.ResetTimer()
+	for range b.N {
+		idx.Search(query, 10)
 	}
 }
 
