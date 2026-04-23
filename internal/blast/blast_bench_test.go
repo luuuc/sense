@@ -65,7 +65,7 @@ func runBlastBench(b *testing.B, n, branching int) {
 	const subjectID int64 = 1
 
 	for b.Loop() {
-		res, err := blast.Compute(ctx, db, subjectID, blast.Options{MaxHops: 3})
+		res, err := blast.Compute(ctx, db, []int64{subjectID}, blast.Options{MaxHops: 3})
 		if err != nil {
 			b.Fatalf("Compute: %v", err)
 		}
