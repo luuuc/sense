@@ -120,6 +120,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 		return nil, 0, fmt.Errorf("search centrality: %w", err)
 	}
 	applyGraphCentrality(fused, centrality)
+	applyKindWeights(fused)
 	normalizeScores(fused)
 
 	// Sort by final score descending.
@@ -259,6 +260,17 @@ func normalizeScores(results []Result) {
 	}
 	for i := range results {
 		results[i].Score = (results[i].Score - minScore) / span
+	}
+}
+
+// applyKindWeights demotes namespace-level symbols (modules) which
+// tend to appear in many files and dominate search results over the
+// specific classes/methods users actually want.
+func applyKindWeights(results []Result) {
+	for i := range results {
+		if results[i].Kind == "module" {
+			results[i].Score *= 0.5
+		}
 	}
 }
 

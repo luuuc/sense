@@ -79,35 +79,33 @@ type Result struct {
 	TotalAffected   int
 }
 
-// Compute returns the blast radius of symbolID under the given
-// options. Errors surface only for I/O failures or a missing subject
-// symbol; an absence of callers is a successful empty result, not an
-// error.
+// Compute returns the blast radius of symbolIDs under the given
+// options. The first ID is the canonical subject for display; all IDs
+// seed the BFS frontier at hop 0. This handles Ruby class reopenings
+// where a single class is defined across multiple files — callers may
+// point to any reopening, so all must be seeds.
 //
-// The pitch's pseudocode signature omitted context.Context because
-// it was sketched as an API shape, not a type. Real callers (the CLI
-// in 01-04 and the MCP server in 01-05) need cancellation — a blast
-// on a wide graph can run tens of milliseconds, and an MCP server
-// answering concurrent requests should never hold an uncancellable
-// query. ctx flows through every I/O hop below.
-func Compute(ctx context.Context, db *sql.DB, symbolID int64, opts Options) (Result, error) {
+// For single-symbol queries, pass a one-element slice.
+func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (Result, error) {
+	if len(symbolIDs) == 0 {
+		return Result{}, fmt.Errorf("blast: no symbol IDs provided")
+	}
 	if opts.MaxHops <= 0 {
 		opts.MaxHops = defaultMaxHops
 	}
 
-	subject, err := loadSymbol(ctx, db, symbolID)
+	subject, err := loadSymbol(ctx, db, symbolIDs[0])
 	if err != nil {
-		return Result{}, fmt.Errorf("blast: load subject %d: %w", symbolID, err)
+		return Result{}, fmt.Errorf("blast: load subject %d: %w", symbolIDs[0], err)
 	}
 
-	// BFS bookkeeping. visited maps caller id → hop count. predecessor
-	// maps caller id → the id it called in the previous frontier
-	// (enables Via reconstruction for indirect hops). Both are keyed
-	// on symbol id; a symbol appears at most once at its shortest-
-	// path hop distance.
-	visited := map[int64]int{subject.ID: 0}
+	visited := map[int64]int{}
 	predecessor := map[int64]int64{}
-	frontier := []int64{subject.ID}
+	frontier := make([]int64, 0, len(symbolIDs))
+	for _, id := range symbolIDs {
+		visited[id] = 0
+		frontier = append(frontier, id)
+	}
 
 	for hop := 1; hop <= opts.MaxHops; hop++ {
 		if err := ctx.Err(); err != nil {

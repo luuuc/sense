@@ -110,6 +110,33 @@ func loadSymbols(ctx context.Context, db *sql.DB, ids []int64) (map[int64]model.
 	return out, nil
 }
 
+// SiblingSymbolIDs returns all symbol IDs sharing the same qualified
+// name and kind as the given symbol. The input symbolID is always
+// first in the returned slice so Compute uses it as the canonical
+// subject for display. This aggregates Ruby class reopenings (and
+// similar patterns) so blast radius can seed the BFS with all
+// definitions of the same logical class.
+func SiblingSymbolIDs(ctx context.Context, db *sql.DB, symbolID int64) ([]int64, error) {
+	const q = `SELECT s2.id FROM sense_symbols s1
+	           JOIN sense_symbols s2 ON s2.qualified = s1.qualified AND s2.kind = s1.kind
+	           WHERE s1.id = ? AND s2.id != ?
+	           ORDER BY s2.id`
+	rows, err := db.QueryContext(ctx, q, symbolID, symbolID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []int64{symbolID}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // sortSymbolsByID provides deterministic output ordering. Callers
 // consuming the blast Result (CLI tables, MCP responses) don't need
 // to impose their own sort.

@@ -487,7 +487,12 @@ func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Op
 			symbol, strings.Join(lines, "\n"))}
 	}
 
-	result, err := blast.Compute(ctx, h.db, matches[0].ID, opts)
+	siblingIDs, err := blast.SiblingSymbolIDs(ctx, h.db, matches[0].ID)
+	if err != nil {
+		siblingIDs = []int64{matches[0].ID}
+	}
+
+	result, err := blast.Compute(ctx, h.db, siblingIDs, opts)
 	if err != nil {
 		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: compute: %w", err)
 	}
@@ -518,7 +523,7 @@ func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options
 
 	results := make([]blast.Result, 0, len(symbolIDs))
 	for _, sid := range symbolIDs {
-		r, err := blast.Compute(ctx, h.db, sid, opts)
+		r, err := blast.Compute(ctx, h.db, []int64{sid}, opts)
 		if err != nil {
 			return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: %w", err)
 		}

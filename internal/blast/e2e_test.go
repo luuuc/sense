@@ -86,7 +86,7 @@ func TestE2EBlastOnSenseRepo(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	out, err := blast.Compute(ctx, db, subjectID, blast.Options{
+	out, err := blast.Compute(ctx, db, []int64{subjectID}, blast.Options{
 		MaxHops:      3,
 		IncludeTests: true,
 	})

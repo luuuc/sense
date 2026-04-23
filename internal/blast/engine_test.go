@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/index"
+	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
 )
@@ -99,7 +101,7 @@ func TestComputeDirectCaller(t *testing.T) {
 	leafID := idOf(t, adapter, "C#leaf")
 	middleID := idOf(t, adapter, "B#middle")
 
-	res, err := blast.Compute(context.Background(), db, leafID, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{MaxHops: 1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -135,7 +137,7 @@ func TestComputeMultiHopReachesAncestor(t *testing.T) {
 	middleID := idOf(t, adapter, "B#middle")
 	topID := idOf(t, adapter, "A#top")
 
-	res, err := blast.Compute(context.Background(), db, leafID, blast.Options{MaxHops: 3})
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{MaxHops: 3})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -167,7 +169,7 @@ func TestComputeMaxHopsCaps(t *testing.T) {
 	db, adapter := setupGraph(t)
 	leafID := idOf(t, adapter, "C#leaf")
 
-	res, err := blast.Compute(context.Background(), db, leafID, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{MaxHops: 1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -184,7 +186,7 @@ func TestComputeMinConfidenceFilters(t *testing.T) {
 	db, adapter := setupGraph(t)
 	leafID := idOf(t, adapter, "C#leaf")
 
-	res, err := blast.Compute(context.Background(), db, leafID, blast.Options{
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{
 		MaxHops:       3,
 		MinConfidence: 0.8,
 	})
@@ -202,7 +204,7 @@ func TestComputeMinConfidenceFilters(t *testing.T) {
 func TestComputeMissingSubjectReturnsSentinel(t *testing.T) {
 	db, _ := setupGraph(t)
 
-	_, err := blast.Compute(context.Background(), db, 99999, blast.Options{MaxHops: 1})
+	_, err := blast.Compute(context.Background(), db, []int64{99999}, blast.Options{MaxHops: 1})
 	if !errors.Is(err, blast.ErrSymbolNotFound) {
 		t.Errorf("err = %v, want ErrSymbolNotFound", err)
 	}
@@ -215,7 +217,7 @@ func TestComputeDefaultMaxHops(t *testing.T) {
 	db, adapter := setupGraph(t)
 	leafID := idOf(t, adapter, "C#leaf")
 
-	res, err := blast.Compute(context.Background(), db, leafID, blast.Options{})
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -265,7 +267,7 @@ end
 	aID := idOf(t, adapter, "Cycle#a")
 	bID := idOf(t, adapter, "Cycle#b")
 
-	res, err := blast.Compute(ctx, db, aID, blast.Options{MaxHops: 3})
+	res, err := blast.Compute(ctx, db, []int64{aID}, blast.Options{MaxHops: 3})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -289,7 +291,7 @@ func TestComputeIncludeTestsEmptyWhenNoEdges(t *testing.T) {
 	db, adapter := setupGraph(t)
 	leafID := idOf(t, adapter, "C#leaf")
 
-	res, err := blast.Compute(context.Background(), db, leafID, blast.Options{
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{
 		MaxHops:      3,
 		IncludeTests: true,
 	})
@@ -345,7 +347,7 @@ func TestTarget(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	targetID := idOf(t, adapter, "widget.Target")
-	res, err := blast.Compute(ctx, db, targetID, blast.Options{
+	res, err := blast.Compute(ctx, db, []int64{targetID}, blast.Options{
 		MaxHops:      1,
 		IncludeTests: true,
 	})
@@ -402,7 +404,7 @@ end
 	t.Cleanup(func() { _ = db.Close() })
 
 	userID := idOf(t, adapter, "User")
-	res, err := blast.Compute(ctx, db, userID, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(ctx, db, []int64{userID}, blast.Options{MaxHops: 1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -456,7 +458,7 @@ end
 	t.Cleanup(func() { _ = db.Close() })
 
 	baseID := idOf(t, adapter, "ApplicationController")
-	res, err := blast.Compute(ctx, db, baseID, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(ctx, db, []int64{baseID}, blast.Options{MaxHops: 1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -469,6 +471,135 @@ end
 	}
 	if !found {
 		t.Errorf("DirectCallers = %+v, want UsersController (via inherits edge)", res.DirectCallers)
+	}
+}
+
+// TestComputeMultiSeedAggregatesReopenings verifies that passing
+// multiple symbol IDs seeds the BFS from all of them, returning the
+// union of callers. Builds edges at the database level with specific
+// target IDs to simulate Ruby class reopenings where each reopened
+// definition has distinct callers.
+func TestComputeMultiSeedAggregatesReopenings(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "multi.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	err = adapter.InTx(ctx, func() error {
+		// Two files, each with a "Widget" class (reopening).
+		f1, err := adapter.WriteFile(ctx, &model.File{
+			Path: "widget.rb", Language: "ruby", Hash: "w1",
+			Symbols: 1, IndexedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		f2, err := adapter.WriteFile(ctx, &model.File{
+			Path: "widget_ext.rb", Language: "ruby", Hash: "w2",
+			Symbols: 1, IndexedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+
+		// Widget in file 1 (id will be assigned by DB)
+		widget1, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: f1, Name: "Widget", Qualified: "Widget",
+			Kind: model.KindClass, LineStart: 1, LineEnd: 10,
+		})
+		if err != nil {
+			return err
+		}
+		// Widget in file 2 (reopening — same qualified name)
+		widget2, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: f2, Name: "Widget", Qualified: "Widget",
+			Kind: model.KindClass, LineStart: 1, LineEnd: 10,
+		})
+		if err != nil {
+			return err
+		}
+
+		// CallerA calls Widget in file 1 only
+		callerA, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: f1, Name: "CallerA", Qualified: "CallerA",
+			Kind: model.KindClass, LineStart: 20, LineEnd: 30,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &callerA, TargetID: widget1,
+			Kind: model.EdgeCalls, FileID: f1, Confidence: 1.0,
+		}); err != nil {
+			return err
+		}
+
+		// CallerB calls Widget in file 2 only
+		callerB, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: f2, Name: "CallerB", Qualified: "CallerB",
+			Kind: model.KindClass, LineStart: 20, LineEnd: 30,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &callerB, TargetID: widget2,
+			Kind: model.EdgeCalls, FileID: f2, Confidence: 1.0,
+		}); err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Find both Widget symbol IDs.
+	all, err := adapter.Query(ctx, index.Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	var widgetIDs []int64
+	for _, s := range all {
+		if s.Qualified == "Widget" && s.Kind == "class" {
+			widgetIDs = append(widgetIDs, s.ID)
+		}
+	}
+	if len(widgetIDs) != 2 {
+		t.Fatalf("expected 2 Widget symbols, got %d", len(widgetIDs))
+	}
+
+	// Single-seed: only finds the caller targeting that specific ID.
+	single, err := blast.Compute(ctx, db, []int64{widgetIDs[0]}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute single: %v", err)
+	}
+	if single.TotalAffected != 1 {
+		t.Errorf("single-seed TotalAffected = %d, want 1", single.TotalAffected)
+	}
+
+	// Multi-seed: finds callers targeting both Widget definitions.
+	multi, err := blast.Compute(ctx, db, widgetIDs, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute multi: %v", err)
+	}
+	if multi.TotalAffected != 2 {
+		t.Errorf("multi-seed TotalAffected = %d, want 2", multi.TotalAffected)
+	}
+
+	if multi.TotalAffected <= single.TotalAffected {
+		t.Errorf("multi-seed (%d) should find more callers than single-seed (%d)",
+			multi.TotalAffected, single.TotalAffected)
 	}
 }
 

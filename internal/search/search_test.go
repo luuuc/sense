@@ -372,3 +372,74 @@ func TestNormalizeScoresSpread(t *testing.T) {
 		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)
 	}
 }
+
+func TestKindWeightsDemotesModules(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "mod.rb", Language: "ruby",
+		Hash: "m1", Symbols: 3, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A module symbol that would normally rank first via keyword match.
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Payments", Qualified: "Payments",
+		Kind: "module", LineStart: 1, LineEnd: 50,
+		Docstring: "payment processing module namespace",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A method symbol with a weaker keyword match but specific kind.
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "process_payment", Qualified: "Payments#process_payment",
+		Kind: "method", LineStart: 10, LineEnd: 20,
+		Docstring: "processes a single payment",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A class symbol with a weaker keyword match.
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "PaymentService", Qualified: "Payments::PaymentService",
+		Kind: "class", LineStart: 25, LineEnd: 45,
+		Docstring: "payment service class",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := search.NewEngine(a, nil, nil)
+	results, _, err := engine.Search(ctx, search.Options{
+		Query: "payment",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("no results returned")
+	}
+
+	if results[0].Kind == "module" {
+		t.Errorf("module %q ranks first; kind weights should demote it below non-module results",
+			results[0].Qualified)
+	}
+
+	hasModule := false
+	for _, r := range results {
+		if r.Kind == "module" {
+			hasModule = true
+		}
+	}
+	if !hasModule {
+		t.Error("module symbol missing from results entirely — test setup issue")
+	}
+}
