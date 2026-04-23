@@ -1,16 +1,20 @@
 package scan
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/search"
+	"github.com/luuuc/sense/internal/sqlite"
 )
 
 const maxEmbedWorkers = 8
@@ -31,13 +35,16 @@ func (h *harness) embedSymbols() error {
 		return nil
 	}
 
+	h.extendMethodSnippets(syms)
+	contextMap := h.buildContextMap(syms)
+
 	inputs := make([]embed.EmbedInput, len(syms))
 	for i, s := range syms {
 		inputs[i] = embed.EmbedInput{
 			QualifiedName: s.Qualified,
 			Kind:          s.Kind,
-			ParentName:    s.ParentName,
 			Snippet:       s.Snippet,
+			Context:       contextMap[s.ID],
 		}
 	}
 
@@ -215,6 +222,95 @@ func parallelEmbed(ctx context.Context, inputs []embed.EmbedInput) ([][]float32,
 		all = append(all, r.vecs...)
 	}
 	return all, nil
+}
+
+// buildContextMap calls ContextForFile for each unique file among the
+// symbols and merges the results into a flat symbolID→context map.
+func (h *harness) buildContextMap(syms []sqlite.EmbedSymbol) map[int64]string {
+	seen := make(map[int64]bool)
+	result := make(map[int64]string, len(syms))
+	for _, s := range syms {
+		if seen[s.FileID] {
+			continue
+		}
+		seen[s.FileID] = true
+		ctx, err := h.idx.ContextForFile(h.ctx, s.FileID)
+		if err != nil {
+			continue
+		}
+		for id, text := range ctx {
+			result[id] = text
+		}
+	}
+	return result
+}
+
+const maxBodyLines = 10
+
+// extendMethodSnippets replaces single-line snippets for method/function
+// symbols with the first N lines of the body read from source. Groups
+// symbols by file to avoid re-reading the same file multiple times.
+func (h *harness) extendMethodSnippets(syms []sqlite.EmbedSymbol) {
+	byFile := make(map[int64][]int)
+	for i := range syms {
+		if syms[i].Kind == "method" || syms[i].Kind == "function" {
+			byFile[syms[i].FileID] = append(byFile[syms[i].FileID], i)
+		}
+	}
+	if len(byFile) == 0 {
+		return
+	}
+
+	fileIDs := make([]int64, 0, len(byFile))
+	for fid := range byFile {
+		fileIDs = append(fileIDs, fid)
+	}
+	paths, err := h.idx.FilePathsByIDs(h.ctx, fileIDs)
+	if err != nil {
+		return
+	}
+
+	for fid, indices := range byFile {
+		relPath, ok := paths[fid]
+		if !ok {
+			continue
+		}
+		absPath := filepath.Join(h.root, relPath)
+		lines, err := readFileLines(absPath)
+		if err != nil {
+			continue
+		}
+		for _, i := range indices {
+			s := &syms[i]
+			start := s.LineStart - 1 // 0-indexed
+			end := s.LineStart - 1 + maxBodyLines
+			if end > s.LineEnd {
+				end = s.LineEnd
+			}
+			if start < 0 || start >= len(lines) {
+				continue
+			}
+			if end > len(lines) {
+				end = len(lines)
+			}
+			s.Snippet = strings.Join(lines[start:end], "\n")
+		}
+	}
+}
+
+func readFileLines(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	return lines, scanner.Err()
 }
 
 // vectorToBlob serializes a float32 slice to a little-endian byte slice.

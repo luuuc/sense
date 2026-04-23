@@ -152,12 +152,16 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if idx.Rebuilt {
 		_, _ = fmt.Fprintf(out, "schema version mismatch — rebuilding index from source\n")
 	}
+	if idx.FTSMigrated {
+		_, _ = fmt.Fprintf(out, "migrated fts index — keyword search will repopulate during this scan\n")
+	}
 
 	h := &harness{
 		ctx:            ctx,
 		idx:            idx,
 		out:            out,
 		warn:           warn,
+		root:           root,
 		parsers:        map[string]*sitter.Parser{},
 		matcher:        matcher,
 		defaultMatcher: ignore.New(ignore.DefaultPatterns()...),
@@ -333,6 +337,7 @@ type harness struct {
 	idx     *sqlite.Adapter
 	out     io.Writer // summary-line sink
 	warn    io.Writer // per-file warning sink
+	root    string    // repository root directory
 	parsers map[string]*sitter.Parser
 
 	matcher        *ignore.Matcher
