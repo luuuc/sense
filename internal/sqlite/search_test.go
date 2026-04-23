@@ -316,3 +316,130 @@ func TestSymbolCount(t *testing.T) {
 		t.Errorf("got count %d, want 4", count)
 	}
 }
+
+func TestKeywordSearchMatchesSnippet(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "app/models/post.rb", Language: "ruby",
+		Hash: "snip1", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Post", Qualified: "Post",
+		Kind: "class", LineStart: 1, LineEnd: 50,
+		Snippet: "class Post < ApplicationRecord\n  belongs_to :user\n  has_many :comments",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// "belongs_to" only appears in the snippet, not in name/qualified/docstring.
+	results, err := a.KeywordSearch(ctx, "belongs_to", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'belongs_to' (from snippet), got %d", len(results))
+	}
+	if results[0].Qualified != "Post" {
+		t.Errorf("expected Post, got %q", results[0].Qualified)
+	}
+}
+
+func TestFTSMigrationAddsSnippet(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// First open creates the current schema (with snippet in FTS).
+	a, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "app/models/user.rb", Language: "ruby",
+		Hash: "m1", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "User", Qualified: "User",
+		Kind: "class", LineStart: 1, LineEnd: 30,
+		Snippet: "class User < ApplicationRecord\n  validates :email",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify snippet search works.
+	results, err := a.KeywordSearch(ctx, "validates", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result for 'validates', got %d", len(results))
+	}
+
+	// Simulate a pre-migration database by dropping FTS and recreating
+	// without the snippet column.
+	db := a.DB()
+	for _, name := range []string{
+		"sense_symbols_fts_insert", "sense_symbols_fts_delete",
+		"sense_symbols_fts_update", "sense_symbols_fts_update_after",
+	} {
+		if _, err := db.ExecContext(ctx, "DROP TRIGGER IF EXISTS "+name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS sense_symbols_fts"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE VIRTUAL TABLE sense_symbols_fts USING fts5(
+		name, qualified, docstring, content='sense_symbols', content_rowid='id'
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close()
+
+	// Reopen — should detect stale FTS and migrate.
+	a2, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a2.Close() }()
+
+	// After migration the FTS table is empty (drop+recreate loses content).
+	// But new inserts should populate snippet in FTS.
+	fid2, err := a2.WriteFile(ctx, &model.File{
+		Path: "app/models/post.rb", Language: "ruby",
+		Hash: "m2", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a2.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid2, Name: "Post", Qualified: "Post",
+		Kind: "class", LineStart: 1, LineEnd: 20,
+		Snippet: "class Post < ApplicationRecord\n  belongs_to :author",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err = a2.KeywordSearch(ctx, "belongs_to", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'belongs_to' after migration, got %d", len(results))
+	}
+}
