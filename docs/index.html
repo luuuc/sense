@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sense — Codebase understanding that any tool can query</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0a0d12;
+    --bg-2: #0d1118;
+    --bg-3: #11151d;
+    --line: #1b2230;
+    --line-2: #232c3d;
+    --ink: #e6ecf5;
+    --ink-2: #aab4c4;
+    --ink-3: #6b7689;
+    --ink-4: #454e5f;
+    --accent: oklch(0.82 0.14 220);
+    --accent-dim: oklch(0.62 0.12 220);
+    --accent-deep: oklch(0.42 0.09 220);
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  body{
+    background:
+      radial-gradient(1200px 600px at 50% -200px, rgba(90,160,220,0.06), transparent 60%),
+      radial-gradient(800px 400px at 90% 20%, rgba(90,160,220,0.03), transparent 60%),
+      var(--bg);
+    min-height:100vh;
+    overflow-x:hidden;
+  }
+  a{color:inherit;text-decoration:none}
+
+  /* ----- Top bar ----- */
+  .chrome{
+    position:sticky;top:0;z-index:50;
+    backdrop-filter:blur(12px);
+    background:rgba(10,13,18,0.72);
+    border-bottom:1px solid var(--line);
+  }
+  .chrome-inner{
+    max-width:1200px;margin:0 auto;padding:12px 28px;
+    display:flex;align-items:center;gap:24px;
+    font-size:13px;
+  }
+  .repo-crumb{display:flex;align-items:center;gap:8px;color:var(--ink-2)}
+  .repo-crumb .slash{color:var(--ink-4)}
+  .repo-crumb .owner{color:var(--ink-2)}
+  .repo-crumb .name{color:var(--ink);font-weight:500}
+  .repo-pill{
+    margin-left:4px;padding:2px 8px;border:1px solid var(--line-2);border-radius:999px;
+    font-size:11px;color:var(--ink-3);letter-spacing:0.02em;
+  }
+  .chrome-nav{margin-left:auto;display:flex;gap:18px;color:var(--ink-3);font-size:12.5px}
+  .chrome-nav a:hover{color:var(--ink)}
+  .star-btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:5px 10px;border:1px solid var(--line-2);border-radius:6px;
+    background:var(--bg-2);color:var(--ink-2);font-family:var(--mono);font-size:12px;
+    cursor:pointer;transition:all .15s;
+  }
+  .star-btn:hover{border-color:var(--accent-deep);color:var(--ink)}
+  .star-count{color:var(--ink-3);padding-left:8px;margin-left:2px;border-left:1px solid var(--line-2)}
+
+  /* ----- Layout ----- */
+  .wrap{max-width:1200px;margin:0 auto;padding:0 28px}
+  section{position:relative}
+
+  /* ----- Hero ----- */
+  .hero{
+    position:relative;
+    padding:120px 0 100px;
+    border-bottom:1px solid var(--line);
+    overflow:hidden;
+  }
+  #constellation{
+    position:absolute;inset:0;width:100%;height:100%;
+    z-index:0;
+  }
+  .hero-vignette{
+    position:absolute;inset:0;z-index:1;pointer-events:none;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 50%, rgba(10,13,18,0.92), rgba(10,13,18,0.4) 60%, transparent 100%),
+      linear-gradient(180deg, transparent 0%, transparent 60%, var(--bg) 100%);
+  }
+  .hero-inner{position:relative;z-index:2;max-width:1200px;margin:0 auto;padding:0 28px}
+
+  .brand{
+    display:flex;align-items:baseline;gap:16px;margin-bottom:72px;
+  }
+  .braille-logo{
+    font-family:var(--mono);
+    font-size:38px;font-weight:400;
+    letter-spacing:0.18em;
+    color:var(--ink);
+    line-height:1;
+    user-select:none;
+  }
+  .brand-meta{
+    font-family:var(--mono);font-size:11px;color:var(--ink-4);
+    letter-spacing:0.12em;text-transform:uppercase;
+    padding-bottom:4px;
+  }
+  .brand-meta .dot{color:var(--accent);margin:0 8px}
+
+  .tagline{
+    font-family:var(--sans);
+    font-weight:300;
+    font-size:clamp(34px, 5vw, 56px);
+    line-height:1.1;
+    letter-spacing:-0.02em;
+    color:var(--ink);
+    max-width:820px;
+    margin:0 0 20px;
+  }
+  .tagline em{
+    font-style:normal;
+    color:var(--accent);
+    font-weight:400;
+  }
+  .subtitle{
+    font-family:var(--mono);
+    color:var(--ink-3);
+    font-size:14px;
+    letter-spacing:0.01em;
+    max-width:620px;
+    margin:0 0 48px;
+  }
+  .subtitle .sep{color:var(--ink-4);margin:0 10px}
+
+  /* ----- Install line ----- */
+  .install{
+    display:flex;align-items:stretch;
+    max-width:640px;
+    border:1px solid var(--line-2);
+    background:rgba(13,17,24,0.72);
+    border-radius:6px;
+    backdrop-filter:blur(8px);
+    overflow:hidden;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 20px 60px -30px rgba(0,0,0,0.8);
+  }
+  .install-prompt{
+    padding:14px 14px 14px 18px;color:var(--accent);
+    font-family:var(--mono);font-size:13.5px;user-select:none;
+    border-right:1px dashed var(--line-2);
+  }
+  .install-cmd{
+    flex:1;padding:14px 16px;color:var(--ink);
+    font-family:var(--mono);font-size:13.5px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .install-cmd .muted{color:var(--ink-3)}
+  .install-copy{
+    padding:0 18px;border:0;border-left:1px solid var(--line-2);
+    background:transparent;color:var(--ink-3);cursor:pointer;
+    font-family:var(--mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;
+    transition:all .15s;
+  }
+  .install-copy:hover{background:rgba(255,255,255,0.03);color:var(--ink)}
+  .install-copy.copied{color:var(--accent)}
+
+  .hero-secondary{
+    margin-top:22px;display:flex;gap:28px;flex-wrap:wrap;
+    font-family:var(--mono);font-size:12px;color:var(--ink-4);
+  }
+  .hero-secondary a{color:var(--ink-3);border-bottom:1px dotted var(--line-2);padding-bottom:1px}
+  .hero-secondary a:hover{color:var(--accent);border-color:var(--accent-deep)}
+
+  /* ----- Section header ----- */
+  .sect{padding:96px 0;border-bottom:1px solid var(--line)}
+  .sect-head{
+    display:flex;align-items:baseline;gap:18px;margin-bottom:48px;
+  }
+  .sect-num{
+    font-family:var(--mono);font-size:11px;letter-spacing:0.18em;
+    color:var(--accent);text-transform:uppercase;
+  }
+  .sect-title{
+    font-family:var(--sans);font-weight:300;font-size:32px;letter-spacing:-0.01em;
+    color:var(--ink);margin:0;
+  }
+  .sect-rule{flex:1;height:1px;background:var(--line);align-self:center;margin-left:8px}
+
+  /* ----- Capability cards ----- */
+  .caps{
+    display:grid;grid-template-columns:repeat(2,1fr);
+    border-top:1px solid var(--line);border-left:1px solid var(--line);
+  }
+  .cap{
+    border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+    padding:36px 32px;position:relative;
+    transition:background .2s;
+  }
+  .cap:hover{background:rgba(255,255,255,0.012)}
+  .cap-head{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+  .cap-icon{
+    width:28px;height:28px;flex:none;
+    display:grid;place-items:center;
+    color:var(--accent);
+  }
+  .cap-label{
+    font-family:var(--mono);font-size:11px;letter-spacing:0.2em;
+    color:var(--ink-4);text-transform:uppercase;
+  }
+  .cap-name{
+    font-family:var(--sans);font-weight:400;font-size:26px;
+    color:var(--ink);margin:10px 0 4px;letter-spacing:-0.01em;
+  }
+  .cap-tag{
+    font-family:var(--mono);font-size:13px;color:var(--accent);
+    margin:0 0 18px;letter-spacing:-0.005em;
+  }
+  .cap-desc{
+    font-family:var(--sans);font-size:14.5px;color:var(--ink-2);line-height:1.65;
+    max-width:44ch;
+  }
+  .cap-example{
+    margin-top:24px;padding:14px 16px;border:1px solid var(--line);border-radius:4px;
+    background:rgba(13,17,24,0.5);
+    font-family:var(--mono);font-size:12px;color:var(--ink-3);
+    line-height:1.7;
+  }
+  .cap-example .k{color:var(--accent)}
+  .cap-example .s{color:#b4c9a3}
+  .cap-example .c{color:var(--ink-4)}
+  .cap-example .n{color:#d3b58a}
+
+  .cap-corner{
+    position:absolute;top:14px;right:16px;
+    font-family:var(--mono);font-size:10px;color:var(--ink-4);letter-spacing:0.15em;
+  }
+
+  /* ----- How it works ----- */
+  .steps{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+  }
+  .step{
+    background:var(--bg);padding:32px 28px;
+    display:flex;flex-direction:column;gap:14px;
+    min-height:260px;
+  }
+  .step-num{
+    font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:0.18em;
+  }
+  .step-cmd{
+    font-family:var(--mono);font-size:17px;color:var(--ink);
+    padding:10px 0;border-bottom:1px dashed var(--line-2);
+  }
+  .step-cmd .flag{color:var(--ink-3)}
+  .step-cmd .accent{color:var(--accent)}
+  .step-desc{
+    font-family:var(--sans);font-size:14px;color:var(--ink-2);line-height:1.6;
+  }
+  .step-meta{
+    margin-top:auto;padding-top:16px;
+    font-family:var(--mono);font-size:11px;color:var(--ink-4);
+    display:flex;flex-wrap:wrap;gap:10px 14px;
+  }
+  .step-meta span{display:inline-flex;align-items:center;gap:6px}
+  .step-meta span::before{content:"·";color:var(--accent);font-size:16px;line-height:0}
+
+  /* ----- What it's not ----- */
+  .nots{
+    display:grid;grid-template-columns:1fr 1fr;gap:0 64px;
+    border-top:1px solid var(--line);
+  }
+  .not{
+    padding:28px 0;border-bottom:1px solid var(--line);
+    display:grid;grid-template-columns:24px 1fr;gap:18px;align-items:baseline;
+  }
+  .not-mark{
+    font-family:var(--mono);font-size:14px;color:var(--ink-4);line-height:1;
+    padding-top:4px;
+  }
+  .not-title{
+    font-family:var(--sans);font-weight:400;font-size:18px;color:var(--ink);margin:0 0 6px;
+  }
+  .not-body{
+    font-family:var(--mono);font-size:12.5px;color:var(--ink-3);line-height:1.65;
+    max-width:46ch;
+  }
+
+  /* ----- Footer ----- */
+  footer{
+    padding:80px 0 60px;
+    background:linear-gradient(180deg, var(--bg) 0%, #070a0f 100%);
+  }
+  .foot-grid{
+    display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:40px;
+    padding-bottom:48px;border-bottom:1px solid var(--line);
+  }
+  .foot-brand{display:flex;flex-direction:column;gap:14px}
+  .foot-brand .braille-logo{font-size:22px}
+  .foot-brand p{font-family:var(--mono);font-size:12px;color:var(--ink-4);margin:0;max-width:32ch;line-height:1.7}
+  .foot-col h5{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase;
+    color:var(--ink-4);margin:0 0 14px;font-weight:500;
+  }
+  .foot-col a{display:block;font-family:var(--mono);font-size:12.5px;color:var(--ink-2);padding:4px 0;transition:color .15s}
+  .foot-col a:hover{color:var(--accent)}
+  .foot-tail{
+    margin-top:48px;display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap;
+    font-family:var(--mono);font-size:11px;color:var(--ink-4);letter-spacing:0.04em;
+  }
+  .beat{
+    font-family:var(--mono);font-size:11px;color:var(--ink-4);text-align:center;
+    padding:40px 0 8px;letter-spacing:0.3em;text-transform:uppercase;
+  }
+  .beat span{color:var(--ink-3)}
+  .beat .sep{color:var(--accent);margin:0 14px}
+
+  /* ----- Reveal ----- */
+  .reveal{opacity:0;transform:translateY(12px);transition:opacity .7s ease, transform .7s ease}
+  .reveal.in{opacity:1;transform:none}
+
+  /* small screens */
+  @media (max-width: 860px){
+    .chrome-nav{display:none}
+    .caps{grid-template-columns:1fr}
+    .steps{grid-template-columns:1fr}
+    .nots{grid-template-columns:1fr;gap:0}
+    .foot-grid{grid-template-columns:1fr 1fr;gap:32px}
+    .hero{padding:80px 0 70px}
+    .brand{margin-bottom:48px}
+    .license-full{display:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- Top chrome -->
+<div class="chrome">
+  <div class="chrome-inner">
+    <div class="repo-crumb">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 010-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 11-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z" fill="currentColor"/></svg>
+      <span class="owner">luuuc</span>
+      <span class="slash">/</span>
+      <span class="name">sense</span>
+      <span class="repo-pill">Public</span>
+    </div>
+    <nav class="chrome-nav">
+      <a href="https://github.com/luuuc/sense">Code</a>
+      <a href="https://github.com/luuuc/sense/issues">Issues <span id="issueCount" style="color:var(--ink-4)"></span></a>
+      <a href="https://github.com/luuuc/sense/pulls">Pull requests <span id="prCount" style="color:var(--ink-4)"></span></a>
+      <a href="https://www.reddit.com/r/sense_dev">Reddit</a>
+      <a href="https://github.com/luuuc/sense/actions">Actions</a>
+    </nav>
+    <a class="star-btn" href="https://github.com/luuuc/sense" id="star">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z" fill="currentColor"/></svg>
+      Star
+      <span class="star-count" id="starCount"></span>
+    </a>
+  </div>
+</div>
+
+<!-- Hero -->
+<section class="hero">
+  <canvas id="constellation"></canvas>
+  <div class="hero-vignette"></div>
+  <div class="hero-inner">
+    <div class="brand reveal">
+      <div class="braille-logo" aria-label="Sense">⠎⠑⠝⠎⠑</div>
+      <div class="brand-meta"><span id="versionTag">v0.23.0</span><span class="dot">·</span>MIT<span class="dot">·</span>one binary</div>
+    </div>
+
+    <h1 class="tagline reveal">Codebase understanding<br/>that any tool can <em>query</em>.</h1>
+    <p class="subtitle reveal">One binary.<span class="sep">/</span>Four capabilities.<span class="sep">/</span>No external dependencies.</p>
+
+    <div class="install reveal" role="group" aria-label="Install command">
+      <span class="install-prompt">$</span>
+      <div class="install-cmd" id="installCmd"><span class="muted">curl -fsSL</span> https://luuuc.github.io/sense/install.sh <span class="muted">|</span> sh</div>
+      <button class="install-copy" id="copyBtn" aria-label="Copy install command">Copy</button>
+    </div>
+
+    <div class="hero-secondary reveal">
+      <span>or: <a href="https://github.com/luuuc/sense/releases">releases &#8594;</a></span>
+      <span><a href="https://github.com/luuuc/sense#readme">docs &#8594;</a></span>
+      <span><a href="https://github.com/luuuc/sense">source &#8594;</a></span>
+    </div>
+  </div>
+</section>
+
+<!-- What it does -->
+<section class="sect">
+  <div class="wrap">
+    <div class="sect-head reveal">
+      <span class="sect-num">&sect; 01</span>
+      <h2 class="sect-title">What it does</h2>
+      <div class="sect-rule"></div>
+      <span class="sect-num" style="color:var(--ink-4)">four tools</span>
+    </div>
+
+    <div class="caps reveal">
+      <!-- Graph -->
+      <div class="cap">
+        <span class="cap-corner">01 / GRAPH</span>
+        <div class="cap-head">
+          <div class="cap-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+              <circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/>
+              <circle cx="12" cy="13" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>
+              <path d="M7 6.5 L10.5 12.2 M17 6.5 L13.5 12.2 M11 14.5 L6.5 18 M13 14.5 L17.5 18"/>
+            </svg>
+          </div>
+          <span class="cap-label">symbol relationships</span>
+        </div>
+        <h3 class="cap-name">Graph</h3>
+        <p class="cap-tag">"Who calls this? What implements that?"</p>
+        <p class="cap-desc">Callers, callees, inheritance chains, and test coverage mapping — traversable from any symbol in the index.</p>
+        <div class="cap-example">
+<span class="c">$ sense graph --callers parseConfig</span><br/>
+<span class="k">&#8594;</span> cli/main.go:42 &nbsp;<span class="c">main</span><br/>
+<span class="k">&#8594;</span> cli/serve.go:18 <span class="c">startServer</span><br/>
+<span class="k">&#8594;</span> tests/config_test.go:9 <span class="c">TestParse</span><br/>
+<span class="c">3 callers · 1 test · depth 2</span>
+        </div>
+      </div>
+
+      <!-- Search -->
+      <div class="cap">
+        <span class="cap-corner">02 / SEARCH</span>
+        <div class="cap-head">
+          <div class="cap-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+              <circle cx="10.5" cy="10.5" r="6"/>
+              <path d="M15 15 L20 20"/>
+              <path d="M7.5 10.5 L13.5 10.5 M10.5 7.5 L10.5 13.5" opacity="0.45"/>
+            </svg>
+          </div>
+          <span class="cap-label">semantic + keyword</span>
+        </div>
+        <h3 class="cap-name">Search</h3>
+        <p class="cap-tag">"Find by meaning, not just by string."</p>
+        <p class="cap-desc">Hybrid keyword + semantic search across symbols and code. Embeddings are bundled — no API keys, no network.</p>
+        <div class="cap-example">
+<span class="c">$ sense search "retry with backoff"</span><br/>
+<span class="k">0.91</span> <span class="n">net/http.go:134</span> <span class="c">WithRetry()</span><br/>
+<span class="k">0.87</span> <span class="n">queue/worker.go:78</span> <span class="c">ExponentialRetry()</span><br/>
+<span class="k">0.72</span> <span class="n">sync/poll.go:51</span> <span class="c">PollUntil()</span>
+        </div>
+      </div>
+
+      <!-- Blast Radius -->
+      <div class="cap">
+        <span class="cap-corner">03 / BLAST</span>
+        <div class="cap-head">
+          <div class="cap-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+              <circle cx="12" cy="12" r="2.2" fill="currentColor"/>
+              <circle cx="12" cy="12" r="5.5" opacity="0.7"/>
+              <circle cx="12" cy="12" r="9" opacity="0.35"/>
+              <path d="M12 3 L12 5 M21 12 L19 12 M12 21 L12 19 M3 12 L5 12" opacity="0.6"/>
+            </svg>
+          </div>
+          <span class="cap-label">change impact</span>
+        </div>
+        <h3 class="cap-name">Blast Radius</h3>
+        <p class="cap-tag">"What breaks if I change this?"</p>
+        <p class="cap-desc">Trace direct and transitive callers so you know the surface area of a change before you make it.</p>
+        <div class="cap-example">
+<span class="c">$ sense blast User.email --depth 3</span><br/>
+<span class="k">&#9679;</span> direct <span class="c">——</span> 4 sites<br/>
+<span class="k">&#9680;</span> transitive <span class="c">——</span> 27 sites<br/>
+<span class="k">&#9675;</span> tests <span class="c">——</span> 12 files<br/>
+<span class="c">touches: auth, billing, notifications</span>
+        </div>
+      </div>
+
+      <!-- Conventions -->
+      <div class="cap">
+        <span class="cap-corner">04 / CONVENTIONS</span>
+        <div class="cap-head">
+          <div class="cap-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+              <path d="M4 5h16 M4 10h10 M4 15h13 M4 20h7"/>
+              <circle cx="19" cy="15" r="1.4" fill="currentColor"/>
+              <circle cx="16" cy="10" r="1.4" fill="currentColor"/>
+            </svg>
+          </div>
+          <span class="cap-label">derived patterns</span>
+        </div>
+        <h3 class="cap-name">Conventions</h3>
+        <p class="cap-tag">"How does this codebase do things?"</p>
+        <p class="cap-desc">Detect patterns in naming, error handling, test structure, and architecture — derived from the code, not configured.</p>
+        <div class="cap-example">
+<span class="c">$ sense conventions errors</span><br/>
+<span class="k">pattern</span> <span class="s">fmt.Errorf("…: %w", err)</span> <span class="c">· 94%</span><br/>
+<span class="k">pattern</span> <span class="s">if err != nil { return }</span> <span class="c">· 88%</span><br/>
+<span class="k">outlier</span> <span class="n">legacy/db.go</span> <span class="c">· panic()</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="sect">
+  <div class="wrap">
+    <div class="sect-head reveal">
+      <span class="sect-num">&sect; 02</span>
+      <h2 class="sect-title">How it works</h2>
+      <div class="sect-rule"></div>
+      <span class="sect-num" style="color:var(--ink-4)">three steps</span>
+    </div>
+
+    <div class="steps reveal">
+      <div class="step">
+        <span class="step-num">01 / INDEX</span>
+        <div class="step-cmd"><span class="accent">$</span> sense scan <span class="flag">.</span></div>
+        <p class="step-desc">Indexes your codebase into a local <code style="color:var(--accent)">.sense/</code> directory. Tree-sitter parsing for structure, ONNX embeddings for meaning. Incremental on every run.</p>
+        <div class="step-meta">
+          <span>tree-sitter</span><span>onnx</span><span>incremental</span><span>local-only</span>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">02 / CONNECT</span>
+        <div class="step-cmd"><span class="accent">$</span> sense serve <span class="flag">--mcp</span></div>
+        <p class="step-desc">Any MCP-compatible tool — Claude Code, Cursor, your own agent — connects over stdio or socket and queries the index.</p>
+        <div class="step-meta">
+          <span>mcp</span><span>stdio</span><span>claude code</span><span>cursor</span><span>byoa</span>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num">03 / QUERY</span>
+        <div class="step-cmd"><span class="flag">&gt;</span> sense.<span class="accent">{graph,search,blast,conventions}</span></div>
+        <p class="step-desc">Four tools, JSON responses. Composable. Read-only. The model picks which one to call, chains them, and reasons over the result.</p>
+        <div class="step-meta">
+          <span>json</span><span>composable</span><span>read-only</span><span>deterministic</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- What it's not -->
+<section class="sect">
+  <div class="wrap">
+    <div class="sect-head reveal">
+      <span class="sect-num">&sect; 03</span>
+      <h2 class="sect-title">What Sense is not</h2>
+      <div class="sect-rule"></div>
+      <span class="sect-num" style="color:var(--ink-4)">honest boundaries</span>
+    </div>
+
+    <div class="nots reveal">
+      <div class="not">
+        <div class="not-mark">&not;</div>
+        <div>
+          <h4 class="not-title">Not a token optimizer.</h4>
+          <p class="not-body">Understanding is the point. Fewer tokens is a side effect — not the pitch.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&not;</div>
+        <div>
+          <h4 class="not-title">Not a code editor.</h4>
+          <p class="not-body">Read-only by design. Sense answers questions. Your agent does the writing.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&not;</div>
+        <div>
+          <h4 class="not-title">Not a replacement for grep.</h4>
+          <p class="not-body">Use ripgrep for exact strings. Sense is for meaning.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&not;</div>
+        <div>
+          <h4 class="not-title">Not a dashboard.</h4>
+          <p class="not-body">CLI and MCP are the surfaces. Code is the consumer. There is no UI to log into.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&not;</div>
+        <div>
+          <h4 class="not-title">Not a knowledge graph you maintain.</h4>
+          <p class="not-body">Derived from the code on every scan. No ontology to curate, no schema to write.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&not;</div>
+        <div>
+          <h4 class="not-title">Not a service.</h4>
+          <p class="not-body">Runs on your machine. Your code never leaves it. No account, no telemetry, no tier.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <div class="braille-logo">⠎⠑⠝⠎⠑</div>
+        <p>Codebase understanding that any tool can query. Released under the MIT License.</p>
+      </div>
+      <div class="foot-col">
+        <h5>Project</h5>
+        <a href="https://github.com/luuuc/sense#readme">README</a>
+        <a href="https://github.com/luuuc/sense/releases">Changelog</a>
+        <a href="https://github.com/luuuc/sense/issues">Roadmap</a>
+        <a href="https://github.com/luuuc/sense/blob/main/LICENSE">License</a>
+      </div>
+      <div class="foot-col">
+        <h5>Use</h5>
+        <a href="https://github.com/luuuc/sense#readme">Install</a>
+        <a href="https://github.com/luuuc/sense#readme">CLI reference</a>
+        <a href="https://github.com/luuuc/sense#readme">MCP setup</a>
+        <a href="https://github.com/luuuc/sense#readme">Examples</a>
+      </div>
+      <div class="foot-col">
+        <h5>Source</h5>
+        <a href="https://github.com/luuuc/sense">GitHub &#8594;</a>
+        <a href="https://github.com/luuuc/sense/issues">Issues</a>
+        <a href="https://www.reddit.com/r/sense_dev">Reddit</a>
+        <a href="https://github.com/luuuc/sense/blob/main/CONTRIBUTING.md">Contributing</a>
+      </div>
+    </div>
+    <div class="foot-tail">
+      <div>&copy; 2026 luuuc &middot; MIT<span class="license-full"> License</span></div>
+      <div style="display:flex;gap:18px">
+        <a href="https://github.com/luuuc/sense">github.com/luuuc/sense</a>
+      </div>
+    </div>
+    <div class="beat">
+      <span>one binary</span><span class="sep">&middot;</span><span>zero dependencies</span><span class="sep">&middot;</span><span>one binary</span><span class="sep">&middot;</span><span>zero dependencies</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ---------- Copy button ---------- */
+(function(){
+  const btn = document.getElementById('copyBtn');
+  const cmd = 'curl -fsSL https://luuuc.github.io/sense/install.sh | sh';
+  btn.addEventListener('click', async ()=>{
+    try{ await navigator.clipboard.writeText(cmd); }catch(e){}
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(()=>{ btn.textContent='Copy'; btn.classList.remove('copied'); }, 1600);
+  });
+})();
+
+/* ---------- Reveal on scroll ---------- */
+(function(){
+  const els = document.querySelectorAll('.reveal');
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:0.12});
+  els.forEach(el=>io.observe(el));
+})();
+
+/* ---------- Live GitHub metrics ---------- */
+(function(){
+  const REPO = 'luuuc/sense';
+  const API  = 'https://api.github.com/repos/' + REPO;
+
+  function set(id, val){ var el = document.getElementById(id); if(el) el.textContent = val; }
+  function fmt(n){ return Number(n).toLocaleString(); }
+
+  fetch(API)
+    .then(r => r.json())
+    .then(d => {
+      set('starCount', fmt(d.stargazers_count));
+      set('issueCount', fmt(d.open_issues_count));
+    })
+    .catch(()=>{});
+
+  fetch(API + '/pulls?state=open&per_page=1')
+    .then(r => {
+      var total = r.headers.get('Link');
+      if(!total){ return r.json().then(a => a.length); }
+      var match = total.match(/page=(\d+)>; rel="last"/);
+      return match ? parseInt(match[1],10) : 0;
+    })
+    .then(n => set('prCount', fmt(n)))
+    .catch(()=>{});
+
+  fetch(API + '/releases/latest')
+    .then(r => r.json())
+    .then(d => { if(d.tag_name) set('versionTag', d.tag_name); })
+    .catch(()=>{});
+})();
+
+/* ---------- Hero constellation ---------- */
+(function(){
+  const canvas = document.getElementById('constellation');
+  const ctx = canvas.getContext('2d');
+  let W=0, H=0, DPR=Math.min(window.devicePixelRatio||1, 2);
+
+  const SYMBOLS = [
+    'parseConfig()','Server','withRetry()','UserRepo','sense.graph','Cache[T]',
+    'AuthError','resolvePath()','Indexer','embed()','struct Node','QueryEngine',
+    'Result[T]','func scan()','Storage','MCP.serve','Token','Symbol',
+    'scanWorker','conventions','Walker','ast.Walk','Call()','writer.go',
+    'func parse()','TestCtx','EdgeIter','blast()', 'Worker','sense.search',
+  ];
+
+  let stars = [];
+  let nodes = [];
+  let edges = [];
+
+  const mouse = {x:0.5, y:0.5, inside:false};
+
+  function rebuild(){
+    stars = [];
+    nodes = [];
+    edges = [];
+    const area = (W*H)/1_000_000;
+    const starCount = Math.max(60, Math.floor(160*area));
+    for(let i=0;i<starCount;i++){
+      stars.push({
+        x: Math.random()*W,
+        y: Math.random()*H,
+        r: Math.random()*0.9 + 0.2,
+        a: Math.random()*0.5 + 0.1,
+        tw: Math.random()*Math.PI*2,
+        sp: 0.4 + Math.random()*0.8,
+      });
+    }
+    const nodeCount = Math.min(40, Math.max(6, Math.floor(14*area)));
+    const tries = 400;
+    const minDist = Math.min(W,H)*0.13;
+    let attempts = 0;
+    while(nodes.length < nodeCount && attempts < tries){
+      attempts++;
+      const nx = 0.08*W + Math.random()*0.88*W;
+      const ny = 0.12*H + Math.random()*0.76*H;
+      let ok = true;
+      for(const n of nodes){
+        const dx=n.x-nx, dy=n.y-ny;
+        if(dx*dx+dy*dy < minDist*minDist){ ok=false; break; }
+      }
+      if(ok){
+        const label = SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)];
+        nodes.push({
+          x:nx, y:ny,
+          bx:nx, by:ny,
+          r: 1.8 + Math.random()*2.0,
+          label,
+          pulse: Math.random()*Math.PI*2,
+          drift: Math.random()*Math.PI*2,
+          kind: Math.random()<0.35?'hub':'leaf',
+        });
+      }
+    }
+    for(let i=0;i<nodes.length;i++){
+      const a = nodes[i];
+      const dists = nodes.map((b,j)=>({j, d: (b.x-a.x)**2+(b.y-a.y)**2})).filter(o=>o.j!==i).sort((p,q)=>p.d-q.d);
+      const count = a.kind==='hub' ? 3 : (Math.random()<0.6?1:2);
+      for(let k=0;k<count && k<dists.length;k++){
+        const j = dists[k].j;
+        if(!edges.find(e=>(e.a===i&&e.b===j)||(e.a===j&&e.b===i))){
+          edges.push({a:i,b:j, phase: Math.random()*Math.PI*2});
+        }
+      }
+    }
+  }
+
+  function resize(){
+    const rect = canvas.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    canvas.width = W*DPR; canvas.height = H*DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    rebuild();
+  }
+
+  window.addEventListener('resize', resize);
+  canvas.addEventListener('mousemove', e=>{
+    const r = canvas.getBoundingClientRect();
+    mouse.x = (e.clientX-r.left)/r.width;
+    mouse.y = (e.clientY-r.top)/r.height;
+    mouse.inside = true;
+  });
+  canvas.addEventListener('mouseleave', ()=>{ mouse.inside=false; });
+
+  const ACCENT = 'rgba(140, 205, 245,';
+  const INK    = 'rgba(230, 236, 245,';
+  const DIM    = 'rgba(120, 150, 180,';
+
+  let t0 = performance.now();
+  function frame(now){
+    const t = (now - t0)/1000;
+    ctx.clearRect(0,0,W,H);
+
+    for(const s of stars){
+      const a = s.a * (0.6 + 0.4*Math.sin(s.tw + t*s.sp));
+      ctx.fillStyle = INK + a.toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+    }
+
+    const mx = (mouse.x-0.5), my = (mouse.y-0.5);
+    for(const n of nodes){
+      const driftX = Math.sin(t*0.15 + n.drift)*6;
+      const driftY = Math.cos(t*0.12 + n.drift*1.3)*5;
+      const par = mouse.inside ? 14 : 0;
+      n.x = n.bx + driftX + mx*par;
+      n.y = n.by + driftY + my*par;
+    }
+
+    ctx.lineWidth = 1;
+    for(const e of edges){
+      const a = nodes[e.a], b = nodes[e.b];
+      const dist = Math.hypot(a.x-b.x, a.y-b.y);
+      const alpha = Math.max(0.05, 0.22 - dist/1400);
+      ctx.strokeStyle = DIM + alpha.toFixed(3) + ')';
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+
+      if((e.a + e.b) % 5 === 0){
+        const p = ((t*0.12 + e.phase/6.28) % 1);
+        const px = a.x + (b.x-a.x)*p;
+        const py = a.y + (b.y-a.y)*p;
+        ctx.fillStyle = ACCENT + '0.65)';
+        ctx.beginPath(); ctx.arc(px, py, 1.4, 0, Math.PI*2); ctx.fill();
+      }
+    }
+
+    ctx.font = '11px JetBrains Mono, monospace';
+    ctx.textBaseline = 'middle';
+    for(const n of nodes){
+      const pulse = 0.7 + 0.3*Math.sin(t*1.2 + n.pulse);
+      const grd = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, 22);
+      grd.addColorStop(0, ACCENT + (0.18*pulse).toFixed(3) + ')');
+      grd.addColorStop(1, ACCENT + '0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.arc(n.x, n.y, 22, 0, Math.PI*2); ctx.fill();
+
+      ctx.fillStyle = n.kind==='hub' ? ACCENT + (0.95*pulse).toFixed(3) + ')'
+                                    : INK + (0.9*pulse).toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2); ctx.fill();
+
+      ctx.fillStyle = INK + '0.45)';
+      ctx.textAlign = 'left';
+      ctx.fillText(n.label, n.x + 10, n.y - 0.5);
+
+      ctx.strokeStyle = DIM + '0.35)';
+      ctx.beginPath();
+      ctx.moveTo(n.x+4, n.y); ctx.lineTo(n.x+8, n.y);
+      ctx.stroke();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
