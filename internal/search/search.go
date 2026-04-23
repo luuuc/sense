@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -121,6 +122,22 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 	}
 	applyGraphCentrality(fused, centrality)
 	applyKindWeights(fused)
+
+	// Path-based re-ranking: demote infrastructure code.
+	fileIDs := make([]int64, 0, len(fused))
+	seen := map[int64]struct{}{}
+	for _, r := range fused {
+		if _, ok := seen[r.FileID]; !ok {
+			seen[r.FileID] = struct{}{}
+			fileIDs = append(fileIDs, r.FileID)
+		}
+	}
+	pathByID, err := e.adapter.FilePathsByIDs(ctx, fileIDs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search paths: %w", err)
+	}
+	applyPathWeights(fused, pathByID)
+
 	normalizeScores(fused)
 
 	// Sort by final score descending.
@@ -270,6 +287,34 @@ func applyKindWeights(results []Result) {
 	for i := range results {
 		if results[i].Kind == "module" {
 			results[i].Score *= 0.5
+		}
+	}
+}
+
+// demotedPathPrefixes lists path prefixes for infrastructure code that
+// should be ranked below application code in search results. Migrations
+// and import scripts contain domain keywords in their names but are
+// rarely what users search for.
+var demotedPathPrefixes = []string{
+	"db/migrate/",
+	"db/post_migrate/",
+	"script/",
+	"scripts/",
+}
+
+// applyPathWeights demotes symbols in infrastructure paths (migrations,
+// scripts) that match domain keywords but aren't application code.
+func applyPathWeights(results []Result, pathByID map[int64]string) {
+	for i := range results {
+		path, ok := pathByID[results[i].FileID]
+		if !ok {
+			continue
+		}
+		for _, prefix := range demotedPathPrefixes {
+			if strings.HasPrefix(path, prefix) {
+				results[i].Score *= 0.3
+				break
+			}
 		}
 	}
 }

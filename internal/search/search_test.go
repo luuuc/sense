@@ -443,3 +443,85 @@ func TestKindWeightsDemotesModules(t *testing.T) {
 		t.Error("module symbol missing from results entirely — test setup issue")
 	}
 }
+
+func TestPathWeightsDemotesMigrationsAndScripts(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	appFile, err := a.WriteFile(ctx, &model.File{
+		Path: "app/models/post.rb", Language: "ruby",
+		Hash: "a1", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrateFile, err := a.WriteFile(ctx, &model.File{
+		Path: "db/migrate/20190101_create_posts.rb", Language: "ruby",
+		Hash: "m1", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptFile, err := a.WriteFile(ctx, &model.File{
+		Path: "script/import_scripts/import_posts.rb", Language: "ruby",
+		Hash: "s1", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: appFile, Name: "Post", Qualified: "Post",
+		Kind: "class", LineStart: 1, LineEnd: 100,
+		Docstring: "post moderation flagging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: migrateFile, Name: "MigrateOldModeratorPosts", Qualified: "MigrateOldModeratorPosts#down",
+		Kind: "method", LineStart: 1, LineEnd: 20,
+		Docstring: "post moderation flagging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: scriptFile, Name: "import_post", Qualified: "ImportScripts::GenericDatabase#import_post",
+		Kind: "method", LineStart: 1, LineEnd: 30,
+		Docstring: "post moderation flagging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := search.NewEngine(a, nil, nil)
+	results, _, err := engine.Search(ctx, search.Options{
+		Query: "post moderation flagging",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) < 3 {
+		t.Fatalf("expected at least 3 results, got %d", len(results))
+	}
+
+	if results[0].Qualified != "Post" {
+		t.Errorf("app code %q should rank first, got %q", "Post", results[0].Qualified)
+	}
+
+	has := map[string]bool{}
+	for _, r := range results {
+		has[r.Qualified] = true
+		t.Logf("  %s (score=%.4f, kind=%s)", r.Qualified, r.Score, r.Kind)
+	}
+	for _, want := range []string{"MigrateOldModeratorPosts#down", "ImportScripts::GenericDatabase#import_post"} {
+		if !has[want] {
+			t.Errorf("demoted symbol %q missing from results — should be present but ranked lower", want)
+		}
+	}
+}
