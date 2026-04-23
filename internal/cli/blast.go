@@ -118,7 +118,7 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 
 	results := make([]blast.Result, 0, len(symbolIDs))
 	for _, sid := range symbolIDs {
-		r, cerr := blast.Compute(ctx, adapter.DB(), sid, blast.Options{
+		r, cerr := blast.Compute(ctx, adapter.DB(), []int64{sid}, blast.Options{
 			MaxHops:       opts.MaxHops,
 			MinConfidence: opts.MinConfidence,
 			IncludeTests:  opts.IncludeTests,
@@ -211,7 +211,13 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 		return ExitSymbolIssue
 	}
 
-	result, err := blast.Compute(ctx, adapter.DB(), matches[0].ID, blast.Options{
+	siblingIDs, err := blast.SiblingSymbolIDs(ctx, adapter.DB(), matches[0].ID)
+	if err != nil {
+		_, _ = fmt.Fprintf(cio.Stderr, "warn: sibling resolution failed: %v\n", err)
+		siblingIDs = []int64{matches[0].ID}
+	}
+
+	result, err := blast.Compute(ctx, adapter.DB(), siblingIDs, blast.Options{
 		MaxHops:       opts.MaxHops,
 		MinConfidence: opts.MinConfidence,
 		IncludeTests:  opts.IncludeTests,

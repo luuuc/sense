@@ -36,7 +36,12 @@ func computeBlast(db *sql.DB, symbolID int64) (*blastState, error) {
 	if db == nil {
 		return nil, fmt.Errorf("no database connection")
 	}
-	result, err := blast.Compute(context.Background(), db, symbolID, blast.Options{
+	siblingIDs, err := blast.SiblingSymbolIDs(context.Background(), db, symbolID)
+	if err != nil {
+		siblingIDs = []int64{symbolID}
+	}
+
+	result, err := blast.Compute(context.Background(), db, siblingIDs, blast.Options{
 		MaxHops:      3,
 		IncludeTests: true,
 	})
