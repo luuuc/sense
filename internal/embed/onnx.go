@@ -33,15 +33,31 @@ type ONNXEmbedder struct {
 
 // NewONNXEmbedder creates an embedder from model and vocabulary bytes.
 // The caller must have previously called InitORTLibrary.
-func NewONNXEmbedder(modelBytes []byte, vocabBytes []byte) (*ONNXEmbedder, error) {
+// intraOpThreads controls per-session thread parallelism; use 0 for the
+// ONNX Runtime default (all cores).
+func NewONNXEmbedder(modelBytes []byte, vocabBytes []byte, intraOpThreads int) (*ONNXEmbedder, error) {
 	inputNames := []string{"input_ids", "attention_mask", "token_type_ids"}
 	outputNames := []string{"last_hidden_state"}
+
+	opts, err := ort.NewSessionOptions()
+	if err != nil {
+		return nil, fmt.Errorf("create session options: %w", err)
+	}
+	defer func() { _ = opts.Destroy() }()
+	if intraOpThreads > 0 {
+		if err := opts.SetIntraOpNumThreads(intraOpThreads); err != nil {
+			return nil, fmt.Errorf("set intra-op threads: %w", err)
+		}
+	}
+	if err := opts.SetGraphOptimizationLevel(ort.GraphOptimizationLevelEnableAll); err != nil {
+		return nil, fmt.Errorf("set graph optimization level: %w", err)
+	}
 
 	session, err := ort.NewDynamicAdvancedSessionWithONNXData(
 		modelBytes,
 		inputNames,
 		outputNames,
-		nil,
+		opts,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create ONNX session: %w", err)

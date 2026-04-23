@@ -87,7 +87,7 @@ func buildSearchEngine(ctx context.Context, adapter *sqlite.Adapter, senseDir st
 		embeddings, err := adapter.LoadEmbeddings(ctx)
 		if err == nil && len(embeddings) > 0 {
 			vectorIdx = search.BuildHNSWIndex(embeddings)
-			embedder, _ = embed.NewBundledEmbedder()
+			embedder, _ = embed.NewBundledEmbedder(0)
 		}
 	}
 	return search.NewEngine(adapter, vectorIdx, embedder)

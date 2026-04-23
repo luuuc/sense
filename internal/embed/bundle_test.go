@@ -21,7 +21,7 @@ func TestNewBundledEmbedder(t *testing.T) {
 		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")
 	}
 
-	emb, err := NewBundledEmbedder()
+	emb, err := NewBundledEmbedder(0)
 	if err != nil {
 		t.Fatalf("NewBundledEmbedder: %v", err)
 	}

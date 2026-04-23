@@ -19,7 +19,10 @@ var vocabBytes []byte
 // NewBundledEmbedder creates an ONNXEmbedder using the model, vocabulary,
 // and ONNX Runtime library embedded in the binary. It extracts the
 // platform-specific shared library to a cache directory on first use.
-func NewBundledEmbedder() (*ONNXEmbedder, error) {
+// intraOpThreads controls per-session parallelism; 0 means ONNX Runtime
+// default (all cores). Use a smaller value when running multiple sessions
+// in parallel to avoid thread over-subscription.
+func NewBundledEmbedder(intraOpThreads int) (*ONNXEmbedder, error) {
 	libPath, err := ensureORTLib()
 	if err != nil {
 		return nil, fmt.Errorf("extract ONNX Runtime library: %w", err)
@@ -29,7 +32,7 @@ func NewBundledEmbedder() (*ONNXEmbedder, error) {
 		return nil, fmt.Errorf("init ONNX Runtime: %w", err)
 	}
 
-	return NewONNXEmbedder(modelBytes, vocabBytes)
+	return NewONNXEmbedder(modelBytes, vocabBytes, intraOpThreads)
 }
 
 // ensureORTLib extracts the bundled ONNX Runtime shared library to a
