@@ -1,14 +1,14 @@
 # Sense
 
+    ●    ●      ● ●      ●    ●
+  ●        ●      ●    ●        ●
+  ●             ●      ●
+
 **Codebase understanding that any tool can query.**
 
-Sense gives your AI tools structural understanding of the code they're working in. Instead of exploring through repeated grep/glob/read cycles — burning tokens to rediscover what the codebase already knows about itself — your tools query a local graph and get precise answers: what exists, how it connects, what breaks if you change it, and what patterns the project follows.
+Sense gives your AI tools structural understanding of your codebase. The kind a senior engineer carries in their head but an LLM has to rebuild from scratch every session. Your tools query a local graph and get precise answers about what exists, how it connects, what breaks if you change it, and what patterns the project follows.
 
 One binary, one index, four capabilities. No SaaS account, no API key, no cloud dependency.
-
-## Status
-
-Pre-alpha. Graph scanning, symbol queries, blast radius, and MCP server work. Embeddings and semantic search are next.
 
 ## Install
 
@@ -25,7 +25,7 @@ Download the binary for your OS from the [latest release](https://github.com/luu
 Or use the install script (macOS and Linux, amd64 or arm64):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/luuuc/sense/main/install.sh | sh
+curl -fsSL https://luuuc.github.io/sense/install.sh | sh
 ```
 
 ### Verify
@@ -65,17 +65,17 @@ sense conventions
 #    Test pattern: Minitest, fixtures, no DB mocking
 ```
 
-### Five MCP Tools
+### MCP Tools
 
 | Tool | Capability |
 |---|---|
+| `sense.graph` | Symbol relationships, callers, callees, inheritance, tests |
 | `sense.search` | Hybrid semantic + keyword search |
-| `sense.graph` | Symbol relationships — callers, callees, inheritance, tests |
-| `sense.blast` | Blast radius — affected code, affected tests, risk score |
+| `sense.blast` | Blast radius, affected code, affected tests, risk score |
 | `sense.conventions` | Detected project conventions |
-| `sense.status` | Index health — coverage, staleness, last scan |
+| `sense.status` | Index health, coverage, staleness, last scan |
 
-Five tools. Focused, composable, no sprawl.
+Four capabilities, plus `sense.status` for index health. Focused, composable, no sprawl.
 
 ## MCP Setup
 
@@ -132,21 +132,20 @@ healthy; fall back to grep/glob only if Sense is unavailable or the index is sta
 
 New Tier 1 languages are added by writing a framework-aware extractor on top of the base tree-sitter graph.
 
-## Token Savings — Measured, Not Claimed
+## What Sense Brings
 
-Every MCP response includes `estimated_file_reads_avoided` and `estimated_tokens_saved`. Session analytics via `sense stats`. No telemetry. Numbers stay on your machine.
+Sense gives your AI tools structural understanding of your codebase. The kind a senior engineer carries in their head but an LLM has to rebuild from scratch every session.
 
-Sense doesn't compress answers — it lets your tools ask better questions so the wasteful queries never happen.
+- **Meaning over strings.** Your AI reasons over actual structure instead of pattern-matching file contents, so it makes fewer wrong assumptions about what connects to what.
+- **Derived, not curated.** The graph rebuilds from your code automatically. No ontology to maintain, no config to tune.
+- **Read-only by design.** Sense observes the codebase. It never modifies it. Your editor and your tools stay in control.
+- **Four capabilities, full stop.** Symbol graph, semantic search, blast radius, convention detection. Sense does these cleanly and resists the gravity toward "do everything."
 
-## What Sense Is Not
-
-- **Not a token optimizer.** Understanding is the identity. Token savings is the side effect.
-- **Not a code editor.** Sense reads the codebase. It does not modify it. Read-only by design.
-- **Not a replacement for grep.** Use ripgrep for exact text. Sense is for meaning.
+Token savings? A natural by-product. But the real gain is that your AI stops guessing at structure and starts knowing it.
 
 ## Feedback
 
-Pre-alpha — expect rough edges. File issues at [github.com/luuuc/sense/issues](https://github.com/luuuc/sense/issues).
+File issues at [github.com/luuuc/sense/issues](https://github.com/luuuc/sense/issues).
 
 ## Development
 
@@ -159,4 +158,4 @@ make ci       # all of the above
 
 ## License
 
-O'Saasy — MIT-style with SaaS-competition rights reserved. See [LICENSE](LICENSE).
+O'Saasy. MIT-style with SaaS-competition rights reserved. See [LICENSE](LICENSE).
