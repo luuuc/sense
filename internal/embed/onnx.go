@@ -17,7 +17,7 @@ var ortInitErr error
 const BatchSize = 50
 
 // MaxSequenceLength is the maximum token sequence length the model accepts.
-const MaxSequenceLength = 128
+const MaxSequenceLength = 256
 
 // ONNXEmbedder wraps an ONNX Runtime session for all-MiniLM-L6-v2 inference.
 // Not safe for concurrent use.
@@ -125,7 +125,7 @@ func (e *ONNXEmbedder) embedBatch(batch []EmbedInput) ([][]float32, error) {
 	clear(tokenTypeIDs)
 
 	for i, in := range batch {
-		text := FormatInput(in)
+		text := FormatContext(in)
 		tok := e.tokenizer.Tokenize(text)
 		offset := int64(i) * seqLen
 		for j := 0; j < int(seqLen); j++ {

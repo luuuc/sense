@@ -87,7 +87,7 @@ func TestEmbedDimensions(t *testing.T) {
 	emb := setupEmbedder(t)
 
 	vecs, err := emb.Embed(context.Background(), []EmbedInput{
-		{QualifiedName: "Auth::Login#call", Kind: "method", ParentName: "Auth::Login", Snippet: "def call(email, password)"},
+		{QualifiedName: "Auth::Login#call", Kind: "method", Snippet: "def call(email, password)"},
 	})
 	if err != nil {
 		t.Fatalf("embed: %v", err)
@@ -105,15 +105,15 @@ func TestGoldenPairSimilarity(t *testing.T) {
 
 	inputs := []EmbedInput{
 		// 0: authentication login
-		{QualifiedName: "Auth::Login#call", Kind: "method", ParentName: "Auth::Login", Snippet: "def call(email, password)"},
+		{QualifiedName: "Auth::Login#call", Kind: "method", Snippet: "def call(email, password)"},
 		// 1: authentication verify (semantically similar to 0)
-		{QualifiedName: "Auth::Verify#execute", Kind: "method", ParentName: "Auth::Verify", Snippet: "def execute(token)"},
+		{QualifiedName: "Auth::Verify#execute", Kind: "method", Snippet: "def execute(token)"},
 		// 2: file parser (semantically different from 0 and 1)
-		{QualifiedName: "CSV::Parser#parse", Kind: "method", ParentName: "CSV::Parser", Snippet: "def parse(input_stream, delimiter)"},
+		{QualifiedName: "CSV::Parser#parse", Kind: "method", Snippet: "def parse(input_stream, delimiter)"},
 		// 3: http request handler (different domain)
-		{QualifiedName: "HTTP::Router#dispatch", Kind: "method", ParentName: "HTTP::Router", Snippet: "def dispatch(request, response)"},
+		{QualifiedName: "HTTP::Router#dispatch", Kind: "method", Snippet: "def dispatch(request, response)"},
 		// 4: user authentication (similar to 0)
-		{QualifiedName: "Users::Authenticate", Kind: "function", ParentName: "Users", Snippet: "func Authenticate(username string, password string) (*User, error)"},
+		{QualifiedName: "Users::Authenticate", Kind: "function", Snippet: "func Authenticate(username string, password string) (*User, error)"},
 	}
 
 	vecs, err := emb.Embed(context.Background(), inputs)
@@ -190,20 +190,17 @@ func TestTruncationPreservesSemantics(t *testing.T) {
 	short := EmbedInput{
 		QualifiedName: "Auth::Login#call",
 		Kind:          "method",
-		ParentName:    "Auth::Login",
 		Snippet:       "def call(email, password)",
 	}
 	// Long snippet that will be truncated at 128 tokens
 	long := EmbedInput{
 		QualifiedName: "Auth::Login#call",
 		Kind:          "method",
-		ParentName:    "Auth::Login",
 		Snippet:       "def call(email, password) validate_email(email) user = User.find_by(email: email) return nil unless user return nil unless user.authenticate(password) session = Session.create(user: user, expires_at: 24.hours.from_now) notify_login(user) AuditLog.record(event: :login, user: user) session",
 	}
 	unrelated := EmbedInput{
 		QualifiedName: "CSV::Parser#parse",
 		Kind:          "method",
-		ParentName:    "CSV::Parser",
 		Snippet:       "def parse(input_stream, delimiter)",
 	}
 
@@ -232,7 +229,7 @@ func TestTokenizer(t *testing.T) {
 		t.Skip("vocab not downloaded")
 	}
 
-	tok := newTokenizer(vocabBytes, 128)
+	tok := newTokenizer(vocabBytes, MaxSequenceLength)
 
 	result := tok.Tokenize("hello world")
 	if result.InputIDs[0] != tok.clsID {
@@ -261,7 +258,7 @@ func TestTokenizer(t *testing.T) {
 			lastNonPad = i
 		}
 	}
-	if lastNonPad >= 127 {
+	if lastNonPad >= MaxSequenceLength-1 {
 		t.Error("expected padding in short sequence")
 	}
 	if result.AttentionMask[lastNonPad+1] != 0 {
@@ -289,8 +286,8 @@ func TestEmbedDeterminism(t *testing.T) {
 	vb, _ := os.ReadFile(vocabPath)
 
 	inputs := []EmbedInput{
-		{QualifiedName: "Auth::Login#call", Kind: "method", ParentName: "Auth::Login", Snippet: "def call(email, password)"},
-		{QualifiedName: "CSV::Parser#parse", Kind: "method", ParentName: "CSV::Parser", Snippet: "def parse(stream)"},
+		{QualifiedName: "Auth::Login#call", Kind: "method", Snippet: "def call(email, password)"},
+		{QualifiedName: "CSV::Parser#parse", Kind: "method", Snippet: "def parse(stream)"},
 		{QualifiedName: "HTTP::Router#dispatch", Kind: "function", Snippet: "func dispatch(req, res)"},
 	}
 
@@ -367,28 +364,49 @@ func BenchmarkEmbed(b *testing.B) {
 	}
 }
 
-func TestFormatInput(t *testing.T) {
+func TestFormatContext(t *testing.T) {
 	tests := []struct {
+		name string
 		in   EmbedInput
 		want string
 	}{
 		{
-			in:   EmbedInput{QualifiedName: "Foo#bar", Kind: "method", ParentName: "Foo", Snippet: "def bar"},
-			want: "method Foo#bar parent: Foo def bar",
+			name: "context with snippet",
+			in: EmbedInput{
+				Context: "File: app/services/auth.rb\nmethod Auth#login",
+				Snippet: "def login(email, password)\n  User.authenticate(email, password)",
+			},
+			want: "File: app/services/auth.rb\nmethod Auth#login\ndef login(email, password)\n  User.authenticate(email, password)",
 		},
 		{
-			in:   EmbedInput{QualifiedName: "main", Kind: "function", Snippet: "func main()"},
-			want: "function main func main()",
+			name: "context without snippet",
+			in: EmbedInput{
+				Context: "File: app/models/user.rb\nclass User\ncomposes: Project, Team",
+			},
+			want: "File: app/models/user.rb\nclass User\ncomposes: Project, Team",
 		},
 		{
+			name: "query (snippet only)",
+			in:   EmbedInput{Snippet: "user authentication and password validation"},
+			want: "user authentication and password validation",
+		},
+		{
+			name: "fallback kind+name only",
 			in:   EmbedInput{QualifiedName: "Config", Kind: "class"},
 			want: "class Config",
 		},
+		{
+			name: "fallback kind+name+snippet",
+			in:   EmbedInput{QualifiedName: "Foo#bar", Kind: "method", Snippet: "def bar(x)"},
+			want: "method Foo#bar\ndef bar(x)",
+		},
 	}
 	for _, tt := range tests {
-		got := FormatInput(tt.in)
-		if got != tt.want {
-			t.Errorf("FormatInput(%+v) = %q, want %q", tt.in, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatContext(tt.in)
+			if got != tt.want {
+				t.Errorf("FormatContext = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

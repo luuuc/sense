@@ -16,7 +16,7 @@ type fakeEmbedder struct {
 func (f *fakeEmbedder) Embed(_ context.Context, inputs []embed.EmbedInput) ([][]float32, error) {
 	vecs := make([][]float32, len(inputs))
 	for i, in := range inputs {
-		text := embed.FormatInput(in)
+		text := embed.FormatContext(in)
 		vec := make([]float32, f.dims)
 		for j := range vec {
 			vec[j] = float32(len(text)+j) * 0.001
