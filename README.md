@@ -145,7 +145,7 @@ New Tier 1 languages are added by writing a framework-aware extractor on top of 
 
 ## What Sense Brings
 
-Sense gives your AI tools structural understanding of your codebase. The kind a senior engineer carries in their head but an LLM has to rebuild from scratch every session.
+Instead of reading dozens of files to build a mental model, your AI queries a graph and gets precise answers.
 
 - **Meaning over strings.** Your AI reasons over actual structure instead of pattern-matching file contents, so it makes fewer wrong assumptions about what connects to what.
 - **Derived, not curated.** The graph rebuilds from your code automatically. No ontology to maintain, no config to tune.
