@@ -12,6 +12,7 @@ ROOT="$SCRIPT_DIR/.."
 BUNDLE="$ROOT/internal/embed/bundle"
 
 ORT_VERSION="1.24.4"
+ORT_VERSION_DARWIN_AMD64="1.23.0"
 MODEL_REPO="sentence-transformers/all-MiniLM-L6-v2"
 
 mkdir -p "$BUNDLE"
@@ -38,27 +39,33 @@ fetch_ort() {
     local os="$1" arch="$2" target_dir="$3"
     local libname url archive_dir
 
+    # ORT 1.24+ dropped macOS x86_64 builds; use 1.23.0 for darwin/amd64
+    local ver="$ORT_VERSION"
+    if [ "$os" = "darwin" ] && [ "$arch" = "amd64" ]; then
+        ver="$ORT_VERSION_DARWIN_AMD64"
+    fi
+
     mkdir -p "$target_dir"
 
     case "$os" in
         darwin)
             libname="libonnxruntime.dylib"
             if [ "$arch" = "arm64" ]; then
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-arm64-${ORT_VERSION}.tgz"
-                archive_dir="onnxruntime-osx-arm64-${ORT_VERSION}"
+                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-osx-arm64-${ver}.tgz"
+                archive_dir="onnxruntime-osx-arm64-${ver}"
             else
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-x86_64-${ORT_VERSION}.tgz"
-                archive_dir="onnxruntime-osx-x86_64-${ORT_VERSION}"
+                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-osx-x86_64-${ver}.tgz"
+                archive_dir="onnxruntime-osx-x86_64-${ver}"
             fi
             ;;
         linux)
             libname="libonnxruntime.so"
             if [ "$arch" = "arm64" ]; then
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-aarch64-${ORT_VERSION}.tgz"
-                archive_dir="onnxruntime-linux-aarch64-${ORT_VERSION}"
+                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-linux-aarch64-${ver}.tgz"
+                archive_dir="onnxruntime-linux-aarch64-${ver}"
             else
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
-                archive_dir="onnxruntime-linux-x64-${ORT_VERSION}"
+                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-linux-x64-${ver}.tgz"
+                archive_dir="onnxruntime-linux-x64-${ver}"
             fi
             ;;
     esac
@@ -84,6 +91,7 @@ if [ "${1:-}" = "--local" ]; then
     fetch_ort "$OS" "$ARCH" "$BUNDLE/${OS}_${ARCH}"
 else
     fetch_ort darwin arm64 "$BUNDLE/darwin_arm64"
+    fetch_ort darwin amd64 "$BUNDLE/darwin_amd64"
     fetch_ort linux amd64 "$BUNDLE/linux_amd64"
     fetch_ort linux arm64 "$BUNDLE/linux_arm64"
 fi
