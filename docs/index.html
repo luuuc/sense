@@ -1050,31 +1050,29 @@
 
         <div class="steps reveal">
           <div class="step">
-            <span class="step-num">01 / INSTALL + INDEX</span>
+            <span class="step-num">01 / INSTALL</span>
             <div class="step-cmd">
               <span class="accent">$</span> curl -fsSL <span class="flag">...</span> | sh
             </div>
             <p class="step-desc">
-              One command installs a single binary. Then
-              <code style="color: var(--accent)">sense scan</code> in your project directory to
-              build a local <code style="color: var(--accent)">.sense/</code> index. Tree-sitter
-              parsing for structure, ONNX embeddings for meaning. Incremental on every run.
+              Single binary, ~40 MB. macOS and Linux (Windows with WSL). No dependencies.
+              No internet required past install &mdash; everything runs locally, your code never leaves your machine.
             </p>
             <div class="step-meta">
-              <span>~40 MB</span><span>macOS + Linux</span><span>zero deps</span
-              ><span>incremental</span>
+              <span>~40 MB</span><span>macOS + Linux + WSL</span><span>zero deps</span
+              ><span>fully offline</span>
             </div>
           </div>
           <div class="step">
-            <span class="step-num">02 / CONNECT</span>
-            <div class="step-cmd" style="font-size: 14px"><span class="flag">automatic</span></div>
+            <span class="step-num">02 / SCAN</span>
+            <div class="step-cmd"><span class="accent">$</span> sense scan</div>
             <p class="step-desc">
-              The first <code style="color: var(--accent)">sense scan</code> writes your
-              <code style="color: var(--accent)">.mcp.json</code>, hooks, CLAUDE.md, and skills.
-              No manual config. If you need a getting-started guide, we failed.
+              One command indexes your codebase and configures your AI tools. Tree-sitter for
+              structure, ONNX embeddings for meaning. Incremental on every run.
             </p>
             <div class="step-meta">
-              <span>claude code</span><span>cursor</span><span>any mcp client</span>
+              <span>claude code</span><span>cursor</span><span>any mcp client</span
+              ><span>incremental</span>
             </div>
           </div>
           <div class="step">
@@ -1324,10 +1322,9 @@
     </footer>
 
     <script>
-      /* ---------- Copy button ---------- */
-      (function () {
-        const btn = document.getElementById("copyBtn");
-        const cmd = "curl -fsSL https://luuuc.github.io/sense/install.sh | sh";
+      /* ---------- Copy buttons ---------- */
+      document.querySelectorAll(".install-copy").forEach((btn) => {
+        const cmd = btn.dataset.copy || "curl -fsSL https://luuuc.github.io/sense/install.sh | sh";
         btn.addEventListener("click", async () => {
           try {
             await navigator.clipboard.writeText(cmd);
@@ -1339,7 +1336,7 @@
             btn.classList.remove("copied");
           }, 1600);
         });
-      })();
+      });
 
       /* ---------- Reveal on scroll ---------- */
       (function () {
