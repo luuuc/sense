@@ -10,13 +10,11 @@ One binary, one index, four capabilities. No SaaS account, no API key, no cloud 
 
 ## Install
 
-Download the binary for your OS from the [latest release](https://github.com/luuuc/sense/releases/latest), unzip, and move `sense` somewhere on your `PATH`.
-
-Or use the install script (macOS and Linux, amd64 or arm64):
-
 ```bash
 curl -fsSL https://luuuc.github.io/sense/install.sh | sh
 ```
+
+Or download the binary for your OS from the [latest release](https://github.com/luuuc/sense/releases/latest), unzip, and move `sense` somewhere on your `PATH`.
 
 ### With Go (1.25+)
 
@@ -31,6 +29,23 @@ sense version
 sense scan        # in any project directory
 sense graph User  # query the symbol graph
 ```
+
+## Supported Platforms
+
+| Platform | Status |
+|---|---|
+| Linux amd64 | Supported |
+| Linux arm64 | Supported |
+| macOS Apple Silicon (arm64) | Supported |
+| macOS Intel (amd64) | Supported |
+| Windows | Not supported (use WSL2) |
+
+Windows native builds are not yet available. Use WSL2 with the Linux binary.
+
+## Requirements
+
+- ~60 MB disk for the binary
+- 100–200 MB for the `.sense/` index (varies with project size)
 
 ## How It Works
 
