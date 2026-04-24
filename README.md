@@ -34,49 +34,21 @@ Parses your code with tree-sitter, extracts symbols and relationships, embeds ev
 
 ## Connect Your AI
 
-Add to your `.mcp.json` (Claude Code, Cursor, or any MCP-speaking tool):
+The first `sense scan` automatically configures your AI tools:
 
-```json
-{
-  "mcpServers": {
-    "sense": {
-      "command": "sense",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+- **`.mcp.json`** — MCP server config (Claude Code, Cursor, any MCP client)
+- **`.claude/settings.json`** — lifecycle hooks that nudge Claude toward Sense tools
+- **`CLAUDE.md`** — routing guidance with a substitution table
+- **`.claude/skills/`** — workflow skills for exploration, impact analysis, and conventions
 
-Cursor users: place the same block in `~/.cursor/mcp.json`.
+No manual setup. Run `sense scan` and your AI has structural understanding.
 
-That's it. Your AI now has structural understanding of your codebase. No getting-started guide, no commands to learn, no config to tune. The AI is the interface.
+Cursor users: copy the `sense` entry from `.mcp.json` into `~/.cursor/mcp.json`.
 
-### Claude Code Setup
+To re-generate config files after upgrading Sense:
 
-After connecting Sense via `.mcp.json`, add the following to your project's `CLAUDE.md` so Claude Code uses Sense proactively:
-
-```markdown
-## Sense (codebase understanding)
-
-Sense is connected as an MCP server. Load its tools via ToolSearch at the start
-of any code exploration task. Call `sense.status` first to confirm the index is
-healthy; fall back to grep/glob only if Sense is unavailable or the index is stale.
-
-### Before writing code
-
-1. `sense.status` — confirm index health.
-2. `sense.conventions` — check patterns for the domain you're working in.
-3. `sense.search` — look for prior art before creating new code.
-4. `sense.blast` — check scope of the symbols you're about to change.
-
-### While writing code
-
-- `sense.graph` — check callers before modifying a symbol's signature.
-- `sense.search` — check for existing implementations before creating new ones.
-
-### After completing work
-
-- `sense.blast --diff HEAD~1` — verify the scope of your changes.
+```bash
+sense scan --init
 ```
 
 ## What Your AI Gets
