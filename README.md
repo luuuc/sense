@@ -2,7 +2,9 @@
 
 **Codebase understanding that any tool can query.**
 
-Sense gives your AI tools structural understanding of your codebase. The kind a senior engineer carries in their head but an LLM has to rebuild from scratch every session. Your tools query a local graph and get precise answers about what exists, how it connects, what breaks if you change it, and what patterns the project follows.
+Sense gives your AI tools structural understanding of your codebase. The kind a senior engineer carries in their head but an LLM has to rebuild from scratch every session.
+
+Your tools query a local graph and get precise answers about what exists, how it connects, what breaks if you change it, and what patterns the project follows.
 
 One binary, one index, four capabilities. No SaaS account, no API key, no cloud dependency.
 
