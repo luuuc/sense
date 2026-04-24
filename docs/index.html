@@ -11,7 +11,7 @@
   gtag('js', new Date());
   gtag('config', 'G-41CSSC12Q9');
 </script>
-<title>Sense. Codebase understanding that any tool can query</title>
+<title>Sense. Your AI's understanding of your codebase</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -339,6 +339,72 @@
     .brand{margin-bottom:48px}
     .license-full{display:none}
   }
+
+  /* ----- MCP config snippet ----- */
+  .mcp-snippet{
+    margin-top:24px;padding:16px 18px;
+    border:1px solid var(--line);border-radius:4px;
+    background:rgba(13,17,24,0.5);
+    font-family:var(--mono);font-size:11.5px;color:var(--ink-3);
+    line-height:1.7;
+    white-space:pre;
+    overflow-x:auto;
+  }
+  .mcp-snippet .k{color:var(--accent)}
+  .mcp-snippet .s{color:#b4c9a3}
+
+  /* ----- AI thought block ----- */
+  .ai-thought{
+    margin-top:24px;padding:16px 18px;
+    border:1px solid var(--line);border-radius:4px;
+    background:rgba(13,17,24,0.5);
+    font-family:var(--mono);font-size:12px;color:var(--ink-3);
+    line-height:1.7;
+  }
+  .ai-thought .label{
+    font-size:10px;letter-spacing:0.18em;text-transform:uppercase;
+    color:var(--ink-4);margin-bottom:8px;display:block;
+  }
+  .ai-thought .k{color:var(--accent)}
+  .ai-thought .s{color:#b4c9a3}
+  .ai-thought .c{color:var(--ink-4)}
+  .ai-thought .n{color:#d3b58a}
+
+  /* ----- Convention callout ----- */
+  .cap-callout{
+    margin-top:16px;padding:12px 16px;
+    border-left:2px solid var(--accent-dim);
+    background:rgba(90,160,220,0.04);
+    border-radius:0 4px 4px 0;
+    font-family:var(--sans);font-size:13px;color:var(--ink-2);
+    line-height:1.6;
+  }
+
+  /* ----- Performance row ----- */
+  .perf-row{
+    display:flex;gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+    margin-top:48px;
+  }
+  .perf-cell{
+    flex:1;
+    background:var(--bg);
+    padding:24px 20px;
+    text-align:center;
+  }
+  .perf-val{
+    font-family:var(--mono);font-size:22px;font-weight:500;
+    color:var(--accent);letter-spacing:-0.02em;
+  }
+  .perf-label{
+    margin-top:6px;
+    font-family:var(--mono);font-size:11px;color:var(--ink-4);
+    letter-spacing:0.1em;text-transform:uppercase;
+  }
+  @media (max-width: 860px){
+    .perf-row{flex-direction:column}
+  }
 </style>
 </head>
 <body>
@@ -378,8 +444,8 @@
       <div class="brand-meta"><span id="versionTag">v0.23.0</span><span class="dot">·</span>MIT<span class="dot">·</span>one binary</div>
     </div>
 
-    <h1 class="tagline reveal">Codebase understanding<br/>that any tool can <em>query</em>.</h1>
-    <p class="subtitle reveal">One binary.<span class="sep">/</span>Four capabilities.<span class="sep">/</span>No external dependencies.</p>
+    <h1 class="tagline reveal">Your AI's understanding<br/>of your <em>codebase</em>.</h1>
+    <p class="subtitle reveal">Sense sits on your machine, has no learning curve, and isn't for you&nbsp;&mdash;&nbsp;it's for your AI.</p>
 
     <div class="install reveal" role="group" aria-label="Install command">
       <span class="install-prompt">$</span>
@@ -395,12 +461,12 @@
   </div>
 </section>
 
-<!-- What it does -->
+<!-- What your AI gets -->
 <section class="sect">
   <div class="wrap">
     <div class="sect-head reveal">
       <span class="sect-num">&sect; 01</span>
-      <h2 class="sect-title">What it does</h2>
+      <h2 class="sect-title">What your AI gets</h2>
       <div class="sect-rule"></div>
       <span class="sect-num" style="color:var(--ink-4)">four tools</span>
     </div>
@@ -421,9 +487,12 @@
         </div>
         <h3 class="cap-name">Graph</h3>
         <p class="cap-tag">"Who calls this? What implements that?"</p>
-        <p class="cap-desc">Callers, callees, inheritance chains, and test coverage mapping, traversable from any symbol in the index.</p>
+        <p class="cap-desc">Your AI navigates callers, callees, inheritance chains, and test coverage from any symbol &mdash; without reading dozens of files to piece the picture together.</p>
         <div class="cap-example">
-<span class="c">$ sense graph --callers parseConfig</span><br/>
+<span class="c">// AI calls sense.graph</span><br/>
+<span class="k">tool:</span> sense.graph<br/>
+<span class="k">args:</span> { <span class="s">"symbol"</span>: <span class="s">"parseConfig"</span>, <span class="s">"callers"</span>: <span class="n">true</span> }<br/>
+<br/>
 <span class="k">&#8594;</span> cli/main.go:42 &nbsp;<span class="c">main</span><br/>
 <span class="k">&#8594;</span> cli/serve.go:18 <span class="c">startServer</span><br/>
 <span class="k">&#8594;</span> tests/config_test.go:9 <span class="c">TestParse</span><br/>
@@ -446,9 +515,12 @@
         </div>
         <h3 class="cap-name">Search</h3>
         <p class="cap-tag">"Find by meaning, not just by string."</p>
-        <p class="cap-desc">Hybrid keyword + semantic search across symbols and code. Embeddings are bundled. No API keys, no network.</p>
+        <p class="cap-desc">Your AI finds relevant code by concept, not just grep patterns. Hybrid keyword + semantic search with bundled embeddings. No API keys, no network.</p>
         <div class="cap-example">
-<span class="c">$ sense search "retry with backoff"</span><br/>
+<span class="c">// AI calls sense.search</span><br/>
+<span class="k">tool:</span> sense.search<br/>
+<span class="k">args:</span> { <span class="s">"query"</span>: <span class="s">"retry with backoff"</span> }<br/>
+<br/>
 <span class="k">0.91</span> <span class="n">net/http.go:134</span> <span class="c">WithRetry()</span><br/>
 <span class="k">0.87</span> <span class="n">queue/worker.go:78</span> <span class="c">ExponentialRetry()</span><br/>
 <span class="k">0.72</span> <span class="n">sync/poll.go:51</span> <span class="c">PollUntil()</span>
@@ -471,9 +543,12 @@
         </div>
         <h3 class="cap-name">Blast Radius</h3>
         <p class="cap-tag">"What breaks if I change this?"</p>
-        <p class="cap-desc">Trace direct and transitive callers so you know the surface area of a change before you make it.</p>
+        <p class="cap-desc">Before your AI modifies a symbol, it traces direct and transitive callers to know the full surface area of the change. Fewer surprises, fewer broken builds.</p>
         <div class="cap-example">
-<span class="c">$ sense blast User.email --depth 3</span><br/>
+<span class="c">// AI calls sense.blast before editing</span><br/>
+<span class="k">tool:</span> sense.blast<br/>
+<span class="k">args:</span> { <span class="s">"symbol"</span>: <span class="s">"User.email"</span>, <span class="s">"depth"</span>: <span class="n">3</span> }<br/>
+<br/>
 <span class="k">&#9679;</span> direct <span class="c">——</span> 4 sites<br/>
 <span class="k">&#9680;</span> transitive <span class="c">——</span> 27 sites<br/>
 <span class="k">&#9675;</span> tests <span class="c">——</span> 12 files<br/>
@@ -496,12 +571,18 @@
         </div>
         <h3 class="cap-name">Conventions</h3>
         <p class="cap-tag">"How does this codebase do things?"</p>
-        <p class="cap-desc">Detect patterns in naming, error handling, test structure, and architecture. Derived from the code, not configured.</p>
+        <p class="cap-desc">Your AI doesn't just write correct code &mdash; it writes code that matches how your team writes code. Sense detects patterns in naming, error handling, test structure, and architecture. Derived from the code, not configured.</p>
         <div class="cap-example">
-<span class="c">$ sense conventions errors</span><br/>
+<span class="c">// AI calls sense.conventions</span><br/>
+<span class="k">tool:</span> sense.conventions<br/>
+<span class="k">args:</span> { <span class="s">"domain"</span>: <span class="s">"errors"</span> }<br/>
+<br/>
 <span class="k">pattern</span> <span class="s">fmt.Errorf("…: %w", err)</span> <span class="c">· 94%</span><br/>
 <span class="k">pattern</span> <span class="s">if err != nil { return }</span> <span class="c">· 88%</span><br/>
 <span class="k">outlier</span> <span class="n">legacy/db.go</span> <span class="c">· panic()</span>
+        </div>
+        <div class="cap-callout">
+          AI tools don't just struggle with structure &mdash; they struggle with style. Convention detection is what makes AI-written code feel like it belongs in your codebase, not just compile against it.
         </div>
       </div>
     </div>
@@ -520,27 +601,118 @@
 
     <div class="steps reveal">
       <div class="step">
-        <span class="step-num">01 / INDEX</span>
-        <div class="step-cmd"><span class="accent">$</span> sense scan <span class="flag">.</span></div>
-        <p class="step-desc">Indexes your codebase into a local <code style="color:var(--accent)">.sense/</code> directory. Tree-sitter parsing for structure, ONNX embeddings for meaning. Incremental on every run.</p>
+        <span class="step-num">01 / INSTALL + INDEX</span>
+        <div class="step-cmd"><span class="accent">$</span> curl -fsSL <span class="flag">...</span> | sh</div>
+        <p class="step-desc">One command installs a single binary. Then <code style="color:var(--accent)">sense scan</code> in your project directory to build a local <code style="color:var(--accent)">.sense/</code> index. Tree-sitter parsing for structure, ONNX embeddings for meaning. Incremental on every run.</p>
         <div class="step-meta">
-          <span>tree-sitter</span><span>onnx</span><span>incremental</span><span>local-only</span>
+          <span>~40 MB</span><span>macOS + Linux</span><span>zero deps</span><span>incremental</span>
         </div>
       </div>
       <div class="step">
         <span class="step-num">02 / CONNECT</span>
-        <div class="step-cmd"><span class="accent">$</span> sense serve <span class="flag">--mcp</span></div>
-        <p class="step-desc">Any MCP-compatible tool connects over stdio or socket and queries the index. Claude Code, Cursor, or your own agent.</p>
+        <div class="step-cmd" style="font-size:14px"><span class="flag">.mcp.json</span></div>
+        <div class="mcp-snippet">{
+  <span class="k">"mcpServers"</span>: {
+    <span class="k">"sense"</span>: {
+      <span class="k">"command"</span>: <span class="s">"sense"</span>,
+      <span class="k">"args"</span>: [<span class="s">"mcp"</span>]
+    }
+  }
+}</div>
+        <p class="step-desc">Add this to your MCP config. That's onboarding. If you need a getting-started guide, we failed.</p>
         <div class="step-meta">
-          <span>mcp</span><span>stdio</span><span>claude code</span><span>cursor</span><span>byoa</span>
+          <span>claude code</span><span>cursor</span><span>any mcp client</span>
         </div>
       </div>
       <div class="step">
-        <span class="step-num">03 / QUERY</span>
-        <div class="step-cmd"><span class="flag">&gt;</span> sense.<span class="accent">{graph,search,blast,conventions}</span></div>
-        <p class="step-desc">Four tools, JSON responses. Composable. Read-only. The model picks which one to call, chains them, and reasons over the result.</p>
+        <span class="step-num">03 / DONE</span>
+        <div class="step-cmd" style="font-size:14px"><span class="flag">your AI</span> queries Sense <span class="accent">automatically</span></div>
+        <div class="ai-thought">
+          <span class="label">AI reasoning</span>
+          Before modifying <span class="n">User.email</span>, let me check the blast radius.<br/>
+          <span class="k">&#8594;</span> <span class="c">sense.blast</span> returns 4 direct callers, 27 transitive.<br/>
+          <span class="k">&#8594;</span> <span class="c">sense.conventions</span> shows 94% use <span class="s">fmt.Errorf</span> wrapping.<br/>
+          I'll update all call sites and follow the wrapping pattern.
+        </div>
+        <p class="step-desc">You don't type commands. Your AI picks which tools to call, chains them, and reasons over the results.</p>
         <div class="step-meta">
-          <span>json</span><span>composable</span><span>read-only</span><span>deterministic</span>
+          <span>json responses</span><span>composable</span><span>read-only</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="perf-row reveal">
+      <div class="perf-cell">
+        <div class="perf-val">&lt; 10 ms</div>
+        <div class="perf-label">graph queries</div>
+      </div>
+      <div class="perf-cell">
+        <div class="perf-val">&lt; 50 ms</div>
+        <div class="perf-label">semantic search</div>
+      </div>
+      <div class="perf-cell">
+        <div class="perf-val">&lt; 100 ms</div>
+        <div class="perf-label">cold start</div>
+      </div>
+      <div class="perf-cell">
+        <div class="perf-val">0</div>
+        <div class="perf-label">external dependencies</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- What Sense is not -->
+<section class="sect">
+  <div class="wrap">
+    <div class="sect-head reveal">
+      <span class="sect-num">&sect; 03</span>
+      <h2 class="sect-title">What Sense is not</h2>
+      <div class="sect-rule"></div>
+      <span class="sect-num" style="color:var(--ink-4)">sharp edges</span>
+    </div>
+
+    <div class="nots reveal">
+      <div class="not">
+        <div class="not-mark">&times;</div>
+        <div>
+          <h4 class="not-title">Not a code editor.</h4>
+          <p class="not-body">Sense is read-only by design. It observes your codebase but never modifies it. Your editor and your tools stay in control. Read-only is the identity, not a limitation.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&times;</div>
+        <div>
+          <h4 class="not-title">Not a token optimizer.</h4>
+          <p class="not-body">Token savings are a natural by-product. But if LLM costs dropped to zero tomorrow, Sense would still be valuable. The goal is understanding, not compression.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&times;</div>
+        <div>
+          <h4 class="not-title">Not a search engine.</h4>
+          <p class="not-body">Semantic search is one of four capabilities, not the product. The product is structural understanding that your AI reasons over.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&times;</div>
+        <div>
+          <h4 class="not-title">Not a feature-count competitor.</h4>
+          <p class="not-body">Four capabilities is a choice, not a constraint. Your AI doesn't need 102 tools to choose from. It needs four that work.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&times;</div>
+        <div>
+          <h4 class="not-title">Not dependent on anything.</h4>
+          <p class="not-body">No API keys. No Ollama. No Docker. No Python. The moment Sense requires an external dependency, it loses its clearest advantage.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&times;</div>
+        <div>
+          <h4 class="not-title">Not a tool you interact with.</h4>
+          <p class="not-body">You never open a TUI, never type a command, never read Sense output. You notice it in the absence of frustration &mdash; faster answers, fewer wrong turns, code that matches your conventions.</p>
         </div>
       </div>
     </div>
@@ -551,14 +723,14 @@
 <section class="sect">
   <div class="wrap">
     <div class="sect-head reveal">
-      <span class="sect-num">&sect; 03</span>
+      <span class="sect-num">&sect; 04</span>
       <h2 class="sect-title">What Sense brings</h2>
       <div class="sect-rule"></div>
       <span class="sect-num" style="color:var(--ink-4)">clear value</span>
     </div>
 
     <p class="cap-desc reveal" style="margin-bottom:40px;max-width:100%">
-      Sense gives your AI tools structural understanding of your codebase. The kind a senior engineer carries in their head but an LLM has to rebuild from scratch every session.
+      Your AI stops guessing about your codebase structure. It stops reading 30 files to answer "who calls this?" It stops hallucinating dependencies. It stops writing code that doesn't match how your team writes code. Not because the model got better &mdash; because it now has the structural understanding a senior engineer carries in their head.
     </p>
 
     <div class="nots reveal">
@@ -580,7 +752,14 @@
         <div class="not-mark">&rarr;</div>
         <div>
           <h4 class="not-title">Read-only by design.</h4>
-          <p class="not-body">Sense observes the codebase. It never modifies it. Your editor and your tools stay in control.</p>
+          <p class="not-body">Sense observes the codebase. It never modifies it. Safe to install, safe to leave running, safe to connect to any AI tool.</p>
+        </div>
+      </div>
+      <div class="not">
+        <div class="not-mark">&rarr;</div>
+        <div>
+          <h4 class="not-title">Invisible when it works.</h4>
+          <p class="not-body">The developer doesn't think "Sense answered that." They think "my AI just got better."</p>
         </div>
       </div>
       <div class="not">
@@ -593,22 +772,11 @@
       <div class="not">
         <div class="not-mark">&rarr;</div>
         <div>
-          <h4 class="not-title">CLI and MCP native.</h4>
-          <p class="not-body">No UI to log into. Code is the consumer. Your tools query Sense directly.</p>
-        </div>
-      </div>
-      <div class="not">
-        <div class="not-mark">&rarr;</div>
-        <div>
           <h4 class="not-title">Runs on your machine.</h4>
           <p class="not-body">Your code never leaves it. No account, no telemetry, no tier.</p>
         </div>
       </div>
     </div>
-
-    <p class="not-body reveal" style="margin-top:32px;max-width:100%">
-      Token savings? A natural by-product. But the real gain is that your AI stops guessing at structure and starts knowing it.
-    </p>
   </div>
 </section>
 
