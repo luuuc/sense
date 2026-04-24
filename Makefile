@@ -1,4 +1,4 @@
-.PHONY: build test clean install lint ci run fetch-deps bench
+.PHONY: build test clean install lint ci run fetch-deps bench smoke
 
 VERSION ?= dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -26,6 +26,9 @@ lint:
 
 ci: build test lint
 	@echo "All CI checks passed!"
+
+smoke:
+	go test -v -run TestSmoke ./internal/smoke/
 
 bench:
 	go test -bench=. -count=1 -run=^$$ ./internal/scan/ ./internal/blast/ ./internal/embed/ ./internal/search/
