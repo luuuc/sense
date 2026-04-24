@@ -36,6 +36,7 @@ import (
 	"github.com/luuuc/sense/internal/ignore"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/resolve"
+	"github.com/luuuc/sense/internal/setup"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
@@ -54,6 +55,7 @@ type Options struct {
 	Output            io.Writer // summary-line sink (default: os.Stderr)
 	Warnings          io.Writer // per-file warning sink (default: os.Stderr)
 	EmbeddingsEnabled bool      // when true, pass 3 generates embeddings for changed symbols
+	Init              bool      // force re-generation of AI tool config files
 }
 
 // PhaseTiming records how long each scan phase took.
@@ -133,6 +135,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build ignore matcher: %w", err)
 	}
+
+	_, senseDirErr := os.Stat(senseDir)
+	firstRun := os.IsNotExist(senseDirErr)
 
 	if err := os.MkdirAll(senseDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create sense dir: %w", err)
@@ -250,6 +255,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if elapsed > time.Second {
 		printPhaseBreakdown(out, elapsed, phases)
+	}
+
+	if firstRun || opts.Init {
+		if _, serr := setup.Run(root, out); serr != nil {
+			_, _ = fmt.Fprintf(warn, "warn: AI tool setup failed: %v\n", serr)
+		}
 	}
 
 	return res, nil
