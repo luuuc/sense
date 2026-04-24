@@ -11,8 +11,21 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+          - runner: macos-latest
+            os: darwin
+            arch: arm64
+          - runner: macos-13
+            os: darwin
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
 
@@ -20,14 +33,28 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Cache dependencies (model + ORT)
+        uses: actions/cache@v4
+        with:
+          path: internal/embed/bundle
+          key: sense-deps-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/fetch-deps.sh') }}
+
       - name: Fetch dependencies (model + ORT)
         run: ./scripts/fetch-deps.sh --local
 
       - name: Build
-        run: go build -v ./...
+        run: make build
 
       - name: Test
         run: go test -v ./...
+
+      - name: Smoke
+        run: make smoke
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
 
   stdout-hygiene:
     runs-on: ubuntu-latest
@@ -51,20 +78,3 @@ jobs:
             echo "$hits"
             exit 1
           fi
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Fetch dependencies (model + ORT)
-        run: ./scripts/fetch-deps.sh --local
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
