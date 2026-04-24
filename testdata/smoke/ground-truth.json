@@ -1,0 +1,82 @@
+{
+  "symbols": {
+    "min_total": 30,
+    "by_language": {
+      "go": 17,
+      "ruby": 13
+    }
+  },
+  "edges": {
+    "required": [
+      {
+        "source": "smoke.OrderService.Process",
+        "target": "smoke.PaymentGateway.Charge",
+        "kind": "calls"
+      },
+      {
+        "source": "Order",
+        "target": "Order#validate_total",
+        "kind": "calls"
+      },
+      {
+        "source": "smoke.OrderService",
+        "target": "smoke.BaseService",
+        "kind": "includes"
+      },
+      {
+        "source": "Order",
+        "target": "Trackable",
+        "kind": "includes"
+      },
+      {
+        "source": "smoke.OrderService",
+        "target": "smoke.Notifier",
+        "kind": "inherits"
+      },
+      {
+        "source": "Order",
+        "target": "ApplicationRecord",
+        "kind": "inherits"
+      },
+      {
+        "source": "Order",
+        "target": "LineItem",
+        "kind": "composes"
+      },
+      {
+        "source": "smoke.TestOrderProcess",
+        "target": "smoke.OrderService",
+        "kind": "tests"
+      },
+      {
+        "source": "OrderTest",
+        "target": "Order",
+        "kind": "tests"
+      }
+    ],
+    "min_total": 28
+  },
+  "search": [
+    {
+      "query": "PaymentGateway",
+      "expected_in_top3": "PaymentGateway"
+    },
+    {
+      "query": "validate_total",
+      "expected_in_top3": "validate_total"
+    }
+  ],
+  "blast": [
+    {
+      "symbol": "smoke.OrderService.Process",
+      "min_direct_callers": 2
+    }
+  ],
+  "conventions": {
+    "min_detected": 6
+  },
+  "performance": {
+    "scan_max_seconds": 10,
+    "query_max_ms": 500
+  }
+}
