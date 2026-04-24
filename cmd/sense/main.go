@@ -13,6 +13,7 @@ import (
 
 	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/hook"
 	"github.com/luuuc/sense/internal/mcpserver"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -36,6 +37,7 @@ Commands:
   conventions   Detected project conventions
   status        Index health and embedding coverage
   doctor        Diagnose common index problems
+  hook          Claude Code lifecycle hooks (pre-tool-use, pre-compact, etc.)
   mcp           Start the MCP server (stdio transport)
   version       Print version
   help          Show this help
@@ -73,7 +75,7 @@ func main() {
 	cmd := os.Args[1]
 
 	switch cmd {
-	case "version", "--version", "-v", "help", "--help", "-h", "mcp":
+	case "version", "--version", "-v", "help", "--help", "-h", "mcp", "hook":
 		// no version check for these
 	default:
 		jsonMode := false
@@ -104,6 +106,7 @@ func main() {
 		fs.SetOutput(os.Stderr)
 		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
 		quietFlag := fs.Bool("quiet", false, "suppress warnings")
+		initFlag := fs.Bool("init", false, "re-generate AI tool config files (.mcp.json, .claude/, CLAUDE.md)")
 		dir := fs.String("dir", ".", "project root")
 		cpuprofile := fs.String("cpuprofile", "", "write CPU profile to file")
 		memprofile := fs.String("memprofile", "", "write heap profile to file on exit")
@@ -143,6 +146,7 @@ func main() {
 				Root:              *dir,
 				Warnings:          warnSink,
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
+				Init:              *initFlag,
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, "sense scan:", err)
 				os.Exit(1)
@@ -178,6 +182,13 @@ func main() {
 
 	case "doctor":
 		os.Exit(cli.RunDoctor(os.Args[2:], cli.DefaultIO()))
+
+	case "hook":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: sense hook <pre-tool-use|pre-compact|subagent-start|session-start>")
+			os.Exit(1)
+		}
+		os.Exit(hook.Run(os.Args[2], ".", os.Stdin, os.Stdout))
 
 	case "mcp":
 		fs := flag.NewFlagSet("sense mcp", flag.ContinueOnError)

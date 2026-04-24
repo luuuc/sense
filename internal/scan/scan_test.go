@@ -83,16 +83,19 @@ func TestScanIsRerunnable(t *testing.T) {
 		t.Fatalf("second Run: %v", err)
 	}
 
-	if first.Files != second.Files {
-		t.Errorf("file count drifted between runs: first=%d second=%d",
-			first.Files, second.Files)
+	// First-run setup writes .mcp.json and CLAUDE.md, so the second
+	// scan visits more files. The important invariants: indexed count
+	// is stable and nothing was re-indexed.
+	if first.Indexed != second.Indexed {
+		t.Errorf("indexed count drifted between runs: first=%d second=%d",
+			first.Indexed, second.Indexed)
 	}
 	if first.Symbols != second.Symbols {
 		t.Errorf("symbol count drifted between runs: first=%d second=%d",
 			first.Symbols, second.Symbols)
 	}
-	if second.Files != 2 {
-		t.Errorf("second.Files = %d, want 2", second.Files)
+	if second.Changed != 0 {
+		t.Errorf("second.Changed = %d, want 0 (nothing should be re-indexed)", second.Changed)
 	}
 
 	// A fresh open after the two scans confirms the adapter released its
@@ -104,6 +107,50 @@ func TestScanIsRerunnable(t *testing.T) {
 	}
 	if err := a.Close(); err != nil {
 		t.Errorf("Close: %v", err)
+	}
+}
+
+func TestScanSecondRunSkipsSetup(t *testing.T) {
+	root := t.TempDir()
+	buildTree(t, root, []string{"a.go"})
+	ctx := context.Background()
+
+	// First run: setup fires, writes config files.
+	var firstOut bytes.Buffer
+	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &firstOut, Warnings: io.Discard}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if !strings.Contains(firstOut.String(), "AI tool integration:") {
+		t.Fatal("first run should print setup summary")
+	}
+
+	// Second run: setup should NOT fire.
+	var secondOut bytes.Buffer
+	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &secondOut, Warnings: io.Discard}); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if strings.Contains(secondOut.String(), "AI tool integration:") {
+		t.Error("second run should not print setup summary")
+	}
+}
+
+func TestScanInitForcesSetup(t *testing.T) {
+	root := t.TempDir()
+	buildTree(t, root, []string{"a.go"})
+	ctx := context.Background()
+
+	// First run: creates .sense/ and writes config.
+	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Second run with --init: setup should fire again.
+	var buf bytes.Buffer
+	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &buf, Warnings: io.Discard, Init: true}); err != nil {
+		t.Fatalf("init Run: %v", err)
+	}
+	if !strings.Contains(buf.String(), "AI tool integration:") {
+		t.Error("--init run should print setup summary")
 	}
 }
 
@@ -151,8 +198,9 @@ func TestScanOutputFormat(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// Summary line format: "scanned N files (...) in Xms" optionally followed by "edges: ..."
-	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ indexed, \d+ changed, \d+ skipped\) in \S+\n(edges: \d+ resolved, \d+ unresolved, \d+ ambiguous\n)?\z`)
+	// Summary line: "scanned N files (...) in Xms" optionally followed
+	// by edges, then the first-run AI tool integration summary.
+	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ indexed, \d+ changed, \d+ skipped\) in \S+\n(edges: \d+ resolved, \d+ unresolved, \d+ ambiguous\n)?`)
 	if !pattern.MatchString(buf.String()) {
 		t.Fatalf("output does not match summary pattern\nhave: %q",
 			buf.String())
