@@ -1,5 +1,7 @@
 # Sense ⠎⠑⠝⠎⠑
 
+[![CI](https://github.com/luuuc/sense/actions/workflows/ci.yml/badge.svg)](https://github.com/luuuc/sense/actions/workflows/ci.yml)
+
 **Codebase understanding that any tool can query.**
 
 Sense gives your AI tools structural understanding of your codebase. The kind a senior engineer carries in their head but an LLM has to rebuild from scratch every session.
