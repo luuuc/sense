@@ -71,7 +71,16 @@ func CheckAndNotify(stderr io.Writer) {
 	}
 
 	s, err := readState()
-	if err == nil && time.Since(s.LastCheck) < checkInterval {
+	if err != nil {
+		// First run after install — seed the cache and skip the network
+		// call. The user just installed the latest version so there is
+		// nothing to report, and reaching out to api.github.com on first
+		// launch triggers a macOS firewall prompt.
+		writeState(state{LastCheck: time.Now(), LatestVersion: version.Version})
+		return
+	}
+
+	if time.Since(s.LastCheck) < checkInterval {
 		if s.LatestVersion != "" && isNewer(s.LatestVersion, version.Version) {
 			printNotice(stderr, s.LatestVersion)
 		}
