@@ -1,0 +1,21 @@
+name: Council Review
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  models: read
+  pull-requests: write
+  contents: read
+  checks: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: luuuc/council/action@v1
+        with:
+          pack: go
+          # anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
