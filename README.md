@@ -150,7 +150,7 @@ Sense uses tree-sitter for parsing. It ships with extractors for six languages a
 | **Rust** | — |
 | **ERB** | Stimulus, Turbo (cross-language edges to JS controllers) |
 
-All six get the full toolkit: symbols, calls, inheritance, blast radius, and semantic search. Adding a new language takes ~100 lines of Go on top of its tree-sitter grammar.
+All six get the full toolkit: symbols, calls, inheritance, blast radius, and semantic search. See [LANGUAGES.md](LANGUAGES.md) for how to add a new language or framework.
 
 ## Feedback
 
