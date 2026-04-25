@@ -17,12 +17,48 @@ type preToolUseInput struct {
 		Command      string `json:"command"`
 		Regex        string `json:"regex"`
 		SubagentType string `json:"subagent_type"`
+		Prompt       string `json:"prompt"`
+		Description  string `json:"description"`
 	} `json:"tool_input"`
 }
 
 var explorationAgents = map[string]bool{
 	"deep-explore": true,
 	"Explore":      true,
+}
+
+var explorationPhrases = []string{
+	"explore the codebase",
+	"search the codebase",
+	"understand the codebase",
+	"research the codebase",
+	"codebase structure",
+	"codebase architecture",
+	"codebase exploration",
+	"codebase understanding",
+	"code structure",
+	"code architecture",
+	"code exploration",
+	"find implementation",
+	"find callers",
+	"find uses of",
+	"find where",
+	"who calls",
+	"what calls",
+	"callers of",
+	"callees of",
+	"dependencies of",
+	"understand the code",
+	"how does the code",
+	"what would break",
+	"blast radius",
+	"impact of changing",
+	"symbol relationship",
+}
+
+var codeExtensions = []string{
+	".go", ".py", ".ts", ".tsx", ".js", ".jsx",
+	".rb", ".rs", ".java", ".kt", ".scala", ".cs", ".php",
 }
 
 func handlePreToolUse(ctx context.Context, input json.RawMessage, adapter *sqlite.Adapter, _ string) (any, error) {
@@ -43,12 +79,21 @@ func handlePreToolUse(ctx context.Context, input json.RawMessage, adapter *sqlit
 
 func handleGrepGlob(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
 	pattern := extractPattern(req)
-	if pattern == "" || !isSymbolShaped(pattern) {
+	if pattern == "" {
+		return nil, nil
+	}
+
+	if !isSymbolShaped(pattern) {
 		return nil, nil
 	}
 
 	symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
 	if err != nil || len(symbols) == 0 {
+		if isMultiWordPattern(pattern) {
+			return advise(fmt.Sprintf(
+				"Consider sense_search query=%q for semantic code search. "+
+					"Load tools first: %s", pattern, toolSearchCmd)), nil
+		}
 		return nil, nil
 	}
 
@@ -56,7 +101,15 @@ func handleGrepGlob(ctx context.Context, req preToolUseInput, adapter *sqlite.Ad
 }
 
 func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
-	if !explorationAgents[req.Input.SubagentType] {
+	isKnownExplorer := explorationAgents[req.Input.SubagentType]
+
+	prompt := req.Input.Prompt
+	if prompt == "" {
+		prompt = req.Input.Description
+	}
+	hasExplorationIntent := prompt != "" && hasExplorationKeyword(prompt)
+
+	if !isKnownExplorer && !hasExplorationIntent {
 		return nil, nil
 	}
 
@@ -66,8 +119,7 @@ func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapt
 	}
 
 	reason := fmt.Sprintf(
-		"This project has a Sense index (%d symbols). Do not spawn exploration agents for structural questions. "+
-			"Use Sense MCP tools instead:\n"+
+		"This project has a Sense index (%d symbols). Use Sense MCP tools instead of agents for codebase understanding:\n"+
 			"- sense_graph for symbol relationships (callers, callees, inheritance)\n"+
 			"- sense_search for semantic code search\n"+
 			"- sense_blast for impact analysis\n"+
@@ -79,17 +131,28 @@ func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapt
 }
 
 func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
-	pattern := extractBashPattern(req.Input.Command)
-	if pattern == "" || !isSymbolShaped(pattern) {
-		return nil, nil
+	cmd := req.Input.Command
+
+	pattern := extractBashPattern(cmd)
+	if pattern != "" && isSymbolShaped(pattern) {
+		symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
+		if err == nil && len(symbols) > 0 {
+			return denyOrAdvise(ctx, adapter, len(symbols), pattern, "bash grep"), nil
+		}
+		if isMultiWordPattern(pattern) {
+			return advise(fmt.Sprintf(
+				"Consider sense_search query=%q for semantic code search. "+
+					"Load tools first: %s", pattern, toolSearchCmd)), nil
+		}
 	}
 
-	symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
-	if err != nil || len(symbols) == 0 {
-		return nil, nil
+	if isExplorationCommand(cmd) {
+		return advise(
+			"Sense can answer codebase understanding questions without reading individual files. "+
+				"Load tools first: "+toolSearchCmd), nil
 	}
 
-	return denyOrAdvise(ctx, adapter, len(symbols), pattern, "bash grep"), nil
+	return nil, nil
 }
 
 // denyOrAdvise blocks the tool call when the index is fresh, or adds
@@ -172,4 +235,53 @@ func isSymbolShaped(pattern string) bool {
 		}
 	}
 	return len(pattern) >= 2
+}
+
+func hasExplorationKeyword(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	for _, phrase := range explorationPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func isMultiWordPattern(pattern string) bool {
+	return strings.Contains(pattern, " ") && len(pattern) >= 4
+}
+
+func isExplorationCommand(cmd string) bool {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return false
+	}
+
+	switch fields[0] {
+	case "find", "head", "cat", "tail", "less", "more", "wc":
+		return argsHaveCodeExtension(fields)
+	}
+	return false
+}
+
+func argsHaveCodeExtension(fields []string) bool {
+	for _, f := range fields {
+		if strings.HasPrefix(f, "-") {
+			continue
+		}
+		f = strings.Trim(f, "'\"")
+		if hasCodeExtension(f) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCodeExtension(s string) bool {
+	for _, ext := range codeExtensions {
+		if strings.HasSuffix(s, ext) {
+			return true
+		}
+	}
+	return false
 }

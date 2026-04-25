@@ -39,7 +39,7 @@ func handlePreCompact(ctx context.Context, _ json.RawMessage, adapter *sqlite.Ad
 		}
 	}
 
-	sb.WriteString("\nUse Sense MCP tools (sense_graph, sense_search, sense_blast, sense_conventions) instead of grep/glob for structural questions.")
+	sb.WriteString("\nUse Sense MCP tools (sense_graph, sense_search, sense_blast, sense_conventions) for ALL codebase understanding — not just symbol lookups.")
 
 	return &messageResponse{Message: sb.String()}, nil
 }
