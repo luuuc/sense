@@ -333,3 +333,210 @@ func TestIsSymbolShaped(t *testing.T) {
 		}
 	}
 }
+
+func TestPreToolUseAgentExplorationIntentDeny(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"explore the codebase to understand the architecture"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp denyResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Output.Decision != "deny" {
+		t.Fatalf("expected deny for exploration-intent agent, got %q", resp.Output.Decision)
+	}
+}
+
+func TestPreToolUseAgentDescriptionFallback(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","description":"explore the codebase structure"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp denyResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Output.Decision != "deny" {
+		t.Fatalf("expected deny for exploration-intent description, got %q", resp.Output.Decision)
+	}
+}
+
+func TestPreToolUseAgentNoExplorationIntentPass(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"format the markdown tables in README"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("non-exploration agent should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseConceptSearchAdvise(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Grep","tool_input":{"pattern":"error handling middleware"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp hookResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected advisory for concept search pattern")
+	}
+	if !strings.Contains(resp.AdditionalContext, "sense_search") {
+		t.Error("expected sense_search suggestion in advisory")
+	}
+}
+
+func TestPreToolUseBashFindCodeAdvise(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"find . -name \"*.go\" -type f"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp hookResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected advisory for find code files")
+	}
+}
+
+func TestPreToolUseBashHeadCodeAdvise(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"head -20 internal/hook/pre_tool_use.go"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp hookResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected advisory for head on code file")
+	}
+}
+
+func TestPreToolUseBashHeadNonCodePass(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"head -20 README.md"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("head on non-code file should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseBashFindNonCodePass(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"find . -name \"*.md\" -type f"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("find non-code files should be no-op, got %q", buf.String())
+	}
+}
+
+func TestHasExplorationKeyword(t *testing.T) {
+	cases := []struct {
+		prompt string
+		want   bool
+	}{
+		{"explore the codebase to find auth flow", true},
+		{"find implementations of the handler interface", true},
+		{"who calls this function", true},
+		{"understand the code structure", true},
+		{"what would break if I change this", true},
+		{"Deep codebase exploration using semantic search", true},
+		{"CODEBASE EXPLORATION using semantic search", true},
+		{"format the markdown tables in README", false},
+		{"fix the typo in the error message", false},
+		{"run the test suite", false},
+		{"do something", false},
+		{"update the codebase documentation", false},
+		{"run linting on the codebase", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := hasExplorationKeyword(tc.prompt); got != tc.want {
+			t.Errorf("hasExplorationKeyword(%q) = %v, want %v", tc.prompt, got, tc.want)
+		}
+	}
+}
+
+func TestIsMultiWordPattern(t *testing.T) {
+	cases := []struct {
+		pattern string
+		want    bool
+	}{
+		{"error handling middleware", true},
+		{"review engine flow", true},
+		{"a bc", true},
+		{"auth", false},
+		{"UserService", false},
+		{"a b", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isMultiWordPattern(tc.pattern); got != tc.want {
+			t.Errorf("isMultiWordPattern(%q) = %v, want %v", tc.pattern, got, tc.want)
+		}
+	}
+}
+
+func TestIsExplorationCommand(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{`find . -name "*.go" -type f`, true},
+		{`find . -name "*.md"`, false},
+		{`head -20 main.go`, true},
+		{`head -20 README.md`, false},
+		{`cat internal/hook/hook.go`, true},
+		{`cat package.json`, false},
+		{`tail -f app.log`, false},
+		{`wc -l *.go`, true},
+		{`wc -l *.md`, false},
+		{`ls -la`, false},
+		{`git status`, false},
+		{`make build`, false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isExplorationCommand(tc.cmd); got != tc.want {
+			t.Errorf("isExplorationCommand(%q) = %v, want %v", tc.cmd, got, tc.want)
+		}
+	}
+}
+
+func TestHasCodeExtension(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"main.go", true},
+		{"app.py", true},
+		{"index.ts", true},
+		{"component.tsx", true},
+		{"script.js", true},
+		{"README.md", false},
+		{"package.json", false},
+		{"go.mod", false},
+		{"Makefile", false},
+		{"*.go", true},
+	}
+	for _, tc := range cases {
+		if got := hasCodeExtension(tc.path); got != tc.want {
+			t.Errorf("hasCodeExtension(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}

@@ -29,3 +29,7 @@ func deny(reason string) *denyResponse {
 		},
 	}
 }
+
+func advise(msg string) *hookResponse {
+	return &hookResponse{AdditionalContext: msg}
+}
