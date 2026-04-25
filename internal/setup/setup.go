@@ -83,14 +83,15 @@ func writeMCPJSON(root string) (bool, error) {
 		"command": "sense",
 		"args":    []any{"mcp"},
 		"serverInstructions": "When Sense is available and indexed, you MUST use Sense tools " +
-			"instead of grep, glob, or exploration agents for structural and semantic code " +
-			"questions. Sense provides pre-indexed results that are faster and more complete.\n\n" +
+			"instead of grep, glob, or exploration agents for codebase understanding, " +
+			"exploration, and research. Sense provides pre-indexed results that are faster and more complete.\n\n" +
 			"WHEN TO USE SENSE TOOLS:\n" +
 			"- Symbol relationships, callers, dependencies → sense.graph\n" +
 			"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
 			"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
 			"- Project patterns and conventions → sense.conventions\n" +
-			"- Index health, what's indexed → sense.status\n\n" +
+			"- Index health, what's indexed → sense.status\n" +
+			"- ANY question about how the codebase works or is structured → start with Sense\n\n" +
 			"WHEN NOT TO USE SENSE TOOLS:\n" +
 			"- Exact text/string search → use grep\n" +
 			"- Reading file contents → use your file reading tool\n" +

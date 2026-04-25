@@ -18,17 +18,18 @@ const senseSection = `<!-- sense:start -->
 
 Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
 
-**BEFORE any code exploration, symbol lookup, or agent spawning:**
+**Your FIRST action in every conversation — before responding, before any tool call — MUST be:**
 
 1. Load Sense tools: ` + "`ToolSearch(\"select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions,mcp__sense__sense_status\")`" + `
 2. Call ` + "`sense_status`" + ` to confirm index health
-3. Use ` + "`sense_graph`" + `, ` + "`sense_search`" + `, ` + "`sense_blast`" + ` for ALL structural questions
+3. Use Sense tools for ALL codebase understanding — exploration, research, architecture, callers, dependencies, search
 
 **You MUST NOT:**
 
-- Spawn deep-explore or Explore agents for structural questions — Sense answers them directly
+- Spawn deep-explore, Explore, or general-purpose agents for codebase questions — Sense answers them directly
 - Use grep/glob to find symbol callers, implementations, or dependencies
 - Skip Sense because tools are deferred — load them with ToolSearch first
+- Fall back to Read/Bash after a hook blocks another tool — the hook is telling you to use Sense
 
 **When to use each tool:**
 
