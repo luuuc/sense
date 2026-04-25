@@ -14,9 +14,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/luuuc/sense/internal/sqlite"
 )
+
+const staleThreshold = 24 * time.Hour
 
 // Run dispatches to the named hook handler. It returns an exit code
 // (always 0 — hooks must not fail the host tool).
@@ -84,6 +87,19 @@ func silentRun(dir string, stdin io.Reader, stdout io.Writer, fn handlerFunc) {
 
 func writeEmpty(w io.Writer) {
 	_, _ = io.WriteString(w, "{}\n")
+}
+
+func indexAge(ctx context.Context, adapter *sqlite.Adapter) time.Duration {
+	var raw string
+	err := adapter.DB().QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`).Scan(&raw)
+	if err != nil || raw == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return 0
+	}
+	return time.Since(t)
 }
 
 func indexPath(dir string) string {
