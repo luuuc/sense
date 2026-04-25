@@ -8,6 +8,7 @@ package languages
 import (
 	_ "github.com/luuuc/sense/internal/extract/erb"
 	_ "github.com/luuuc/sense/internal/extract/golang"
+	_ "github.com/luuuc/sense/internal/extract/langspec"
 	_ "github.com/luuuc/sense/internal/extract/python"
 	_ "github.com/luuuc/sense/internal/extract/ruby"
 	_ "github.com/luuuc/sense/internal/extract/rust"

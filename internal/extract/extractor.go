@@ -38,6 +38,12 @@ var languageTiers = map[string]Tier{
 	"python":     TierStandard,
 	"java":       TierStandard,
 	"rust":       TierStandard,
+	"c":          TierStandard,
+	"cpp":        TierStandard,
+	"csharp":     TierStandard,
+	"kotlin":     TierStandard,
+	"php":        TierStandard,
+	"scala":      TierStandard,
 }
 
 // LanguageTier returns the support tier for a language name.
