@@ -16,7 +16,7 @@ Extractors are stateless and per-file. They never read other files or query the 
 
 ## Adding a new language
 
-Six files to touch, in order.
+Seven steps, in order.
 
 ### 1. Bundle the tree-sitter grammar
 
@@ -43,6 +43,8 @@ The grammar compiles into the binary via CGo at `go build` time. Verify it links
 go test ./internal/grammars/
 ```
 
+**Grammar gate:** Before writing any extractor code, verify the grammar parses modern syntax for your language. Write a small test file using recent language features (e.g. C# 10 file-scoped namespaces, Python 3.12 type parameter syntax) and confirm tree-sitter produces a valid CST without `ERROR` nodes. If the grammar chokes on modern syntax, stop — fixing upstream grammars will blow your time budget.
+
 ### 2. Write the extractor
 
 Create `internal/extract/<lang>/<lang>.go`. The extractor must implement:
@@ -66,7 +68,11 @@ type Emitter interface {
 }
 ```
 
-Start from the Go extractor (`internal/extract/golang/golang.go`) as the simplest complete example. The pattern every extractor follows:
+Start from the Go extractor (`internal/extract/golang/golang.go`) as the simplest complete example.
+
+**The `filePath` parameter:** The Go extractor ignores it (`_ string`), but other extractors use it. Ruby checks for `config/routes.rb` and `config/importmap.rb` to trigger route/importmap parsing. Python uses it to detect `urls.py` for Django URL pattern extraction. If your language has file-path-dependent semantics (e.g. C# file-scoped namespaces, top-level statements), store `filePath` on the walker.
+
+The pattern every extractor follows:
 
 **Struct:** A private `walker` holds per-file state:
 
@@ -122,6 +128,37 @@ return extract.WalkNamedDescendants(body, "call_expression", func(c *sitter.Node
 ```go
 func init() { extract.Register(Extractor{}) }
 ```
+
+### What to extract and what to skip
+
+Extract named, addressable declarations: classes, functions, methods, interfaces, constants, type definitions. These are the symbols users ask about ("who calls this?", "what implements this?").
+
+Skip anonymous or ephemeral constructs:
+- **Lambdas and closures** -- too granular, no stable name to query by.
+- **Local variables** -- internal to a function, not part of the structural graph.
+- **Generated code** -- if a language has code generation (C# source generators, Rust proc macros), the generator output is invisible to tree-sitter. Extract the declaration, not what it expands to.
+- **Primitive types** -- don't emit `composes` edges for `int`, `string`, `bool`, etc. Only emit for user-defined types.
+- **Generic type parameters** -- `T` in `class Repository<T>` is a compile-time constraint, not a structural relationship. Extract the class as `Repository`, ignore `T`.
+
+When in doubt: if a user would never type `sense graph "thing"` to ask about it, don't extract it.
+
+### Typed fields and `composes` edges
+
+Properties, fields, and parameters with user-defined types should emit `composes` edges. This applies to all extractors, not just frameworks:
+
+```csharp
+class Order {
+    public User Customer { get; set; }      // → composes → User
+    public List<OrderItem> Items { get; set; } // → composes → OrderItem (unwrap generic)
+    public int Quantity { get; set; }        // skip: primitive
+}
+```
+
+Unwrap one level of generic wrappers (`List<T>`, `Optional<T>`, `Vec<T>`, `Box<T>`) to extract the inner type. Skip language primitives and standard library types.
+
+### Duplicate qualified names (partial classes, reopened classes)
+
+Some languages allow the same symbol to be defined across multiple files -- C# partial classes, Ruby reopened classes. Both files emit symbols under the same qualified name with different `file_id` values. The resolver maps edges to both via the shared qualified name. Write a fixture that tests this if your language supports it.
 
 ### Available symbol kinds
 
@@ -226,7 +263,11 @@ go test ./internal/extract -update
 
 Review the generated JSON before committing. The fixture runner sorts symbols by `(qualified, kind, line_start)` and edges by `(source, target, kind, line)`, so output is stable regardless of traversal order.
 
-### 6. Verify
+### 6. Update the language definition doc
+
+Add a section for your language in `.doc/definition/05-languages.md`. Follow the format of existing entries (Ruby, Python, Go, etc.): file extensions, symbol extraction table, call resolution rules, and any framework inference. This doc is the normative spec -- keep it in sync with what your extractor actually does.
+
+### 7. Verify
 
 ```bash
 make ci
