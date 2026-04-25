@@ -139,13 +139,18 @@ Windows native builds are not yet available. Use WSL2 with the Linux binary.
 
 ## Language Support
 
-| Tier | Languages | Coverage |
-|---|---|---|
-| **Tier 1 (Full)** | Ruby, Go, TypeScript, JavaScript | Full graph + framework-aware extractors (Rails, Next.js, stdlib Go) |
-| **Tier 2 (Standard)** | Python, Java, Rust | Full graph, no framework-specific inference |
-| **Tier 3 (Basic)** | C/C++, PHP, Elixir, Swift, Kotlin | Symbol + call graph, no inheritance inference |
+Sense uses tree-sitter for parsing. It ships with extractors for six languages and understands popular frameworks out of the box:
 
-New Tier 1 languages are added by writing a framework-aware extractor on top of the base tree-sitter graph.
+| Language | Framework support |
+|---|---|
+| **Ruby** | Rails (associations, callbacks, routes), Stimulus, Turbo |
+| **TypeScript / JavaScript** | React (JSX component calls) |
+| **Python** | Django (models, URL patterns), FastAPI (routes, Depends) |
+| **Go** | — |
+| **Rust** | — |
+| **ERB** | Stimulus, Turbo (cross-language edges to JS controllers) |
+
+All six get the full toolkit: symbols, calls, inheritance, blast radius, and semantic search. Adding a new language takes ~100 lines of Go on top of its tree-sitter grammar.
 
 ## Feedback
 
