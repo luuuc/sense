@@ -14,32 +14,36 @@ const (
 )
 
 const senseSection = `<!-- sense:start -->
-## Sense
+## IMPORTANT: This project has a Sense index — you MUST use it
 
-This project has a [Sense](https://github.com/luuuc/sense) index. Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
+Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
 
-### Use Sense tools instead of grep/glob for structural questions
+**BEFORE any code exploration, symbol lookup, or agent spawning:**
 
-| Instead of | Use | Why |
-|---|---|---|
-| Grep for a function/class name | ` + "`sense_graph symbol=\"Name\"`" + ` | Returns callers, callees, inheritance — not just string matches |
-| Glob to find related files | ` + "`sense_search query=\"description\"`" + ` | Semantic search finds conceptually related code, not just filename patterns |
-| Reading files to trace dependencies | ` + "`sense_blast symbol=\"Name\"`" + ` | Shows the full blast radius — what breaks if you change it |
-| Exploring code for patterns | ` + "`sense_conventions`" + ` | Detected patterns: naming, structure, inheritance, testing |
-| Checking index health | ` + "`sense_status`" + ` | Symbol count, edge count, languages, freshness |
+1. Load Sense tools: ` + "`ToolSearch(\"select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions,mcp__sense__sense_status\")`" + `
+2. Call ` + "`sense_status`" + ` to confirm index health
+3. Use ` + "`sense_graph`" + `, ` + "`sense_search`" + `, ` + "`sense_blast`" + ` for ALL structural questions
 
-### When NOT to use Sense
+**You MUST NOT:**
 
-- Exact text/string search (regex, log messages, string literals) → use grep
+- Spawn deep-explore or Explore agents for structural questions — Sense answers them directly
+- Use grep/glob to find symbol callers, implementations, or dependencies
+- Skip Sense because tools are deferred — load them with ToolSearch first
+
+**When to use each tool:**
+
+| Question | Tool |
+|---|---|
+| Who calls X? What does X call? | ` + "`sense_graph symbol=\"X\"`" + ` |
+| Find code related to a concept | ` + "`sense_search query=\"description\"`" + ` |
+| What breaks if I change X? | ` + "`sense_blast symbol=\"X\"`" + ` |
+| What patterns does this project follow? | ` + "`sense_conventions`" + ` |
+
+**When NOT to use Sense** (use grep instead):
+
+- Exact text/string search (regex, log messages, string literals)
 - Reading file contents → use Read
 - Editing code → Sense is read-only
-
-### Before writing code
-
-1. ` + "`sense_status`" + ` — confirm index is healthy
-2. ` + "`sense_conventions`" + ` — check patterns for the domain you're working in
-3. ` + "`sense_search`" + ` — look for prior art before creating new code
-4. ` + "`sense_blast`" + ` — check scope of the symbols you're about to change
 <!-- sense:end -->`
 
 // writeClaudeMD creates or updates the Sense section in CLAUDE.md.

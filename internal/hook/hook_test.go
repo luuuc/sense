@@ -3,14 +3,17 @@ package hook
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luuuc/sense/internal/scan"
+	_ "modernc.org/sqlite"
 )
 
 func indexedDir(t *testing.T) string {
@@ -32,6 +35,22 @@ func indexedDir(t *testing.T) string {
 	}
 
 	return root
+}
+
+func staleDir(t *testing.T) string {
+	t.Helper()
+	dir := indexedDir(t)
+	dbPath := filepath.Join(dir, ".sense", "index.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	old := time.Now().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`UPDATE sense_files SET indexed_at = ?`, old); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func TestRunUnknownHook(t *testing.T) {
@@ -72,6 +91,9 @@ func TestSessionStartReturnsStats(t *testing.T) {
 	if !strings.Contains(resp.Message, "Sense index:") {
 		t.Errorf("message = %q, expected 'Sense index:' prefix", resp.Message)
 	}
+	if !strings.Contains(resp.Message, "ToolSearch") {
+		t.Errorf("message = %q, expected ToolSearch directive", resp.Message)
+	}
 }
 
 func TestPreCompactReturnsHubs(t *testing.T) {
@@ -100,6 +122,12 @@ func TestSubagentStartReturnsGuidance(t *testing.T) {
 	if !strings.Contains(resp.AdditionalContext, "Sense index") {
 		t.Errorf("context = %q, expected sense guidance", resp.AdditionalContext)
 	}
+	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
+		t.Error("expected sense_graph in guidance")
+	}
+	if !strings.Contains(resp.AdditionalContext, "parent agent") {
+		t.Error("expected parent agent delegation guidance")
+	}
 }
 
 func TestPreToolUseSymbolMatch(t *testing.T) {
@@ -108,15 +136,15 @@ func TestPreToolUseSymbolMatch(t *testing.T) {
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp denyResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if resp.AdditionalContext == "" {
-		t.Fatal("expected additionalContext for known symbol")
+	if resp.Output.Decision != "deny" {
+		t.Fatalf("expected deny decision, got %q", resp.Output.Decision)
 	}
-	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
-		t.Error("expected sense_graph suggestion")
+	if !strings.Contains(resp.Output.Reason, "sense_graph") {
+		t.Error("expected sense_graph suggestion in deny reason")
 	}
 }
 
@@ -139,6 +167,146 @@ func TestPreToolUseNoMatch(t *testing.T) {
 
 	if buf.String() != "{}\n" {
 		t.Errorf("unknown symbol should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseAgentDeny(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"deep-explore","prompt":"find all callers"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp denyResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Output.Decision != "deny" {
+		t.Fatalf("expected deny decision for deep-explore, got %q", resp.Output.Decision)
+	}
+	if !strings.Contains(resp.Output.Reason, "sense_graph") {
+		t.Error("expected sense_graph in deny reason")
+	}
+}
+
+func TestPreToolUseAgentAllowNonExplore(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"do something"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("non-exploration agent should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseBashGrepDeny(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"grep -rn UserService ."}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp denyResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Output.Decision != "deny" {
+		t.Fatalf("expected deny for bash grep of known symbol, got %q", resp.Output.Decision)
+	}
+}
+
+func TestPreToolUseBashNonGrepNoOp(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"ls -la"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("non-grep bash should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseExploreAgentDeny(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"Explore","prompt":"find implementations"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp denyResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.Output.Decision != "deny" {
+		t.Fatalf("expected deny for Explore agent, got %q", resp.Output.Decision)
+	}
+}
+
+func TestPreToolUseStaleIndexAdvisesInsteadOfDeny(t *testing.T) {
+	dir := staleDir(t)
+	input := `{"tool_name":"Grep","tool_input":{"pattern":"UserService"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var deny denyResponse
+	if err := json.Unmarshal(buf.Bytes(), &deny); err == nil && deny.Output.Decision == "deny" {
+		t.Fatal("stale index should advise, not deny")
+	}
+
+	var resp hookResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected additionalContext for stale index")
+	}
+	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
+		t.Error("expected sense_graph suggestion in advisory")
+	}
+}
+
+func TestPreToolUseBashStaleIndexAdvises(t *testing.T) {
+	dir := staleDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"grep -rn UserService ."}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var deny denyResponse
+	if err := json.Unmarshal(buf.Bytes(), &deny); err == nil && deny.Output.Decision == "deny" {
+		t.Fatal("stale index should advise, not deny")
+	}
+
+	var resp hookResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected additionalContext for stale bash grep")
+	}
+}
+
+func TestExtractBashPattern(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want string
+	}{
+		{"grep -rn UserService .", "UserService"},
+		{"grep UserService", "UserService"},
+		{"grep -rn 'UserService' .", "UserService"},
+		{"rg UserService", "UserService"},
+		{"ag UserService", "UserService"},
+		{"grep -e pattern .", ""},
+		{"ls -la", ""},
+		{"git status", ""},
+		{"", ""},
+		{"grep -rn --include '*.go' UserService .", "UserService"},
+		{"grep -rn UserService . | head -20", "UserService"},
+		{"grep -rn UserService . && echo done", "UserService"},
+		{"grep -rn UserService ; echo done", "UserService"},
+		{"grep -rn UserService . || true", "UserService"},
+	}
+	for _, tc := range cases {
+		if got := extractBashPattern(tc.cmd); got != tc.want {
+			t.Errorf("extractBashPattern(%q) = %q, want %q", tc.cmd, got, tc.want)
+		}
 	}
 }
 

@@ -82,15 +82,15 @@ func writeMCPJSON(root string) (bool, error) {
 	senseCfg := map[string]any{
 		"command": "sense",
 		"args":    []any{"mcp"},
-		"serverInstructions": "ALWAYS prefer Sense tools over Grep/Glob/Read for structural " +
-			"and semantic code questions. Sense provides pre-indexed results that are " +
-			"faster and more complete.\n\n" +
+		"serverInstructions": "When Sense is available and indexed, you MUST use Sense tools " +
+			"instead of grep, glob, or exploration agents for structural and semantic code " +
+			"questions. Sense provides pre-indexed results that are faster and more complete.\n\n" +
 			"WHEN TO USE SENSE TOOLS:\n" +
-			"- Symbol relationships, callers, dependencies → sense_graph\n" +
-			"- \"What would break if I changed X?\", impact analysis → sense_blast\n" +
-			"- Conceptual/semantic code search (not exact string match) → sense_search\n" +
-			"- Project patterns and conventions → sense_conventions\n" +
-			"- Index health, what's indexed → sense_status\n\n" +
+			"- Symbol relationships, callers, dependencies → sense.graph\n" +
+			"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
+			"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
+			"- Project patterns and conventions → sense.conventions\n" +
+			"- Index health, what's indexed → sense.status\n\n" +
 			"WHEN NOT TO USE SENSE TOOLS:\n" +
 			"- Exact text/string search → use grep\n" +
 			"- Reading file contents → use your file reading tool\n" +
@@ -132,7 +132,7 @@ func writeClaudeSettings(root string) (bool, error) {
 	hooks := map[string]any{
 		"PreToolUse": []any{
 			map[string]any{
-				"matcher": "Grep|Glob",
+				"matcher": "Grep|Glob|Agent|Bash",
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",

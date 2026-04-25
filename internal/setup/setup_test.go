@@ -134,7 +134,7 @@ func TestSettingsPreservesExistingHooks(t *testing.T) {
 	hooks, _ := m["hooks"].(map[string]any)
 	preToolUse, _ := hooks["PreToolUse"].([]any)
 
-	// Should have both: the existing Bash hook and the new Sense Grep|Glob hook.
+	// Should have both: the existing Bash hook and the new Sense Grep|Glob|Agent|Bash hook.
 	if len(preToolUse) != 2 {
 		t.Errorf("PreToolUse hooks = %d, want 2 (existing + sense)", len(preToolUse))
 	}
