@@ -160,6 +160,9 @@ if [ "${PATH_HINT:-}" = "1" ]; then
 fi
 
 if [ "$OS" = "darwin" ]; then
-  # Unsigned binaries trigger macOS Gatekeeper warnings on first run.
   xattr -d com.apple.quarantine "${INSTALL_DIR}/sense" 2>/dev/null || true
+  # Ad-hoc codesign so macOS tracks by code identity, not raw checksum.
+  # Without this, each update triggers a "program has been modified" warning
+  # when Sense makes network requests.
+  codesign --force --sign - "${INSTALL_DIR}/sense" 2>/dev/null || true
 fi
