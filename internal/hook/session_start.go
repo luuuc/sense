@@ -58,8 +58,10 @@ func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.
 		lastScan = "unknown"
 	}
 
-	msg := fmt.Sprintf("Sense index: %d symbols, %d edges, %d languages (%s). Last scan: %s. Use Sense MCP tools for structural questions.",
-		symbolCount, edgeCount, len(langs), strings.Join(langs, ", "), lastScan)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Sense index: %d symbols, %d edges, %d languages (%s). Last scan: %s.\n", symbolCount, edgeCount, len(langs), strings.Join(langs, ", "), lastScan)
+	fmt.Fprintf(&sb, "REQUIRED: Run %s now to load Sense tools.\n", toolSearchCmd)
+	sb.WriteString("Use Sense MCP tools for ALL structural questions — do not use grep, glob, or exploration agents.")
 
-	return &messageResponse{Message: msg}, nil
+	return &messageResponse{Message: sb.String()}, nil
 }
