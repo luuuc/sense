@@ -16,6 +16,65 @@ Extractors are stateless and per-file. They never read other files or query the 
 
 ## Adding a new language
 
+There are two paths, depending on the level of support you need.
+
+### Path A: Standard tier via `langSpec` (recommended for most languages)
+
+The generic extractor in `internal/extract/langspec/` handles Standard-tier extraction from a ~25-line config struct. No walker code required. This is how Java, Kotlin, C#, C++, C, PHP, and Scala are implemented.
+
+**Steps:**
+
+1. **Bundle the grammar.** Create `internal/grammars/<lang>.go` (see step 1 below). Add the Go dependency with `go get`. Verify ABI compatibility with the tree-sitter runtime version in `go.sum`.
+
+2. **Explore the AST.** Parse a sample file and dump the tree to identify node kinds for classes, functions, calls, imports, and inheritance. Budget 30 minutes.
+
+3. **Write the langSpec.** Create `internal/extract/langspec/<lang>.go`:
+
+```go
+package langspec
+
+import (
+    "github.com/luuuc/sense/internal/extract"
+    "github.com/luuuc/sense/internal/grammars"
+)
+
+func init() {
+    extract.Register(New(langSpec{
+        Name:      "<lang>",
+        Exts:      []string{".<ext>"},
+        Grammar:   grammars.Lang(),
+        Tier:      extract.TierStandard,
+        Separator: ".",
+
+        FuncTypes:    []string{"function_definition"},
+        ClassTypes:   []string{"class_definition"},
+        CallTypes:    []string{"call_expression"},
+        ImportTypes:  []string{"import_statement"},
+        InheritFields: []string{"superclass"},
+        NameField:    "name",
+    }))
+}
+```
+
+See existing specs (`java.go`, `kotlin.go`, `cpp.go`) for real examples. Key fields:
+- `InheritFields` -- field names on class nodes holding superclass references
+- `InheritKinds` -- node kinds to search for inheritance when there's no field name (e.g. C# `base_list`)
+- `CallNameFn` -- custom call name extraction for grammars without standard field names
+
+4. **Write fixtures and generate goldens.** Add `internal/extract/testdata/<lang>/basic.<ext>`, then run `go test ./internal/extract -run 'TestFixtures/<lang>' -update`. Review the golden JSON for correctness.
+
+5. **Register the tier.** Add the language to `languageTiers` in `internal/extract/extractor.go`.
+
+6. **Verify.** Run `make ci`.
+
+The `langspec` package is already blank-imported in `internal/extract/languages/languages.go` -- new specs are picked up automatically via `init()`.
+
+---
+
+### Path B: Full tier (dedicated extractor)
+
+For languages that need framework-specific inference, test association, complexity scoring, or convention detection, write a dedicated extractor. This is how Ruby, Python, Go, TypeScript/JS, and Rust are implemented.
+
 Seven steps, in order.
 
 ### 1. Bundle the tree-sitter grammar
@@ -361,6 +420,8 @@ Include negative cases: patterns that look like framework code but shouldn't emi
 
 ## Reference: existing extractors
 
+### Full tier (dedicated extractors)
+
 | Language | Directory | Framework support | Lines |
 |---|---|---|---|
 | Go | `internal/extract/golang/` | None | ~785 |
@@ -370,4 +431,16 @@ Include negative cases: patterns that look like framework code but shouldn't emi
 | Rust | `internal/extract/rust/` | None | ~860 |
 | ERB | `internal/extract/erb/` | Stimulus, Turbo, Importmap (cross-language) | ~250 |
 
-Read the simplest one first (Go for no-framework, Python for framework support) before starting yours.
+### Standard tier (langSpec configs)
+
+| Language | Config file | Notes |
+|---|---|---|
+| Java | `internal/extract/langspec/java.go` | Classes, interfaces, enums, records |
+| Kotlin | `internal/extract/langspec/kotlin.go` | Custom `CallNameFn` (fwcd grammar has no field names) |
+| C# | `internal/extract/langspec/csharp.go` | Namespace scoping, `InheritKinds` for `base_list` |
+| C++ | `internal/extract/langspec/cpp.go` | `::` separator, namespace/class/struct scoping |
+| C | `internal/extract/langspec/c.go` | Functions and structs only, no inheritance |
+| PHP | `internal/extract/langspec/php.go` | `\` separator, three call expression types |
+| Scala | `internal/extract/langspec/scala.go` | Classes, traits, objects, field-based inheritance |
+
+Read the simplest langSpec first (`c.go`) to understand the pattern, then `java.go` for a fuller example with inheritance fields.

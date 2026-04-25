@@ -139,7 +139,9 @@ Windows native builds are not yet available. Use WSL2 with the Linux binary.
 
 ## Language Support
 
-Sense uses tree-sitter for parsing. It ships with extractors for six languages and understands popular frameworks out of the box:
+Sense uses tree-sitter for parsing. It ships with extractors for 13 languages across two tiers:
+
+**Full tier** — symbols, calls, inheritance, imports, blast radius, semantic search, and framework-specific inference:
 
 | Language | Framework support |
 |---|---|
@@ -150,7 +152,19 @@ Sense uses tree-sitter for parsing. It ships with extractors for six languages a
 | **Rust** | — |
 | **ERB** | Stimulus, Turbo (cross-language edges to JS controllers) |
 
-All six get the full toolkit: symbols, calls, inheritance, blast radius, and semantic search. See [LANGUAGES.md](LANGUAGES.md) for how to add a new language or framework.
+**Standard tier** — symbols, calls, inheritance, imports, blast radius, and semantic search (no framework inference):
+
+| Language | Notes |
+|---|---|
+| **Java** | Classes, interfaces, enums, records |
+| **Kotlin** | Classes, interfaces, objects |
+| **C#** | Classes, interfaces, structs, namespaces |
+| **C++** | Classes, structs, namespaces (`::` scoping) |
+| **C** | Functions, structs, enums |
+| **PHP** | Classes, interfaces, traits (`\` scoping) |
+| **Scala** | Classes, traits, objects |
+
+Standard-tier languages use a table-driven generic extractor — each is ~25 lines of config, not a handwritten walker. See [LANGUAGES.md](LANGUAGES.md) for how to add a new language or framework.
 
 ## Feedback
 
