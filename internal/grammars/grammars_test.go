@@ -23,6 +23,13 @@ func TestAllGrammarsParse(t *testing.T) {
 		{"javascript", JavaScript, "export class Foo {}\n"},
 		{"go", Go, "package p\nfunc F() {}\n"},
 		{"rust", Rust, "fn main() {}\n"},
+		{"java", Java, "public class Foo {}\n"},
+		{"c", C, "int main() { return 0; }\n"},
+		{"cpp", Cpp, "class Foo {};\n"},
+		{"csharp", CSharp, "class Foo {}\n"},
+		{"php", PHP, "<?php class Foo {}\n"},
+		{"kotlin", Kotlin, "fun main() {}\n"},
+		{"scala", Scala, "object Foo {}\n"},
 	}
 
 	for _, tc := range cases {
