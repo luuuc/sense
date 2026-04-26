@@ -92,7 +92,7 @@ func RunSearch(args []string, cio IO) int {
 	}
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
-	results, symbolCount, err := engine.Search(ctx, search.Options{
+	results, symbolCount, _, err := engine.Search(ctx, search.Options{
 		Query:    opts.Query,
 		Limit:    opts.Limit,
 		Language: opts.Language,

@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -34,8 +35,10 @@ type Options struct {
 
 // Engine orchestrates hybrid search: keyword (FTS5) and vector (HNSW)
 // in parallel, fused with reciprocal rank fusion, re-ranked by graph
-// centrality.
+// centrality. The vector index can be swapped at runtime (e.g. after
+// background embedding completes) via SetVectors.
 type Engine struct {
+	mu       sync.RWMutex
 	adapter  *sqlite.Adapter
 	vectors  VectorIndex
 	embedder embed.Embedder
@@ -51,8 +54,22 @@ func NewEngine(adapter *sqlite.Adapter, vectors VectorIndex, embedder embed.Embe
 	}
 }
 
+// SetVectors swaps the in-memory vector index. Safe for concurrent use
+// with Search — the next query will pick up the new index.
+func (e *Engine) SetVectors(v VectorIndex) {
+	e.mu.Lock()
+	e.vectors = v
+	e.mu.Unlock()
+}
+
+const (
+	ModeHybrid  = "hybrid"
+	ModeKeyword = "keyword"
+)
+
 // Search runs hybrid search and returns fused, re-ranked results.
-func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error) {
+// The mode string is "hybrid" when vector search was used, "keyword" otherwise.
+func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, string, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = 10
 	}
@@ -62,7 +79,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 
 	symbolCount, err := e.adapter.SymbolCount(ctx)
 	if err != nil {
-		return nil, 0, fmt.Errorf("search: %w", err)
+		return nil, 0, "", fmt.Errorf("search: %w", err)
 	}
 
 	// Fetch more candidates than requested so RRF has enough to fuse.
@@ -74,7 +91,11 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 	var keywordResults []sqlite.SearchResult
 	var vectorResults []VectorResult
 
-	canVector := e.vectors != nil && e.vectors.Len() > 0 && e.embedder != nil
+	e.mu.RLock()
+	vectors := e.vectors
+	e.mu.RUnlock()
+
+	canVector := vectors != nil && vectors.Len() > 0 && e.embedder != nil
 
 	if canVector {
 		g, gctx := errgroup.WithContext(ctx)
@@ -90,17 +111,17 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 			if err != nil {
 				return err
 			}
-			vectorResults = e.vectors.Search(queryVec, candidateLimit)
+			vectorResults = vectors.Search(queryVec, candidateLimit)
 			return nil
 		})
 
 		if err := g.Wait(); err != nil {
-			return nil, 0, fmt.Errorf("search: %w", err)
+			return nil, 0, "", fmt.Errorf("search: %w", err)
 		}
 	} else {
 		keywordResults, err = e.adapter.KeywordSearch(ctx, opts.Query, opts.Language, candidateLimit)
 		if err != nil {
-			return nil, 0, fmt.Errorf("search: %w", err)
+			return nil, 0, "", fmt.Errorf("search: %w", err)
 		}
 	}
 
@@ -108,7 +129,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 
 	// Hydrate metadata for vector-only results that have no name/qualified.
 	if err := e.hydrateResults(ctx, fused); err != nil {
-		return nil, 0, fmt.Errorf("search: %w", err)
+		return nil, 0, "", fmt.Errorf("search: %w", err)
 	}
 
 	// Graph centrality re-ranking.
@@ -118,7 +139,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 	}
 	centrality, err := e.adapter.InboundEdgeCounts(ctx, symbolIDs)
 	if err != nil {
-		return nil, 0, fmt.Errorf("search centrality: %w", err)
+		return nil, 0, "", fmt.Errorf("search centrality: %w", err)
 	}
 	applyGraphCentrality(fused, centrality)
 	applyKindWeights(fused)
@@ -134,7 +155,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 	}
 	pathByID, err := e.adapter.FilePathsByIDs(ctx, fileIDs)
 	if err != nil {
-		return nil, 0, fmt.Errorf("search paths: %w", err)
+		return nil, 0, "", fmt.Errorf("search paths: %w", err)
 	}
 	applyPathWeights(fused, pathByID)
 
@@ -157,7 +178,11 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, error
 		}
 	}
 
-	return results, symbolCount, nil
+	mode := ModeKeyword
+	if canVector {
+		mode = ModeHybrid
+	}
+	return results, symbolCount, mode, nil
 }
 
 const rrfK = 60
