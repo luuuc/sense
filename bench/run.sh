@@ -302,6 +302,7 @@ print(json.dumps({'prompt': template, 'params': params, 'scoring': task.get('sco
       claude_args=(
         -p "$prompt"
         --bare
+        --verbose
         --append-system-prompt "$claude_md"
         --output-format stream-json
         --permission-mode bypassPermissions
