@@ -62,6 +62,7 @@ func main() {
 		fs := flag.NewFlagSet("sense scan", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
+		embedFlag := fs.Bool("embed", false, "block until embeddings complete (default: defer to MCP server)")
 		quietFlag := fs.Bool("quiet", false, "suppress warnings")
 		initFlag := fs.Bool("init", false, "re-generate AI tool config files (.mcp.json, .claude/, CLAUDE.md)")
 		dir := fs.String("dir", ".", "project root")
@@ -103,6 +104,7 @@ func main() {
 				Root:              *dir,
 				Warnings:          warnSink,
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
+				Embed:             *embedFlag,
 				Init:              *initFlag,
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, "sense scan:", err)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -18,6 +19,76 @@ import (
 )
 
 const maxEmbedWorkers = 8
+
+// EmbedPending generates embeddings for all symbols that lack them and
+// rebuilds the HNSW index. Designed for the MCP server's background
+// embedder — it constructs a minimal harness internally and clears the
+// embedding watermark on success. Returns the number of symbols embedded.
+func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root, senseDir string) (int, error) {
+	syms, err := idx.SymbolsWithoutEmbeddings(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("query pending symbols: %w", err)
+	}
+	if len(syms) == 0 {
+		return 0, nil
+	}
+
+	h := &harness{ctx: ctx, idx: idx, root: root, out: io.Discard, warn: io.Discard}
+	h.extendMethodSnippets(syms)
+	contextMap := h.buildContextMap(syms)
+
+	inputs := make([]embed.EmbedInput, len(syms))
+	for i, s := range syms {
+		inputs[i] = embed.EmbedInput{
+			QualifiedName: s.Qualified,
+			Kind:          s.Kind,
+			Snippet:       s.Snippet,
+			Context:       contextMap[s.ID],
+		}
+	}
+
+	vecs, err := parallelEmbed(ctx, inputs)
+	if err != nil {
+		return 0, fmt.Errorf("generate embeddings: %w", err)
+	}
+
+	err = idx.InTx(ctx, func() error {
+		stmt, err := idx.PrepareEmbeddingStmt(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = stmt.Close() }()
+		for i, vec := range vecs {
+			blob := vectorToBlob(vec)
+			if _, err := stmt.ExecContext(ctx, syms[i].ID, blob); err != nil {
+				return fmt.Errorf("write embedding symbol=%d: %w", syms[i].ID, err)
+			}
+		}
+		if err := idx.WriteMeta(ctx, "embedding_model", embed.ModelID); err != nil {
+			return fmt.Errorf("write embedding model meta: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("write embeddings: %w", err)
+	}
+
+	hnswPath := filepath.Join(senseDir, "hnsw.bin")
+	embeddings, err := idx.LoadEmbeddings(ctx)
+	if err != nil {
+		return len(vecs), fmt.Errorf("load embeddings for hnsw: %w", err)
+	}
+	if len(embeddings) > 0 {
+		if err := search.SaveHNSWIndex(hnswPath, embeddings); err != nil {
+			return len(vecs), fmt.Errorf("save hnsw index: %w", err)
+		}
+	}
+
+	if err := idx.DeleteMeta(ctx, "embedding_watermark"); err != nil {
+		return len(vecs), fmt.Errorf("clear embedding watermark: %w", err)
+	}
+	return len(vecs), nil
+}
 
 // embedSymbols is pass 3: generate embeddings for symbols in changed files.
 // Only symbols whose file was re-indexed this scan get new embeddings.
