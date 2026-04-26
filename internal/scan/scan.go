@@ -56,7 +56,6 @@ type Options struct {
 	Warnings          io.Writer // per-file warning sink (default: os.Stderr)
 	EmbeddingsEnabled bool      // when true, embeddings are part of the index pipeline
 	Embed             bool      // block until embeddings complete; requires EmbeddingsEnabled. When false, embeddings are deferred and a watermark is written for the MCP server to pick up.
-	Init              bool      // force re-generation of AI tool config files
 }
 
 // PhaseTiming records how long each scan phase took.
@@ -279,8 +278,8 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		printPhaseBreakdown(out, elapsed, phases)
 	}
 
-	if firstRun || opts.Init {
-		if _, serr := setup.Run(root, out); serr != nil {
+	if firstRun {
+		if _, serr := setup.Run(root, out, &setup.Options{CurrentOnly: true}); serr != nil {
 			_, _ = fmt.Fprintf(warn, "warn: AI tool setup failed: %v\n", serr)
 		}
 	}

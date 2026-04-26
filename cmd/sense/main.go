@@ -25,6 +25,7 @@ Usage: sense [command] [args]
 
 Commands:
   scan          Build or refresh the index
+  setup         Configure AI tool integrations (Claude Code, Cursor, Codex CLI)
   search        Hybrid semantic + keyword search
   graph         Symbol relationships — callers, callees, inheritance, tests
   blast         Blast radius for a symbol or diff
@@ -64,7 +65,6 @@ func main() {
 		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
 		embedFlag := fs.Bool("embed", false, "block until embeddings complete (default: defer to MCP server)")
 		quietFlag := fs.Bool("quiet", false, "suppress warnings")
-		initFlag := fs.Bool("init", false, "re-generate AI tool config files (.mcp.json, .claude/, CLAUDE.md)")
 		dir := fs.String("dir", ".", "project root")
 		cpuprofile := fs.String("cpuprofile", "", "write CPU profile to file")
 		memprofile := fs.String("memprofile", "", "write heap profile to file on exit")
@@ -105,7 +105,6 @@ func main() {
 				Warnings:          warnSink,
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
 				Embed:             *embedFlag,
-				Init:              *initFlag,
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, "sense scan:", err)
 				os.Exit(1)
@@ -123,6 +122,9 @@ func main() {
 			}
 			_ = f.Close()
 		}
+
+	case "setup":
+		os.Exit(cli.RunSetup(os.Args[2:], cli.DefaultIO()))
 
 	case "search":
 		os.Exit(cli.RunSearch(os.Args[2:], cli.DefaultIO()))

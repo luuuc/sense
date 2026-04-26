@@ -50,8 +50,13 @@ Sense gives you structural understanding of the codebase — symbols, relationsh
 // writeClaudeMD creates or updates the Sense section in CLAUDE.md.
 // Uses marker comments for idempotent updates.
 func writeClaudeMD(root string) (bool, error) {
-	path := filepath.Join(root, "CLAUDE.md")
+	return writeMarkerFile(filepath.Join(root, "CLAUDE.md"), senseSection)
+}
 
+// writeMarkerFile creates or updates a marker-delimited Sense section
+// in the file at path. If the file already contains markers, the section
+// between them is replaced. Otherwise the section is appended.
+func writeMarkerFile(path, section string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
@@ -60,18 +65,16 @@ func writeClaudeMD(root string) (bool, error) {
 	content := string(data)
 
 	if strings.Contains(content, markerStart) {
-		// Replace existing Sense section between markers.
 		startIdx := strings.Index(content, markerStart)
 		endIdx := strings.Index(content, markerEnd)
 		if endIdx < 0 {
-			// Missing end marker — replace from start marker to EOF.
-			content = content[:startIdx] + senseSection + "\n"
+			content = content[:startIdx] + section + "\n"
 		} else {
 			endIdx += len(markerEnd)
-			content = content[:startIdx] + senseSection + content[endIdx:]
+			content = content[:startIdx] + section + content[endIdx:]
 		}
 	} else if len(content) == 0 {
-		content = senseSection + "\n"
+		content = section + "\n"
 	} else {
 		sep := "\n\n"
 		if strings.HasSuffix(content, "\n\n") {
@@ -79,7 +82,7 @@ func writeClaudeMD(root string) (bool, error) {
 		} else if strings.HasSuffix(content, "\n") {
 			sep = "\n"
 		}
-		content = content + sep + senseSection + "\n"
+		content = content + sep + section + "\n"
 	}
 
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

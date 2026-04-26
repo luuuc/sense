@@ -1,10 +1,10 @@
-// Package setup generates AI tool integration files on first scan.
-// It writes .mcp.json, .claude/settings.json, CLAUDE.md, and
-// .claude/skills/ so that Claude Code (and future AI tools) discover
-// and prefer Sense tools without manual configuration.
+// Package setup generates AI tool integration files for detected
+// coding tools. It writes per-tool config files (MCP server entries,
+// routing guidance, hooks, skills) so that AI tools discover and
+// prefer Sense without manual configuration.
 //
-// All writes are idempotent: JSON files are deep-merged, CLAUDE.md
-// uses marker comments, skill files use existence checks. Running
+// All writes are idempotent: JSON files are deep-merged, Markdown
+// files use marker comments, skill files are overwritten. Running
 // setup twice produces the same result.
 package setup
 
@@ -13,66 +13,181 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-// Result summarises what setup wrote.
-type Result struct {
-	MCPJSON        bool // .mcp.json created or updated
-	ClaudeSettings bool // .claude/settings.json created or updated
-	ClaudeMD       bool // CLAUDE.md created or updated
-	Skills         int  // number of skill files written
+// Options controls which tools setup configures.
+type Options struct {
+	// Tools overrides auto-detection. When non-empty, only these
+	// tools are configured regardless of detection results.
+	Tools []Tool
+
+	// CurrentOnly restricts setup to the tool the user is currently
+	// running inside (detected via env vars). Used by scan first-run.
+	CurrentOnly bool
 }
 
-// Run writes AI tool integration files into root. It is called by
-// scan.Run on first-run (no .sense/ existed) or when --init is passed.
-func Run(root string, out io.Writer) (*Result, error) {
+// ToolResult summarises what was written for a single tool.
+type ToolResult struct {
+	Tool  Tool
+	Files []string // relative paths of files written
+}
+
+// Result summarises what setup wrote across all tools.
+type Result struct {
+	Tools []ToolResult
+}
+
+// Run detects installed AI tools and writes integration files into root.
+// When opts is nil, all detected tools are configured.
+func Run(root string, out io.Writer, opts *Options) (*Result, error) {
+	tools := resolveTools(opts)
 	res := &Result{}
 
-	wrote, err := writeMCPJSON(root)
-	if err != nil {
+	for _, t := range tools {
+		tr, err := configureTool(root, t)
+		if err != nil {
+			return nil, fmt.Errorf("configure %s: %w", t.DisplayName(), err)
+		}
+		res.Tools = append(res.Tools, *tr)
+	}
+
+	printSetupSummary(out, res)
+	return res, nil
+}
+
+func resolveTools(opts *Options) []Tool {
+	if opts != nil && len(opts.Tools) > 0 {
+		return opts.Tools
+	}
+	if opts != nil && opts.CurrentOnly {
+		return []Tool{DetectCurrent()}
+	}
+	var tools []Tool
+	for _, dr := range DetectAll() {
+		if dr.Found {
+			tools = append(tools, dr.Tool)
+		}
+	}
+	if len(tools) == 0 {
+		tools = []Tool{ToolClaudeCode}
+	}
+	return tools
+}
+
+func configureTool(root string, t Tool) (*ToolResult, error) {
+	switch t {
+	case ToolClaudeCode:
+		return configureClaudeCode(root)
+	case ToolCursor:
+		return configureCursor(root)
+	case ToolCodexCLI:
+		return configureCodexCLI(root)
+	default:
+		return nil, fmt.Errorf("unknown tool: %s", t)
+	}
+}
+
+func configureClaudeCode(root string) (*ToolResult, error) {
+	tr := &ToolResult{Tool: ToolClaudeCode}
+
+	if wrote, err := writeMCPJSON(root); err != nil {
 		return nil, fmt.Errorf("write .mcp.json: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".mcp.json")
 	}
-	res.MCPJSON = wrote
 
-	wrote, err = writeClaudeSettings(root)
-	if err != nil {
+	if wrote, err := writeClaudeSettings(root); err != nil {
 		return nil, fmt.Errorf("write .claude/settings.json: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".claude/settings.json")
 	}
-	res.ClaudeSettings = wrote
 
-	wrote, err = writeClaudeMD(root)
-	if err != nil {
+	if wrote, err := writeClaudeMD(root); err != nil {
 		return nil, fmt.Errorf("write CLAUDE.md: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, "CLAUDE.md")
 	}
-	res.ClaudeMD = wrote
 
 	n, err := writeSkills(root)
 	if err != nil {
 		return nil, fmt.Errorf("write .claude/skills: %w", err)
 	}
-	res.Skills = n
+	if n > 0 {
+		tr.Files = append(tr.Files, fmt.Sprintf("%d skill files in .claude/skills/", n))
+	}
 
-	printSummary(out, res)
-	return res, nil
+	return tr, nil
 }
 
-func printSummary(out io.Writer, res *Result) {
+func configureCursor(root string) (*ToolResult, error) {
+	tr := &ToolResult{Tool: ToolCursor}
+
+	if wrote, err := writeCursorMCPJSON(root); err != nil {
+		return nil, fmt.Errorf("write .cursor/mcp.json: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".cursor/mcp.json")
+	}
+
+	if wrote, err := writeCursorRules(root); err != nil {
+		return nil, fmt.Errorf("write .cursorrules: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".cursorrules")
+	}
+
+	return tr, nil
+}
+
+func configureCodexCLI(root string) (*ToolResult, error) {
+	tr := &ToolResult{Tool: ToolCodexCLI}
+
+	if wrote, err := writeMCPJSON(root); err != nil {
+		return nil, fmt.Errorf("write .mcp.json: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".mcp.json")
+	}
+
+	if wrote, err := writeAgentsMD(root); err != nil {
+		return nil, fmt.Errorf("write AGENTS.md: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, "AGENTS.md")
+	}
+
+	return tr, nil
+}
+
+func printSetupSummary(out io.Writer, res *Result) {
+	if len(res.Tools) == 0 {
+		return
+	}
+
 	_, _ = fmt.Fprintln(out, "")
-	_, _ = fmt.Fprintln(out, "AI tool integration:")
-	if res.MCPJSON {
-		_, _ = fmt.Fprintln(out, "  wrote .mcp.json (MCP server config)")
+	for _, tr := range res.Tools {
+		_, _ = fmt.Fprintf(out, "Configuring %s...\n", tr.Tool.DisplayName())
+		for _, f := range tr.Files {
+			_, _ = fmt.Fprintf(out, "  wrote %s\n", f)
+		}
+		_, _ = fmt.Fprintln(out, "")
 	}
-	if res.ClaudeSettings {
-		_, _ = fmt.Fprintln(out, "  wrote .claude/settings.json (hooks + permissions)")
+
+	var names []string
+	for _, tr := range res.Tools {
+		names = append(names, tr.Tool.DisplayName())
 	}
-	if res.ClaudeMD {
-		_, _ = fmt.Fprintln(out, "  wrote CLAUDE.md (Sense routing guidance)")
+	_, _ = fmt.Fprintf(out, "Done. Sense is configured for %s.\n", joinNames(names))
+}
+
+func joinNames(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 	}
-	if res.Skills > 0 {
-		_, _ = fmt.Fprintf(out, "  wrote %d skill files in .claude/skills/\n", res.Skills)
-	}
-	_, _ = fmt.Fprintln(out, "")
-	_, _ = fmt.Fprintln(out, "Tip: .mcp.json and .claude/ may or may not belong in version control — that's your call.")
 }
 
 // writeMCPJSON creates or merges the Sense MCP server entry into .mcp.json.
@@ -197,4 +312,27 @@ func writeClaudeSettings(root string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// ParseTools parses a comma-separated list of tool names into Tool values.
+// Returns an error if any name is unrecognized.
+func ParseTools(s string) ([]Tool, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var tools []Tool
+	for _, name := range strings.Split(s, ",") {
+		name = strings.TrimSpace(name)
+		switch name {
+		case "claude-code":
+			tools = append(tools, ToolClaudeCode)
+		case "cursor":
+			tools = append(tools, ToolCursor)
+		case "codex-cli":
+			tools = append(tools, ToolCodexCLI)
+		default:
+			return nil, fmt.Errorf("unknown tool %q (valid: claude-code, cursor, codex-cli)", name)
+		}
+	}
+	return tools, nil
 }
