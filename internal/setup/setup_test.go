@@ -140,6 +140,31 @@ func TestSettingsPreservesExistingHooks(t *testing.T) {
 	}
 }
 
+func TestSettingsContainsPostToolUse(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Run(root, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, ".claude/settings.json"))
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	hooks, _ := m["hooks"].(map[string]any)
+	postToolUse, _ := hooks["PostToolUse"].([]any)
+	if len(postToolUse) == 0 {
+		t.Fatal("PostToolUse hook not found in settings")
+	}
+
+	entry, _ := postToolUse[0].(map[string]any)
+	matcher, _ := entry["matcher"].(string)
+	if matcher != "Write|Edit|NotebookEdit" {
+		t.Errorf("PostToolUse matcher = %q, want Write|Edit|NotebookEdit", matcher)
+	}
+}
+
 func TestClaudeMDMarkerReplacement(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "CLAUDE.md")

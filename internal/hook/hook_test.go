@@ -518,6 +518,219 @@ func TestIsExplorationCommand(t *testing.T) {
 	}
 }
 
+func TestExtractWrittenPath(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"Write", `{"tool_name":"Write","tool_input":{"file_path":"/tmp/foo.go"}}`, "/tmp/foo.go"},
+		{"Edit", `{"tool_name":"Edit","tool_input":{"file_path":"/tmp/bar.go"}}`, "/tmp/bar.go"},
+		{"NotebookEdit", `{"tool_name":"NotebookEdit","tool_input":{"notebook_path":"/tmp/nb.ipynb"}}`, "/tmp/nb.ipynb"},
+		{"Bash", `{"tool_name":"Bash","tool_input":{"command":"echo hi"}}`, ""},
+		{"Grep", `{"tool_name":"Grep","tool_input":{"pattern":"foo"}}`, ""},
+		{"EmptyInput", `{"tool_name":"Write","tool_input":{}}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var req postToolUseInput
+			if err := json.Unmarshal([]byte(tc.raw), &req); err != nil {
+				t.Fatal(err)
+			}
+			if got := extractWrittenPath(req); got != tc.want {
+				t.Errorf("extractWrittenPath = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPostToolUseWriteUpdatesIndex(t *testing.T) {
+	dir := indexedDir(t)
+
+	newFile := filepath.Join(dir, "new_service.go")
+	if err := os.WriteFile(newFile, []byte("package main\n\nfunc NewService() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Write","tool_input":{"file_path":"` + newFile + `"}}`
+	var buf bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("output = %q, want {}", buf.String())
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sense_symbols WHERE name = 'NewService'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Error("expected NewService symbol in index after PostToolUse Write")
+	}
+}
+
+func TestPostToolUseEditUpdatesIndex(t *testing.T) {
+	dir := indexedDir(t)
+
+	newFile := filepath.Join(dir, "edited.go")
+	if err := os.WriteFile(newFile, []byte("package main\n\nfunc EditedFunc() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Edit","tool_input":{"file_path":"` + newFile + `"}}`
+	var buf bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("output = %q, want {}", buf.String())
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sense_symbols WHERE name = 'EditedFunc'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Error("expected EditedFunc symbol in index after PostToolUse Edit")
+	}
+}
+
+func TestPostToolUseNonSourceFileNoOp(t *testing.T) {
+	dir := indexedDir(t)
+
+	mdFile := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(mdFile, []byte("# README"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Write","tool_input":{"file_path":"` + mdFile + `"}}`
+	var buf bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("expected no-op for .md file, got %q", buf.String())
+	}
+}
+
+func TestPostToolUseIgnoredFileNoOp(t *testing.T) {
+	dir := indexedDir(t)
+
+	vendorDir := filepath.Join(dir, "vendor")
+	if err := os.MkdirAll(vendorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vendorFile := filepath.Join(vendorDir, "dep.go")
+	if err := os.WriteFile(vendorFile, []byte("package vendor\n\nfunc VendorFunc() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Write","tool_input":{"file_path":"` + vendorFile + `"}}`
+	var buf bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("expected no-op for vendor file, got %q", buf.String())
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sense_symbols WHERE name = 'VendorFunc'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Error("vendor file should not be indexed")
+	}
+}
+
+func TestPostToolUseSenseDirNoOp(t *testing.T) {
+	dir := indexedDir(t)
+
+	senseFile := filepath.Join(dir, ".sense", "stray.go")
+	if err := os.WriteFile(senseFile, []byte("package stray\n\nfunc Stray() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Write","tool_input":{"file_path":"` + senseFile + `"}}`
+	var buf bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("expected no-op for .sense/ file, got %q", buf.String())
+	}
+}
+
+func TestPostToolUseIdempotent(t *testing.T) {
+	dir := indexedDir(t)
+
+	newFile := filepath.Join(dir, "idempotent.go")
+	if err := os.WriteFile(newFile, []byte("package main\n\nfunc IdempotentFunc() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `{"tool_name":"Write","tool_input":{"file_path":"` + newFile + `"}}`
+
+	var buf1 bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf1)
+	var buf2 bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf2)
+
+	if buf1.String() != "{}\n" || buf2.String() != "{}\n" {
+		t.Error("expected both runs to output {}")
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sense_symbols WHERE name = 'IdempotentFunc'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 IdempotentFunc symbol, got %d", count)
+	}
+}
+
+func TestPostToolUseNoIndex(t *testing.T) {
+	dir := t.TempDir()
+	input := `{"tool_name":"Write","tool_input":{"file_path":"` + filepath.Join(dir, "foo.go") + `"}}`
+	var buf bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("expected no-op when no index, got %q", buf.String())
+	}
+}
+
+func TestPostToolUseOutsideProjectNoOp(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Write","tool_input":{"file_path":"/tmp/outside.go"}}`
+	var buf bytes.Buffer
+	Run("post-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("expected no-op for file outside project, got %q", buf.String())
+	}
+}
+
 func TestHasCodeExtension(t *testing.T) {
 	cases := []struct {
 		path string
