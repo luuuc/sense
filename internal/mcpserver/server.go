@@ -357,12 +357,54 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
+	resp.NextSteps = graphHints(resp, direction)
 
 	out, err := mcpio.MarshalGraph(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense.graph: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func graphHints(resp mcpio.GraphResponse, direction string) []mcpio.NextStep {
+	var hints []mcpio.NextStep
+
+	if len(resp.Edges.CalledBy) >= 5 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.blast",
+			Args:   map[string]any{"symbol": resp.Symbol.Qualified},
+			Reason: fmt.Sprintf("%d callers found — check blast radius before changing this symbol", len(resp.Edges.CalledBy)),
+		})
+	} else if len(resp.Edges.CalledBy) == 0 && !isTestFile(resp.Symbol.File) {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.search",
+			Args:   map[string]any{"query": resp.Symbol.Name},
+			Reason: "no callers found in graph — search for dynamic references",
+		})
+	}
+
+	if direction == "callers" && len(hints) < 2 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.graph",
+			Args:   map[string]any{"symbol": resp.Symbol.Qualified, "direction": "callees"},
+			Reason: "see what this symbol depends on",
+		})
+	}
+
+	if len(hints) > 2 {
+		hints = hints[:2]
+	}
+	return hints
+}
+
+func isTestFile(path string) bool {
+	return strings.Contains(path, "_test.") ||
+		strings.Contains(path, "/test/") ||
+		strings.Contains(path, "/tests/") ||
+		strings.Contains(path, "/spec/") ||
+		strings.HasPrefix(path, "test/") ||
+		strings.HasPrefix(path, "tests/") ||
+		strings.HasPrefix(path, "spec/")
 }
 
 // ---------------------------------------------------------------
@@ -428,11 +470,49 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	h.tracker.Record("sense.search", query,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
+	resp.NextSteps = searchHints(resp)
+
 	out, err := mcpio.MarshalSearch(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense.search: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func searchHints(resp mcpio.SearchResponse) []mcpio.NextStep {
+	var hints []mcpio.NextStep
+
+	if len(resp.Results) > 0 && float64(resp.Results[0].Score) >= 0.8 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.graph",
+			Args:   map[string]any{"symbol": resp.Results[0].Symbol},
+			Reason: "strong match — explore its relationships",
+		})
+	}
+
+	if len(hints) < 2 {
+		fileCounts := map[string]int{}
+		for _, r := range resp.Results {
+			if r.File != "" {
+				fileCounts[r.File]++
+			}
+		}
+		for _, r := range resp.Results {
+			if r.File != "" && fileCounts[r.File] >= 3 {
+				hints = append(hints, mcpio.NextStep{
+					Tool:   "sense.conventions",
+					Args:   map[string]any{"domain": filepath.Dir(r.File)},
+					Reason: "cluster of related symbols — check conventions in this area",
+				})
+				break
+			}
+		}
+	}
+
+	if len(hints) > 2 {
+		hints = hints[:2]
+	}
+	return hints
 }
 
 // ---------------------------------------------------------------
@@ -488,12 +568,37 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
+	resp.NextSteps = blastHints(resp)
 
 	out, err := mcpio.MarshalBlast(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense.blast: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func blastHints(resp mcpio.BlastResponse) []mcpio.NextStep {
+	var hints []mcpio.NextStep
+
+	if resp.Risk == "high" {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.conventions",
+			Reason: "high blast radius — check conventions before changing",
+		})
+	}
+
+	if len(resp.AffectedTests) == 0 && resp.TotalAffected > 0 && len(hints) < 2 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.search",
+			Args:   map[string]any{"query": resp.Symbol + " test"},
+			Reason: "affected symbols have no test coverage — search for related tests",
+		})
+	}
+
+	if len(hints) > 2 {
+		hints = hints[:2]
+	}
+	return hints
 }
 
 type toolError struct{ msg string }
@@ -637,11 +742,40 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 	h.tracker.Record("sense.conventions", domain,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
+	resp.NextSteps = conventionsHints(resp, domain)
+
 	out, err := mcpio.MarshalConventions(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense.conventions: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func conventionsHints(resp mcpio.ConventionsResponse, domain string) []mcpio.NextStep {
+	var hints []mcpio.NextStep
+
+	for _, c := range resp.Conventions {
+		if float64(c.Strength) >= 0.8 {
+			hints = append(hints, mcpio.NextStep{
+				Tool:   "sense.search",
+				Args:   map[string]any{"query": c.Description},
+				Reason: "strong convention — search for all instances",
+			})
+			break
+		}
+	}
+
+	if domain != "" && len(hints) < 2 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.conventions",
+			Reason: "scoped results — run without domain filter for project-wide patterns",
+		})
+	}
+
+	if len(hints) > 2 {
+		hints = hints[:2]
+	}
+	return hints
 }
 
 // ---------------------------------------------------------------
@@ -675,11 +809,35 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 		EstimatedTokensSaved:      lt.TokensSaved,
 	}
 
+	resp.NextSteps = statusHints(resp, sess.Queries)
+
 	out, err := mcpio.MarshalStatus(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense.status: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func statusHints(resp mcpio.StatusResponse, sessionQueries int) []mcpio.NextStep {
+	var hints []mcpio.NextStep
+
+	if resp.Freshness.StaleFilesSeen != nil && *resp.Freshness.StaleFilesSeen > 0 {
+		hints = append(hints, mcpio.NextStep{
+			Reason: fmt.Sprintf("index has %d stale files — consider running `sense scan`", *resp.Freshness.StaleFilesSeen),
+		})
+	}
+
+	if sessionQueries == 0 && len(hints) < 2 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.conventions",
+			Reason: "start of session — check project conventions",
+		})
+	}
+
+	if len(hints) > 2 {
+		hints = hints[:2]
+	}
+	return hints
 }
 
 func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.WatchState) (mcpio.StatusResponse, error) {
