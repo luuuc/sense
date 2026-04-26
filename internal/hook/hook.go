@@ -33,6 +33,8 @@ func Run(name string, dir string, stdin io.Reader, stdout io.Writer) int {
 		silentRun(dir, stdin, stdout, handleSubagentStart)
 	case "session-start":
 		silentRun(dir, stdin, stdout, handleSessionStart)
+	case "post-tool-use":
+		silentRun(dir, stdin, stdout, handlePostToolUse)
 	default:
 		fmt.Fprintf(os.Stderr, "sense hook: unknown hook %q\n", name)
 		writeEmpty(stdout)

@@ -176,6 +176,18 @@ func writeClaudeSettings(root string) (bool, error) {
 				},
 			},
 		},
+		"PostToolUse": []any{
+			map[string]any{
+				"matcher": "Write|Edit|NotebookEdit",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": "sense hook post-tool-use",
+						"timeout": 5000,
+					},
+				},
+			},
+		},
 	}
 
 	mergeHooks(existing, hooks)
