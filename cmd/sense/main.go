@@ -2,14 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"runtime/pprof"
-
-	"github.com/mattn/go-isatty"
 
 	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/embed"
@@ -17,7 +14,6 @@ import (
 	"github.com/luuuc/sense/internal/mcpserver"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
-	"github.com/luuuc/sense/internal/tui"
 	"github.com/luuuc/sense/internal/version"
 	"github.com/luuuc/sense/internal/versioncheck"
 	"github.com/luuuc/sense/internal/watch"
@@ -26,8 +22,6 @@ import (
 const helpText = `sense — codebase understanding that any tool can query
 
 Usage: sense [command] [args]
-
-  Running 'sense' with no arguments in a terminal launches the graph TUI.
 
 Commands:
   scan          Build or refresh the index
@@ -50,24 +44,6 @@ func main() {
 	ctx := context.Background()
 
 	if len(os.Args) < 2 {
-		if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
-			adapter, err := cli.OpenIndex(ctx, ".")
-			if err != nil {
-				if errors.Is(err, cli.ErrIndexMissing) {
-					fmt.Fprintln(os.Stderr, "sense: no index found. Run 'sense scan' first.")
-					os.Exit(3)
-				}
-				fmt.Fprintln(os.Stderr, "sense:", err)
-				os.Exit(1)
-			}
-			tuiErr := tui.Run(ctx, adapter, tui.SenseDir("."))
-			_ = adapter.Close()
-			if tuiErr != nil {
-				fmt.Fprintln(os.Stderr, "sense:", tuiErr)
-				os.Exit(1)
-			}
-			os.Exit(0)
-		}
 		fmt.Fprint(os.Stderr, helpText)
 		os.Exit(2)
 	}
