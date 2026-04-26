@@ -5,6 +5,7 @@ package mcpio
 type ConventionsResponse struct {
 	Conventions  []ConventionEntry    `json:"conventions"`
 	SenseMetrics ConventionsMetrics   `json:"sense_metrics"`
+	NextSteps    []NextStep           `json:"next_steps"`
 }
 
 // ConventionEntry is a single detected convention in the wire response.
@@ -28,6 +29,9 @@ type ConventionsMetrics struct {
 func MarshalConventions(r ConventionsResponse) ([]byte, error) {
 	if r.Conventions == nil {
 		r.Conventions = []ConventionEntry{}
+	}
+	if r.NextSteps == nil {
+		r.NextSteps = []NextStep{}
 	}
 	return marshalPretty(r)
 }
