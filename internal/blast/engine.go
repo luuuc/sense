@@ -52,11 +52,13 @@ type Options struct {
 // one hop closer to the subject (predecessor on the BFS shortest
 // path), so a consumer can render "X calls Y which calls <subject>".
 // Hops is 1-indexed from the subject: Hops=2 means "callers of
-// direct callers".
+// direct callers". ViaTemporal is true when this hop traversed a
+// temporal coupling edge rather than a structural one.
 type CallerHop struct {
-	Symbol model.Symbol
-	Via    model.Symbol
-	Hops   int
+	Symbol      model.Symbol
+	Via         model.Symbol
+	Hops        int
+	ViaTemporal bool
 }
 
 // Result is the full blast-radius answer for one subject symbol. The
@@ -77,6 +79,9 @@ type Result struct {
 	IndirectCallers []CallerHop
 	AffectedTests   []string
 	TotalAffected   int
+	// DirectTemporalIDs tracks which direct callers were reached via
+	// a temporal edge. Keyed by symbol ID.
+	DirectTemporalIDs map[int64]bool
 }
 
 // Compute returns the blast radius of symbolIDs under the given
@@ -101,6 +106,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 
 	visited := map[int64]int{}
 	predecessor := map[int64]int64{}
+	viaTemporal := map[int64]bool{}
 	frontier := make([]int64, 0, len(symbolIDs))
 	for _, id := range symbolIDs {
 		visited[id] = 0
@@ -122,6 +128,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			}
 			visited[pair.source] = hop
 			predecessor[pair.source] = pair.target
+			if pair.temporal {
+				viaTemporal[pair.source] = true
+			}
 			next = append(next, pair.source)
 		}
 		if len(next) == 0 {
@@ -171,9 +180,13 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	symbolsByID[subject.ID] = subject
 
 	directCallers := make([]model.Symbol, 0, len(directIDs))
+	directTemporalIDs := map[int64]bool{}
 	for _, id := range directIDs {
 		if sym, ok := symbolsByID[id]; ok {
 			directCallers = append(directCallers, sym)
+			if viaTemporal[id] {
+				directTemporalIDs[id] = true
+			}
 		}
 	}
 	sortSymbolsByID(directCallers)
@@ -186,9 +199,10 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		}
 		via := symbolsByID[predecessor[id]]
 		indirectCallers = append(indirectCallers, CallerHop{
-			Symbol: sym,
-			Via:    via,
-			Hops:   visited[id],
+			Symbol:      sym,
+			Via:         via,
+			Hops:        visited[id],
+			ViaTemporal: viaTemporal[id],
 		})
 	}
 	sortHopsByID(indirectCallers)
@@ -204,19 +218,26 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		affectedTests = tests
 	}
 
-	// Card 11 replaces the placeholder risk. Filling the zero value
-	// now keeps the struct shape valid so callers written against the
-	// public API compile today.
-	risk, reasons := classifyRisk(len(directCallers))
+	hasTemporalEdge := len(directTemporalIDs) > 0
+	if !hasTemporalEdge {
+		for _, hop := range indirectCallers {
+			if hop.ViaTemporal {
+				hasTemporalEdge = true
+				break
+			}
+		}
+	}
+	risk, reasons := classifyRisk(len(directCallers), hasTemporalEdge)
 
 	return Result{
-		Symbol:          subject,
-		Risk:            risk,
-		RiskReasons:     reasons,
-		DirectCallers:   directCallers,
-		IndirectCallers: indirectCallers,
-		AffectedTests:   affectedTests,
-		TotalAffected:   len(directCallers) + len(indirectCallers),
+		Symbol:            subject,
+		Risk:              risk,
+		RiskReasons:       reasons,
+		DirectCallers:     directCallers,
+		IndirectCallers:   indirectCallers,
+		AffectedTests:     affectedTests,
+		TotalAffected:     len(directCallers) + len(indirectCallers),
+		DirectTemporalIDs: directTemporalIDs,
 	}, nil
 }
 
@@ -224,8 +245,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 // is the caller we're learning about; target is the node we already
 // visited and are expanding from.
 type edgePair struct {
-	source int64
-	target int64
+	source   int64
+	target   int64
+	temporal bool
 }
 
 // expandFrontier runs the BFS hop query: "which symbols reference
@@ -251,10 +273,10 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfid
 		placeholders := strings.Repeat("?,", len(batch))
 		placeholders = placeholders[:len(placeholders)-1]
 
-		q := `SELECT source_id, target_id FROM sense_edges
+		q := `SELECT source_id, target_id, kind FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
-		        AND kind IN ('calls', 'composes', 'includes', 'inherits')
+		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal')
 		        AND confidence >= ?`
 
 		args := make([]any, 0, len(batch)+1)
@@ -269,10 +291,12 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfid
 		}
 		for rows.Next() {
 			var p edgePair
-			if err := rows.Scan(&p.source, &p.target); err != nil {
+			var kind string
+			if err := rows.Scan(&p.source, &p.target, &kind); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
+			p.temporal = kind == "temporal"
 			out = append(out, p)
 		}
 		if err := rows.Err(); err != nil {
@@ -311,22 +335,25 @@ const (
 //	direct_callers >= 3   → medium
 //	otherwise             → low
 //
-// RiskReasons carries one human-readable line per factor. Today the
-// only factor is the direct-caller count; the pitch's "crosses
-// module boundary" example is reserved for when a real case argues
-// for it, so the slice is always a single element. Consumers that
-// want to check risk programmatically should branch on the Risk
-// string (or the Risk* constants) rather than parsing Reasons.
-func classifyRisk(directCallers int) (string, []string) {
+// When temporal coupling edges are present, risk is bumped to at
+// least medium — a symbol with 0 structural callers but temporal
+// coupling has hidden dependencies.
+func classifyRisk(directCallers int, hasTemporal bool) (string, []string) {
 	reasons := []string{directCallersReason(directCallers)}
+	if hasTemporal {
+		reasons = append(reasons, "temporal coupling detected (git co-change history)")
+	}
+	risk := RiskLow
 	switch {
 	case directCallers >= riskHighThreshold:
-		return RiskHigh, reasons
+		risk = RiskHigh
 	case directCallers >= riskMediumThreshold:
-		return RiskMedium, reasons
-	default:
-		return RiskLow, reasons
+		risk = RiskMedium
 	}
+	if hasTemporal && risk == RiskLow {
+		risk = RiskMedium
+	}
+	return risk, reasons
 }
 
 // directCallersReason formats the direct-caller count as a human
