@@ -129,3 +129,117 @@ func TestBuildGraphResponseIncludesImports(t *testing.T) {
 		t.Errorf("Imports[0].Symbol = %q, want %q", resp.Edges.Imports[0].Symbol, "utils")
 	}
 }
+
+func TestBuildGraphResponseTemporalEdges(t *testing.T) {
+	filePaths := map[int64]string{
+		1: "app/services/checkout.rb",
+		2: "app/jobs/export_cron.rb",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	coChanges := 14
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			ID: 1, Name: "Checkout", Qualified: "Checkout",
+			Kind: "class", FileID: 1, LineStart: 1, LineEnd: 50,
+		},
+		File: model.File{Path: "app/services/checkout.rb"},
+		Outbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeTemporal, Confidence: 0.7, Line: &coChanges},
+				Target: model.Symbol{ID: 2, Qualified: "ExportCron", FileID: 2},
+			},
+		},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeTemporal, Confidence: 0.7, Line: &coChanges},
+				Target: model.Symbol{ID: 2, Qualified: "ExportCron", FileID: 2},
+			},
+		},
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	// Temporal edges are deduplicated — even though the same symbol appears
+	// in both inbound and outbound, only one entry should appear.
+	if len(resp.Edges.Temporal) != 1 {
+		t.Fatalf("Temporal = %d, want 1 (deduplicated)", len(resp.Edges.Temporal))
+	}
+	te := resp.Edges.Temporal[0]
+	if te.Symbol != "ExportCron" {
+		t.Errorf("Symbol = %q, want %q", te.Symbol, "ExportCron")
+	}
+	if te.CoChanges != 14 {
+		t.Errorf("CoChanges = %d, want 14", te.CoChanges)
+	}
+	if float64(te.Strength) != 0.7 {
+		t.Errorf("Strength = %v, want 0.7", te.Strength)
+	}
+	if te.File == nil || *te.File != "app/jobs/export_cron.rb" {
+		t.Errorf("File = %v, want app/jobs/export_cron.rb", te.File)
+	}
+}
+
+func TestBuildGraphResponseTemporalEmptyWhenNoEdges(t *testing.T) {
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "Foo", Qualified: "Foo", Kind: "class"},
+		File:   model.File{Path: "foo.rb"},
+	}
+	files := func(int64) (string, bool) { return "", false }
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	if resp.Edges.Temporal != nil {
+		t.Errorf("Temporal should be nil (not empty slice) before normalization, got %v", resp.Edges.Temporal)
+	}
+}
+
+func TestBuildGraphResponseTemporalDirectionIndependent(t *testing.T) {
+	coChanges := 5
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "A", Qualified: "A", Kind: "class"},
+		File:   model.File{Path: "a.rb"},
+		Outbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeTemporal, Confidence: 0.5, Line: &coChanges},
+				Target: model.Symbol{ID: 2, Qualified: "B", FileID: 2},
+			},
+		},
+	}
+	files := func(int64) (string, bool) { return "", false }
+
+	// Temporal should appear regardless of direction filter.
+	for _, dir := range []string{"both", "callers", "callees"} {
+		resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: dir})
+		if len(resp.Edges.Temporal) != 1 {
+			t.Errorf("direction=%q: Temporal = %d, want 1", dir, len(resp.Edges.Temporal))
+		}
+	}
+}
+
+func TestBuildGraphResponseTemporalCountsInMetrics(t *testing.T) {
+	coChanges := 3
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "A", Qualified: "A", Kind: "class", FileID: 1},
+		File:   model.File{Path: "a.rb"},
+		Outbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeTemporal, Confidence: 0.5, Line: &coChanges},
+				Target: model.Symbol{ID: 2, Qualified: "B", FileID: 2},
+			},
+		},
+	}
+	filePaths := map[int64]string{2: "b.rb"}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	if resp.SenseMetrics.SymbolsReturned != 1 {
+		t.Errorf("SymbolsReturned = %d, want 1", resp.SenseMetrics.SymbolsReturned)
+	}
+	if resp.SenseMetrics.EstimatedFileReadsAvoided != 1 {
+		t.Errorf("EstimatedFileReadsAvoided = %d, want 1", resp.SenseMetrics.EstimatedFileReadsAvoided)
+	}
+}

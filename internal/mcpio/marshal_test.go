@@ -36,6 +36,7 @@ func TestMarshalGraphRoundTrip(t *testing.T) {
 			Includes: []IncludeEdgeRef{},
 			Imports:  []ImportEdgeRef{},
 			Tests:    []TestEdgeRef{{File: "test/services/checkout_service_test.rb", Confidence: 0.8}},
+			Temporal: []TemporalEdgeRef{},
 		},
 		SenseMetrics: GraphMetrics{SymbolsReturned: 3},
 		NextSteps:    []NextStep{},
@@ -101,12 +102,12 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalGraph: %v", err)
 	}
-	for _, field := range []string{`"calls": []`, `"called_by": []`, `"inherits": []`, `"composes": []`, `"includes": []`, `"imports": []`, `"tests": []`, `"next_steps": []`} {
+	for _, field := range []string{`"calls": []`, `"called_by": []`, `"inherits": []`, `"composes": []`, `"includes": []`, `"imports": []`, `"tests": []`, `"temporal": []`, `"next_steps": []`} {
 		if !strings.Contains(string(graphBytes), field) {
 			t.Errorf("GraphResponse zero-value missing %s\ngot:\n%s", field, graphBytes)
 		}
 	}
-	for _, nullField := range []string{`"calls": null`, `"called_by": null`, `"inherits": null`, `"composes": null`, `"includes": null`, `"imports": null`, `"tests": null`, `"next_steps": null`} {
+	for _, nullField := range []string{`"calls": null`, `"called_by": null`, `"inherits": null`, `"composes": null`, `"includes": null`, `"imports": null`, `"tests": null`, `"temporal": null`, `"next_steps": null`} {
 		if strings.Contains(string(graphBytes), nullField) {
 			t.Errorf("GraphResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, graphBytes)
 		}
@@ -151,6 +152,7 @@ func TestMarshalNoHTMLEscape(t *testing.T) {
 			Includes: []IncludeEdgeRef{},
 			Imports:  []ImportEdgeRef{},
 			Tests:    []TestEdgeRef{},
+			Temporal: []TemporalEdgeRef{},
 		},
 	}
 	raw, err := MarshalGraph(in)

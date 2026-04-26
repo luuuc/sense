@@ -1163,6 +1163,36 @@ func TestScan_AddSenseToGitignore(t *testing.T) {
 	})
 }
 
+func TestTemporalCouplingNoOpWithoutGit(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.rb"), "class A; end\n")
+	writeFile(t, filepath.Join(root, "sub", "b.rb"), "class B; end\n")
+
+	ctx := context.Background()
+	res, err := scan.Run(ctx, quietOpts(root))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Indexed < 2 {
+		t.Fatalf("Indexed = %d, want >= 2", res.Indexed)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	edges, err := adapter.EdgesOfKind(ctx, model.EdgeTemporal)
+	if err != nil {
+		t.Fatalf("EdgesOfKind: %v", err)
+	}
+	if len(edges) != 0 {
+		t.Errorf("expected 0 temporal edges without git, got %d", len(edges))
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

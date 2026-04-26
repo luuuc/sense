@@ -28,4 +28,5 @@ const (
 	EdgeIncludes EdgeKind = "includes"
 	EdgeTests    EdgeKind = "tests"
 	EdgeComposes EdgeKind = "composes"
+	EdgeTemporal EdgeKind = "temporal"
 )

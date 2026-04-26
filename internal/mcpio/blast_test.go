@@ -92,3 +92,54 @@ func TestBuildDiffBlastResponseDedupCallers(t *testing.T) {
 		t.Errorf("TotalAffected = %d, want 2 (1 direct + 1 indirect)", resp.TotalAffected)
 	}
 }
+
+func TestBuildBlastResponseViaTemporal(t *testing.T) {
+	r := blast.Result{
+		Symbol: model.Symbol{ID: 1, Qualified: "Subject"},
+		Risk:   blast.RiskMedium,
+		RiskReasons: []string{
+			"0 direct callers",
+			"temporal coupling detected (git co-change history)",
+		},
+		DirectCallers: []model.Symbol{
+			{ID: 10, Qualified: "TemporalPartner", FileID: 2},
+		},
+		IndirectCallers: []blast.CallerHop{
+			{
+				Symbol:      model.Symbol{ID: 20, Qualified: "Indirect"},
+				Via:         model.Symbol{ID: 10, Qualified: "TemporalPartner"},
+				Hops:        2,
+				ViaTemporal: true,
+			},
+		},
+		AffectedTests:     []string{},
+		TotalAffected:     2,
+		DirectTemporalIDs: map[int64]bool{10: true},
+	}
+
+	filePaths := map[int64]string{2: "partner.rb"}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(r, files)
+
+	if len(resp.DirectCallers) != 1 {
+		t.Fatalf("DirectCallers = %d, want 1", len(resp.DirectCallers))
+	}
+	if !resp.DirectCallers[0].ViaTemporal {
+		t.Error("DirectCallers[0].ViaTemporal should be true")
+	}
+
+	if len(resp.IndirectCallers) != 1 {
+		t.Fatalf("IndirectCallers = %d, want 1", len(resp.IndirectCallers))
+	}
+	if !resp.IndirectCallers[0].ViaTemporal {
+		t.Error("IndirectCallers[0].ViaTemporal should be true")
+	}
+
+	if resp.Risk != blast.RiskMedium {
+		t.Errorf("Risk = %q, want medium", resp.Risk)
+	}
+}

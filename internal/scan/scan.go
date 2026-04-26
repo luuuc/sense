@@ -65,6 +65,7 @@ type PhaseTiming struct {
 	ResolveEdges      time.Duration
 	SatisfyInterfaces time.Duration
 	AssociateTests    time.Duration
+	Temporal          time.Duration
 	Embed             time.Duration
 	BuildHNSW         time.Duration
 }
@@ -209,6 +210,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.AssociateTests = time.Since(t0)
 
+	t0 = time.Now()
+	if err := h.extractTemporalCoupling(); err != nil {
+		return nil, err
+	}
+	phases.Temporal = time.Since(t0)
+
 	if opts.EmbeddingsEnabled && opts.Embed {
 		t0 = time.Now()
 		if err := h.embedSymbols(); err != nil {
@@ -294,12 +301,13 @@ func printPhaseBreakdown(out io.Writer, total time.Duration, p PhaseTiming) {
 		}
 		return int(100 * d / total)
 	}
-	_, _ = fmt.Fprintf(out, "phases: walk %s (%d%%), stale %s (%d%%), edges %s (%d%%), interfaces %s (%d%%), tests %s (%d%%)",
+	_, _ = fmt.Fprintf(out, "phases: walk %s (%d%%), stale %s (%d%%), edges %s (%d%%), interfaces %s (%d%%), tests %s (%d%%), temporal %s (%d%%)",
 		p.Walk, pct(p.Walk),
 		p.RemoveStale, pct(p.RemoveStale),
 		p.ResolveEdges, pct(p.ResolveEdges),
 		p.SatisfyInterfaces, pct(p.SatisfyInterfaces),
-		p.AssociateTests, pct(p.AssociateTests))
+		p.AssociateTests, pct(p.AssociateTests),
+		p.Temporal, pct(p.Temporal))
 	if p.Embed > 0 || p.BuildHNSW > 0 {
 		_, _ = fmt.Fprintf(out, ", embed %s (%d%%), hnsw %s (%d%%)",
 			p.Embed, pct(p.Embed),
