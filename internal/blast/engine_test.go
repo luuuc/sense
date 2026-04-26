@@ -603,6 +603,119 @@ func TestComputeMultiSeedAggregatesReopenings(t *testing.T) {
 	}
 }
 
+// TestComputeTemporalEdgeBumpsRisk verifies that a temporal edge in
+// the blast radius bumps risk to at least medium and appears in callers.
+func TestComputeTemporalEdgeBumpsRisk(t *testing.T) {
+	db, adapter := setupGraph(t)
+	ctx := context.Background()
+
+	// C#leaf has 1 structural caller (B#middle), so risk is normally low.
+	// Insert a temporal edge from a new "phantom" symbol to C#leaf.
+	leafID := idOf(t, adapter, "C#leaf")
+
+	// First create a symbol in a different file to serve as temporal partner.
+	// We'll reuse C's file for the edge's file_id.
+	cFileID := fileIDOf(t, adapter, "c.rb")
+	aFileID := fileIDOf(t, adapter, "a.rb")
+
+	phantomID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID:    aFileID,
+		Name:      "PhantomCron",
+		Qualified: "PhantomCron",
+		Kind:      "class",
+		LineStart: 1,
+		LineEnd:   5,
+	})
+	if err != nil {
+		t.Fatalf("WriteSymbol: %v", err)
+	}
+
+	coChanges := 8
+	_, err = adapter.WriteEdge(ctx, &model.Edge{
+		SourceID:   model.Int64Ptr(phantomID),
+		TargetID:   leafID,
+		Kind:       model.EdgeTemporal,
+		FileID:     cFileID,
+		Line:       &coChanges,
+		Confidence: 0.7,
+	})
+	if err != nil {
+		t.Fatalf("WriteEdge temporal: %v", err)
+	}
+
+	res, err := blast.Compute(ctx, db, []int64{leafID}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	// Should have 2 direct callers: B#middle (structural) + PhantomCron (temporal).
+	if len(res.DirectCallers) != 2 {
+		t.Fatalf("DirectCallers = %d, want 2", len(res.DirectCallers))
+	}
+
+	// Risk should be at least medium because of temporal edge.
+	if res.Risk == blast.RiskLow {
+		t.Errorf("Risk = %q, want at least medium (temporal coupling present)", res.Risk)
+	}
+
+	foundTemporal := false
+	for _, reason := range res.RiskReasons {
+		if reason == "temporal coupling detected (git co-change history)" {
+			foundTemporal = true
+		}
+	}
+	if !foundTemporal {
+		t.Errorf("RiskReasons missing temporal: %v", res.RiskReasons)
+	}
+
+	// Verify DirectTemporalIDs contains the phantom.
+	if !res.DirectTemporalIDs[phantomID] {
+		t.Errorf("DirectTemporalIDs should contain phantom %d", phantomID)
+	}
+}
+
+// TestComputeNoTemporalEdgesStaysLow confirms that without temporal
+// edges, the risk classification is unchanged.
+func TestComputeNoTemporalEdgesStaysLow(t *testing.T) {
+	db, adapter := setupGraph(t)
+	leafID := idOf(t, adapter, "C#leaf")
+
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if res.Risk != blast.RiskLow {
+		t.Errorf("Risk = %q, want low (no temporal edges)", res.Risk)
+	}
+	if len(res.DirectTemporalIDs) != 0 {
+		t.Errorf("DirectTemporalIDs should be empty, got %v", res.DirectTemporalIDs)
+	}
+}
+
+func fileIDOf(t *testing.T, a *sqlite.Adapter, filename string) int64 {
+	t.Helper()
+	all, err := a.Query(context.Background(), index.Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	seen := map[int64]bool{}
+	for _, s := range all {
+		if seen[s.FileID] {
+			continue
+		}
+		seen[s.FileID] = true
+		sc, rerr := a.ReadSymbol(context.Background(), s.ID)
+		if rerr != nil {
+			continue
+		}
+		if sc.File.Path == filename {
+			return sc.File.ID
+		}
+	}
+	t.Fatalf("file %q not found in index", filename)
+	return 0
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
