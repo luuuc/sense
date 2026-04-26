@@ -86,6 +86,31 @@ check_pinned_commit() {
   fi
 }
 
+if command -v timeout &>/dev/null; then
+  TIMEOUT_CMD="timeout"
+elif command -v gtimeout &>/dev/null; then
+  TIMEOUT_CMD="gtimeout"
+else
+  TIMEOUT_CMD=""
+fi
+
+run_with_timeout() {
+  local secs="$1"; shift
+  if [[ -n "$TIMEOUT_CMD" ]]; then
+    "$TIMEOUT_CMD" "$secs" "$@"
+  else
+    "$@" &
+    local pid=$!
+    ( sleep "$secs" && kill "$pid" 2>/dev/null ) &
+    local watchdog=$!
+    wait "$pid" 2>/dev/null
+    local rc=$?
+    kill "$watchdog" 2>/dev/null
+    wait "$watchdog" 2>/dev/null
+    return $rc
+  fi
+}
+
 timestamp() {
   date +%Y-%m-%dT%H:%M:%S
 }
@@ -293,7 +318,7 @@ print(json.dumps({'prompt': template, 'params': params, 'scoring': task.get('sco
       log "  running Claude session..."
       start_time=$(date +%s)
 
-      if (cd "$rp" && timeout "$SESSION_TIMEOUT" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log"); then
+      if (cd "$rp" && run_with_timeout "$SESSION_TIMEOUT" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log"); then
         end_time=$(date +%s)
         wall_time=$((end_time - start_time))
         log "  done in ${wall_time}s"

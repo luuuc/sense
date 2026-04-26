@@ -20,8 +20,6 @@ Misses are the novel metric. A tool with zero misses has perfect discoverability
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - Python 3.9+ (for task parsing and scoring)
 - `bc` (for cost estimates in dry-run)
-- `timeout` (coreutils — ships with macOS 15+ and Linux)
-
 ```bash
 python3 -m venv bench/.venv
 source bench/.venv/bin/activate
