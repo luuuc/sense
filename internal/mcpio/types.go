@@ -223,12 +223,22 @@ type Freshness struct {
 // sense.status schema has no `sense_metrics` footer — status is
 // metadata about the index itself, not the result of a query against
 type StatusResponse struct {
-	Index     StatusIndex               `json:"index"`
-	Languages map[string]StatusLanguage `json:"languages"`
-	Freshness Freshness                 `json:"freshness"`
-	Session   *StatusSession            `json:"session,omitempty"`
-	Lifetime  *StatusLifetime           `json:"lifetime,omitempty"`
-	Version   *StatusVersion            `json:"version,omitempty"`
+	Index             StatusIndex               `json:"index"`
+	Languages         map[string]StatusLanguage `json:"languages"`
+	Freshness         Freshness                 `json:"freshness"`
+	EmbeddingProgress *EmbeddingProgress        `json:"embedding_progress,omitempty"`
+	Session           *StatusSession            `json:"session,omitempty"`
+	Lifetime          *StatusLifetime           `json:"lifetime,omitempty"`
+	Version           *StatusVersion            `json:"version,omitempty"`
+}
+
+// EmbeddingProgress reports background embedding state. Present only
+// when there is embedding debt (symbols without embeddings). Omitted
+// when fully indexed.
+type EmbeddingProgress struct {
+	Total    int `json:"total"`
+	Embedded int `json:"embedded"`
+	Percent  int `json:"percent"`
 }
 
 // StatusSession holds in-memory session-scoped savings counters.
@@ -296,6 +306,7 @@ type StatusLanguage struct {
 // .doc/definition/06-mcp-and-cli.md exactly.
 type SearchResponse struct {
 	Results      []SearchResultEntry `json:"results"`
+	SearchMode   string              `json:"search_mode"`
 	SenseMetrics SearchMetrics       `json:"sense_metrics"`
 }
 

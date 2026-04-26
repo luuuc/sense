@@ -113,9 +113,56 @@ func Run(ctx context.Context, opts RunOptions) error {
 	parsers := scan.NewParserCache()
 	defer parsers.Close()
 
+	// Background embed management: the watch loop owns all embedding.
+	// The MCP server skips its own background embed when WatchState is set.
+	var embedCancel context.CancelFunc
+	var embedDone chan struct{}
+
+	startEmbed := func() {
+		if !opts.EmbeddingsEnabled || ctx.Err() != nil {
+			return
+		}
+		debt, derr := writeAdapter.EmbeddingDebtCount(ctx)
+		if derr != nil {
+			log("sense: check embedding debt: %v", derr)
+			return
+		}
+		if debt == 0 {
+			return
+		}
+		var embedCtx context.Context
+		embedCtx, embedCancel = context.WithCancel(ctx)
+		embedDone = make(chan struct{})
+		go func() {
+			defer close(embedDone)
+			n, err := scan.EmbedPending(embedCtx, writeAdapter, root, senseDir)
+			if err != nil {
+				if embedCtx.Err() == nil {
+					log("sense: background embed error: %v", err)
+				}
+				return
+			}
+			if n > 0 {
+				log("sense: background embed complete (%d symbols)", n)
+			}
+		}()
+	}
+
+	cancelEmbed := func() {
+		if embedCancel != nil {
+			embedCancel()
+			<-embedDone
+			embedCancel = nil
+			embedDone = nil
+		}
+	}
+	defer cancelEmbed()
+
 	// Mark watch start for status reporting
 	ws.Set(true, time.Now().UTC())
 	defer ws.Set(false, time.Time{})
+
+	startEmbed()
 
 	log("sense: watching for changes (debounce=%dms)", debounceMs)
 
@@ -132,17 +179,17 @@ func Run(ctx context.Context, opts RunOptions) error {
 			if total == 0 {
 				continue
 			}
+			cancelEmbed()
 			res, err := scan.RunIncremental(ctx, scan.IncrementalOptions{
-				Root:              root,
-				Idx:               writeAdapter,
-				Matcher:           matcher,
-				MaxFileSizeKB:     cfg.Scan.MaxFileSizeKB,
-				EmbeddingsEnabled: opts.EmbeddingsEnabled,
-				Output:            io.Discard,
-				Warnings:          os.Stderr,
-				Changed:           batch.Changed,
-				Removed:           batch.Removed,
-				Parsers:           parsers,
+				Root:          root,
+				Idx:           writeAdapter,
+				Matcher:       matcher,
+				MaxFileSizeKB: cfg.Scan.MaxFileSizeKB,
+				Output:        io.Discard,
+				Warnings:      os.Stderr,
+				Changed:       batch.Changed,
+				Removed:       batch.Removed,
+				Parsers:       parsers,
 			})
 			if err != nil {
 				log("sense: re-index error: %v", err)
@@ -150,6 +197,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 			}
 			log("sense: re-indexed %d files (%d changed, %d removed, %d symbols) in %s",
 				total, res.Changed, res.Removed, res.Symbols, res.Duration)
+			startEmbed()
 		}
 	}
 }

@@ -157,7 +157,7 @@ func TestFusionBothBackendsRankHigher(t *testing.T) {
 
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
-	results, symbolCount, err := engine.Search(ctx, search.Options{
+	results, symbolCount, _, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -199,7 +199,7 @@ func TestFusionKeywordOnly(t *testing.T) {
 	// No vector index, no embedder → keyword-only
 	engine := search.NewEngine(a, nil, nil)
 
-	results, _, err := engine.Search(ctx, search.Options{
+	results, _, _, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -280,7 +280,7 @@ func TestFusionCentralityBreaksTie(t *testing.T) {
 
 	engine := search.NewEngine(a, nil, nil)
 
-	results, _, err := engine.Search(ctx, search.Options{
+	results, _, _, err := engine.Search(ctx, search.Options{
 		Query: "handler",
 		Limit: 10,
 	})
@@ -316,7 +316,7 @@ func TestFusionMinScore(t *testing.T) {
 
 	engine := search.NewEngine(a, nil, nil)
 
-	results, _, err := engine.Search(ctx, search.Options{
+	results, _, _, err := engine.Search(ctx, search.Options{
 		Query:    "payment",
 		Limit:    10,
 		MinScore: 999, // absurdly high — should filter everything
@@ -347,7 +347,7 @@ func TestNormalizeScoresSpread(t *testing.T) {
 	vectorIdx := search.BuildHNSWIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
-	results, _, err := engine.Search(ctx, search.Options{
+	results, _, _, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -416,7 +416,7 @@ func TestKindWeightsDemotesModules(t *testing.T) {
 	}
 
 	engine := search.NewEngine(a, nil, nil)
-	results, _, err := engine.Search(ctx, search.Options{
+	results, _, _, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -441,6 +441,91 @@ func TestKindWeightsDemotesModules(t *testing.T) {
 	}
 	if !hasModule {
 		t.Error("module symbol missing from results entirely — test setup issue")
+	}
+}
+
+func TestSearchModeKeyword(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	engine := search.NewEngine(a, nil, nil)
+	_, _, mode, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != search.ModeKeyword {
+		t.Errorf("mode = %q, want %q", mode, search.ModeKeyword)
+	}
+}
+
+func TestSearchModeHybrid(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
+
+	_, _, mode, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != search.ModeHybrid {
+		t.Errorf("mode = %q, want %q", mode, search.ModeHybrid)
+	}
+}
+
+func TestSearchModeUpgradeViaSetVectors(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	engine := search.NewEngine(a, nil, &paymentQueryEmbedder{})
+
+	_, _, mode1, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode1 != search.ModeKeyword {
+		t.Errorf("before SetVectors: mode = %q, want %q", mode1, search.ModeKeyword)
+	}
+
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+	engine.SetVectors(vectorIdx)
+
+	_, _, mode2, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode2 != search.ModeHybrid {
+		t.Errorf("after SetVectors: mode = %q, want %q", mode2, search.ModeHybrid)
 	}
 }
 
@@ -498,7 +583,7 @@ func TestPathWeightsDemotesMigrationsAndScripts(t *testing.T) {
 	}
 
 	engine := search.NewEngine(a, nil, nil)
-	results, _, err := engine.Search(ctx, search.Options{
+	results, _, _, err := engine.Search(ctx, search.Options{
 		Query: "post moderation flagging",
 		Limit: 10,
 	})

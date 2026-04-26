@@ -776,6 +776,38 @@ type EmbedSymbol struct {
 	LineEnd    int
 }
 
+// SymbolsWithoutEmbeddings returns all symbols that have no embedding yet,
+// with the same fields as SymbolsForFiles. Used by the background embedder
+// to process embedding debt.
+func (a *Adapter) SymbolsWithoutEmbeddings(ctx context.Context) ([]EmbedSymbol, error) {
+	const q = `SELECT s.id, s.file_id, s.qualified, s.kind, COALESCE(p.name, ''),
+		       s.snippet, s.line_start, s.line_end
+		FROM sense_symbols s
+		LEFT JOIN sense_symbols p ON s.parent_id = p.id
+		LEFT JOIN sense_embeddings e ON e.symbol_id = s.id
+		WHERE e.symbol_id IS NULL
+		ORDER BY s.id ASC`
+
+	rows, err := a.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite SymbolsWithoutEmbeddings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var syms []EmbedSymbol
+	for rows.Next() {
+		var s EmbedSymbol
+		var snippet sql.NullString
+		if err := rows.Scan(&s.ID, &s.FileID, &s.Qualified, &s.Kind, &s.ParentName,
+			&snippet, &s.LineStart, &s.LineEnd); err != nil {
+			return nil, fmt.Errorf("sqlite SymbolsWithoutEmbeddings scan: %w", err)
+		}
+		s.Snippet = snippet.String
+		syms = append(syms, s)
+	}
+	return syms, rows.Err()
+}
+
 // WriteEmbedding upserts a single embedding vector into sense_embeddings.
 func (a *Adapter) WriteEmbedding(ctx context.Context, symbolID int64, vector []byte) error {
 	const q = `INSERT INTO sense_embeddings (symbol_id, vector)
@@ -820,6 +852,28 @@ func (a *Adapter) ReadMeta(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("sqlite ReadMeta: %w", err)
 	}
 	return value, nil
+}
+
+// EmbeddingDebtCount returns the number of symbols that lack embeddings.
+func (a *Adapter) EmbeddingDebtCount(ctx context.Context) (int, error) {
+	var count int
+	err := a.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sense_symbols s
+		 LEFT JOIN sense_embeddings e ON e.symbol_id = s.id
+		 WHERE e.symbol_id IS NULL`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite EmbeddingDebtCount: %w", err)
+	}
+	return count, nil
+}
+
+// DeleteMeta removes a key from sense_meta.
+func (a *Adapter) DeleteMeta(ctx context.Context, key string) error {
+	_, err := a.db.ExecContext(ctx, "DELETE FROM sense_meta WHERE key = ?", key)
+	if err != nil {
+		return fmt.Errorf("sqlite DeleteMeta: %w", err)
+	}
+	return nil
 }
 
 func (a *Adapter) Clear(ctx context.Context) error {

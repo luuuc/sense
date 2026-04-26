@@ -54,7 +54,8 @@ type Options struct {
 	Sense             string    // sense dir (default: "<Root>/.sense")
 	Output            io.Writer // summary-line sink (default: os.Stderr)
 	Warnings          io.Writer // per-file warning sink (default: os.Stderr)
-	EmbeddingsEnabled bool      // when true, pass 3 generates embeddings for changed symbols
+	EmbeddingsEnabled bool      // when true, embeddings are part of the index pipeline
+	Embed             bool      // block until embeddings complete; requires EmbeddingsEnabled. When false, embeddings are deferred and a watermark is written for the MCP server to pick up.
 	Init              bool      // force re-generation of AI tool config files
 }
 
@@ -79,6 +80,7 @@ type Result struct {
 	Symbols        int // symbols written to the index
 	Edges          int // edges resolved and written to sense_edges
 	Embedded       int // symbols whose embeddings were generated/updated
+	EmbeddingDebt  int // symbols needing embeddings (deferred to background)
 	Unresolved     int // edges whose target name matched no symbol; dropped
 	Ambiguous      int // edges resolved via ambiguous (multi-match) fallback
 	Warnings       int // per-file failures logged; scan continues past them
@@ -208,7 +210,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.AssociateTests = time.Since(t0)
 
-	if opts.EmbeddingsEnabled {
+	if opts.EmbeddingsEnabled && opts.Embed {
 		t0 = time.Now()
 		if err := h.embedSymbols(); err != nil {
 			return nil, err
@@ -220,7 +222,23 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			_, _ = fmt.Fprintf(warn, "warn: hnsw index build failed: %v\n", err)
 		}
 		phases.BuildHNSW = time.Since(t0)
+
+		if derr := idx.DeleteMeta(ctx, "embedding_watermark"); derr != nil {
+			_, _ = fmt.Fprintf(warn, "warn: clear embedding watermark: %v\n", derr)
+		}
 	}
+
+	var embeddingDebt int
+	if opts.EmbeddingsEnabled && !opts.Embed && h.changed > 0 {
+		ts := time.Now().UTC().Format(time.RFC3339)
+		if err := idx.WriteMeta(ctx, "embedding_watermark", ts); err != nil {
+			_, _ = fmt.Fprintf(warn, "warn: write embedding watermark: %v\n", err)
+		}
+		if debt, derr := idx.EmbeddingDebtCount(ctx); derr == nil {
+			embeddingDebt = debt
+		}
+	}
+
 	if err := idx.StampSchemaVersion(ctx); err != nil {
 		return nil, err
 	}
@@ -235,6 +253,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		Symbols:        h.symbols,
 		Edges:          h.edges,
 		Embedded:       h.embedded,
+		EmbeddingDebt:  embeddingDebt,
 		Unresolved:     h.unresolved,
 		Ambiguous:      h.ambiguous,
 		Warnings:       h.warnings,
@@ -252,6 +271,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if res.DefaultIgnored > 0 {
 		_, _ = fmt.Fprintf(out, "skipped %d directories (default ignores: %s)\n",
 			res.DefaultIgnored, strings.Join(ignore.DefaultPatterns(), ", "))
+	}
+	if embeddingDebt > 0 {
+		_, _ = fmt.Fprintf(out, "graph, blast, and conventions ready — embeddings deferred (%d symbols)\n", embeddingDebt)
 	}
 	if elapsed > time.Second {
 		printPhaseBreakdown(out, elapsed, phases)
