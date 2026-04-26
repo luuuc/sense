@@ -222,6 +222,38 @@ func Test_filterMatches(t *testing.T) {
 	})
 }
 
+func TestLookupSQLInjectionPayloads(t *testing.T) {
+	db := seedLookupDB(t)
+	payloads := []string{
+		"'; DROP TABLE sense_symbols; --",
+		`" OR 1=1 --`,
+		"User' UNION SELECT id,name,qualified,kind,path,language,line_start FROM sense_files--",
+		"Robert'); DELETE FROM sense_symbols WHERE ('1'='1",
+		"' OR ''='",
+		`"; ATTACH DATABASE '/tmp/evil.db' AS evil; --`,
+	}
+	for _, p := range payloads {
+		t.Run(p, func(t *testing.T) {
+			matches, err := Lookup(context.Background(), db, p)
+			if err != nil {
+				t.Fatalf("Lookup should not error on injection payload: %v", err)
+			}
+			if len(matches) != 0 {
+				t.Errorf("injection payload should not match any symbols, got %d matches", len(matches))
+			}
+		})
+	}
+
+	// Verify the database is still intact after all payloads.
+	matches, err := Lookup(context.Background(), db, "App::User")
+	if err != nil {
+		t.Fatalf("Lookup after injection attempts: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("database corrupted by injection: want 1 match for App::User, got %d", len(matches))
+	}
+}
+
 func TestLevenshtein(t *testing.T) {
 	cases := []struct {
 		a, b string

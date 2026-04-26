@@ -218,6 +218,43 @@ func TestKeywordSearchSanitization(t *testing.T) {
 	}
 }
 
+func TestKeywordSearchSQLInjectionPayloads(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedSearchIndex(t, ctx, a)
+
+	payloads := []string{
+		"'; DROP TABLE sense_symbols; --",
+		`" OR 1=1 --`,
+		"payment' UNION SELECT 1,2,3,4,5,6,7,8 FROM sense_files--",
+		`"); DELETE FROM sense_symbols WHERE ("1"="1`,
+		"' OR ''='",
+	}
+	for _, p := range payloads {
+		t.Run(p, func(t *testing.T) {
+			_, err := a.KeywordSearch(ctx, p, "", 10)
+			if err != nil {
+				t.Errorf("injection payload %q should not cause error: %v", p, err)
+			}
+		})
+	}
+
+	// Verify the database is still intact after all payloads.
+	count, err := a.SymbolCount(ctx)
+	if err != nil {
+		t.Fatalf("SymbolCount after injection attempts: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("database corrupted by injection: want 4 symbols, got %d", count)
+	}
+}
+
 func TestLoadEmbeddingsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
