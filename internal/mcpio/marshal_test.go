@@ -38,6 +38,7 @@ func TestMarshalGraphRoundTrip(t *testing.T) {
 			Tests:    []TestEdgeRef{{File: "test/services/checkout_service_test.rb", Confidence: 0.8}},
 		},
 		SenseMetrics: GraphMetrics{SymbolsReturned: 3},
+		NextSteps:    []NextStep{},
 	}
 
 	raw, err := MarshalGraph(in)
@@ -69,6 +70,7 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 		AffectedTests: []string{"test/models/user_test.rb"},
 		TotalAffected: 2,
 		SenseMetrics:  BlastMetrics{SymbolsTraversed: 5},
+		NextSteps:     []NextStep{},
 	}
 
 	raw, err := MarshalBlast(in)
@@ -99,12 +101,12 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalGraph: %v", err)
 	}
-	for _, field := range []string{`"calls": []`, `"called_by": []`, `"inherits": []`, `"composes": []`, `"includes": []`, `"imports": []`, `"tests": []`} {
+	for _, field := range []string{`"calls": []`, `"called_by": []`, `"inherits": []`, `"composes": []`, `"includes": []`, `"imports": []`, `"tests": []`, `"next_steps": []`} {
 		if !strings.Contains(string(graphBytes), field) {
 			t.Errorf("GraphResponse zero-value missing %s\ngot:\n%s", field, graphBytes)
 		}
 	}
-	for _, nullField := range []string{`"calls": null`, `"called_by": null`, `"inherits": null`, `"composes": null`, `"includes": null`, `"imports": null`, `"tests": null`} {
+	for _, nullField := range []string{`"calls": null`, `"called_by": null`, `"inherits": null`, `"composes": null`, `"includes": null`, `"imports": null`, `"tests": null`, `"next_steps": null`} {
 		if strings.Contains(string(graphBytes), nullField) {
 			t.Errorf("GraphResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, graphBytes)
 		}
@@ -114,12 +116,12 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalBlast: %v", err)
 	}
-	for _, field := range []string{`"risk_factors": []`, `"direct_callers": []`, `"indirect_callers": []`, `"affected_tests": []`} {
+	for _, field := range []string{`"risk_factors": []`, `"direct_callers": []`, `"indirect_callers": []`, `"affected_tests": []`, `"next_steps": []`} {
 		if !strings.Contains(string(blastBytes), field) {
 			t.Errorf("BlastResponse zero-value missing %s\ngot:\n%s", field, blastBytes)
 		}
 	}
-	for _, nullField := range []string{`"risk_factors": null`, `"direct_callers": null`, `"indirect_callers": null`, `"affected_tests": null`} {
+	for _, nullField := range []string{`"risk_factors": null`, `"direct_callers": null`, `"indirect_callers": null`, `"affected_tests": null`, `"next_steps": null`} {
 		if strings.Contains(string(blastBytes), nullField) {
 			t.Errorf("BlastResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, blastBytes)
 		}

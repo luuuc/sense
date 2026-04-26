@@ -49,6 +49,20 @@ func (c Confidence) MarshalJSON() ([]byte, error) {
 }
 
 // ---------------------------------------------------------------
+// Next-step hints (pitch 11-06)
+// ---------------------------------------------------------------
+
+// NextStep is a follow-up action hint appended to every MCP
+// response. Tool is the MCP tool name, Args are pre-filled
+// arguments the agent can pass directly, and Reason is a
+// one-sentence explanation of why this is the logical next call.
+type NextStep struct {
+	Tool   string         `json:"tool"`
+	Args   map[string]any `json:"args,omitempty"`
+	Reason string         `json:"reason"`
+}
+
+// ---------------------------------------------------------------
 // sense.graph response
 // ---------------------------------------------------------------
 
@@ -61,6 +75,7 @@ type GraphResponse struct {
 	Edges        GraphEdges   `json:"edges"`
 	SenseMetrics GraphMetrics `json:"sense_metrics"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`
+	NextSteps    []NextStep   `json:"next_steps"`
 }
 
 // GraphSymbol is the focal symbol's identity block. File is always
@@ -169,6 +184,7 @@ type BlastResponse struct {
 	TotalAffected   int             `json:"total_affected"`
 	SenseMetrics    BlastMetrics    `json:"sense_metrics"`
 	Freshness       *Freshness      `json:"freshness,omitempty"`
+	NextSteps       []NextStep      `json:"next_steps"`
 }
 
 // BlastCaller is the shape of a direct_callers entry.
@@ -230,6 +246,7 @@ type StatusResponse struct {
 	Session           *StatusSession            `json:"session,omitempty"`
 	Lifetime          *StatusLifetime           `json:"lifetime,omitempty"`
 	Version           *StatusVersion            `json:"version,omitempty"`
+	NextSteps         []NextStep                `json:"next_steps"`
 }
 
 // EmbeddingProgress reports background embedding state. Present only
@@ -308,6 +325,7 @@ type SearchResponse struct {
 	Results      []SearchResultEntry `json:"results"`
 	SearchMode   string              `json:"search_mode"`
 	SenseMetrics SearchMetrics       `json:"sense_metrics"`
+	NextSteps    []NextStep          `json:"next_steps"`
 }
 
 // SearchResultEntry is a single search hit in the wire response.

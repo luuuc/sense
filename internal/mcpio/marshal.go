@@ -30,6 +30,9 @@ func MarshalStatus(r StatusResponse) ([]byte, error) {
 	if r.Languages == nil {
 		r.Languages = map[string]StatusLanguage{}
 	}
+	if r.NextSteps == nil {
+		r.NextSteps = []NextStep{}
+	}
 	return marshalPretty(r)
 }
 
@@ -82,12 +85,18 @@ func normalizeGraphResponse(r *GraphResponse) {
 	if r.Edges.Tests == nil {
 		r.Edges.Tests = []TestEdgeRef{}
 	}
+	if r.NextSteps == nil {
+		r.NextSteps = []NextStep{}
+	}
 }
 
 // normalizeSearchResponse replaces nil Results with an empty slice.
 func normalizeSearchResponse(r *SearchResponse) {
 	if r.Results == nil {
 		r.Results = []SearchResultEntry{}
+	}
+	if r.NextSteps == nil {
+		r.NextSteps = []NextStep{}
 	}
 }
 
@@ -105,5 +114,8 @@ func normalizeBlastResponse(r *BlastResponse) {
 	}
 	if r.AffectedTests == nil {
 		r.AffectedTests = []string{}
+	}
+	if r.NextSteps == nil {
+		r.NextSteps = []NextStep{}
 	}
 }
