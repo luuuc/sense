@@ -10,6 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/luuuc/sense/internal/benchmark"
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -37,6 +38,41 @@ import (
 func BenchmarkBlast(b *testing.B) {
 	b.Run("small_graph", func(b *testing.B) { runBlastBench(b, 1024, 8) })
 	b.Run("large_graph", func(b *testing.B) { runBlastBench(b, 30000, 30) })
+}
+
+func BenchmarkBlastHops(b *testing.B) {
+	b.ReportAllocs()
+	ctx := context.Background()
+	dbPath := filepath.Join(b.TempDir(), "hops-bench.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		b.Fatalf("sqlite.Open: %v", err)
+	}
+	b.Cleanup(func() { _ = adapter.Close() })
+
+	fix, err := benchmark.BuildFixture(ctx, adapter, 500)
+	if err != nil {
+		b.Fatalf("BuildFixture: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		b.Fatalf("sql.Open: %v", err)
+	}
+	b.Cleanup(func() { _ = db.Close() })
+
+	subjectID := fix.SymbolIDs[0]
+
+	for _, hops := range []int{1, 2, 3} {
+		b.Run(fmt.Sprintf("hops_%d", hops), func(b *testing.B) {
+			for b.Loop() {
+				_, err := blast.Compute(ctx, db, []int64{subjectID}, blast.Options{MaxHops: hops})
+				if err != nil {
+					b.Fatalf("Compute: %v", err)
+				}
+			}
+		})
+	}
 }
 
 func runBlastBench(b *testing.B, n, branching int) {
