@@ -6,7 +6,7 @@ require (
 	github.com/coder/hnsw v0.6.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/fwcd/tree-sitter-kotlin v0.0.0-20260411204054-55622a49bd59
-	github.com/mark3labs/mcp-go v0.48.0
+	github.com/mark3labs/mcp-go v0.49.0
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-c v0.24.2
 	github.com/tree-sitter/tree-sitter-c-sharp v0.23.5
@@ -18,12 +18,12 @@ require (
 	github.com/tree-sitter/tree-sitter-python v0.25.0
 	github.com/tree-sitter/tree-sitter-ruby v0.23.1
 	github.com/tree-sitter/tree-sitter-rust v0.24.2
-	github.com/tree-sitter/tree-sitter-scala v0.25.0
+	github.com/tree-sitter/tree-sitter-scala v0.26.0
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
-	github.com/yalue/onnxruntime_go v1.27.0
+	github.com/yalue/onnxruntime_go v1.28.0
 	golang.org/x/sync v0.20.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.49.0
+	modernc.org/sqlite v1.50.0
 )
 
 require (
