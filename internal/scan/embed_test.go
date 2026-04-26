@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/luuuc/sense/internal/index"
 	"github.com/luuuc/sense/internal/scan"
+	"github.com/luuuc/sense/internal/sqlite"
 )
 
 func skipWithoutORT(t *testing.T) {
@@ -52,6 +56,7 @@ func Logout(token string) {
 		Output:            &bytes.Buffer{},
 		Warnings:          io.Discard,
 		EmbeddingsEnabled: true,
+		Embed:             true,
 	}
 
 	res, err := scan.Run(ctx, opts)
@@ -111,6 +116,7 @@ func Format(tokens []string) string {
 		Output:            &bytes.Buffer{},
 		Warnings:          io.Discard,
 		EmbeddingsEnabled: true,
+		Embed:             true,
 	}
 
 	// First scan: both files
@@ -162,6 +168,244 @@ func Verify(token string) bool {
 	}
 }
 
+func TestEmbedPending(t *testing.T) {
+	skipWithoutORT(t)
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "auth.go"), `package auth
+
+func Login(email, password string) error {
+	return nil
+}
+
+func Logout(token string) {
+}
+`)
+
+	ctx := context.Background()
+
+	// Phase 1: scan without embedding (deferred)
+	res, err := scan.Run(ctx, scan.Options{
+		Root:              root,
+		Output:            &bytes.Buffer{},
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             false,
+	})
+	if err != nil {
+		t.Fatalf("deferred scan: %v", err)
+	}
+	if res.EmbeddingDebt == 0 {
+		t.Fatal("expected embedding debt after deferred scan")
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	senseDir := filepath.Join(root, ".sense")
+
+	// Phase 2: EmbedPending picks up the debt
+	adapter, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	sqliteAdapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite adapter: %v", err)
+	}
+	defer func() { _ = sqliteAdapter.Close() }()
+
+	n, err := scan.EmbedPending(ctx, sqliteAdapter, root, senseDir)
+	if err != nil {
+		t.Fatalf("EmbedPending: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("EmbedPending should have embedded symbols")
+	}
+
+	// Verify embeddings now exist
+	if count := countEmbeddings(t, dbPath); count == 0 {
+		t.Fatal("no embeddings after EmbedPending")
+	}
+
+	// Verify watermark is cleared
+	watermark := readMeta(t, dbPath, "embedding_watermark")
+	if watermark != "" {
+		t.Errorf("embedding_watermark should be cleared after EmbedPending, got %q", watermark)
+	}
+
+	// Verify HNSW index was written
+	hnswPath := filepath.Join(senseDir, "hnsw.bin")
+	if _, err := os.Stat(hnswPath); err != nil {
+		t.Errorf("hnsw.bin should exist after EmbedPending: %v", err)
+	}
+}
+
+func TestScanEmbeddingsDeferred(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "auth.go"), `package auth
+
+func Login(email, password string) error {
+	return nil
+}
+
+func Logout(token string) {
+}
+`)
+
+	ctx := context.Background()
+	res, err := scan.Run(ctx, scan.Options{
+		Root:              root,
+		Output:            &bytes.Buffer{},
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             false,
+	})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if res.Embedded != 0 {
+		t.Errorf("deferred scan should embed 0 symbols, got %d", res.Embedded)
+	}
+	if res.EmbeddingDebt == 0 {
+		t.Fatal("deferred scan should report embedding debt > 0")
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	if count := countEmbeddings(t, dbPath); count != 0 {
+		t.Errorf("no embeddings should exist after deferred scan, got %d", count)
+	}
+
+	watermark := readMeta(t, dbPath, "embedding_watermark")
+	if watermark == "" {
+		t.Fatal("embedding_watermark should be set after deferred scan")
+	}
+}
+
+func TestEmbedPendingCancelSafe(t *testing.T) {
+	skipWithoutORT(t)
+
+	root := t.TempDir()
+	// Create enough symbols to make embedding take non-trivial time.
+	var src strings.Builder
+	src.WriteString("package bulk\n\n")
+	for i := range 30 {
+		fmt.Fprintf(&src, "func Fn%d() {}\n\n", i)
+	}
+	writeFile(t, filepath.Join(root, "bulk.go"), src.String())
+
+	ctx := context.Background()
+
+	res, err := scan.Run(ctx, scan.Options{
+		Root:              root,
+		Output:            &bytes.Buffer{},
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             false,
+	})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if res.EmbeddingDebt == 0 {
+		t.Fatal("expected embedding debt")
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	senseDir := filepath.Join(root, ".sense")
+
+	// Cancel immediately — EmbedPending should exit without corrupting the index.
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	_, _ = scan.EmbedPending(cancelCtx, adapter, root, senseDir)
+	// EmbedPending may fail (cancelled) or succeed (race) — either is fine.
+	// What matters: the index is not corrupted.
+
+	syms, qerr := adapter.Query(ctx, index.Filter{})
+	if qerr != nil {
+		t.Fatalf("query after cancel: %v", qerr)
+	}
+	if len(syms) == 0 {
+		t.Fatal("symbols should survive cancelled embed")
+	}
+}
+
+func TestDeferredEmbedTransition(t *testing.T) {
+	skipWithoutORT(t)
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "svc.go"), `package svc
+
+func Process() error { return nil }
+func Validate() bool { return true }
+`)
+
+	ctx := context.Background()
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	senseDir := filepath.Join(root, ".sense")
+
+	// State 1: Deferred scan — structural index exists, no embeddings.
+	res, err := scan.Run(ctx, scan.Options{
+		Root:              root,
+		Output:            &bytes.Buffer{},
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             false,
+	})
+	if err != nil {
+		t.Fatalf("deferred scan: %v", err)
+	}
+	if res.Symbols == 0 {
+		t.Fatal("expected symbols from scan")
+	}
+	if res.EmbeddingDebt == 0 {
+		t.Fatal("state 1: expected embedding debt")
+	}
+	if countEmbeddings(t, dbPath) != 0 {
+		t.Fatal("state 1: expected 0 embeddings")
+	}
+	if wm := readMeta(t, dbPath, "embedding_watermark"); wm == "" {
+		t.Fatal("state 1: expected watermark set")
+	}
+
+	// State 2: EmbedPending completes — embeddings exist, watermark cleared.
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	n, err := scan.EmbedPending(ctx, adapter, root, senseDir)
+	if err != nil {
+		t.Fatalf("EmbedPending: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("state 2: EmbedPending should embed symbols")
+	}
+
+	if count := countEmbeddings(t, dbPath); count != n {
+		t.Errorf("state 2: embeddings count %d != embedded %d", count, n)
+	}
+	if wm := readMeta(t, dbPath, "embedding_watermark"); wm != "" {
+		t.Errorf("state 2: watermark should be cleared, got %q", wm)
+	}
+
+	// State 3: No more debt — EmbedPending is a no-op.
+	n2, err := scan.EmbedPending(ctx, adapter, root, senseDir)
+	if err != nil {
+		t.Fatalf("second EmbedPending: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("state 3: expected 0 symbols embedded on re-run, got %d", n2)
+	}
+}
+
 func countEmbeddings(t *testing.T, dbPath string) int {
 	t.Helper()
 	db, err := sql.Open("sqlite", dbPath)
@@ -188,4 +432,19 @@ func firstEmbeddingBlobSize(t *testing.T, dbPath string) int {
 		t.Fatalf("read embedding: %v", err)
 	}
 	return len(blob)
+}
+
+func readMeta(t *testing.T, dbPath, key string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var value string
+	err = db.QueryRow("SELECT value FROM sense_meta WHERE key = ?", key).Scan(&value)
+	if err != nil {
+		return ""
+	}
+	return value
 }
