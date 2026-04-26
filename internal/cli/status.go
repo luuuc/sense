@@ -16,7 +16,6 @@ import (
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/sqlite"
-	"github.com/luuuc/sense/internal/tui"
 	"github.com/luuuc/sense/internal/version"
 
 	_ "modernc.org/sqlite"
@@ -29,7 +28,6 @@ coverage, freshness, and version info.
 
 Flags:
   --json       Emit JSON matching the sense.status MCP schema
-  --live       Show a live-updating single-line status bar (for tmux/editor embedding)
   -h, --help   Show this help
 
 Exit codes:
@@ -43,17 +41,12 @@ func RunStatus(args []string, cio IO) int {
 	fs := flag.NewFlagSet("sense status", flag.ContinueOnError)
 	fs.SetOutput(cio.Stderr)
 	jsonFlag := fs.Bool("json", false, "")
-	liveFlag := fs.Bool("live", false, "")
 	fs.Usage = func() { _, _ = fmt.Fprint(cio.Stderr, statusHelp) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return ExitSuccess
 		}
 		return ExitGeneralError
-	}
-
-	if *liveFlag {
-		return runStatusLive(cio)
 	}
 
 	ctx := context.Background()
@@ -389,33 +382,6 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
-}
-
-func runStatusLive(cio IO) int {
-	ctx := context.Background()
-	senseDir := filepath.Join(cio.Dir, ".sense")
-	if env := os.Getenv("SENSE_DIR"); env != "" {
-		senseDir = env
-	}
-	dbPath := filepath.Join(senseDir, "index.db")
-
-	if _, err := os.Stat(dbPath); err != nil {
-		_, _ = fmt.Fprintln(cio.Stderr, "sense: no index found. Run 'sense scan' to build one.")
-		return ExitIndexMissing
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		_, _ = fmt.Fprintf(cio.Stderr, "sense status: %v\n", err)
-		return ExitGeneralError
-	}
-	defer func() { _ = db.Close() }()
-
-	if err := tui.RunLive(ctx, db); err != nil {
-		_, _ = fmt.Fprintf(cio.Stderr, "sense status --live: %v\n", err)
-		return ExitGeneralError
-	}
-	return ExitSuccess
 }
 
 func EmbeddingsEnabled(root string) bool {

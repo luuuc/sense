@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -46,19 +45,6 @@ func TestRunStatusJSONProducesValidJSON(t *testing.T) {
 	}
 	if raw[0] != '{' {
 		t.Errorf("stdout starts with %q, want '{'  — preamble is leaking into JSON output", string(raw[:1]))
-	}
-}
-
-func TestRunStatus_LiveNoIndex(t *testing.T) {
-	dir := t.TempDir()
-	cio := IO{
-		Dir:    dir,
-		Stdout: &strings.Builder{},
-		Stderr: &strings.Builder{},
-	}
-	code := RunStatus([]string{"--live"}, cio)
-	if code != ExitIndexMissing {
-		t.Errorf("expected exit code %d for missing index, got %d", ExitIndexMissing, code)
 	}
 }
 
