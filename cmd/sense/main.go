@@ -39,6 +39,7 @@ Commands:
   doctor        Diagnose common index problems
   hook          Claude Code lifecycle hooks (pre-tool-use, pre-compact, etc.)
   mcp           Start the MCP server (stdio transport)
+  update        Check for and install the latest version
   version       Print version
   help          Show this help
 
@@ -50,7 +51,6 @@ func main() {
 
 	if len(os.Args) < 2 {
 		if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
-			versioncheck.CheckAndNotify(os.Stderr)
 			adapter, err := cli.OpenIndex(ctx, ".")
 			if err != nil {
 				if errors.Is(err, cli.ErrIndexMissing) {
@@ -73,25 +73,6 @@ func main() {
 	}
 
 	cmd := os.Args[1]
-
-	switch cmd {
-	case "version", "--version", "-v", "help", "--help", "-h", "mcp", "hook":
-		// no version check for these
-	default:
-		jsonMode := false
-		for _, a := range os.Args[2:] {
-			if a == "--" {
-				break
-			}
-			if a == "--json" || a == "-json" {
-				jsonMode = true
-				break
-			}
-		}
-		if !jsonMode {
-			versioncheck.CheckAndNotify(os.Stderr)
-		}
-	}
 
 	switch cmd {
 	case "version", "--version", "-v":
@@ -201,6 +182,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "sense mcp:", err)
 			os.Exit(1)
 		}
+
+	case "update":
+		os.Exit(versioncheck.Update(os.Stdout, os.Stderr))
 
 	default:
 		fmt.Fprintf(os.Stderr, "sense: unknown command %q. Run 'sense help'.\n", cmd)
