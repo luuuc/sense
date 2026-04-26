@@ -32,6 +32,7 @@ Commands:
   dead          Find dead code (symbols with no incoming references)
   conventions   Detected project conventions
   status        Index health and embedding coverage
+  benchmark     Run performance benchmarks on the index
   doctor        Diagnose common index problems
   hook          Claude Code lifecycle hooks (pre-tool-use, pre-compact, etc.)
   mcp           Start the MCP server (stdio transport)
@@ -144,6 +145,9 @@ func main() {
 
 	case "status":
 		os.Exit(cli.RunStatus(os.Args[2:], cli.DefaultIO()))
+
+	case "benchmark":
+		os.Exit(cli.RunBenchmark(os.Args[2:], cli.DefaultIO()))
 
 	case "doctor":
 		os.Exit(cli.RunDoctor(os.Args[2:], cli.DefaultIO()))
