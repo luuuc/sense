@@ -1,0 +1,33 @@
+name: orient
+description: Orient in an unfamiliar codebase — identify architecture and key abstractions
+variables: []
+prompt_template: |
+  I just cloned this repo and need to understand it. Give me a high-level
+  orientation: what does it do, how is it structured, what are the key
+  abstractions, and where would I start reading? Do not use Explore agents.
+  Respond with a JSON object: { "summary": "...", "key_abstractions": ["...", ...], "entry_points": ["file:line", ...] }
+
+repos:
+  sense:
+    ground_truth_file: ground-truth/sense/orient.json
+  discourse:
+    ground_truth_file: ground-truth/discourse/orient.json
+  openproject:
+    ground_truth_file: ground-truth/openproject/orient.json
+  gin:
+    ground_truth_file: ground-truth/gin/orient.json
+  nextjs:
+    ground_truth_file: ground-truth/nextjs/orient.json
+
+scoring:
+  correctness:
+    type: qualitative
+    match_key: keywords
+    rubric: keyword_presence
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness

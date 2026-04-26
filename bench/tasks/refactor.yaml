@@ -1,0 +1,38 @@
+name: refactor
+description: Assess what to know before refactoring a symbol
+variables: [symbol]
+prompt_template: |
+  I'm about to refactor `{symbol}`. What should I know before I start?
+  Cover callers, dependents, tests, risk, and anything non-obvious.
+  Do not use Explore agents.
+  Respond with a JSON object: { "callers": [...], "dependents": [...], "tests": [...], "risks": ["...", ...] }
+
+repos:
+  sense:
+    symbol: "scan.RunIncremental"
+    ground_truth_file: ground-truth/sense/refactor.json
+  discourse:
+    symbol: "PostCreator#create"
+    ground_truth_file: ground-truth/discourse/refactor.json
+  openproject:
+    symbol: "WorkPackage"
+    ground_truth_file: ground-truth/openproject/refactor.json
+  gin:
+    symbol: "Engine.handleHTTPRequest"
+    ground_truth_file: ground-truth/gin/refactor.json
+  nextjs:
+    symbol: "renderToHTMLOrFlight"
+    ground_truth_file: ground-truth/nextjs/refactor.json
+
+scoring:
+  correctness:
+    type: qualitative
+    match_key: keywords
+    rubric: keyword_presence
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness
