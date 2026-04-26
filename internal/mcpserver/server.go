@@ -80,6 +80,7 @@ func RunWithOptions(opts RunOptions) error {
 			Output:            os.Stderr,
 			Warnings:          os.Stderr,
 			EmbeddingsEnabled: cli.EmbeddingsEnabled(dir),
+			Embed:             true,
 		}); err != nil {
 			return fmt.Errorf("sense mcp: rebuild scan: %w", err)
 		}
@@ -97,8 +98,10 @@ func RunWithOptions(opts RunOptions) error {
 
 	var vectorIdx search.VectorIndex
 	var embedder embed.Embedder
+	var hasDebt bool
 
-	if cli.EmbeddingsEnabled(dir) {
+	embeddingsEnabled := cli.EmbeddingsEnabled(dir)
+	if embeddingsEnabled {
 		hnswPath := filepath.Join(dir, ".sense", "hnsw.bin")
 		idx, loadErr := search.LoadHNSWIndex(hnswPath)
 		if loadErr == nil && idx != nil {
@@ -112,7 +115,11 @@ func RunWithOptions(opts RunOptions) error {
 				vectorIdx = search.BuildHNSWIndex(embeddings)
 			}
 		}
-		if vectorIdx != nil && vectorIdx.Len() > 0 {
+
+		debtCount, _ := adapter.EmbeddingDebtCount(ctx)
+		hasDebt = debtCount > 0
+
+		if (vectorIdx != nil && vectorIdx.Len() > 0) || hasDebt {
 			embedder, err = embed.NewBundledEmbedder(0)
 			if err != nil {
 				return fmt.Errorf("sense mcp: init embedder: %w", err)
@@ -122,6 +129,31 @@ func RunWithOptions(opts RunOptions) error {
 	}
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
+
+	embedCtx, cancelEmbed := context.WithCancel(ctx)
+	defer cancelEmbed()
+
+	if embeddingsEnabled && hasDebt && opts.WatchState == nil {
+		senseDir := filepath.Join(dir, ".sense")
+		go func() {
+			n, err := scan.EmbedPending(embedCtx, adapter, dir, senseDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "sense mcp: background embed failed: %v\n", err)
+				return
+			}
+			if n == 0 {
+				return
+			}
+			hnswPath := filepath.Join(senseDir, "hnsw.bin")
+			newIdx, loadErr := search.LoadHNSWIndex(hnswPath)
+			if loadErr != nil {
+				fmt.Fprintf(os.Stderr, "sense mcp: load hnsw after embed: %v\n", loadErr)
+				return
+			}
+			engine.SetVectors(newIdx)
+			fmt.Fprintf(os.Stderr, "sense mcp: embeddings complete (%d symbols) — search upgraded to hybrid mode\n", n)
+		}()
+	}
 
 	tracker := metrics.NewTracker(adapter.DB())
 	defer tracker.Close()
@@ -347,7 +379,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	language := req.GetString("language", "")
 	minScore := req.GetFloat("min_score", 0.0)
 
-	results, symbolCount, err := h.search.Search(ctx, search.Options{
+	results, symbolCount, searchMode, err := h.search.Search(ctx, search.Options{
 		Query:    query,
 		Limit:    limit,
 		Language: language,
@@ -385,7 +417,8 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 
 	filesAvoided := len(uniqueFiles)
 	resp := mcpio.SearchResponse{
-		Results: entries,
+		Results:    entries,
+		SearchMode: searchMode,
 		SenseMetrics: mcpio.SearchMetrics{
 			SymbolsSearched:           symbolCount,
 			EstimatedFileReadsAvoided: filesAvoided,
@@ -681,6 +714,18 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 
 	if resp.Index.Symbols > 0 {
 		resp.Index.Coverage = float64(resp.Index.Embeddings) / float64(resp.Index.Symbols)
+	}
+
+	if debt := resp.Index.Symbols - resp.Index.Embeddings; debt > 0 {
+		pct := 0
+		if resp.Index.Symbols > 0 {
+			pct = resp.Index.Embeddings * 100 / resp.Index.Symbols
+		}
+		resp.EmbeddingProgress = &mcpio.EmbeddingProgress{
+			Total:    resp.Index.Symbols,
+			Embedded: resp.Index.Embeddings,
+			Percent:  pct,
+		}
 	}
 
 	langs, err := queryLanguageBreakdown(ctx, db)
