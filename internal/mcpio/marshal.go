@@ -43,6 +43,18 @@ func MarshalSearch(r SearchResponse) ([]byte, error) {
 	return marshalPretty(r)
 }
 
+// MarshalDeadCode renders a DeadCodeResponse with the same
+// normalization + pretty-print contract as MarshalGraph.
+func MarshalDeadCode(r DeadCodeResponse) ([]byte, error) {
+	if r.DeadSymbols == nil {
+		r.DeadSymbols = []DeadSymbolEntry{}
+	}
+	if r.NextSteps == nil {
+		r.NextSteps = []NextStep{}
+	}
+	return marshalPretty(r)
+}
+
 // marshalPretty is the shared encoder: SetEscapeHTML(false) keeps
 // identifier characters like `<`, `>`, `&` literal so goldens in
 // card 3 pin the documented examples byte-for-byte. Two-space indent

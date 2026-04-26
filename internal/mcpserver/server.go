@@ -20,6 +20,7 @@ import (
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/conventions"
+	"github.com/luuuc/sense/internal/dead"
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
@@ -227,7 +228,9 @@ func graphTool() mcp.Tool {
 			"inheritance, composition, includes, imports, and test coverage. "+
 			"Use this instead of grep or file reading when the user asks about relationships, dependencies, "+
 			"callers, or how a symbol connects to the rest of the codebase. "+
-			"Returns a pre-computed graph from the Sense index with no context window cost for file contents."),
+			"Returns a pre-computed graph from the Sense index with no context window cost for file contents.\n\n"+
+			"When dead_code is true, returns project-wide dead symbols (zero incoming references) instead of "+
+			"per-symbol edges. The symbol, direction, and depth parameters are ignored in this mode."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Graph",
 			ReadOnlyHint:    mcp.ToBoolPtr(true),
@@ -236,8 +239,7 @@ func graphTool() mcp.Tool {
 			OpenWorldHint:   mcp.ToBoolPtr(false),
 		}),
 		mcp.WithString("symbol",
-			mcp.Required(),
-			mcp.Description("Qualified or unqualified symbol name, e.g. 'User', 'Checkout::Order', 'HandleRequest'"),
+			mcp.Description("Qualified or unqualified symbol name, e.g. 'User', 'Checkout::Order', 'HandleRequest'. Ignored when dead_code is true."),
 		),
 		mcp.WithNumber("depth",
 			mcp.Description("How many hops to traverse from the symbol (default 1)"),
@@ -245,6 +247,15 @@ func graphTool() mcp.Tool {
 		mcp.WithString("direction",
 			mcp.Description("Which edges to follow: 'both' (default), 'callers' (who calls this), or 'callees' (what this calls)"),
 			mcp.Enum("both", "callers", "callees"),
+		),
+		mcp.WithBoolean("dead_code",
+			mcp.Description("When true, return project-wide dead symbols instead of per-symbol edges. Symbol, direction, and depth are ignored."),
+		),
+		mcp.WithString("language",
+			mcp.Description("Filter dead code results to a specific language, e.g. 'go', 'ruby'. Only used when dead_code is true."),
+		),
+		mcp.WithString("domain",
+			mcp.Description("Filter dead code results to a path substring, e.g. 'services', 'models'. Only used when dead_code is true."),
 		),
 	)
 }
@@ -303,8 +314,12 @@ func statusTool() mcp.Tool {
 // ---------------------------------------------------------------
 
 func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	symbol, err := req.RequireString("symbol")
-	if err != nil {
+	if req.GetBool("dead_code", false) {
+		return h.handleDeadCode(ctx, req)
+	}
+
+	symbol := req.GetString("symbol", "")
+	if symbol == "" {
 		return mcp.NewToolResultError("sense.graph: missing required parameter 'symbol'"), nil
 	}
 
@@ -394,6 +409,47 @@ func graphHints(resp mcpio.GraphResponse, direction string) []mcpio.NextStep {
 	if len(hints) > 2 {
 		hints = hints[:2]
 	}
+	return hints
+}
+
+func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	language := req.GetString("language", "")
+	domain := req.GetString("domain", "")
+
+	result, err := dead.FindDead(ctx, h.db, dead.Options{
+		Language: language,
+		Domain:   domain,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sense.graph dead_code: %w", err)
+	}
+
+	rolled := dead.Rollup(result.Dead)
+	resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols)
+
+	h.tracker.Record("sense.graph", "dead_code",
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
+
+	resp.NextSteps = deadCodeHints(resp)
+
+	out, err := mcpio.MarshalDeadCode(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense.graph dead_code: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func deadCodeHints(resp mcpio.DeadCodeResponse) []mcpio.NextStep {
+	var hints []mcpio.NextStep
+
+	if resp.DeadCount > 0 && len(resp.DeadSymbols) > 0 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.graph",
+			Args:   map[string]any{"symbol": resp.DeadSymbols[0].Qualified},
+			Reason: "inspect the top dead symbol's relationships to confirm it's truly unused",
+		})
+	}
+
 	return hints
 }
 
