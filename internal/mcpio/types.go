@@ -354,3 +354,35 @@ type SearchMetrics struct {
 	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
 	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
 }
+
+// ---------------------------------------------------------------
+// Dead code response (sense.graph dead_code mode)
+// ---------------------------------------------------------------
+
+// DeadCodeResponse is the shape returned by sense.graph when dead_code
+// is true. It replaces the normal GraphResponse with project-wide dead
+// symbol analysis.
+type DeadCodeResponse struct {
+	DeadSymbols  []DeadSymbolEntry `json:"dead_symbols"`
+	TotalSymbols int               `json:"total_symbols"`
+	DeadCount    int               `json:"dead_count"`
+	SenseMetrics DeadCodeMetrics   `json:"sense_metrics"`
+	NextSteps    []NextStep        `json:"next_steps"`
+}
+
+// DeadSymbolEntry is a single dead symbol in the response.
+type DeadSymbolEntry struct {
+	Symbol    string `json:"symbol"`
+	Qualified string `json:"qualified"`
+	File      string `json:"file"`
+	LineStart int    `json:"line_start"`
+	LineEnd   int    `json:"line_end"`
+	Kind      string `json:"kind"`
+}
+
+// DeadCodeMetrics is the observability footer for dead code analysis.
+type DeadCodeMetrics struct {
+	SymbolsAnalyzed           int `json:"symbols_analyzed"`
+	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
+}
