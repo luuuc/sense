@@ -29,6 +29,7 @@ Commands:
   search        Hybrid semantic + keyword search
   graph         Symbol relationships — callers, callees, inheritance, tests
   blast         Blast radius for a symbol or diff
+  dead          Find dead code (symbols with no incoming references)
   conventions   Detected project conventions
   status        Index health and embedding coverage
   doctor        Diagnose common index problems
@@ -134,6 +135,9 @@ func main() {
 
 	case "blast":
 		os.Exit(cli.RunBlast(os.Args[2:], cli.DefaultIO()))
+
+	case "dead":
+		os.Exit(cli.RunDead(os.Args[2:], cli.DefaultIO()))
 
 	case "conventions":
 		os.Exit(cli.RunConventions(os.Args[2:], cli.DefaultIO()))
