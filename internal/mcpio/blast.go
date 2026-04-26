@@ -26,24 +26,22 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 	}
 
 	for _, c := range r.DirectCallers {
-		// Empty File indicates a FileLookup miss — a data-integrity
-		// race between the blast read and the file-path read, not an
-		// intentional empty path. Direct callers are indexed symbols
-		// by construction, so a miss here is rare.
 		var file string
 		if path, ok := files(c.FileID); ok {
 			file = path
 		}
 		resp.DirectCallers = append(resp.DirectCallers, BlastCaller{
-			Symbol: qualifiedOrName(c),
-			File:   file,
+			Symbol:      qualifiedOrName(c),
+			File:        file,
+			ViaTemporal: r.DirectTemporalIDs[c.ID],
 		})
 	}
 	for _, hop := range r.IndirectCallers {
 		resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
-			Symbol: qualifiedOrName(hop.Symbol),
-			Via:    qualifiedOrName(hop.Via),
-			Hops:   hop.Hops,
+			Symbol:      qualifiedOrName(hop.Symbol),
+			Via:         qualifiedOrName(hop.Via),
+			Hops:        hop.Hops,
+			ViaTemporal: hop.ViaTemporal,
 		})
 	}
 

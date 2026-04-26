@@ -115,9 +115,52 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		}
 	}
 
+	// Temporal edges are bidirectional — collect from outbound to get one
+	// entry per partner, regardless of direction filter.
+	temporalSeen := map[int64]struct{}{}
+	for _, e := range sc.Outbound {
+		if e.Edge.Kind != model.EdgeTemporal {
+			continue
+		}
+		if _, dup := temporalSeen[e.Target.ID]; dup {
+			continue
+		}
+		temporalSeen[e.Target.ID] = struct{}{}
+		coChanges := 0
+		if e.Edge.Line != nil {
+			coChanges = *e.Edge.Line
+		}
+		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
+			Symbol:    qualifiedOrName(e.Target),
+			File:      fileRefOrNil(e.Target.FileID, files),
+			CoChanges: coChanges,
+			Strength:  Confidence(e.Edge.Confidence),
+		})
+	}
+	for _, e := range sc.Inbound {
+		if e.Edge.Kind != model.EdgeTemporal {
+			continue
+		}
+		if _, dup := temporalSeen[e.Target.ID]; dup {
+			continue
+		}
+		temporalSeen[e.Target.ID] = struct{}{}
+		coChanges := 0
+		if e.Edge.Line != nil {
+			coChanges = *e.Edge.Line
+		}
+		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
+			Symbol:    qualifiedOrName(e.Target),
+			File:      fileRefOrNil(e.Target.FileID, files),
+			CoChanges: coChanges,
+			Strength:  Confidence(e.Edge.Confidence),
+		})
+	}
+
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
-		len(resp.Edges.Includes) + len(resp.Edges.Imports) + len(resp.Edges.Tests)
+		len(resp.Edges.Includes) + len(resp.Edges.Imports) + len(resp.Edges.Tests) +
+		len(resp.Edges.Temporal)
 
 	uniqueFiles := countUniqueEdgeFiles(resp)
 	resp.SenseMetrics = GraphMetrics{
@@ -172,6 +215,11 @@ func countUniqueEdgeFiles(resp GraphResponse) int {
 	}
 	for _, e := range resp.Edges.Tests {
 		seen[e.File] = struct{}{}
+	}
+	for _, e := range resp.Edges.Temporal {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
 	}
 	return len(seen)
 }
