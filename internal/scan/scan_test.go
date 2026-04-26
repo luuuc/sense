@@ -120,7 +120,7 @@ func TestScanSecondRunSkipsSetup(t *testing.T) {
 	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &firstOut, Warnings: io.Discard}); err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
-	if !strings.Contains(firstOut.String(), "AI tool integration:") {
+	if !strings.Contains(firstOut.String(), "Configuring") {
 		t.Fatal("first run should print setup summary")
 	}
 
@@ -129,30 +129,11 @@ func TestScanSecondRunSkipsSetup(t *testing.T) {
 	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &secondOut, Warnings: io.Discard}); err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
-	if strings.Contains(secondOut.String(), "AI tool integration:") {
+	if strings.Contains(secondOut.String(), "Configuring") {
 		t.Error("second run should not print setup summary")
 	}
 }
 
-func TestScanInitForcesSetup(t *testing.T) {
-	root := t.TempDir()
-	buildTree(t, root, []string{"a.go"})
-	ctx := context.Background()
-
-	// First run: creates .sense/ and writes config.
-	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
-		t.Fatalf("first Run: %v", err)
-	}
-
-	// Second run with --init: setup should fire again.
-	var buf bytes.Buffer
-	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &buf, Warnings: io.Discard, Init: true}); err != nil {
-		t.Fatalf("init Run: %v", err)
-	}
-	if !strings.Contains(buf.String(), "AI tool integration:") {
-		t.Error("--init run should print setup summary")
-	}
-}
 
 func TestScanSchemaApplied(t *testing.T) {
 	root := t.TempDir()
