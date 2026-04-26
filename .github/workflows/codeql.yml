@@ -1,0 +1,41 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Cache dependencies (model + ORT)
+        uses: actions/cache@v5
+        with:
+          path: internal/embed/bundle
+          key: sense-deps-linux-amd64-${{ hashFiles('scripts/fetch-deps.sh') }}
+
+      - name: Fetch dependencies (model + ORT)
+        run: ./scripts/fetch-deps.sh --local
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+
+      - name: Build
+        run: make build
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
