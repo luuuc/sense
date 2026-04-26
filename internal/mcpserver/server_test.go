@@ -149,6 +149,11 @@ func TestMCPIntegration(t *testing.T) {
 				IndexAgeSeconds *int64 `json:"index_age_seconds"`
 				StaleFilesSeen  *int   `json:"stale_files_seen"`
 			} `json:"freshness"`
+			NextSteps []struct {
+				Tool   string         `json:"tool"`
+				Args   map[string]any `json:"args,omitempty"`
+				Reason string         `json:"reason"`
+			} `json:"next_steps"`
 		}
 		if err := json.Unmarshal([]byte(text), &graph); err != nil {
 			t.Fatalf("parse graph JSON: %v\n%s", err, text)
@@ -169,6 +174,12 @@ func TestMCPIntegration(t *testing.T) {
 			t.Error("freshness block missing")
 		} else if graph.Freshness.IndexAgeSeconds == nil {
 			t.Error("freshness.index_age_seconds missing")
+		}
+		if graph.NextSteps == nil {
+			t.Error("next_steps missing from graph response")
+		}
+		if len(graph.Edges.CalledBy) >= 5 && len(graph.NextSteps) == 0 {
+			t.Error("expected blast hint for symbol with ≥5 callers")
 		}
 	})
 
@@ -261,6 +272,10 @@ func TestMCPIntegration(t *testing.T) {
 				StaleFilesSeen        *int    `json:"stale_files_seen"`
 				MaxFileMtimeSinceScan *string `json:"max_file_mtime_since_scan"`
 			} `json:"freshness"`
+			NextSteps []struct {
+				Tool   string `json:"tool"`
+				Reason string `json:"reason"`
+			} `json:"next_steps"`
 		}
 		if err := json.Unmarshal([]byte(text), &status); err != nil {
 			t.Fatalf("parse status JSON: %v\n%s", err, text)
@@ -287,6 +302,9 @@ func TestMCPIntegration(t *testing.T) {
 		// the other freshness fields instead.
 		if status.Freshness.StaleFilesSeen == nil {
 			t.Error("freshness.stale_files_seen missing")
+		}
+		if status.NextSteps == nil {
+			t.Error("next_steps missing from status response")
 		}
 	})
 }
