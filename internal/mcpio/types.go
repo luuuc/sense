@@ -96,13 +96,14 @@ type GraphSymbol struct {
 // leave unrequested kinds as empty slices and callers must treat
 // `[]` as "none found" rather than "not provided."
 type GraphEdges struct {
-	Calls    []CallEdgeRef    `json:"calls"`
-	CalledBy []CallEdgeRef    `json:"called_by"`
-	Inherits []InheritEdgeRef `json:"inherits"`
-	Composes []ComposeEdgeRef `json:"composes"`
-	Includes []IncludeEdgeRef `json:"includes"`
-	Imports  []ImportEdgeRef  `json:"imports"`
-	Tests    []TestEdgeRef    `json:"tests"`
+	Calls    []CallEdgeRef      `json:"calls"`
+	CalledBy []CallEdgeRef      `json:"called_by"`
+	Inherits []InheritEdgeRef   `json:"inherits"`
+	Composes []ComposeEdgeRef   `json:"composes"`
+	Includes []IncludeEdgeRef   `json:"includes"`
+	Imports  []ImportEdgeRef    `json:"imports"`
+	Tests    []TestEdgeRef      `json:"tests"`
+	Temporal []TemporalEdgeRef  `json:"temporal"`
 }
 
 // CallEdgeRef is the shape of a calls / called_by edge entry. File
@@ -157,6 +158,16 @@ type TestEdgeRef struct {
 	Confidence Confidence `json:"confidence"`
 }
 
+// TemporalEdgeRef is the shape of a temporal coupling edge entry.
+// Co-change data is derived from git history; strength is the
+// normalized co-change frequency (co_changes / max(changes_A, changes_B)).
+type TemporalEdgeRef struct {
+	Symbol    string     `json:"symbol"`
+	File      *string    `json:"file"`
+	CoChanges int        `json:"co_changes"`
+	Strength  Confidence `json:"strength"`
+}
+
 // GraphMetrics is the observability footer on a graph response.
 type GraphMetrics struct {
 	SymbolsReturned           int `json:"symbols_returned"`
@@ -189,8 +200,9 @@ type BlastResponse struct {
 
 // BlastCaller is the shape of a direct_callers entry.
 type BlastCaller struct {
-	Symbol string `json:"symbol"`
-	File   string `json:"file"`
+	Symbol      string `json:"symbol"`
+	File        string `json:"file"`
+	ViaTemporal bool   `json:"via_temporal,omitempty"`
 }
 
 // BlastIndirect is the shape of an indirect_callers entry. Via names
@@ -198,9 +210,10 @@ type BlastCaller struct {
 // closer" to the subject — so a consumer can render
 // "X (via Y, hops=N)".
 type BlastIndirect struct {
-	Symbol string `json:"symbol"`
-	Via    string `json:"via"`
-	Hops   int    `json:"hops"`
+	Symbol      string `json:"symbol"`
+	Via         string `json:"via"`
+	Hops        int    `json:"hops"`
+	ViaTemporal bool   `json:"via_temporal,omitempty"`
 }
 
 // BlastMetrics mirrors GraphMetrics' footer shape but with the
