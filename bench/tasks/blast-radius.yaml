@@ -1,0 +1,38 @@
+name: blast-radius
+description: Determine what breaks if a symbol changes
+variables: [symbol]
+prompt_template: |
+  What would break if I changed the signature of `{symbol}`?
+  List every file and symbol that would be directly or indirectly affected.
+  Do not use Explore agents.
+  Respond with a JSON object: { "affected": ["file:line symbol", ...] }
+
+repos:
+  sense:
+    symbol: "blast.Compute"
+    ground_truth_file: ground-truth/sense/blast-radius.json
+  discourse:
+    symbol: "Topic"
+    ground_truth_file: ground-truth/discourse/blast-radius.json
+  openproject:
+    symbol: "WorkPackage"
+    ground_truth_file: ground-truth/openproject/blast-radius.json
+  gin:
+    symbol: "Context"
+    ground_truth_file: ground-truth/gin/blast-radius.json
+  nextjs:
+    symbol: "NextConfig"
+    ground_truth_file: ground-truth/nextjs/blast-radius.json
+
+scoring:
+  correctness:
+    type: set_match
+    match_key: affected
+    partial_credit: true
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness

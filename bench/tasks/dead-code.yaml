@@ -1,0 +1,37 @@
+name: dead-code
+description: Find dead code (unused symbols) in a codebase area
+variables: [domain]
+prompt_template: |
+  Find dead code in `{domain}` — symbols that are defined but never
+  referenced anywhere else in the codebase. Do not use Explore agents.
+  Respond with a JSON object: { "dead_symbols": ["qualified.Name", ...] }
+
+repos:
+  sense:
+    domain: "internal/benchmark"
+    ground_truth_file: ground-truth/sense/dead-code.json
+  discourse:
+    domain: "app/services"
+    ground_truth_file: ground-truth/discourse/dead-code.json
+  openproject:
+    domain: "app/services"
+    ground_truth_file: ground-truth/openproject/dead-code.json
+  gin:
+    domain: "."
+    ground_truth_file: ground-truth/gin/dead-code.json
+  nextjs:
+    domain: "packages/next/src/server"
+    ground_truth_file: ground-truth/nextjs/dead-code.json
+
+scoring:
+  correctness:
+    type: set_match
+    match_key: dead_symbols
+    partial_credit: true
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness

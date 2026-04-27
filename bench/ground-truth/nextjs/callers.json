@@ -1,0 +1,11 @@
+{
+  "symbol": "renderToHTMLOrFlight",
+  "callers": [
+    "packages/next/src/server/route-modules/app-page/module.ts:AppPageRouteModule.render",
+    "packages/next/src/server/route-modules/app-page/module.render.ts:lazyRenderAppPage",
+    "packages/next/src/server/next-server.ts:lazyRenderAppPage",
+    "packages/next/src/export/routes/app-page.ts:lazyRenderAppPage"
+  ],
+  "_note": "renderToHTMLOrFlight is exported from app-render.tsx, imported into module.ts which calls it directly in AppPageRouteModule.render() and re-exports it. module.render.ts wraps it via dynamic require as lazyRenderAppPage. lazyRenderAppPage is then called from next-server.ts and export/routes/app-page.ts. Verified via grep -rn across packages/next/src/.",
+  "status": "verified"
+}

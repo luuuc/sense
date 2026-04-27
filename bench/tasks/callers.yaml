@@ -1,0 +1,37 @@
+name: callers
+description: Find all callers of a specific symbol
+variables: [symbol]
+prompt_template: |
+  Find all callers of `{symbol}` in this codebase. List each caller
+  with its file path and line number. Do not use Explore agents.
+  Respond with a JSON object: { "callers": ["file:line symbol", ...] }
+
+repos:
+  sense:
+    symbol: "blast.Compute"
+    ground_truth_file: ground-truth/sense/callers.json
+  discourse:
+    symbol: "TopicCreator#create"
+    ground_truth_file: ground-truth/discourse/callers.json
+  openproject:
+    symbol: "WorkPackage#save"
+    ground_truth_file: ground-truth/openproject/callers.json
+  gin:
+    symbol: "Engine.ServeHTTP"
+    ground_truth_file: ground-truth/gin/callers.json
+  nextjs:
+    symbol: "renderToHTMLOrFlight"
+    ground_truth_file: ground-truth/nextjs/callers.json
+
+scoring:
+  correctness:
+    type: set_match
+    match_key: callers
+    partial_credit: true
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness

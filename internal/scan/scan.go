@@ -221,6 +221,16 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		if err := h.embedSymbols(); err != nil {
 			return nil, err
 		}
+
+		// Backfill embeddings for symbols indexed in prior scans
+		// that were never embedded (changedFileIDs was empty).
+		if pending, perr := idx.EmbeddingDebtCount(ctx); perr == nil && pending > 0 {
+			n, eerr := EmbedPending(ctx, idx, root, senseDir)
+			if eerr != nil {
+				return nil, fmt.Errorf("embed pending symbols: %w", eerr)
+			}
+			h.embedded += n
+		}
 		phases.Embed = time.Since(t0)
 
 		t0 = time.Now()

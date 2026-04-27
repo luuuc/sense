@@ -1,0 +1,38 @@
+name: conventions
+description: Identify patterns and conventions in a code domain
+variables: [domain]
+prompt_template: |
+  What patterns and conventions does the `{domain}` area of this codebase follow?
+  Cover naming, structure, testing, and inheritance patterns.
+  Do not use Explore agents.
+  Respond with a JSON object: { "conventions": ["pattern description", ...] }
+
+repos:
+  sense:
+    domain: "internal/scan"
+    ground_truth_file: ground-truth/sense/conventions.json
+  discourse:
+    domain: "app/models"
+    ground_truth_file: ground-truth/discourse/conventions.json
+  openproject:
+    domain: "app/models"
+    ground_truth_file: ground-truth/openproject/conventions.json
+  gin:
+    domain: "."
+    ground_truth_file: ground-truth/gin/conventions.json
+  nextjs:
+    domain: "packages/next/src/server"
+    ground_truth_file: ground-truth/nextjs/conventions.json
+
+scoring:
+  correctness:
+    type: qualitative
+    match_key: keywords
+    rubric: keyword_presence
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness

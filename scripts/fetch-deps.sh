@@ -11,8 +11,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$SCRIPT_DIR/.."
 BUNDLE="$ROOT/internal/embed/bundle"
 
+# ── Version coupling ────────────────────────────────────────────────
+# The Go bindings (github.com/yalue/onnxruntime_go) compile against a
+# specific ORT C API version (ORT_API_VERSION in onnxruntime_c_api.h).
+# The shared library's GetApi() returns NULL if asked for a version it
+# doesn't support, so the library major version must match the bindings:
+#
+#   onnxruntime_go v1.27.0 → ORT_API_VERSION 24 → needs ORT ≥ 1.24.x
+#   onnxruntime_go v1.28.0 → ORT_API_VERSION 25 → needs ORT ≥ 1.25.x
+#
+# ORT dropped macOS x86_64 builds after v1.23.1, so darwin/amd64 is
+# pinned to the last release that ships an x86_64 dylib. Bumping the
+# Go bindings past v1.27.0 (API 24) would break Mac Intel entirely
+# because no ORT ≥ 1.24 ships an x86_64 build (API 23 < 24 still works
+# since the library supports all prior API versions).
+#
+# TL;DR: if you bump onnxruntime_go, bump ORT_VERSION to match and
+# verify ORT_VERSION_DARWIN_AMD64 still satisfies the new API version.
 ORT_VERSION="1.24.4"
-ORT_VERSION_DARWIN_AMD64="1.23.0"
+ORT_VERSION_DARWIN_AMD64="1.23.1"  # last ORT release with macOS x86_64 builds
 MODEL_REPO="sentence-transformers/all-MiniLM-L6-v2"
 
 mkdir -p "$BUNDLE"

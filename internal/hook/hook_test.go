@@ -334,33 +334,33 @@ func TestIsSymbolShaped(t *testing.T) {
 	}
 }
 
-func TestPreToolUseAgentExplorationIntentDeny(t *testing.T) {
+func TestPreToolUseAgentExplorationIntentAdvise(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"explore the codebase to understand the architecture"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp denyResponse
+	var resp hookResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if resp.Output.Decision != "deny" {
-		t.Fatalf("expected deny for exploration-intent agent, got %q", resp.Output.Decision)
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected advisory context for exploration-intent agent, got empty")
 	}
 }
 
-func TestPreToolUseAgentDescriptionFallback(t *testing.T) {
+func TestPreToolUseAgentDescriptionFallbackAdvise(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","description":"explore the codebase structure"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp denyResponse
+	var resp hookResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if resp.Output.Decision != "deny" {
-		t.Fatalf("expected deny for exploration-intent description, got %q", resp.Output.Decision)
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected advisory context for exploration-intent description, got empty")
 	}
 }
 

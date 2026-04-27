@@ -14,6 +14,13 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # onnxruntime_go bindings are tightly coupled to the ORT shared library
+      # version (ORT_API_VERSION in the C header). Bumping the bindings requires
+      # a matching ORT library bump in scripts/fetch-deps.sh and must not break
+      # darwin/amd64 (Mac Intel), which is pinned to ORT 1.23.1 (last x86_64
+      # release). Review manually — do not auto-merge.
+      - dependency-name: "github.com/yalue/onnxruntime_go"
     commit-message:
       prefix: "chore(deps)"
     open-pull-requests-limit: 5

@@ -1,0 +1,38 @@
+name: semantic-search
+description: Find code related to a concept using semantic understanding
+variables: [concept]
+prompt_template: |
+  Find all symbols related to "{concept}" in this codebase.
+  List the top 10 most relevant symbols with file paths.
+  Do not use Explore agents.
+  Respond with a JSON object: { "symbols": ["qualified.Name", ...] }
+
+repos:
+  sense:
+    concept: "scanning and indexing codebase files"
+    ground_truth_file: ground-truth/sense/semantic-search.json
+  discourse:
+    concept: "topic creation and post publishing"
+    ground_truth_file: ground-truth/discourse/semantic-search.json
+  openproject:
+    concept: "work package scheduling and date dependencies"
+    ground_truth_file: ground-truth/openproject/semantic-search.json
+  gin:
+    concept: "HTTP request routing and middleware"
+    ground_truth_file: ground-truth/gin/semantic-search.json
+  nextjs:
+    concept: "server-side rendering and page generation"
+    ground_truth_file: ground-truth/nextjs/semantic-search.json
+
+scoring:
+  correctness:
+    type: set_match
+    match_key: symbols
+    partial_credit: true
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness
