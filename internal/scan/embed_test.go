@@ -406,6 +406,59 @@ func Validate() bool { return true }
 	}
 }
 
+func TestScanEmbedBackfillsOnNoChange(t *testing.T) {
+	skipWithoutORT(t)
+
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "svc.go"), `package svc
+
+func Process() error { return nil }
+func Validate() bool { return true }
+`)
+
+	ctx := context.Background()
+	dbPath := filepath.Join(root, ".sense", "index.db")
+
+	// Scan 1: deferred — symbols indexed, no embeddings
+	res1, err := scan.Run(ctx, scan.Options{
+		Root:              root,
+		Output:            &bytes.Buffer{},
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             false,
+	})
+	if err != nil {
+		t.Fatalf("deferred scan: %v", err)
+	}
+	if res1.EmbeddingDebt == 0 {
+		t.Fatal("expected embedding debt after deferred scan")
+	}
+	if countEmbeddings(t, dbPath) != 0 {
+		t.Fatal("expected 0 embeddings after deferred scan")
+	}
+
+	// Scan 2: -embed with no file changes — should backfill embeddings
+	res2, err := scan.Run(ctx, scan.Options{
+		Root:              root,
+		Output:            &bytes.Buffer{},
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             true,
+	})
+	if err != nil {
+		t.Fatalf("embed scan: %v", err)
+	}
+	if res2.Changed != 0 {
+		t.Errorf("expected 0 changed files, got %d", res2.Changed)
+	}
+	if res2.Embedded == 0 {
+		t.Fatal("expected embeddings to be backfilled on second scan with -embed")
+	}
+	if count := countEmbeddings(t, dbPath); count != res2.Embedded {
+		t.Errorf("embeddings in db (%d) != result.Embedded (%d)", count, res2.Embedded)
+	}
+}
+
 func countEmbeddings(t *testing.T, dbPath string) int {
 	t.Helper()
 	db, err := sql.Open("sqlite", dbPath)
