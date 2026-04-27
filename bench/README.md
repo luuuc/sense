@@ -57,6 +57,20 @@ git clone https://github.com/vercel/next.js.git nextjs
 
 Pin each repo to a specific commit for reproducible ground-truth (see repos/README.md).
 
+## Setup
+
+Index repos before running evaluations. Indexes persist in repo directories (`.sense/`, `.roam/`, `.code-review-graph/`, `.grepai/`, `.tokensave/`) and only need to be built once.
+
+```bash
+# Index all tools × all repos
+bash bench/setup.sh
+
+# Index specific tools/repos
+bash bench/setup.sh --tool sense,roam --repo sense,gin
+```
+
+Already-indexed tool+repo pairs are skipped automatically.
+
 ## Running
 
 ### Full matrix
@@ -66,6 +80,8 @@ bash bench/run.sh
 ```
 
 Runs all 6 tools × 5 repos × 7 tasks = 210 Claude sessions. Estimated cost: ~$10.50 at ~$0.05/session.
+
+If a tool is already indexed (from `setup.sh` or a prior run), `run.sh` skips setup and writes only the lightweight workspace config. If not indexed, it runs full setup inline.
 
 ### Partial runs
 
@@ -88,10 +104,11 @@ bash bench/run.sh --dry-run
 
 Shows what would execute without running Claude sessions. Reports which repos are present/missing and estimated cost.
 
-### Budget control
+### Budget and timeout control
 
 ```bash
-bash bench/run.sh --budget 1.00  # max $1.00 per Claude session (default: $0.50)
+bash bench/run.sh --budget 2.00    # max $2.00 per Claude session (default: $1.00)
+bash bench/run.sh --timeout 900    # max 900s per Claude session (default: 600)
 ```
 
 ## Scoring
@@ -174,10 +191,11 @@ Create matching ground-truth JSON files with a `status` field (`verified`, `init
 
 ## Adding a tool
 
-Create `tools/<name>.sh` implementing two modes per [tools/protocol.md](tools/protocol.md):
+Create `tools/<name>.sh` implementing three modes per [tools/protocol.md](tools/protocol.md):
 
 1. **Setup**: `tools/<name>.sh <repo_path> <workspace_path>` — install, index, write `.mcp.json` and `CLAUDE.md` to workspace
 2. **Ready**: `tools/<name>.sh --check-ready <repo_path> <workspace_path>` — exit 0 (ready), 1 (building), or 2 (broken)
+3. **Write config**: `tools/<name>.sh --write-config <repo_path> <workspace_path>` — write `.mcp.json` and `CLAUDE.md` only (no indexing). Used by `run.sh` when the tool is already indexed
 
 Add the tool's capabilities to `TOOL_CAPABILITIES` in `lib/scorer.py` for miss detection.
 

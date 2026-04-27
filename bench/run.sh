@@ -10,9 +10,9 @@ REPOS_DIR="$BENCH_DIR/repos"
 SENSE_REPO="$(cd "$BENCH_DIR/.." && pwd)"
 
 READY_POLL_INTERVAL=5
-READY_POLL_MAX=120  # 10 minutes at 5s intervals
-MAX_BUDGET_USD="0.50"
-SESSION_TIMEOUT=300  # 5 minutes per Claude session
+READY_POLL_MAX=720  # 60 minutes at 5s intervals
+MAX_BUDGET_USD="1.00"
+SESSION_TIMEOUT=600  # 10 minutes per Claude session
 
 # --- Argument parsing ---
 
@@ -164,6 +164,33 @@ task_json() {
   cat "$TASK_CACHE_DIR/$1.json"
 }
 
+# --- Collect unique repos across all tasks ---
+
+all_repos=()
+for task in "${tasks[@]}"; do
+  for repo in $(task_repos "$task"); do
+    matches_filter "$repo" "$FILTER_REPOS" || continue
+    # Deduplicate
+    already=false
+    for r in "${all_repos[@]+"${all_repos[@]}"}"; do [[ "$r" == "$repo" ]] && already=true; done
+    $already || all_repos+=("$repo")
+  done
+done
+
+# Returns space-separated tasks that apply to a given repo
+tasks_for_repo() {
+  local repo="$1"
+  local result=""
+  for task in "${tasks[@]}"; do
+    for r in $(task_repos "$task"); do
+      if [[ "$r" == "$repo" ]]; then
+        result+="$task "
+      fi
+    done
+  done
+  echo "$result"
+}
+
 # --- Count runs ---
 
 total_runs=0
@@ -186,9 +213,8 @@ if $DRY_RUN; then
   echo ""
   run_num=0
   for tool in "${tools[@]}"; do
-    for task in "${tasks[@]}"; do
-      for repo in $(task_repos "$task"); do
-        matches_filter "$repo" "$FILTER_REPOS" || continue
+    for repo in "${all_repos[@]}"; do
+      for task in $(tasks_for_repo "$repo"); do
         run_num=$((run_num + 1))
         rp=$(repo_path "$repo")
         exists="YES"
@@ -202,7 +228,7 @@ if $DRY_RUN; then
   exit 0
 fi
 
-# --- Main loop ---
+# --- Main loop: tool → repo (setup once) → tasks ---
 
 run_num=0
 passed=0
@@ -210,49 +236,54 @@ failed=0
 skipped=0
 
 for tool in "${tools[@]}"; do
-  for task in "${tasks[@]}"; do
-    for repo in $(task_repos "$task"); do
-      matches_filter "$repo" "$FILTER_REPOS" || continue
-      run_num=$((run_num + 1))
-
-      log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
-
-      # Check repo exists
-      rp=$(repo_path "$repo")
-      if [[ ! -d "$rp" ]]; then
+  for repo in "${all_repos[@]}"; do
+    # Check repo exists
+    rp=$(repo_path "$repo")
+    if [[ ! -d "$rp" ]]; then
+      for task in $(tasks_for_repo "$repo"); do
+        run_num=$((run_num + 1))
+        log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
         log "  SKIP: repo directory not found: $rp"
         skipped=$((skipped + 1))
+      done
+      continue
+    fi
+
+    check_pinned_commit "$repo" "$rp"
+
+    # Persistent workspace per tool+repo (survives across runs, holds venvs)
+    workspace="$RESULTS_DIR/$tool/$repo/.workspace"
+    mkdir -p "$workspace"
+    first_task="$(tasks_for_repo "$repo" | awk '{print $1}')"
+    setup_result_dir="$RESULTS_DIR/$tool/$repo/$first_task"
+    mkdir -p "$setup_result_dir"
+
+    # Check if already indexed — skip full setup, just write config
+    "$TOOLS_DIR/$tool.sh" --check-ready "$rp" "$workspace" > "$setup_result_dir/index_meta.json" 2>/dev/null && ready_rc=0 || ready_rc=$?
+    if [[ $ready_rc -eq 0 ]]; then
+      log "  $tool × $repo already indexed — writing config only"
+      "$TOOLS_DIR/$tool.sh" --write-config "$rp" "$workspace"
+    else
+      log "  setting up $tool for $repo (workspace: $workspace)..."
+      if ! "$TOOLS_DIR/$tool.sh" "$rp" "$workspace" 2>"$setup_result_dir/setup.log"; then
+        log "  FAIL: setup failed (see $setup_result_dir/setup.log)"
+        for task in $(tasks_for_repo "$repo"); do
+          run_num=$((run_num + 1))
+          log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task — setup failed"
+          result_dir="$RESULTS_DIR/$tool/$repo/$task"
+          mkdir -p "$result_dir"
+          echo '{"index_completeness": "setup_failed"}' > "$result_dir/index_meta.json"
+          failed=$((failed + 1))
+        done
         continue
       fi
 
-      check_pinned_commit "$repo" "$rp"
-
-      # Create results directory
-      result_dir="$RESULTS_DIR/$tool/$repo/$task"
-      mkdir -p "$result_dir"
-
-      # Create workspace
-      workspace=$(mktemp -d)
-      log "  workspace: $workspace"
-
-      # 1. Setup tool (runs per combination — setup scripts must be idempotent)
-      log "  setting up $tool..."
-      if ! "$TOOLS_DIR/$tool.sh" "$rp" "$workspace" 2>"$result_dir/setup.log"; then
-        log "  FAIL: setup failed (see $result_dir/setup.log)"
-        echo '{"index_completeness": "setup_failed"}' > "$result_dir/index_meta.json"
-        cp -r "$workspace" "$result_dir/workspace_debug" 2>/dev/null || true
-        failed=$((failed + 1))
-        rm -rf "$workspace"
-        continue
-      fi
-
-      # 2. Poll until ready
+      # Poll until ready (once per tool+repo)
       log "  waiting for index readiness..."
       ready=false
       broken=false
       for i in $(seq 1 $READY_POLL_MAX); do
-        "$TOOLS_DIR/$tool.sh" --check-ready "$rp" "$workspace" > "$result_dir/index_meta.json" 2>/dev/null
-        rc=$?
+        "$TOOLS_DIR/$tool.sh" --check-ready "$rp" "$workspace" > "$setup_result_dir/index_meta.json" 2>/dev/null && rc=0 || rc=$?
         if [[ $rc -eq 0 ]]; then
           ready=true
           break
@@ -268,23 +299,39 @@ for tool in "${tools[@]}"; do
       done
 
       if [[ "$ready" != "true" ]]; then
-        cp -r "$workspace" "$result_dir/workspace_debug" 2>/dev/null || true
-        if [[ "$broken" == "true" ]]; then
-          log "  FAIL: tool broken — cannot proceed"
-          echo '{"index_completeness": "broken"}' > "$result_dir/index_meta.json"
-          failed=$((failed + 1))
-        else
-          log "  SKIP: index never became ready"
-          echo '{"index_completeness": "timeout"}' > "$result_dir/index_meta.json"
-          skipped=$((skipped + 1))
-        fi
-        rm -rf "$workspace"
+        for task in $(tasks_for_repo "$repo"); do
+          run_num=$((run_num + 1))
+          log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task — index not ready"
+          result_dir="$RESULTS_DIR/$tool/$repo/$task"
+          mkdir -p "$result_dir"
+          if [[ "$broken" == "true" ]]; then
+            echo '{"index_completeness": "broken"}' > "$result_dir/index_meta.json"
+            failed=$((failed + 1))
+          else
+            echo '{"index_completeness": "timeout"}' > "$result_dir/index_meta.json"
+            skipped=$((skipped + 1))
+          fi
+        done
         continue
       fi
+    fi
 
-      log "  index ready: $(cat "$result_dir/index_meta.json")"
+    index_meta=$(cat "$setup_result_dir/index_meta.json")
+    log "  index ready: $index_meta"
 
-      # 3. Render prompt
+    # Run all tasks for this tool+repo
+    claude_md=$(cat "$workspace/CLAUDE.md")
+    for task in $(tasks_for_repo "$repo"); do
+      run_num=$((run_num + 1))
+      log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
+
+      result_dir="$RESULTS_DIR/$tool/$repo/$task"
+      mkdir -p "$result_dir"
+
+      # Copy index_meta to each task result
+      echo "$index_meta" > "$result_dir/index_meta.json"
+
+      # Render prompt
       rendered=$(task_json "$task" | python3 -c "
 import sys, json
 task = json.load(sys.stdin)
@@ -296,9 +343,8 @@ for var in task.get('variables', []):
 print(json.dumps({'prompt': template, 'params': params, 'scoring': task.get('scoring', {})}))
 " "$repo")
       prompt=$(echo "$rendered" | python3 -c "import sys,json; print(json.load(sys.stdin)['prompt'])")
-      claude_md=$(cat "$workspace/CLAUDE.md")
 
-      # 4. Build claude command
+      # Build claude command
       claude_args=(
         -p "$prompt"
         --verbose
@@ -309,21 +355,33 @@ print(json.dumps({'prompt': template, 'params': params, 'scoring': task.get('sco
         --max-budget-usd "$MAX_BUDGET_USD"
       )
 
-      # Add MCP config if it exists (baseline has none)
       if [[ -f "$workspace/.mcp.json" ]]; then
         claude_args+=(--mcp-config "$workspace/.mcp.json")
       fi
 
-      # 5. Run Claude session from repo directory
+      # Run Claude session from repo directory
       log "  running Claude session..."
       start_time=$(date +%s)
 
-      if (cd "$rp" && run_with_timeout "$SESSION_TIMEOUT" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log"); then
-        end_time=$(date +%s)
-        wall_time=$((end_time - start_time))
-        log "  done in ${wall_time}s"
+      (cd "$rp" && run_with_timeout "$SESSION_TIMEOUT" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
+      end_time=$(date +%s)
+      wall_time=$((end_time - start_time))
 
-        # Record run metadata
+      # Check if budget-exceeded (transcript has a result line with error_max_budget_usd)
+      budget_exceeded=false
+      if [[ $claude_rc -ne 0 && -s "$result_dir/transcript.json" ]]; then
+        if tail -1 "$result_dir/transcript.json" | grep -q '"error_max_budget_usd"'; then
+          budget_exceeded=true
+        fi
+      fi
+
+      if [[ $claude_rc -eq 0 || "$budget_exceeded" == "true" ]]; then
+        if [[ "$budget_exceeded" == "true" ]]; then
+          log "  done in ${wall_time}s (budget exceeded — transcript still scorable)"
+        else
+          log "  done in ${wall_time}s"
+        fi
+
         tool_version=$(grep -m1 '^TOOL_VERSION=' "$TOOLS_DIR/$tool.sh" 2>/dev/null | cut -d'"' -f2 || echo "")
         repo_commit=$(cd "$rp" && git rev-parse --short HEAD 2>/dev/null || echo "")
 
@@ -338,24 +396,21 @@ meta = {
     'timestamp': sys.argv[6],
     'tool_version': sys.argv[7] or None,
     'repo_commit': sys.argv[8] or None,
+    'budget_exceeded': sys.argv[9] == 'true',
 }
 json.dump(meta, sys.stdout, indent=2)
 print()
-" "$tool" "$repo" "$task" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$tool_version" "$repo_commit" > "$result_dir/run_meta.json"
+" "$tool" "$repo" "$task" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$tool_version" "$repo_commit" "$budget_exceeded" > "$result_dir/run_meta.json"
 
         passed=$((passed + 1))
       else
-        end_time=$(date +%s)
-        wall_time=$((end_time - start_time))
         log "  FAIL: Claude session failed after ${wall_time}s (see $result_dir/claude.log)"
         echo "{\"error\": \"claude_session_failed\", \"wall_time_seconds\": $wall_time}" > "$result_dir/run_meta.json"
-        cp -r "$workspace" "$result_dir/workspace_debug" 2>/dev/null || true
         failed=$((failed + 1))
       fi
-
-      # 6. Cleanup workspace
-      rm -rf "$workspace"
     done
+
+    # Workspace persists at $RESULTS_DIR/$tool/$repo/.workspace for reuse
   done
 done
 
