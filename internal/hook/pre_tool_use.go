@@ -127,7 +127,11 @@ func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapt
 			"Load tools first: %s",
 		count, toolSearchCmd,
 	)
-	return deny(reason), nil
+
+	if isKnownExplorer {
+		return deny(reason), nil
+	}
+	return advise(reason), nil
 }
 
 func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
