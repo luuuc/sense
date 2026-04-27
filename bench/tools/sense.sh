@@ -5,7 +5,7 @@ TOOL_NAME="sense"
 TOOL_VERSION="0.30.0"
 
 usage() {
-  echo "Usage: $0 [--check-ready] <repo_path> <workspace_path>"
+  echo "Usage: $0 [--check-ready|--write-config] <repo_path> <workspace_path>"
   exit 2
 }
 
@@ -50,24 +50,9 @@ print(json.dumps(out))
   fi
 }
 
-setup() {
+write_config() {
   local repo="$1"
   local workspace="$2"
-
-  echo "[$TOOL_NAME] Checking prerequisites..." >&2
-  if ! command -v sense &>/dev/null; then
-    echo "[$TOOL_NAME] ERROR: sense binary not found. Install: curl -fsSL https://sense.sh/install | sh" >&2
-    exit 2
-  fi
-
-  local version
-  version=$(sense --version 2>/dev/null || echo "unknown")
-  echo "[$TOOL_NAME] Using sense $version (pinned: $TOOL_VERSION)" >&2
-
-  echo "[$TOOL_NAME] Indexing $repo..." >&2
-  sense scan --dir "$repo"
-
-  echo "[$TOOL_NAME] Writing MCP config to $workspace..." >&2
   local repo_abs
   repo_abs=$(cd "$repo" && pwd)
 
@@ -92,6 +77,27 @@ Sense provides four MCP tools:
 - sense_blast: blast radius / impact analysis
 - sense_conventions: project patterns and conventions
 EOF
+}
+
+setup() {
+  local repo="$1"
+  local workspace="$2"
+
+  echo "[$TOOL_NAME] Checking prerequisites..." >&2
+  if ! command -v sense &>/dev/null; then
+    echo "[$TOOL_NAME] ERROR: sense binary not found. Install: curl -fsSL https://sense.sh/install | sh" >&2
+    exit 2
+  fi
+
+  local version
+  version=$(sense --version 2>/dev/null || echo "unknown")
+  echo "[$TOOL_NAME] Using sense $version (pinned: $TOOL_VERSION)" >&2
+
+  echo "[$TOOL_NAME] Indexing $repo..." >&2
+  sense scan --dir "$repo" -embed
+
+  echo "[$TOOL_NAME] Writing config to $workspace..." >&2
+  write_config "$repo" "$workspace"
 
   echo "[$TOOL_NAME] Setup complete." >&2
 }
@@ -99,10 +105,10 @@ EOF
 # --- Main ---
 
 MODE="setup"
-if [[ "${1:-}" == "--check-ready" ]]; then
-  MODE="ready"
-  shift
-fi
+case "${1:-}" in
+  --check-ready)  MODE="ready"; shift ;;
+  --write-config) MODE="write-config"; shift ;;
+esac
 
 [[ $# -ge 2 ]] || usage
 
@@ -110,6 +116,7 @@ REPO="$1"
 WORKSPACE="$2"
 
 case "$MODE" in
-  ready) check_ready "$REPO" ;;
-  setup) setup "$REPO" "$WORKSPACE" ;;
+  ready)        check_ready "$REPO" ;;
+  write-config) write_config "$REPO" "$WORKSPACE" ;;
+  setup)        setup "$REPO" "$WORKSPACE" ;;
 esac

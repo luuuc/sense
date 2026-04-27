@@ -2,10 +2,10 @@
 set -euo pipefail
 
 TOOL_NAME="tokensave"
-TOOL_VERSION="0.5.0"
+TOOL_VERSION="4.1.4"
 
 usage() {
-  echo "Usage: $0 [--check-ready] <repo_path> <workspace_path>"
+  echo "Usage: $0 [--check-ready|--write-config] <repo_path> <workspace_path>"
   exit 2
 }
 
@@ -33,27 +33,8 @@ check_ready() {
   fi
 }
 
-setup() {
-  local repo="$1"
+write_config() {
   local workspace="$2"
-
-  echo "[$TOOL_NAME] Checking prerequisites..." >&2
-
-  if ! command -v tokensave &>/dev/null; then
-    echo "[$TOOL_NAME] ERROR: tokensave not found. Install: brew install aovestdipaperino/tap/tokensave" >&2
-    exit 2
-  fi
-
-  local version
-  version=$(tokensave --version 2>/dev/null || echo "unknown")
-  echo "[$TOOL_NAME] Using tokensave $version (pinned: $TOOL_VERSION)" >&2
-
-  echo "[$TOOL_NAME] Indexing $repo..." >&2
-  (cd "$repo" && tokensave init)
-
-  echo "[$TOOL_NAME] Writing MCP config to $workspace..." >&2
-  local repo_abs
-  repo_abs=$(cd "$repo" && pwd)
 
   cat > "$workspace/.mcp.json" << EOF
 {
@@ -79,6 +60,28 @@ tokensave provides MCP tools for token-efficient codebase queries:
 - tokensave_dead_code: find unreachable symbols
 - tokensave_node: get details + source code for a specific symbol
 EOF
+}
+
+setup() {
+  local repo="$1"
+  local workspace="$2"
+
+  echo "[$TOOL_NAME] Checking prerequisites..." >&2
+
+  if ! command -v tokensave &>/dev/null; then
+    echo "[$TOOL_NAME] ERROR: tokensave not found. Install: brew install aovestdipaperino/tap/tokensave" >&2
+    exit 2
+  fi
+
+  local version
+  version=$(tokensave --version 2>/dev/null || echo "unknown")
+  echo "[$TOOL_NAME] Using tokensave $version (pinned: $TOOL_VERSION)" >&2
+
+  echo "[$TOOL_NAME] Indexing $repo..." >&2
+  (cd "$repo" && yes | tokensave init) || (cd "$repo" && tokensave sync)
+
+  echo "[$TOOL_NAME] Writing config to $workspace..." >&2
+  write_config "$repo" "$workspace"
 
   echo "[$TOOL_NAME] Setup complete." >&2
 }
@@ -86,10 +89,10 @@ EOF
 # --- Main ---
 
 MODE="setup"
-if [[ "${1:-}" == "--check-ready" ]]; then
-  MODE="ready"
-  shift
-fi
+case "${1:-}" in
+  --check-ready)  MODE="ready"; shift ;;
+  --write-config) MODE="write-config"; shift ;;
+esac
 
 [[ $# -ge 2 ]] || usage
 
@@ -97,6 +100,7 @@ REPO="$1"
 WORKSPACE="$2"
 
 case "$MODE" in
-  ready) check_ready "$REPO" ;;
-  setup) setup "$REPO" "$WORKSPACE" ;;
+  ready)        check_ready "$REPO" ;;
+  write-config) write_config "$REPO" "$WORKSPACE" ;;
+  setup)        setup "$REPO" "$WORKSPACE" ;;
 esac
