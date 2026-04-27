@@ -16,12 +16,16 @@ import sys
 def parse_transcript(path):
     """Parse a stream-json JSONL transcript.
 
-    Extracts tool calls, token usage, final text, cost, and duration
-    from Claude CLI stream-json output.
+    Handles two formats:
+    - Message-level: events with type "assistant"/"user"/"system"/"result"
+      (Claude CLI stream-json default)
+    - Streaming: events with type "content_block_start"/"delta"/"stop"
+      (raw API streaming)
     """
     tool_calls = []
     text_chunks = []
-    usage = {"input_tokens": 0, "output_tokens": 0}
+    usage = {"input_tokens": 0, "output_tokens": 0,
+             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
     cost_usd = None
     duration_ms = None
     num_turns = 0
@@ -48,7 +52,22 @@ def parse_transcript(path):
             event = obj.get("event", obj)
             event_type = event.get("type", "")
 
-            if event_type == "message_start":
+            # --- Message-level format (Claude CLI) ---
+            if event_type == "assistant":
+                msg = event.get("message", event)
+                for block in msg.get("content", []):
+                    if block.get("type") == "tool_use":
+                        tool_calls.append({
+                            "name": block.get("name", "unknown"),
+                            "input": block.get("input", {}),
+                        })
+                    elif block.get("type") == "text":
+                        text = block.get("text", "")
+                        if text:
+                            text_chunks.append(text)
+
+            # --- Streaming format (raw API) ---
+            elif event_type == "message_start":
                 msg = event.get("message", {})
                 msg_usage = msg.get("usage", {})
                 usage["input_tokens"] += msg_usage.get("input_tokens", 0)
@@ -91,6 +110,7 @@ def parse_transcript(path):
                 delta_usage = event.get("usage", {})
                 usage["output_tokens"] += delta_usage.get("output_tokens", 0)
 
+            # --- Result event (both formats) ---
             if obj.get("type") == "result":
                 cost_usd = obj.get("total_cost_usd", cost_usd)
                 duration_ms = obj.get("duration_ms", duration_ms)
@@ -102,6 +122,14 @@ def parse_transcript(path):
                     usage["input_tokens"] = result_usage["input_tokens"]
                 if result_usage.get("output_tokens"):
                     usage["output_tokens"] = result_usage["output_tokens"]
+                if result_usage.get("cache_read_input_tokens"):
+                    usage["cache_read_input_tokens"] = result_usage[
+                        "cache_read_input_tokens"
+                    ]
+                if result_usage.get("cache_creation_input_tokens"):
+                    usage["cache_creation_input_tokens"] = result_usage[
+                        "cache_creation_input_tokens"
+                    ]
 
     final_text = text_chunks[-1] if text_chunks else ""
 
@@ -156,26 +184,82 @@ def extract_json_from_text(text):
     return None
 
 
+def _strip_go_package(file_path, symbol):
+    """Strip Go package prefix from a symbol.
+
+    Uses the directory name to identify the package. For root-level
+    files (no directory), strips any leading lowercase identifier
+    prefix (handles single-package repos like gin).
+    """
+    if "/" in file_path:
+        dir_name = file_path.rsplit("/", 1)[0].rsplit("/", 1)[-1]
+    else:
+        dir_name = ""
+
+    if dir_name:
+        prefix = dir_name + "."
+        if symbol.startswith(prefix):
+            return symbol[len(prefix):]
+        if file_path.endswith("_test.go"):
+            test_prefix = dir_name + "_test."
+            if symbol.startswith(test_prefix):
+                return symbol[len(test_prefix):]
+    else:
+        m = re.match(r"^([a-z][a-z0-9_]*)\.(.*)", symbol)
+        if m:
+            return m.group(2)
+
+    return symbol
+
+
+def _strip_bare_go_package(symbol):
+    """Strip Go package prefix from a bare symbol (no file path).
+
+    Only strips 'pkg.' when followed by an uppercase letter, which
+    distinguishes package.Type from type.method in Go naming.
+    E.g. 'gin.Engine' -> 'Engine' but 'node.getValue' stays.
+    """
+    m = re.match(r"^([a-z][a-z0-9_]*)\.([A-Z].*)", symbol)
+    if m:
+        return m.group(2)
+    return symbol
+
+
 def normalize_caller(entry):
     """Normalize a caller/affected entry for comparison.
 
     Ground truth uses 'file:symbol' format. Claude may respond with
     'file:line symbol' or 'file:line:symbol' or other variations.
-    Normalize to 'file:symbol' for comparison.
+    Normalize to 'file:symbol' for comparison, stripping Go package
+    prefixes so that 'pkg.Func' matches bare 'Func'.
+
+    Also handles bare symbols (no file path) for semantic-search and
+    dead-code tasks by stripping 'pkg.' when followed by uppercase.
     """
     entry = entry.strip()
+
     parts = entry.split()
     if len(parts) >= 2:
-        return parts[0].split(":")[0] + ":" + parts[-1]
-    if ":" in entry:
+        file_part = parts[0].split(":")[0]
+        symbol_part = parts[-1]
+    elif ":" in entry:
         segments = entry.split(":")
-        if len(segments) >= 2:
-            file_part = segments[0]
-            symbol_part = segments[-1]
-            if segments[1].isdigit():
-                return file_part + ":" + symbol_part
-            return entry
-    return entry
+        file_part = segments[0]
+        symbol_part = segments[-1]
+        if len(segments) >= 2 and segments[1].isdigit():
+            symbol_part = segments[-1] if len(segments) > 2 else ""
+    else:
+        return _strip_bare_go_package(entry)
+
+    symbol_part = symbol_part.rstrip(")]}")
+
+    if not symbol_part:
+        return entry
+
+    if file_part.endswith(".go"):
+        symbol_part = _strip_go_package(file_part, symbol_part)
+
+    return file_part + ":" + symbol_part
 
 
 def score_set_match(response_json, ground_truth, match_key):
@@ -379,12 +463,13 @@ def score_keyword_presence(text, ground_truth, match_key):
     }
 
 
-def score_result(result_dir, bench_dir):
+def score_result(result_dir, bench_dir, tool=None, repo=None, task=None):
     """Score a single benchmark result."""
-    path_parts = result_dir.rstrip("/").split("/")
-    task = path_parts[-1]
-    repo = path_parts[-2]
-    tool = path_parts[-3]
+    if not all([tool, repo, task]):
+        path_parts = os.path.normpath(result_dir).split(os.sep)
+        task = task or path_parts[-1]
+        repo = repo or path_parts[-2]
+        tool = tool or path_parts[-3]
 
     transcript_path = os.path.join(result_dir, "transcript.json")
     if not os.path.exists(transcript_path):
@@ -457,8 +542,16 @@ def score_result(result_dir, bench_dir):
             },
             "token_input": transcript["usage"]["input_tokens"],
             "token_output": transcript["usage"]["output_tokens"],
+            "cache_read_input_tokens": transcript["usage"][
+                "cache_read_input_tokens"
+            ],
+            "cache_creation_input_tokens": transcript["usage"][
+                "cache_creation_input_tokens"
+            ],
             "token_total": (
                 transcript["usage"]["input_tokens"]
+                + transcript["usage"]["cache_read_input_tokens"]
+                + transcript["usage"]["cache_creation_input_tokens"]
                 + transcript["usage"]["output_tokens"]
             ),
             "cost_usd": transcript["cost_usd"],
@@ -476,12 +569,16 @@ def score_result(result_dir, bench_dir):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: scorer.py <result_dir> <bench_dir>", file=sys.stderr)
+    if len(sys.argv) < 3:
+        print("Usage: scorer.py <result_dir> <bench_dir> [<tool> <repo> <task>]",
+              file=sys.stderr)
         sys.exit(1)
 
     result_dir = sys.argv[1]
     bench_dir = sys.argv[2]
+    tool = sys.argv[3] if len(sys.argv) > 3 else None
+    repo = sys.argv[4] if len(sys.argv) > 4 else None
+    task = sys.argv[5] if len(sys.argv) > 5 else None
 
-    scored = score_result(result_dir, bench_dir)
+    scored = score_result(result_dir, bench_dir, tool=tool, repo=repo, task=task)
     print(json.dumps(scored, indent=2))

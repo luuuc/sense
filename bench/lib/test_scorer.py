@@ -42,6 +42,66 @@ class TestNormalizeCaller(unittest.TestCase):
             "internal/blast/engine.go:TestComputeDirect",
         )
 
+    def test_strips_go_package_prefix(self):
+        self.assertEqual(
+            normalize_caller("internal/benchmark/benchmark.go:104 benchmark.benchBlast"),
+            "internal/benchmark/benchmark.go:benchBlast",
+        )
+
+    def test_strips_go_test_package_prefix(self):
+        self.assertEqual(
+            normalize_caller("internal/blast/blast_bench_test.go:69 blast_test.runBlastBench"),
+            "internal/blast/blast_bench_test.go:runBlastBench",
+        )
+
+    def test_keeps_type_method_prefix(self):
+        self.assertEqual(
+            normalize_caller("internal/mcpserver/server.go:handlers.blastSymbol"),
+            "internal/mcpserver/server.go:handlers.blastSymbol",
+        )
+
+    def test_strips_root_level_go_package(self):
+        self.assertEqual(
+            normalize_caller("context.go:42 gin.Context"),
+            "context.go:Context",
+        )
+
+    def test_root_level_go_type_method(self):
+        self.assertEqual(
+            normalize_caller("gin.go:42 gin.Engine.ServeHTTP"),
+            "gin.go:Engine.ServeHTTP",
+        )
+
+    def test_strips_trailing_paren(self):
+        self.assertEqual(
+            normalize_caller("context.go:42 gin.Context.JSON)"),
+            "context.go:Context.JSON",
+        )
+
+    def test_ruby_file_unchanged(self):
+        self.assertEqual(
+            normalize_caller("app/models/post.rb:Post"),
+            "app/models/post.rb:Post",
+        )
+
+    def test_ruby_class_method(self):
+        self.assertEqual(
+            normalize_caller("lib/post_creator.rb:PostCreator#create_topic"),
+            "lib/post_creator.rb:PostCreator#create_topic",
+        )
+
+    def test_bare_symbol_strips_go_package(self):
+        self.assertEqual(normalize_caller("gin.Engine.ServeHTTP"), "Engine.ServeHTTP")
+
+    def test_bare_symbol_strips_package_for_type(self):
+        self.assertEqual(normalize_caller("gin.HandlerFunc"), "HandlerFunc")
+
+    def test_bare_symbol_keeps_type_method(self):
+        self.assertEqual(normalize_caller("node.getValue"), "node.getValue")
+
+    def test_bare_symbol_keeps_scan_lowercase(self):
+        self.assertEqual(normalize_caller("scan.indexedFile"), "scan.indexedFile")
+
 
 class TestScoreSetMatch(unittest.TestCase):
     def test_perfect_match(self):
@@ -298,15 +358,54 @@ class TestParseTranscript(unittest.TestCase):
     def test_extracts_usage_from_result(self):
         lines = [
             {"type": "result", "total_cost_usd": 0.05, "duration_ms": 3000,
-             "num_turns": 2, "usage": {"input_tokens": 1000, "output_tokens": 500}},
+             "num_turns": 2, "usage": {
+                 "input_tokens": 1000, "output_tokens": 500,
+                 "cache_read_input_tokens": 80000,
+                 "cache_creation_input_tokens": 5000,
+             }},
         ]
         path = self._write_jsonl(lines)
         try:
             result = parse_transcript(path)
             self.assertEqual(result["usage"]["input_tokens"], 1000)
             self.assertEqual(result["usage"]["output_tokens"], 500)
+            self.assertEqual(result["usage"]["cache_read_input_tokens"], 80000)
+            self.assertEqual(result["usage"]["cache_creation_input_tokens"], 5000)
             self.assertEqual(result["cost_usd"], 0.05)
             self.assertEqual(result["duration_ms"], 3000)
+        finally:
+            os.unlink(path)
+
+    def test_message_level_format(self):
+        lines = [
+            {"event": {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "foo.go"}},
+                {"type": "text", "text": "Here is the result."},
+            ]}}},
+            {"event": {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "file content"},
+            ]}}},
+            {"event": {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "mcp__sense__sense_graph",
+                 "input": {"symbol": "Foo"}},
+                {"type": "text", "text": "Final answer."},
+            ]}}},
+            {"type": "result", "total_cost_usd": 0.10, "duration_ms": 5000,
+             "num_turns": 3, "usage": {
+                 "input_tokens": 50, "output_tokens": 800,
+                 "cache_read_input_tokens": 100000,
+                 "cache_creation_input_tokens": 10000,
+             }},
+        ]
+        path = self._write_jsonl(lines)
+        try:
+            result = parse_transcript(path)
+            self.assertEqual(len(result["tool_calls"]), 2)
+            self.assertEqual(result["tool_calls"][0]["name"], "Read")
+            self.assertEqual(result["tool_calls"][1]["name"], "mcp__sense__sense_graph")
+            self.assertEqual(result["final_text"], "Final answer.")
+            self.assertEqual(result["usage"]["input_tokens"], 50)
+            self.assertEqual(result["usage"]["cache_read_input_tokens"], 100000)
         finally:
             os.unlink(path)
 

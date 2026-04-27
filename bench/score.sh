@@ -74,7 +74,7 @@ for tool_dir in "$RESULTS_DIR"/*/; do
 
       log "Scoring: tool=$tool repo=$repo task=$task"
 
-      if python3 "$LIB_DIR/scorer.py" "$task_dir" "$BENCH_DIR" > "$task_dir/scored.json" 2>"$task_dir/score.log"; then
+      if python3 "$LIB_DIR/scorer.py" "$task_dir" "$BENCH_DIR" "$tool" "$repo" "$task" > "$task_dir/scored.json" 2>"$task_dir/score.log"; then
         scored=$((scored + 1))
       else
         log "  ERROR: scoring failed (see $task_dir/score.log)"
