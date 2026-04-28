@@ -37,7 +37,7 @@ func BenchmarkSearch(b *testing.B) {
 
 	b.Run("keyword", func(b *testing.B) {
 		for b.Loop() {
-			_, _, _, _ = engine.Search(ctx, search.Options{
+			_, _, _ = engine.Search(ctx, search.Options{
 				Query: "Symbol0",
 				Limit: 10,
 			})
@@ -46,7 +46,7 @@ func BenchmarkSearch(b *testing.B) {
 
 	b.Run("hybrid", func(b *testing.B) {
 		for b.Loop() {
-			_, _, _, _ = engine.Search(ctx, search.Options{
+			_, _, _ = engine.Search(ctx, search.Options{
 				Query: "how does Symbol0 work",
 				Limit: 10,
 			})

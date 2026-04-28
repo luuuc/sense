@@ -216,7 +216,7 @@ func TestSmoke(t *testing.T) {
 
 		for _, sq := range gt.Search {
 			queryStart := time.Now()
-			results, _, _, err := engine.Search(ctx, search.Options{
+			results, _, err := engine.Search(ctx, search.Options{
 				Query: sq.Query,
 				Limit: 10,
 			})
@@ -404,7 +404,7 @@ func generateGroundTruth(t *testing.T, ctx context.Context, adapter *sqlite.Adap
 
 	engine := search.NewEngine(adapter, nil, nil)
 	for _, sq := range gt.Search {
-		results, _, _, err := engine.Search(ctx, search.Options{Query: sq.Query, Limit: 5})
+		results, _, err := engine.Search(ctx, search.Options{Query: sq.Query, Limit: 5})
 		if err != nil {
 			t.Logf("REVIEW search %q: error: %v", sq.Query, err)
 			continue

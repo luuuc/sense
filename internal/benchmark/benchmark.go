@@ -372,7 +372,7 @@ func benchSearch(ctx context.Context, engine *search.Engine, sym symbolTier, sem
 	durations := make([]time.Duration, 0, n)
 	for i := 0; i < n; i++ {
 		start := time.Now()
-		_, _, _, _ = engine.Search(ctx, search.Options{
+		_, _, _ = engine.Search(ctx, search.Options{
 			Query: query,
 			Limit: 10,
 		})
@@ -386,7 +386,7 @@ func benchSearchHybrid(ctx context.Context, engine *search.Engine, sym symbolTie
 	durations := make([]time.Duration, 0, n)
 	for i := 0; i < n; i++ {
 		start := time.Now()
-		_, _, _, _ = engine.Search(ctx, search.Options{
+		_, _, _ = engine.Search(ctx, search.Options{
 			Query: query,
 			Limit: 10,
 		})

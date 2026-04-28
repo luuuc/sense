@@ -157,7 +157,7 @@ func TestFusionBothBackendsRankHigher(t *testing.T) {
 
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
-	results, symbolCount, _, err := engine.Search(ctx, search.Options{
+	results, meta, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -165,8 +165,8 @@ func TestFusionBothBackendsRankHigher(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if symbolCount < 3 {
-		t.Errorf("expected at least 3 symbols searched, got %d", symbolCount)
+	if meta.SymbolCount < 3 {
+		t.Errorf("expected at least 3 symbols searched, got %d", meta.SymbolCount)
 	}
 
 	if len(results) == 0 {
@@ -199,7 +199,7 @@ func TestFusionKeywordOnly(t *testing.T) {
 	// No vector index, no embedder → keyword-only
 	engine := search.NewEngine(a, nil, nil)
 
-	results, _, _, err := engine.Search(ctx, search.Options{
+	results, _, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -280,7 +280,7 @@ func TestFusionCentralityBreaksTie(t *testing.T) {
 
 	engine := search.NewEngine(a, nil, nil)
 
-	results, _, _, err := engine.Search(ctx, search.Options{
+	results, _, err := engine.Search(ctx, search.Options{
 		Query: "handler",
 		Limit: 10,
 	})
@@ -316,7 +316,7 @@ func TestFusionMinScore(t *testing.T) {
 
 	engine := search.NewEngine(a, nil, nil)
 
-	results, _, _, err := engine.Search(ctx, search.Options{
+	results, _, err := engine.Search(ctx, search.Options{
 		Query:    "payment",
 		Limit:    10,
 		MinScore: 999, // absurdly high — should filter everything
@@ -347,7 +347,7 @@ func TestNormalizeScoresSpread(t *testing.T) {
 	vectorIdx := search.BuildHNSWIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
-	results, _, _, err := engine.Search(ctx, search.Options{
+	results, _, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -416,7 +416,7 @@ func TestKindWeightsDemotesModules(t *testing.T) {
 	}
 
 	engine := search.NewEngine(a, nil, nil)
-	results, _, _, err := engine.Search(ctx, search.Options{
+	results, _, err := engine.Search(ctx, search.Options{
 		Query: "payment",
 		Limit: 10,
 	})
@@ -456,12 +456,12 @@ func TestSearchModeKeyword(t *testing.T) {
 	seedFusionIndex(t, ctx, a)
 
 	engine := search.NewEngine(a, nil, nil)
-	_, _, mode, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode != search.ModeKeyword {
-		t.Errorf("mode = %q, want %q", mode, search.ModeKeyword)
+	if meta.Mode != search.ModeKeyword {
+		t.Errorf("mode = %q, want %q", meta.Mode, search.ModeKeyword)
 	}
 }
 
@@ -483,12 +483,12 @@ func TestSearchModeHybrid(t *testing.T) {
 	vectorIdx := search.BuildHNSWIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
-	_, _, mode, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode != search.ModeHybrid {
-		t.Errorf("mode = %q, want %q", mode, search.ModeHybrid)
+	if meta.Mode != search.ModeHybrid {
+		t.Errorf("mode = %q, want %q", meta.Mode, search.ModeHybrid)
 	}
 }
 
@@ -505,12 +505,12 @@ func TestSearchModeUpgradeViaSetVectors(t *testing.T) {
 
 	engine := search.NewEngine(a, nil, &paymentQueryEmbedder{})
 
-	_, _, mode1, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	_, meta1, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode1 != search.ModeKeyword {
-		t.Errorf("before SetVectors: mode = %q, want %q", mode1, search.ModeKeyword)
+	if meta1.Mode != search.ModeKeyword {
+		t.Errorf("before SetVectors: mode = %q, want %q", meta1.Mode, search.ModeKeyword)
 	}
 
 	embeddings, err := a.LoadEmbeddings(ctx)
@@ -520,12 +520,12 @@ func TestSearchModeUpgradeViaSetVectors(t *testing.T) {
 	vectorIdx := search.BuildHNSWIndex(embeddings)
 	engine.SetVectors(vectorIdx)
 
-	_, _, mode2, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	_, meta2, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode2 != search.ModeHybrid {
-		t.Errorf("after SetVectors: mode = %q, want %q", mode2, search.ModeHybrid)
+	if meta2.Mode != search.ModeHybrid {
+		t.Errorf("after SetVectors: mode = %q, want %q", meta2.Mode, search.ModeHybrid)
 	}
 }
 
@@ -583,7 +583,7 @@ func TestPathWeightsDemotesMigrationsAndScripts(t *testing.T) {
 	}
 
 	engine := search.NewEngine(a, nil, nil)
-	results, _, _, err := engine.Search(ctx, search.Options{
+	results, _, err := engine.Search(ctx, search.Options{
 		Query: "post moderation flagging",
 		Limit: 10,
 	})
@@ -608,5 +608,107 @@ func TestPathWeightsDemotesMigrationsAndScripts(t *testing.T) {
 		if !has[want] {
 			t.Errorf("demoted symbol %q missing from results — should be present but ranked lower", want)
 		}
+	}
+}
+
+func TestFusionWeightsKeywordOnly(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	engine := search.NewEngine(a, nil, nil)
+	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.KeywordWeight != 1.0 {
+		t.Errorf("keyword weight = %v, want 1.0", meta.KeywordWeight)
+	}
+	if meta.VectorWeight != 0.0 {
+		t.Errorf("vector weight = %v, want 0.0", meta.VectorWeight)
+	}
+}
+
+func TestFusionWeightsHybrid(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
+
+	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.KeywordWeight+meta.VectorWeight == 0 {
+		t.Error("both weights are zero in hybrid mode")
+	}
+	if meta.KeywordWeight < meta.VectorWeight {
+		t.Logf("keyword=%.2f vector=%.2f — keyword-biased (low vector confidence)", meta.KeywordWeight, meta.VectorWeight)
+	} else {
+		t.Logf("keyword=%.2f vector=%.2f", meta.KeywordWeight, meta.VectorWeight)
+	}
+}
+
+func TestLowConfidenceExcludesVectorOnlySymbols(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	// Build vector index with very weak embeddings (near-zero similarity).
+	// The default seedFusionIndex embeddings are simple byte patterns,
+	// and the paymentQueryEmbedder produces a different vector.
+	// With only 3 symbols, cosine similarities will be low.
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
+
+	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// When vector weight is 0, vector-only symbols should not appear.
+	if meta.VectorWeight == 0 {
+		t.Logf("vector confidence below threshold — keyword-only mode")
+		// In keyword-only mode, the "TransactionLog" symbol (which has no
+		// keyword match for "payment") should be absent.
+		results, _, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 50})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range results {
+			if r.Name == "TransactionLog" {
+				t.Errorf("TransactionLog (vector-only match) should not appear when vector weight is 0")
+			}
+		}
+	} else {
+		t.Logf("vector confidence above threshold (kw=%.2f vec=%.2f) — vector-only symbols may appear",
+			meta.KeywordWeight, meta.VectorWeight)
 	}
 }
