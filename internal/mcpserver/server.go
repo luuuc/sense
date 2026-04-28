@@ -685,7 +685,51 @@ func (h *handlers) resolveSymbol(ctx context.Context, tool, symbol string) (cli.
 		return cli.Match{}, &resolveError{suggestionsResult(symbol, matches)}
 	}
 
+	if winner, ok := h.dominantMatch(ctx, matches); ok {
+		return winner, nil
+	}
+
 	return cli.Match{}, &resolveError{h.disambiguationResult(ctx, symbol, matches)}
+}
+
+// dominantMatch returns the single best match when one candidate has
+// overwhelmingly more edges than all others — e.g. Topic(107 edges)
+// vs Topic(1 edge) vs Topic(0 edges). The top candidate must have at
+// least 5× the runner-up's edge count (and the runner-up must have
+// ≤ 2 edges) to auto-resolve. This prevents the LLM from entering a
+// retry loop when the disambiguation hint is circular (top match
+// qualified == query).
+func (h *handlers) dominantMatch(ctx context.Context, matches []cli.Match) (cli.Match, bool) {
+	ids := make([]int64, len(matches))
+	for i := range matches {
+		ids[i] = matches[i].ID
+	}
+	counts, err := cli.EdgeCounts(ctx, h.db, ids)
+	if err != nil {
+		return cli.Match{}, false
+	}
+
+	type ranked struct {
+		match cli.Match
+		edges int
+	}
+	items := make([]ranked, len(matches))
+	for i, m := range matches {
+		items[i] = ranked{match: m, edges: counts[m.ID]}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].edges > items[j].edges
+	})
+
+	if len(items) < 2 {
+		return cli.Match{}, false
+	}
+	top := items[0].edges
+	runnerUp := items[1].edges
+	if top >= 5 && runnerUp <= 2 && top >= runnerUp*5 {
+		return items[0].match, true
+	}
+	return cli.Match{}, false
 }
 
 func notFoundResult(symbol string) *mcp.CallToolResult {
@@ -754,7 +798,11 @@ func (h *handlers) disambiguationResult(ctx context.Context, symbol string, matc
 
 	hint := ""
 	if len(topMatches) > 0 {
-		hint = fmt.Sprintf("Refine with a qualified name, e.g. %q", items[0].match.Qualified)
+		if items[0].match.Qualified == symbol {
+			hint = fmt.Sprintf("Multiple symbols named %q exist — pick the one in the right file from top_matches above", symbol)
+		} else {
+			hint = fmt.Sprintf("Refine with a qualified name, e.g. %q", items[0].match.Qualified)
+		}
 	}
 
 	resp := map[string]any{
