@@ -8,9 +8,11 @@ package mcpserver
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -330,26 +332,15 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 
 	direction := req.GetString("direction", "both")
 
-	matches, err := cli.Lookup(ctx, h.db, symbol)
+	match, err := h.resolveSymbol(ctx, "sense.graph", symbol)
 	if err != nil {
-		return nil, fmt.Errorf("sense.graph: lookup: %w", err)
-	}
-	switch len(matches) {
-	case 0:
-		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: no symbol matches %q", symbol)), nil
-	case 1:
-		// resolved
-	default:
-		var lines []string
-		for _, m := range matches {
-			lines = append(lines, fmt.Sprintf("  %s (%s) %s:%d", m.Qualified, m.Kind, m.File, m.LineStart))
+		if re, ok := err.(*resolveError); ok {
+			return re.result, nil
 		}
-		return mcp.NewToolResultError(fmt.Sprintf(
-			"sense.graph: multiple symbols match %q — specify a qualified name:\n%s",
-			symbol, strings.Join(lines, "\n"))), nil
+		return nil, err
 	}
 
-	sc, err := h.adapter.ReadSymbol(ctx, matches[0].ID)
+	sc, err := h.adapter.ReadSymbol(ctx, match.ID)
 	if err != nil {
 		return nil, fmt.Errorf("sense.graph: read symbol: %w", err)
 	}
@@ -607,6 +598,9 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 	} else {
 		resp2, err := h.blastSymbol(ctx, symbol, opts)
 		if err != nil {
+			if re, ok := err.(*resolveError); ok {
+				return re.result, nil
+			}
 			if toolErr, ok := err.(*toolError); ok {
 				return mcp.NewToolResultError(toolErr.msg), nil
 			}
@@ -661,37 +655,137 @@ type toolError struct{ msg string }
 
 func (e *toolError) Error() string { return e.msg }
 
-func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options) (mcpio.BlastResponse, error) {
+type resolveError struct{ result *mcp.CallToolResult }
+
+func (e *resolveError) Error() string { return "resolve: unresolved symbol" }
+
+// disambiguationCap limits the number of candidates in a disambiguation
+// response. Enough for the LLM to pick without overwhelming the context.
+const disambiguationCap = 10
+
+// resolveSymbol runs Lookup and returns the single resolved match.
+// When the symbol is not found, ambiguous, or only fuzzy-matched, it
+// returns a resolveError whose result field carries a pre-built
+// *mcp.CallToolResult with structured JSON for the LLM.
+func (h *handlers) resolveSymbol(ctx context.Context, tool, symbol string) (cli.Match, error) {
 	matches, err := cli.Lookup(ctx, h.db, symbol)
 	if err != nil {
-		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: lookup: %w", err)
+		return cli.Match{}, fmt.Errorf("%s: lookup: %w", tool, err)
 	}
-	switch len(matches) {
-	case 0:
-		return mcpio.BlastResponse{}, &toolError{fmt.Sprintf("sense.blast: no symbol matches %q", symbol)}
-	case 1:
-		// resolved
-	default:
-		var lines []string
-		for _, m := range matches {
-			lines = append(lines, fmt.Sprintf("  %s (%s) %s:%d", m.Qualified, m.Kind, m.File, m.LineStart))
+
+	if len(matches) == 0 {
+		return cli.Match{}, &resolveError{notFoundResult(symbol)}
+	}
+
+	if len(matches) == 1 && matches[0].Resolution != cli.ResFuzzy {
+		return matches[0], nil
+	}
+
+	if matches[0].Resolution == cli.ResFuzzy {
+		return cli.Match{}, &resolveError{suggestionsResult(symbol, matches)}
+	}
+
+	return cli.Match{}, &resolveError{h.disambiguationResult(ctx, symbol, matches)}
+}
+
+func notFoundResult(symbol string) *mcp.CallToolResult {
+	resp := map[string]any{
+		"error": "symbol not found",
+		"query": symbol,
+	}
+	out, _ := json.MarshalIndent(resp, "", "  ")
+	return mcp.NewToolResultError(string(out))
+}
+
+func suggestionsResult(symbol string, matches []cli.Match) *mcp.CallToolResult {
+	suggestions := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if m.Qualified != m.Name {
+			suggestions = append(suggestions, fmt.Sprintf("%s (%s)", m.Qualified, m.Kind))
+		} else {
+			suggestions = append(suggestions, fmt.Sprintf("%s (%s) %s", m.Name, m.Kind, m.File))
 		}
-		return mcpio.BlastResponse{}, &toolError{fmt.Sprintf(
-			"sense.blast: multiple symbols match %q — specify a qualified name:\n%s",
-			symbol, strings.Join(lines, "\n"))}
 	}
+	resp := map[string]any{
+		"error":       "symbol not found",
+		"query":       symbol,
+		"suggestions": suggestions,
+	}
+	out, _ := json.MarshalIndent(resp, "", "  ")
+	return mcp.NewToolResultText(string(out))
+}
 
-	siblingIDs, err := blast.SiblingSymbolIDs(ctx, h.db, matches[0].ID)
+func (h *handlers) disambiguationResult(ctx context.Context, symbol string, matches []cli.Match) *mcp.CallToolResult {
+	ids := make([]int64, len(matches))
+	for i := range matches {
+		ids[i] = matches[i].ID
+	}
+	edgeCounts, err := cli.EdgeCounts(ctx, h.db, ids)
 	if err != nil {
-		siblingIDs = []int64{matches[0].ID}
+		fmt.Fprintf(os.Stderr, "sense: edge count query failed: %v\n", err)
+		edgeCounts = map[int64]int{}
 	}
 
-	result, err := blast.Compute(ctx, h.db, siblingIDs, opts)
+	type ranked struct {
+		match cli.Match
+		edges int
+	}
+	items := make([]ranked, len(matches))
+	for i, m := range matches {
+		items[i] = ranked{match: m, edges: edgeCounts[m.ID]}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].edges != items[j].edges {
+			return items[i].edges > items[j].edges
+		}
+		return items[i].match.Qualified < items[j].match.Qualified
+	})
+
+	limit := disambiguationCap
+	if limit > len(items) {
+		limit = len(items)
+	}
+	topMatches := make([]string, limit)
+	for i := 0; i < limit; i++ {
+		m := items[i]
+		topMatches[i] = fmt.Sprintf("%s (%d edges, %s) %s:%d",
+			m.match.Qualified, m.edges, m.match.Kind, m.match.File, m.match.LineStart)
+	}
+
+	hint := ""
+	if len(topMatches) > 0 {
+		hint = fmt.Sprintf("Refine with a qualified name, e.g. %q", items[0].match.Qualified)
+	}
+
+	resp := map[string]any{
+		"ambiguous":   true,
+		"query":       symbol,
+		"matches":     len(matches),
+		"resolution":  string(matches[0].Resolution),
+		"top_matches": topMatches,
+		"hint":        hint,
+	}
+	out, _ := json.MarshalIndent(resp, "", "  ")
+	return mcp.NewToolResultText(string(out))
+}
+
+func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options) (mcpio.BlastResponse, error) {
+	match, err := h.resolveSymbol(ctx, "sense.blast", symbol)
+	if err != nil {
+		return mcpio.BlastResponse{}, err
+	}
+
+	siblingIDs, err := blast.SiblingSymbolIDs(ctx, h.db, match.ID)
+	if err != nil {
+		siblingIDs = []int64{match.ID}
+	}
+
+	blastResult, err := blast.Compute(ctx, h.db, siblingIDs, opts)
 	if err != nil {
 		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: compute: %w", err)
 	}
 
-	fileIDs := cli.CollectBlastFileIDs(result)
+	fileIDs := cli.CollectBlastFileIDs(blastResult)
 	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
 	if err != nil {
 		return mcpio.BlastResponse{}, fmt.Errorf("sense.blast: load file paths: %w", err)
@@ -701,7 +795,7 @@ func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Op
 		return p, ok
 	}
 
-	return mcpio.BuildBlastResponse(result, lookup), nil
+	return mcpio.BuildBlastResponse(blastResult, lookup), nil
 }
 
 func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options) (mcpio.BlastResponse, error) {
