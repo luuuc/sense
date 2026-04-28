@@ -137,6 +137,16 @@ func SiblingSymbolIDs(ctx context.Context, db *sql.DB, symbolID int64) ([]int64,
 	return ids, rows.Err()
 }
 
+func filterIDs(ids []int64, keep map[int64]struct{}) []int64 {
+	out := ids[:0]
+	for _, id := range ids {
+		if _, ok := keep[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // sortSymbolsByID provides deterministic output ordering. Callers
 // consuming the blast Result (CLI tables, MCP responses) don't need
 // to impose their own sort.

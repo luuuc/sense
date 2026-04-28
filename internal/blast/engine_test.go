@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -137,7 +138,10 @@ func TestComputeMultiHopReachesAncestor(t *testing.T) {
 	middleID := idOf(t, adapter, "B#middle")
 	topID := idOf(t, adapter, "A#top")
 
-	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{MaxHops: 3})
+	res, err := blast.Compute(context.Background(), db, []int64{leafID}, blast.Options{
+		MaxHops:       3,
+		MinConfidence: 0.4,
+	})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -210,10 +214,10 @@ func TestComputeMissingSubjectReturnsSentinel(t *testing.T) {
 	}
 }
 
-// TestComputeDefaultMaxHops pins the zero-value behaviour: passing
-// Options{} (all zero) invokes the default 3-hop traversal, not a
-// no-op.
-func TestComputeDefaultMaxHops(t *testing.T) {
+// TestComputeDefaultsStopWeakChains pins the zero-value behaviour:
+// Options{} applies default MinConfidence 0.5, which stops chains
+// of 0.7-confidence edges at hop 2 (0.7×0.7=0.49 < 0.5).
+func TestComputeDefaultsStopWeakChains(t *testing.T) {
 	db, adapter := setupGraph(t)
 	leafID := idOf(t, adapter, "C#leaf")
 
@@ -221,8 +225,8 @@ func TestComputeDefaultMaxHops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
-	if res.TotalAffected != 2 {
-		t.Errorf("TotalAffected = %d, want 2 (default 3 hops reach A#top via B#middle)", res.TotalAffected)
+	if res.TotalAffected != 1 {
+		t.Errorf("TotalAffected = %d, want 1 (default MinConfidence 0.5 cuts 0.7*0.7=0.49 at hop 2)", res.TotalAffected)
 	}
 }
 
@@ -723,5 +727,263 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+}
+
+// --- Pitch 13-05 fixture tests ---
+
+type fixtureDB struct {
+	db      *sql.DB
+	adapter *sqlite.Adapter
+	fileID  int64
+	nextLine int
+}
+
+func newFixtureDB(t *testing.T) *fixtureDB {
+	t.Helper()
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "fixture.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	fid, err := adapter.WriteFile(ctx, &model.File{
+		Path: "fixture.rb", Language: "ruby", Hash: "fix",
+		Symbols: 1, IndexedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	return &fixtureDB{db: db, adapter: adapter, fileID: fid, nextLine: 1}
+}
+
+func (f *fixtureDB) addSymbol(t *testing.T, name string) int64 {
+	t.Helper()
+	line := f.nextLine
+	f.nextLine += 10
+	id, err := f.adapter.WriteSymbol(context.Background(), &model.Symbol{
+		FileID: f.fileID, Name: name, Qualified: name,
+		Kind: model.KindClass, LineStart: line, LineEnd: line + 5,
+	})
+	if err != nil {
+		t.Fatalf("WriteSymbol %s: %v", name, err)
+	}
+	return id
+}
+
+func (f *fixtureDB) addEdge(t *testing.T, sourceID, targetID int64, kind model.EdgeKind, conf float64) {
+	t.Helper()
+	if _, err := f.adapter.WriteEdge(context.Background(), &model.Edge{
+		SourceID: &sourceID, TargetID: targetID,
+		Kind: kind, FileID: f.fileID, Confidence: conf,
+	}); err != nil {
+		t.Fatalf("WriteEdge %d→%d: %v", sourceID, targetID, err)
+	}
+}
+
+func TestGroupedOutputMultiEdge(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "BaseModel")
+	subA := fix.addSymbol(t, "SubModelA")
+	subB := fix.addSymbol(t, "SubModelB")
+	comp := fix.addSymbol(t, "CompositorX")
+	incl := fix.addSymbol(t, "IncluderY")
+	caller := fix.addSymbol(t, "CallerZ")
+
+	fix.addEdge(t, subA, base, model.EdgeInherits, 1.0)
+	fix.addEdge(t, subB, base, model.EdgeInherits, 1.0)
+	fix.addEdge(t, comp, base, model.EdgeComposes, 0.9)
+	fix.addEdge(t, incl, base, model.EdgeIncludes, 0.9)
+	fix.addEdge(t, caller, base, model.EdgeCalls, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if len(res.DirectCallers) != 5 {
+		t.Errorf("DirectCallers = %d, want 5", len(res.DirectCallers))
+	}
+
+	subclassIDs := map[int64]bool{}
+	for _, s := range res.AffectedSubclasses {
+		subclassIDs[s.ID] = true
+	}
+	if !subclassIDs[subA] || !subclassIDs[subB] {
+		t.Errorf("AffectedSubclasses = %+v, want SubModelA + SubModelB", res.AffectedSubclasses)
+	}
+	if len(res.AffectedSubclasses) != 2 {
+		t.Errorf("AffectedSubclasses len = %d, want 2", len(res.AffectedSubclasses))
+	}
+
+	compIDs := map[int64]bool{}
+	for _, s := range res.AffectedViaComposition {
+		compIDs[s.ID] = true
+	}
+	if !compIDs[comp] {
+		t.Errorf("AffectedViaComposition = %+v, want CompositorX", res.AffectedViaComposition)
+	}
+
+	inclIDs := map[int64]bool{}
+	for _, s := range res.AffectedViaIncludes {
+		inclIDs[s.ID] = true
+	}
+	if !inclIDs[incl] {
+		t.Errorf("AffectedViaIncludes = %+v, want IncluderY", res.AffectedViaIncludes)
+	}
+}
+
+func TestConfidenceDecayStopsAtThreshold(t *testing.T) {
+	fix := newFixtureDB(t)
+
+	// Chain: A ←(0.9)— B ←(0.9)— C ←(0.9)— D ←(0.9)— E ←(0.7)— F
+	// Cumulative at each hop:
+	//   B: 0.9   C: 0.81   D: 0.729   E: 0.656   F: 0.459
+	a := fix.addSymbol(t, "A")
+	b := fix.addSymbol(t, "B")
+	c := fix.addSymbol(t, "C")
+	d := fix.addSymbol(t, "D")
+	e := fix.addSymbol(t, "E")
+	f := fix.addSymbol(t, "F")
+
+	fix.addEdge(t, b, a, model.EdgeCalls, 0.9)
+	fix.addEdge(t, c, b, model.EdgeCalls, 0.9)
+	fix.addEdge(t, d, c, model.EdgeCalls, 0.9)
+	fix.addEdge(t, e, d, model.EdgeCalls, 0.9)
+	fix.addEdge(t, f, e, model.EdgeCalls, 0.7)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{a}, blast.Options{
+		MaxHops:       10,
+		MinConfidence: 0.5,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	found := map[int64]bool{}
+	for _, c := range res.DirectCallers {
+		found[c.ID] = true
+	}
+	for _, h := range res.IndirectCallers {
+		found[h.Symbol.ID] = true
+	}
+
+	for _, want := range []int64{b, c, d, e} {
+		if !found[want] {
+			t.Errorf("expected symbol %d in results (above 0.5 threshold)", want)
+		}
+	}
+	if found[f] {
+		t.Errorf("symbol F (cumulative 0.459) should be excluded at MinConfidence 0.5")
+	}
+	if res.TotalAffected != 4 {
+		t.Errorf("TotalAffected = %d, want 4", res.TotalAffected)
+	}
+
+	// With MinConfidence 0.8: only B (0.9) and C (0.81) pass.
+	res2, err := blast.Compute(context.Background(), fix.db, []int64{a}, blast.Options{
+		MaxHops:       10,
+		MinConfidence: 0.8,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if res2.TotalAffected != 2 {
+		t.Errorf("TotalAffected at 0.8 = %d, want 2 (B=0.9, C=0.81)", res2.TotalAffected)
+	}
+}
+
+func TestResultCapTruncatesWeakest(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "Hub")
+
+	// Create 150 callers with varying confidence.
+	// First 120 at confidence 1.0, last 30 at confidence 0.6.
+	for i := 0; i < 120; i++ {
+		id := fix.addSymbol(t, fmt.Sprintf("Strong%d", i))
+		fix.addEdge(t, id, subject, model.EdgeCalls, 1.0)
+	}
+	for i := 0; i < 30; i++ {
+		id := fix.addSymbol(t, fmt.Sprintf("Weak%d", i))
+		fix.addEdge(t, id, subject, model.EdgeCalls, 0.6)
+	}
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{subject}, blast.Options{
+		MaxHops:       1,
+		MinConfidence: 0.5,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if res.TotalAffected != 150 {
+		t.Errorf("TotalAffected = %d, want 150 (pre-truncation count)", res.TotalAffected)
+	}
+	returned := len(res.DirectCallers) + len(res.IndirectCallers)
+	if returned != 100 {
+		t.Errorf("returned symbols = %d, want 100 (cap)", returned)
+	}
+
+	// All returned should be the strong (1.0) callers — weakest were truncated.
+	for _, c := range res.DirectCallers {
+		if c.Qualified[:4] == "Weak" {
+			// Some Weak callers may survive if there are <100 Strong+Weak at 1.0,
+			// but with 120 strong at 1.0 and only 100 cap, no Weak should remain.
+			t.Errorf("Weak caller %s survived truncation; expected only strong callers", c.Qualified)
+		}
+	}
+}
+
+func TestDoubleReachableAppearsInFirstGroup(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "Base")
+	child := fix.addSymbol(t, "Child")
+
+	// Child reaches Base via both inherits and composes.
+	// Both map to edge-kind groups. BFS visits Child once;
+	// the first edge wins, so Child lands in exactly one group.
+	fix.addEdge(t, child, base, model.EdgeInherits, 1.0)
+	fix.addEdge(t, child, base, model.EdgeComposes, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if len(res.DirectCallers) != 1 {
+		t.Errorf("DirectCallers = %d, want 1 (Child appears once)", len(res.DirectCallers))
+	}
+	if res.DirectCallers[0].ID != child {
+		t.Errorf("DirectCallers[0] = %d, want %d (Child)", res.DirectCallers[0].ID, child)
+	}
+
+	// Child should appear in exactly one edge-kind group, not both.
+	groupCount := 0
+	for _, s := range res.AffectedSubclasses {
+		if s.ID == child {
+			groupCount++
+		}
+	}
+	for _, s := range res.AffectedViaComposition {
+		if s.ID == child {
+			groupCount++
+		}
+	}
+	for _, s := range res.AffectedViaIncludes {
+		if s.ID == child {
+			groupCount++
+		}
+	}
+	if groupCount != 1 {
+		t.Errorf("Child appears in %d edge-kind groups, want exactly 1", groupCount)
 	}
 }
