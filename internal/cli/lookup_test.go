@@ -273,3 +273,373 @@ func TestLevenshtein(t *testing.T) {
 		}
 	}
 }
+
+func TestBestLevenshtein(t *testing.T) {
+	cases := []struct {
+		query, name, qualified string
+		want                   int
+	}{
+		{"create", "create", "Discourse::TopicCreator#create", 0},
+		{"TopicCreator#create", "create", "Discourse::TopicCreator#create", 0},
+		{"TopicCreater#create", "create", "Discourse::TopicCreator#create", 1},
+		{"CheckoutService", "CheckoutService", "App::Services::CheckoutService", 0},
+		{"Services::CheckoutService", "CheckoutService", "App::Services::CheckoutService", 0},
+		{"B.C", "C", "A::B.C#d", 2},
+		{"d", "d", "A::B.C#d", 0},
+		{"xyz", "create", "Discourse::TopicCreator#create", 6},
+		{"A::B.C#d", "d", "A::B.C#d", 0},
+	}
+	for _, tc := range cases {
+		if got := bestLevenshtein(tc.query, tc.name, tc.qualified); got != tc.want {
+			t.Errorf("bestLevenshtein(%q, %q, %q) = %d, want %d",
+				tc.query, tc.name, tc.qualified, got, tc.want)
+		}
+	}
+}
+
+func TestEscapeLike(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"foo", "foo"},
+		{"foo%bar", `foo\%bar`},
+		{"foo_bar", `foo\_bar`},
+		{`foo\bar`, `foo\\bar`},
+		{`%_\`, `\%\_\\`},
+		{"TopicCreator#create", "TopicCreator#create"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := escapeLike(tc.in); got != tc.want {
+			t.Errorf("escapeLike(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// seedFuzzyResolutionDB builds a fixture modeled after the pitch's
+// motivating examples: Discourse-style Ruby symbols with deep
+// qualification, multiple "create" methods for disambiguation, and
+// edges to rank by connectedness.
+func seedFuzzyResolutionDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+	ctx := context.Background()
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	files := []model.File{
+		{Path: "app/models/topic_creator.rb", Language: "ruby", Hash: "a1", IndexedAt: time.Now()},
+		{Path: "app/models/post_creator.rb", Language: "ruby", Hash: "a2", IndexedAt: time.Now()},
+		{Path: "app/models/category_creator.rb", Language: "ruby", Hash: "a3", IndexedAt: time.Now()},
+		{Path: "app/services/checkout.rb", Language: "ruby", Hash: "a4", IndexedAt: time.Now()},
+		{Path: "app/controllers/topics.rb", Language: "ruby", Hash: "a5", IndexedAt: time.Now()},
+		{Path: "lib/helpers.rb", Language: "ruby", Hash: "a6", IndexedAt: time.Now()},
+	}
+	fids := make([]int64, len(files))
+	for i := range files {
+		id, werr := adapter.WriteFile(ctx, &files[i])
+		if werr != nil {
+			t.Fatalf("WriteFile: %v", werr)
+		}
+		fids[i] = id
+	}
+
+	symbols := []model.Symbol{
+		// Discourse-style deep qualification
+		{FileID: fids[0], Name: "create", Qualified: "Discourse::TopicCreator#create", Kind: "method", LineStart: 10, LineEnd: 40},
+		{FileID: fids[0], Name: "new", Qualified: "Discourse::TopicCreator#new", Kind: "method", LineStart: 5, LineEnd: 8},
+		{FileID: fids[0], Name: "TopicCreator", Qualified: "Discourse::TopicCreator", Kind: "class", LineStart: 1, LineEnd: 50},
+		// Multiple "create" methods for disambiguation
+		{FileID: fids[1], Name: "create", Qualified: "Discourse::PostCreator#create", Kind: "method", LineStart: 15, LineEnd: 45},
+		{FileID: fids[2], Name: "create", Qualified: "Discourse::CategoryCreator#create", Kind: "method", LineStart: 8, LineEnd: 20},
+		// Deep service qualification
+		{FileID: fids[3], Name: "CheckoutService", Qualified: "App::Services::CheckoutService", Kind: "class", LineStart: 1, LineEnd: 100},
+		{FileID: fids[3], Name: "process", Qualified: "App::Services::CheckoutService#process", Kind: "method", LineStart: 10, LineEnd: 30},
+		// Controller
+		{FileID: fids[4], Name: "index", Qualified: "TopicsController#index", Kind: "method", LineStart: 5, LineEnd: 15},
+		// Top-level helper
+		{FileID: fids[5], Name: "format_date", Qualified: "format_date", Kind: "function", LineStart: 1, LineEnd: 5},
+	}
+	sids := make([]int64, len(symbols))
+	for i := range symbols {
+		id, werr := adapter.WriteSymbol(ctx, &symbols[i])
+		if werr != nil {
+			t.Fatalf("WriteSymbol: %v", werr)
+		}
+		sids[i] = id
+	}
+
+	// TopicCreator#create: most connected "create" — vary the source
+	// so each edge is unique. We use all 9 symbols as sources.
+	for i := 0; i < len(sids); i++ {
+		sid := sids[i]
+		if _, werr := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &sid, TargetID: sids[0], Kind: model.EdgeCalls,
+			FileID: fids[4], Confidence: 0.9,
+		}); werr != nil {
+			t.Fatalf("WriteEdge: %v", werr)
+		}
+	}
+
+	// PostCreator#create: 8 edges
+	for i := 0; i < 8; i++ {
+		sid := sids[i%len(sids)]
+		if _, werr := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &sid, TargetID: sids[3], Kind: model.EdgeCalls,
+			FileID: fids[1], Confidence: 0.9,
+		}); werr != nil {
+			t.Fatalf("WriteEdge: %v", werr)
+		}
+	}
+
+	// CategoryCreator#create: 3 edges
+	for i := 0; i < 3; i++ {
+		sid := sids[i%len(sids)]
+		if _, werr := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &sid, TargetID: sids[4], Kind: model.EdgeCalls,
+			FileID: fids[2], Confidence: 0.9,
+		}); werr != nil {
+			t.Fatalf("WriteEdge: %v", werr)
+		}
+	}
+
+	return adapter.DB()
+}
+
+func TestLookupSuffixResolution(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	matches, err := Lookup(ctx, db, "TopicCreator#create")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("want 1 suffix match, got %d: %+v", len(matches), matches)
+	}
+	if matches[0].Qualified != "Discourse::TopicCreator#create" {
+		t.Errorf("qualified = %q, want Discourse::TopicCreator#create", matches[0].Qualified)
+	}
+	if matches[0].Resolution != ResSuffix {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResSuffix)
+	}
+}
+
+func TestLookupSuffixCheckoutService(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	matches, err := Lookup(ctx, db, "CheckoutService")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(matches) != 1 {
+		// "CheckoutService" matches via exact name (tier 2)
+		t.Fatalf("want 1 match, got %d: %+v", len(matches), matches)
+	}
+	if matches[0].Qualified != "App::Services::CheckoutService" {
+		t.Errorf("qualified = %q", matches[0].Qualified)
+	}
+	if matches[0].Resolution != ResExactName {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResExactName)
+	}
+}
+
+func TestLookupSuffixDeepQualification(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	matches, err := Lookup(ctx, db, "Services::CheckoutService")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("want 1 suffix match, got %d: %+v", len(matches), matches)
+	}
+	if matches[0].Qualified != "App::Services::CheckoutService" {
+		t.Errorf("qualified = %q", matches[0].Qualified)
+	}
+	if matches[0].Resolution != ResSuffix {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResSuffix)
+	}
+}
+
+func TestLookupContainmentMatch(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	matches, err := Lookup(ctx, db, "TopicCreator")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	// "TopicCreator" matches via exact name (tier 2) for the class symbol
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match, got %d: %+v", len(matches), matches)
+	}
+	if matches[0].Qualified != "Discourse::TopicCreator" {
+		t.Errorf("qualified = %q", matches[0].Qualified)
+	}
+}
+
+func TestLookupContainmentFallback(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	// "Checkout" is not an exact name or suffix but is contained in
+	// qualified names.
+	matches, err := Lookup(ctx, db, "Checkout")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("expected containment matches for 'Checkout'")
+	}
+	if matches[0].Resolution != ResContainment {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResContainment)
+	}
+	found := false
+	for _, m := range matches {
+		if m.Qualified == "App::Services::CheckoutService" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("containment did not find CheckoutService: %+v", matches)
+	}
+}
+
+func TestLookupFuzzySuggestions(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	// "TopicCreater" (typo) has no exact/suffix/containment match but
+	// is within Levenshtein distance 1 of "TopicCreator" via the
+	// suffix of "Discourse::TopicCreator".
+	matches, err := Lookup(ctx, db, "TopicCreater")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("expected fuzzy suggestions for 'TopicCreater'")
+	}
+	if matches[0].Resolution != ResFuzzy {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResFuzzy)
+	}
+	found := false
+	for _, m := range matches {
+		if m.Qualified == "Discourse::TopicCreator" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("fuzzy did not suggest Discourse::TopicCreator: %+v", matches)
+	}
+}
+
+func TestLookupCreateDisambiguationByName(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	// "create" is an exact name match for 3 symbols → disambiguation
+	matches, err := Lookup(ctx, db, "create")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(matches) != 3 {
+		t.Fatalf("want 3 matches for 'create', got %d: %+v", len(matches), matches)
+	}
+	if matches[0].Resolution != ResExactName {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResExactName)
+	}
+}
+
+func TestLookupExactShortCircuitsSuffix(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	// "format_date" is both an exact qualified match and would be
+	// found by suffix. Exact must win.
+	matches, err := Lookup(ctx, db, "format_date")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("want 1 match, got %d", len(matches))
+	}
+	if matches[0].Resolution != ResExactQualified {
+		t.Errorf("resolution = %q, want %q (exact must short-circuit suffix)",
+			matches[0].Resolution, ResExactQualified)
+	}
+}
+
+func TestLookupEdgeCountRanking(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	// All three "create" symbols match via exact name. Verify that
+	// EdgeCounts returns different counts we can rank by.
+	matches, err := Lookup(ctx, db, "create")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	ids := make([]int64, len(matches))
+	for i := range matches {
+		ids[i] = matches[i].ID
+	}
+	counts, err := EdgeCounts(ctx, db, ids)
+	if err != nil {
+		t.Fatalf("EdgeCounts: %v", err)
+	}
+
+	// TopicCreator#create should have the most edges
+	var topicID int64
+	for _, m := range matches {
+		if m.Qualified == "Discourse::TopicCreator#create" {
+			topicID = m.ID
+			break
+		}
+	}
+	if topicID == 0 {
+		t.Fatal("TopicCreator#create not found in matches")
+	}
+	for _, m := range matches {
+		if m.ID != topicID && counts[m.ID] > counts[topicID] {
+			t.Errorf("%s has %d edges > TopicCreator#create's %d edges",
+				m.Qualified, counts[m.ID], counts[topicID])
+		}
+	}
+}
+
+func TestLookupSuffixLIKEEscaping(t *testing.T) {
+	db := seedFuzzyResolutionDB(t)
+	ctx := context.Background()
+
+	// "Topic%Creator" contains a LIKE wildcard — suffix and containment
+	// tiers must escape it so it doesn't match "TopicCreator" etc.
+	matches, err := Lookup(ctx, db, "Topic%Creator")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	for _, m := range matches {
+		if m.Resolution == ResSuffix || m.Resolution == ResContainment {
+			t.Errorf("LIKE %% wildcard leaked: matched %s via %s", m.Qualified, m.Resolution)
+		}
+	}
+
+	// Same for underscore — must not act as single-char wildcard.
+	matches, err = Lookup(ctx, db, "Topic_Creator")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	for _, m := range matches {
+		if m.Resolution == ResSuffix || m.Resolution == ResContainment {
+			t.Errorf("LIKE _ wildcard leaked: matched %s via %s", m.Qualified, m.Resolution)
+		}
+	}
+}

@@ -45,10 +45,9 @@ Python tools (crg, roam) get dedicated virtualenvs created by their setup script
 
 Clone benchmark repos into `bench/repos/`. See [repos/README.md](repos/README.md) for exact clone commands and pinning instructions.
 
-Sense uses the current checkout — no clone needed.
-
 ```bash
 cd bench/repos
+git clone https://github.com/pallets/flask.git flask
 git clone https://github.com/discourse/discourse.git discourse
 git clone https://github.com/opf/openproject.git openproject
 git clone https://github.com/gin-gonic/gin.git gin
@@ -66,7 +65,7 @@ Index repos before running evaluations. Indexes persist in repo directories (`.s
 bash bench/setup.sh
 
 # Index specific tools/repos
-bash bench/setup.sh --tool sense,roam --repo sense,gin
+bash bench/setup.sh --tool sense,roam --repo flask,gin
 ```
 
 Already-indexed tool+repo pairs are skipped automatically.
@@ -87,13 +86,13 @@ If a tool is already indexed (from `setup.sh` or a prior run), `run.sh` skips se
 
 ```bash
 # Single tool + repo + task
-bash bench/run.sh --tool sense --repo sense --task callers
+bash bench/run.sh --tool sense --repo flask --task callers
 
 # Compare sense vs baseline on all tasks
-bash bench/run.sh --tool sense,baseline --repo sense
+bash bench/run.sh --tool sense,baseline --repo flask
 
 # Multiple filters (comma-separated)
-bash bench/run.sh --tool sense,grepai,baseline --repo sense,discourse --task callers,blast-radius
+bash bench/run.sh --tool sense,grepai,baseline --repo flask,discourse --task callers,blast-radius
 ```
 
 ### Dry run
@@ -166,9 +165,9 @@ prompt_template: |
   Find all callers of `{symbol}`. Respond with JSON: { "callers": [...] }
 
 repos:
-  sense:
-    symbol: "blast.Compute"
-    ground_truth_file: ground-truth/sense/my-task.json
+  flask:
+    symbol: "Flask.route"
+    ground_truth_file: ground-truth/flask/my-task.json
   discourse:
     symbol: "TopicCreator#create"
     ground_truth_file: ground-truth/discourse/my-task.json

@@ -9,37 +9,55 @@ import (
 	"strings"
 )
 
+// Resolution describes which tier of the lookup chain produced a Match.
+type Resolution string
+
+const (
+	ResExactQualified Resolution = "exact_qualified"
+	ResExactName      Resolution = "exact_name"
+	ResSuffix         Resolution = "suffix"
+	ResContainment    Resolution = "containment"
+	ResFuzzy          Resolution = "fuzzy"
+)
+
 // Match is one candidate returned by Lookup — the minimum a CLI needs
 // to render a disambiguation list and continue with a resolved id.
 type Match struct {
-	ID        int64
-	Name      string
-	Qualified string
-	Kind      string
-	File      string
-	Language  string
-	LineStart int
+	ID         int64
+	Name       string
+	Qualified  string
+	Kind       string
+	File       string
+	Language   string
+	LineStart  int
+	Resolution Resolution
 }
 
 // Lookup resolves a user-supplied symbol string into matching rows
-// in the sense_symbols table. The search runs three tiers in order
+// in the sense_symbols table. The search runs five tiers in order
 // and returns the first tier that produces any match:
 //
 //  1. Exact qualified name (`qualified = ?`)
 //  2. Exact unqualified name (`name = ?`)
-//  3. Fuzzy (Levenshtein ≤ 2 against both `qualified` and `name`),
-//     requires query length ≥ 3, returns at most fuzzyMaxResults
+//  3. Suffix match (`qualified LIKE '%' || ?`) — query is a suffix
+//     of the qualified name, e.g. `TopicCreator#create` matches
+//     `Discourse::TopicCreator#create`
+//  4. Containment match (`name/qualified LIKE '%' || ? || '%'`) —
+//     query appears anywhere in name or qualified
+//  5. Fuzzy (Levenshtein ≤ 2 against name, qualified, and
+//     separator-delimited suffixes of qualified), requires query
+//     length ≥ 3, returns at most fuzzyMaxResults
 //
-// Tier 3 is only consulted when both exact tiers come up empty — a
-// user who typed a valid qualified name that exists gets that row,
-// not a fuzzy alternative. The returned slice is ordered by
-// qualified-name ascending so the CLI's disambiguation output is
-// alphabetical and stable across runs.
+// Each match carries a Resolution field indicating which tier
+// produced it. Later tiers are only consulted when all earlier tiers
+// come up empty. Suffix and containment tiers require query length
+// ≥ 3 (likeMinQueryLen).
 //
 // Caller contract:
-//   - len(matches) == 0 → not-found; render "no symbol" message, exit 2
+//   - len(matches) == 0 → not-found; render "no symbol" message
 //   - len(matches) == 1 → resolved; use matches[0].ID
-//   - len(matches) > 1  → ambiguous; render disambiguation, exit 2
+//   - len(matches) > 1  → ambiguous; render disambiguation
+//   - Resolution == ResFuzzy → suggestions, not resolved matches
 func Lookup(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
 	if query == "" {
 		return nil, nil
@@ -50,7 +68,7 @@ func Lookup(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
 		return nil, err
 	}
 	if len(matches) > 0 {
-		return matches, nil
+		return setResolution(matches, ResExactQualified), nil
 	}
 
 	matches, err = lookupByName(ctx, db, query)
@@ -58,10 +76,37 @@ func Lookup(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
 		return nil, err
 	}
 	if len(matches) > 0 {
-		return matches, nil
+		return setResolution(matches, ResExactName), nil
 	}
 
-	return lookupFuzzy(ctx, db, query)
+	matches, err = lookupBySuffix(ctx, db, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) > 0 {
+		return setResolution(matches, ResSuffix), nil
+	}
+
+	matches, err = lookupByContainment(ctx, db, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) > 0 {
+		return setResolution(matches, ResContainment), nil
+	}
+
+	matches, err = lookupFuzzy(ctx, db, query)
+	if err != nil {
+		return nil, err
+	}
+	return setResolution(matches, ResFuzzy), nil
+}
+
+func setResolution(matches []Match, r Resolution) []Match {
+	for i := range matches {
+		matches[i].Resolution = r
+	}
+	return matches
 }
 
 // fuzzyMinQueryLen is the smallest query we bother fuzz-matching. A
@@ -104,11 +149,62 @@ func lookupByName(ctx context.Context, db *sql.DB, value string) ([]Match, error
 	return scanMatches(ctx, db, q, value)
 }
 
-// lookupFuzzy streams every symbol's (id, qualified, name, file,
-// line) and keeps the ones within fuzzyMaxDistance on either column.
-// At pitch scale (≤30K symbols) this is a few tens of milliseconds;
-// if that becomes a bottleneck, a future card could trigram-index
-// the columns. Not this card's problem.
+// likeMinQueryLen guards suffix and containment tiers against
+// extremely short queries that would match most symbols.
+const likeMinQueryLen = 3
+
+// lookupBySuffix resolves tier 3 — the query is a suffix of the
+// qualified name. Catches `TopicCreator#create` when the index has
+// `Discourse::TopicCreator#create`.
+func lookupBySuffix(ctx context.Context, db *sql.DB, value string) ([]Match, error) {
+	if len(value) < likeMinQueryLen {
+		return nil, nil
+	}
+	escaped := escapeLike(value)
+	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, f.language, s.line_start
+	           FROM sense_symbols s
+	           JOIN sense_files   f ON f.id = s.file_id
+	           WHERE s.qualified LIKE '%' || ? ESCAPE '\'
+	           ORDER BY s.qualified ASC`
+	return scanMatches(ctx, db, q, escaped)
+}
+
+// lookupByContainment resolves tier 4 — the query appears somewhere
+// in either the name or qualified column. Loosest match; may return
+// many results.
+func lookupByContainment(ctx context.Context, db *sql.DB, value string) ([]Match, error) {
+	if len(value) < likeMinQueryLen {
+		return nil, nil
+	}
+	escaped := escapeLike(value)
+	const q = `SELECT s.id, s.name, s.qualified, s.kind, f.path, f.language, s.line_start
+	           FROM sense_symbols s
+	           JOIN sense_files   f ON f.id = s.file_id
+	           WHERE s.name LIKE '%' || ? || '%' ESCAPE '\'
+	              OR s.qualified LIKE '%' || ? || '%' ESCAPE '\'
+	           ORDER BY s.qualified ASC`
+	return scanMatches(ctx, db, q, escaped, escaped)
+}
+
+// escapeLike escapes the LIKE special characters %, _, and \ in user
+// input so they are treated as literals. The ESCAPE '\' clause in the
+// queries makes \ the escape character.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
+// lookupFuzzy streams every symbol and keeps the closest matches by
+// Levenshtein distance. In addition to comparing against name and
+// qualified columns, it compares against every separator-delimited
+// suffix of the qualified name — so `TopicCreater#create` (typo)
+// finds `Discourse::TopicCreator#create` via the suffix
+// `TopicCreator#create` (distance 1).
+//
+// Results are capped at fuzzyMaxResults, sorted by distance then
+// alphabetically. Only matches within fuzzyMaxDistance are returned.
 func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
 	if len(query) < fuzzyMinQueryLen {
 		return nil, nil
@@ -132,12 +228,7 @@ func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error)
 		if err := rows.Scan(&m.ID, &m.Name, &m.Qualified, &m.Kind, &m.File, &m.Language, &m.LineStart); err != nil {
 			return nil, fmt.Errorf("lookup fuzzy scan: %w", err)
 		}
-		dq := levenshtein(query, m.Qualified)
-		dn := levenshtein(query, m.Name)
-		d := dq
-		if dn < d {
-			d = dn
-		}
+		d := bestLevenshtein(query, m.Name, m.Qualified)
 		if d <= fuzzyMaxDistance {
 			hits = append(hits, scored{match: m, distance: d})
 		}
@@ -146,8 +237,6 @@ func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error)
 		return nil, fmt.Errorf("lookup fuzzy iterate: %w", err)
 	}
 
-	// Closer matches first; ties broken alphabetically so output is
-	// deterministic regardless of SQLite's row order.
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].distance != hits[j].distance {
 			return hits[i].distance < hits[j].distance
@@ -162,6 +251,90 @@ func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error)
 		out = append(out, h.match)
 	}
 	return out, nil
+}
+
+// bestLevenshtein returns the minimum edit distance between query and
+// a symbol's name, qualified name, and every separator-delimited
+// suffix of the qualified name (`::#.`). This catches partial
+// qualification typos: `TopicCreater#create` is distance 1 from the
+// suffix `TopicCreator#create` of `Discourse::TopicCreator#create`.
+func bestLevenshtein(query, name, qualified string) int {
+	d := levenshtein(query, name)
+	if d == 0 {
+		return 0
+	}
+	if dq := levenshtein(query, qualified); dq < d {
+		d = dq
+		if d == 0 {
+			return 0
+		}
+	}
+	seen := map[string]struct{}{name: {}, qualified: {}}
+	for _, sep := range []string{"::", "#", "."} {
+		idx := 0
+		for {
+			pos := strings.Index(qualified[idx:], sep)
+			if pos < 0 {
+				break
+			}
+			idx += pos + len(sep)
+			suffix := qualified[idx:]
+			if _, dup := seen[suffix]; dup {
+				continue
+			}
+			seen[suffix] = struct{}{}
+			if ds := levenshtein(query, suffix); ds < d {
+				d = ds
+				if d == 0 {
+					return 0
+				}
+			}
+		}
+	}
+	return d
+}
+
+// EdgeCounts returns the total number of edges (source + target)
+// for each symbol ID. Used to rank disambiguation candidates by
+// connectedness.
+func EdgeCounts(ctx context.Context, db *sql.DB, ids []int64) (map[int64]int, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)*2)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	ph := strings.Join(placeholders, ",")
+	q := `SELECT symbol_id, SUM(cnt) FROM (
+	          SELECT source_id AS symbol_id, COUNT(*) AS cnt
+	          FROM sense_edges WHERE source_id IN (` + ph + `) GROUP BY source_id
+	          UNION ALL
+	          SELECT target_id AS symbol_id, COUNT(*) AS cnt
+	          FROM sense_edges WHERE target_id IN (` + ph + `) GROUP BY target_id
+	      ) GROUP BY symbol_id`
+
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("edge counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[int64]int, len(ids))
+	for rows.Next() {
+		var id int64
+		var cnt int
+		if err := rows.Scan(&id, &cnt); err != nil {
+			return nil, fmt.Errorf("edge counts scan: %w", err)
+		}
+		counts[id] = cnt
+	}
+	return counts, rows.Err()
 }
 
 // scanMatches is the shared row-scan for the two exact-tier queries.

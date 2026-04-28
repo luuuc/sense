@@ -6,7 +6,7 @@ Clone these repos locally before running the harness. Pin to exact commits for r
 
 | Repo | Language | Clone | Commit |
 |---|---|---|---|
-| **sense** | Go | Uses current checkout — no clone needed | `9a9fa02` (v0.30.0) |
+| **flask** | Python | `git clone https://github.com/pallets/flask.git repos/flask` | Pin on first clone |
 | **discourse** | Ruby/Rails | `git clone https://github.com/discourse/discourse.git repos/discourse` | Pin on first clone |
 | **openproject** | Ruby/Rails | `git clone https://github.com/opf/openproject.git repos/openproject` | Pin on first clone |
 | **gin** | Go | `git clone https://github.com/gin-gonic/gin.git repos/gin` | Pin on first clone |
@@ -40,8 +40,8 @@ git checkout $(python3 -c "import json; print(json.load(open('../PINNED_COMMITS.
 
 | Repo | Files | Primary Language |
 |---|---|---|
+| flask | ~24 | Python (~9.5k lines) |
 | discourse | ~21,500 | Ruby (~427k lines), TS/JS (~320k lines) |
 | openproject | ~20,600 | Ruby (~509k lines), TS/JS (~164k lines) |
 | gin | ~120 | Go |
 | nextjs | ~8,000 | TypeScript |
-| sense | ~255 | Go |
