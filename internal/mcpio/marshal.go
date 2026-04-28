@@ -141,6 +141,15 @@ func normalizeBlastResponse(r *BlastResponse) {
 	if r.AffectedTests == nil {
 		r.AffectedTests = []string{}
 	}
+	if r.AffectedSubclasses == nil {
+		r.AffectedSubclasses = []BlastCaller{}
+	}
+	if r.AffectedViaComposition == nil {
+		r.AffectedViaComposition = []BlastCaller{}
+	}
+	if r.AffectedViaIncludes == nil {
+		r.AffectedViaIncludes = []BlastCaller{}
+	}
 	if r.NextSteps == nil {
 		r.NextSteps = []NextStep{}
 	}

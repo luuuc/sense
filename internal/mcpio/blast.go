@@ -45,6 +45,37 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		})
 	}
 
+	for _, s := range r.AffectedSubclasses {
+		var file string
+		if path, ok := files(s.FileID); ok {
+			file = path
+		}
+		resp.AffectedSubclasses = append(resp.AffectedSubclasses, BlastCaller{
+			Symbol: qualifiedOrName(s),
+			File:   file,
+		})
+	}
+	for _, s := range r.AffectedViaComposition {
+		var file string
+		if path, ok := files(s.FileID); ok {
+			file = path
+		}
+		resp.AffectedViaComposition = append(resp.AffectedViaComposition, BlastCaller{
+			Symbol: qualifiedOrName(s),
+			File:   file,
+		})
+	}
+	for _, s := range r.AffectedViaIncludes {
+		var file string
+		if path, ok := files(s.FileID); ok {
+			file = path
+		}
+		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, BlastCaller{
+			Symbol: qualifiedOrName(s),
+			File:   file,
+		})
+	}
+
 	uniqueFiles := countUniqueBlastFiles(resp)
 	resp.SenseMetrics = BlastMetrics{
 		SymbolsTraversed:          1 + len(r.DirectCallers) + len(r.IndirectCallers),

@@ -193,9 +193,14 @@ type BlastResponse struct {
 	IndirectCallers []BlastIndirect `json:"indirect_callers"`
 	AffectedTests   []string        `json:"affected_tests"`
 	TotalAffected   int             `json:"total_affected"`
-	SenseMetrics    BlastMetrics    `json:"sense_metrics"`
-	Freshness       *Freshness      `json:"freshness,omitempty"`
-	NextSteps       []NextStep      `json:"next_steps"`
+
+	AffectedSubclasses     []BlastCaller `json:"affected_subclasses"`
+	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
+	AffectedViaIncludes    []BlastCaller `json:"affected_via_includes"`
+
+	SenseMetrics BlastMetrics `json:"sense_metrics"`
+	Freshness    *Freshness   `json:"freshness,omitempty"`
+	NextSteps    []NextStep   `json:"next_steps"`
 }
 
 // BlastCaller is the shape of a direct_callers entry.
