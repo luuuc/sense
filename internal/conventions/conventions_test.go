@@ -388,6 +388,109 @@ func TestDetectEmptyIndex(t *testing.T) {
 	}
 }
 
+func TestPickRepresentatives(t *testing.T) {
+	tests := []struct {
+		name     string
+		examples []Example
+		max      int
+		want     []string
+	}{
+		{"empty", nil, 3, nil},
+		{"one", []Example{{Name: "A", Path: "a"}}, 3, []string{"A"}},
+		{"two", []Example{{Name: "A", Path: "a"}, {Name: "B", Path: "b"}}, 3, []string{"A", "B"}},
+		{"exactly three", []Example{
+			{Name: "A", Path: "a"}, {Name: "B", Path: "b"}, {Name: "C", Path: "c"},
+		}, 3, []string{"A", "B", "C"}},
+		{"four picks first/middle/last", []Example{
+			{Name: "A", Path: "a"}, {Name: "B", Path: "b"}, {Name: "C", Path: "c"}, {Name: "D", Path: "d"},
+		}, 3, []string{"A", "C", "D"}},
+		{"six picks first/middle/last", []Example{
+			{Name: "A", Path: "a"}, {Name: "B", Path: "b"}, {Name: "C", Path: "c"},
+			{Name: "D", Path: "d"}, {Name: "E", Path: "e"}, {Name: "F", Path: "f"},
+		}, 3, []string{"A", "D", "F"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PickRepresentatives(tt.examples, tt.max)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("got[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestHasMatchingExample(t *testing.T) {
+	examples := []Example{
+		{Name: "Order", Path: "app/models/order.rb"},
+		{Name: "User", Path: "app/models/user.rb"},
+	}
+	if !hasMatchingExample(examples, "models") {
+		t.Error("expected match for domain 'models'")
+	}
+	if hasMatchingExample(examples, "controllers") {
+		t.Error("expected no match for domain 'controllers'")
+	}
+	if hasMatchingExample(nil, "models") {
+		t.Error("expected no match for nil examples")
+	}
+}
+
+func TestDomainFilterTighteningExcludesNonMatching(t *testing.T) {
+	adapter := setupFixtureIndex(t)
+	ctx := context.Background()
+
+	all, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	services, _, err := Detect(ctx, adapter.DB(), Options{Domain: "services"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(services) >= len(all) {
+		t.Errorf("domain filter should reduce conventions: all=%d services=%d", len(all), len(services))
+	}
+
+	for _, c := range services {
+		matched := false
+		for _, e := range c.Examples {
+			if strings.Contains(e.Path, "services") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("convention %q has no examples matching domain 'services': examples=%v", c.Description, c.Examples)
+		}
+	}
+}
+
+func TestExamplesPopulated(t *testing.T) {
+	adapter := setupFixtureIndex(t)
+	ctx := context.Background()
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range conventions {
+		if len(c.Examples) == 0 {
+			t.Errorf("convention %q has no examples", c.Description)
+		}
+		if len(c.Examples) != c.Instances {
+			t.Errorf("convention %q: len(Examples)=%d != Instances=%d", c.Description, len(c.Examples), c.Instances)
+		}
+	}
+}
+
 func findByCategory(conventions []Convention, cat Category) []Convention {
 	var out []Convention
 	for _, c := range conventions {
