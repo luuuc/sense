@@ -21,12 +21,18 @@ const (
 	CategoryTesting      Category = "testing"
 )
 
+type Example struct {
+	Name string
+	Path string
+}
+
 type Convention struct {
 	Category    Category
 	Description string
 	Instances   int
 	Total       int
 	Strength    float64
+	Examples    []Example
 }
 
 type Options struct {
@@ -59,13 +65,17 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	}
 
 	symbolByID := indexSymbols(symbols)
+	filePathByID := make(map[int64]string, len(files))
+	for _, f := range files {
+		filePathByID[f.id] = f.path
+	}
 
 	var conventions []Convention
-	conventions = append(conventions, detectInheritance(symbols, edges, symbolByID)...)
-	conventions = append(conventions, detectNaming(symbols, files)...)
-	conventions = append(conventions, detectStructure(symbols, files)...)
-	conventions = append(conventions, detectComposition(symbols, edges, symbolByID)...)
-	conventions = append(conventions, detectTesting(symbols, edges, files, symbolByID)...)
+	conventions = append(conventions, detectInheritance(symbols, edges, symbolByID, filePathByID)...)
+	conventions = append(conventions, detectNaming(symbols, filePathByID)...)
+	conventions = append(conventions, detectStructure(symbols, filePathByID)...)
+	conventions = append(conventions, detectComposition(symbols, edges, symbolByID, filePathByID)...)
+	conventions = append(conventions, detectTesting(symbols, edges, filePathByID, symbolByID)...)
 
 	sort.Slice(conventions, func(i, j int) bool {
 		if conventions[i].Category != conventions[j].Category {
@@ -76,6 +86,16 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 		}
 		return conventions[i].Description < conventions[j].Description
 	})
+
+	if opts.Domain != "" {
+		filtered := conventions[:0]
+		for _, c := range conventions {
+			if hasMatchingExample(c.Examples, opts.Domain) {
+				filtered = append(filtered, c)
+			}
+		}
+		conventions = filtered
+	}
 
 	if opts.MinStrength > 0 {
 		filtered := conventions[:0]
@@ -277,13 +297,13 @@ func chunkIDs(ids []int64) [][]int64 {
 	return chunks
 }
 
-func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow) []Convention {
+func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 
-	// Group: for each target of an "inherits" edge, count sources of same kind.
 	type inheritGroup struct {
 		targetName string
 		sourceKind string
 		count      int
+		examples   []Example
 	}
 
 	type groupKey struct {
@@ -307,16 +327,17 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		key := groupKey{targetID: e.targetID, sourceKind: src.kind}
 		if g, exists := groups[key]; exists {
 			g.count++
+			g.examples = append(g.examples, Example{Name: src.name, Path: filePathByID[src.fileID]})
 		} else {
 			groups[key] = &inheritGroup{
 				targetName: tgt.name,
 				sourceKind: src.kind,
 				count:      1,
+				examples:   []Example{{Name: src.name, Path: filePathByID[src.fileID]}},
 			}
 		}
 	}
 
-	// Total: all symbols of that kind
 	kindCounts := map[string]int{}
 	for _, s := range symbols {
 		kindCounts[s.kind]++
@@ -331,29 +352,26 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		if total == 0 {
 			continue
 		}
+		sortExamples(g.examples)
 		out = append(out, Convention{
 			Category:    CategoryInheritance,
 			Description: fmt.Sprintf("%d %s symbols inherit %s", g.count, g.sourceKind, g.targetName),
 			Instances:   g.count,
 			Total:       total,
 			Strength:    float64(g.count) / float64(total),
+			Examples:    g.examples,
 		})
 	}
 	return out
 }
 
-func detectNaming(symbols []symbolRow, files []fileRow) []Convention {
-	fileByID := map[int64]string{}
-	for _, f := range files {
-		fileByID[f.id] = f.path
-	}
-
-	// Group symbols by kind, detect suffix patterns in names
+func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Convention {
 	type kindSuffix struct {
 		kind   string
 		suffix string
 	}
 	suffixCounts := map[kindSuffix]int{}
+	suffixExamples := map[kindSuffix][]Example{}
 	kindCounts := map[string]int{}
 
 	for _, s := range symbols {
@@ -366,22 +384,24 @@ func detectNaming(symbols []symbolRow, files []fileRow) []Convention {
 		if suffix == "" {
 			continue
 		}
-		suffixCounts[kindSuffix{kind: s.kind, suffix: suffix}]++
+		ks := kindSuffix{kind: s.kind, suffix: suffix}
+		suffixCounts[ks]++
+		suffixExamples[ks] = append(suffixExamples[ks], Example{Name: s.name, Path: filePathByID[s.fileID]})
 	}
 
-	// Also detect file naming patterns per kind
 	type kindFileSuffix struct {
 		kind   string
 		suffix string
 	}
 	fileSuffixCounts := map[kindFileSuffix]int{}
+	fileSuffixExamples := map[kindFileSuffix][]Example{}
 	kindFileCounts := map[string]int{}
 
 	for _, s := range symbols {
 		if s.parentID != nil {
 			continue
 		}
-		fp, ok := fileByID[s.fileID]
+		fp, ok := filePathByID[s.fileID]
 		if !ok {
 			continue
 		}
@@ -391,7 +411,9 @@ func detectNaming(symbols []symbolRow, files []fileRow) []Convention {
 		if fileSuffix == "" {
 			continue
 		}
-		fileSuffixCounts[kindFileSuffix{kind: s.kind, suffix: fileSuffix}]++
+		kfs := kindFileSuffix{kind: s.kind, suffix: fileSuffix}
+		fileSuffixCounts[kfs]++
+		fileSuffixExamples[kfs] = append(fileSuffixExamples[kfs], Example{Name: base, Path: fp})
 	}
 
 	var out []Convention
@@ -404,60 +426,63 @@ func detectNaming(symbols []symbolRow, files []fileRow) []Convention {
 		if total == 0 {
 			continue
 		}
+		ex := suffixExamples[ks]
+		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryNaming,
 			Description: fmt.Sprintf("%s symbols use *%s naming", ks.kind, ks.suffix),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
+			Examples:    ex,
 		})
 	}
 
-	for ks, count := range fileSuffixCounts {
+	for kfs, count := range fileSuffixCounts {
 		if count < minInstances {
 			continue
 		}
-		total := kindFileCounts[ks.kind]
+		total := kindFileCounts[kfs.kind]
 		if total == 0 {
 			continue
 		}
+		ex := fileSuffixExamples[kfs]
+		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryNaming,
-			Description: fmt.Sprintf("%s files use *%s naming", ks.kind, ks.suffix),
+			Description: fmt.Sprintf("%s files use *%s naming", kfs.kind, kfs.suffix),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
+			Examples:    ex,
 		})
 	}
 
 	return out
 }
 
-func detectStructure(symbols []symbolRow, files []fileRow) []Convention {
-	fileByID := map[int64]string{}
-	for _, f := range files {
-		fileByID[f.id] = f.path
-	}
-
-	// Group top-level symbols by kind + directory pattern
+func detectStructure(symbols []symbolRow, filePathByID map[int64]string) []Convention {
 	type kindDir struct {
 		kind string
 		dir  string
 	}
 	dirCounts := map[kindDir]int{}
+	dirExamples := map[kindDir][]Example{}
 	kindCounts := map[string]int{}
 
 	for _, s := range symbols {
 		if s.parentID != nil {
 			continue
 		}
-		fp, ok := fileByID[s.fileID]
+		fp, ok := filePathByID[s.fileID]
 		if !ok {
 			continue
 		}
 		dir := path.Dir(fp)
 		kindCounts[s.kind]++
-		dirCounts[kindDir{kind: s.kind, dir: dir}]++
+		kd := kindDir{kind: s.kind, dir: dir}
+		dirCounts[kd]++
+		dirExamples[kd] = append(dirExamples[kd], Example{Name: s.name, Path: fp})
 	}
 
 	var out []Convention
@@ -469,18 +494,21 @@ func detectStructure(symbols []symbolRow, files []fileRow) []Convention {
 		if total == 0 {
 			continue
 		}
+		ex := dirExamples[kd]
+		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryStructure,
 			Description: fmt.Sprintf("%s symbols live in %s/", kd.kind, kd.dir),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
+			Examples:    ex,
 		})
 	}
 	return out
 }
 
-func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow) []Convention {
+func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 
 	type groupKey struct {
 		targetID   int64
@@ -490,6 +518,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		targetName string
 		sourceKind string
 		count      int
+		examples   []Example
 	}
 	groups := map[groupKey]*compGroup{}
 
@@ -508,11 +537,13 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		key := groupKey{targetID: e.targetID, sourceKind: src.kind}
 		if g, exists := groups[key]; exists {
 			g.count++
+			g.examples = append(g.examples, Example{Name: src.name, Path: filePathByID[src.fileID]})
 		} else {
 			groups[key] = &compGroup{
 				targetName: tgt.name,
 				sourceKind: src.kind,
 				count:      1,
+				examples:   []Example{{Name: src.name, Path: filePathByID[src.fileID]}},
 			}
 		}
 	}
@@ -531,23 +562,20 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		if total == 0 {
 			continue
 		}
+		sortExamples(g.examples)
 		out = append(out, Convention{
 			Category:    CategoryComposition,
 			Description: fmt.Sprintf("%d %s symbols include %s", g.count, g.sourceKind, g.targetName),
 			Instances:   g.count,
 			Total:       total,
 			Strength:    float64(g.count) / float64(total),
+			Examples:    g.examples,
 		})
 	}
 	return out
 }
 
-func detectTesting(symbols []symbolRow, edges []edgeRow, files []fileRow, symbolByID map[int64]symbolRow) []Convention {
-	fileByID := map[int64]string{}
-	for _, f := range files {
-		fileByID[f.id] = f.path
-	}
-
+func detectTesting(symbols []symbolRow, edges []edgeRow, filePathByID map[int64]string, symbolByID map[int64]symbolRow) []Convention {
 	// Detect test file naming conventions from files with "tests" edges
 	testFileIDs := map[int64]struct{}{}
 	for _, e := range edges {
@@ -561,10 +589,10 @@ func detectTesting(symbols []symbolRow, edges []edgeRow, files []fileRow, symbol
 
 	// If no tests edges, infer from file naming patterns
 	if len(testFileIDs) == 0 {
-		for _, f := range files {
-			base := path.Base(f.path)
+		for fid, fp := range filePathByID {
+			base := path.Base(fp)
 			if strings.Contains(base, "_test") || strings.Contains(base, ".test.") || strings.HasPrefix(base, "test_") {
-				testFileIDs[f.id] = struct{}{}
+				testFileIDs[fid] = struct{}{}
 			}
 		}
 	}
@@ -576,7 +604,7 @@ func detectTesting(symbols []symbolRow, edges []edgeRow, files []fileRow, symbol
 	// Detect naming pattern among test files
 	suffixes := map[string]int{}
 	for fid := range testFileIDs {
-		fp, ok := fileByID[fid]
+		fp, ok := filePathByID[fid]
 		if !ok {
 			continue
 		}
@@ -598,12 +626,25 @@ func detectTesting(symbols []symbolRow, edges []edgeRow, files []fileRow, symbol
 		if count < minInstances {
 			continue
 		}
+		var ex []Example
+		for fid := range testFileIDs {
+			fp, ok := filePathByID[fid]
+			if !ok {
+				continue
+			}
+			base := path.Base(fp)
+			if strings.Contains(base, suffix) || (suffix == "test_*" && strings.HasPrefix(base, "test_")) {
+				ex = append(ex, Example{Name: base, Path: fp})
+			}
+		}
+		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryTesting,
 			Description: fmt.Sprintf("%d/%d test files use *%s naming", count, total, suffix),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
+			Examples:    ex,
 		})
 	}
 	return out
@@ -651,6 +692,45 @@ func categoryOrder(c Category) int {
 		return 4
 	}
 	return 5
+}
+
+func hasMatchingExample(examples []Example, domain string) bool {
+	for _, e := range examples {
+		if strings.Contains(e.Path, domain) {
+			return true
+		}
+	}
+	return false
+}
+
+func sortExamples(examples []Example) {
+	sort.Slice(examples, func(i, j int) bool {
+		return examples[i].Path < examples[j].Path
+	})
+}
+
+func PickRepresentatives(examples []Example, max int) []string {
+	if len(examples) == 0 {
+		return nil
+	}
+	if len(examples) <= max {
+		names := make([]string, len(examples))
+		for i, e := range examples {
+			names[i] = e.Name
+		}
+		return names
+	}
+	indices := []int{0, len(examples) / 2, len(examples) - 1}
+	seen := map[int]struct{}{}
+	var names []string
+	for _, idx := range indices {
+		if _, ok := seen[idx]; ok {
+			continue
+		}
+		seen[idx] = struct{}{}
+		names = append(names, examples[idx].Name)
+	}
+	return names
 }
 
 func extractFileSuffix(basename string) string {

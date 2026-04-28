@@ -80,11 +80,11 @@ func RunConventions(args []string, cio IO) int {
 		}
 		for i, c := range results {
 			resp.Conventions[i] = mcpio.ConventionEntry{
-				Category:    string(c.Category),
-				Description: c.Description,
-				Instances:   c.Instances,
-				Total:       c.Total,
-				Strength:    mcpio.Confidence(c.Strength),
+				Category:       string(c.Category),
+				Description:    c.Description,
+				Strength:       mcpio.Confidence(c.Strength),
+				Instances:      conventions.PickRepresentatives(c.Examples, 3),
+				TotalInstances: c.Instances,
 			}
 		}
 		out, err := mcpio.MarshalConventions(resp)
