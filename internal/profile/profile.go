@@ -202,12 +202,12 @@ func DefaultsForTier(tier string) Defaults {
 		return Defaults{
 			SearchKeywordWeight:    0.6,
 			SearchVectorWeight:     0.4,
-			ConventionsMinStrength: 0.40,
-			ConventionsInstanceCap: 2,
-			ConventionsTokenBudget: 3000,
+			ConventionsMinStrength: 0.35,
+			ConventionsInstanceCap: 3,
+			ConventionsTokenBudget: 4000,
 			BlastMaxHops:           2,
-			BlastMinConfidence:     0.7,
-			BlastResultCap:         50,
+			BlastMinConfidence:     0.6,
+			BlastResultCap:         75,
 		}
 	default:
 		return Defaults{

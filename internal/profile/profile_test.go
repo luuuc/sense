@@ -80,17 +80,17 @@ func TestDefaultsForTierValues(t *testing.T) {
 	if large.BlastMaxHops != 2 {
 		t.Errorf("large BlastMaxHops = %d, want 2", large.BlastMaxHops)
 	}
-	if large.BlastMinConfidence != 0.7 {
-		t.Errorf("large BlastMinConfidence = %.2f, want 0.70", large.BlastMinConfidence)
+	if large.BlastMinConfidence != 0.6 {
+		t.Errorf("large BlastMinConfidence = %.2f, want 0.60", large.BlastMinConfidence)
 	}
-	if large.BlastResultCap != 50 {
-		t.Errorf("large BlastResultCap = %d, want 50", large.BlastResultCap)
+	if large.BlastResultCap != 75 {
+		t.Errorf("large BlastResultCap = %d, want 75", large.BlastResultCap)
 	}
-	if large.ConventionsMinStrength != 0.40 {
-		t.Errorf("large ConventionsMinStrength = %.2f, want 0.40", large.ConventionsMinStrength)
+	if large.ConventionsMinStrength != 0.35 {
+		t.Errorf("large ConventionsMinStrength = %.2f, want 0.35", large.ConventionsMinStrength)
 	}
-	if large.ConventionsTokenBudget != 3000 {
-		t.Errorf("large ConventionsTokenBudget = %d, want 3000", large.ConventionsTokenBudget)
+	if large.ConventionsTokenBudget != 4000 {
+		t.Errorf("large ConventionsTokenBudget = %d, want 4000", large.ConventionsTokenBudget)
 	}
 }
 
