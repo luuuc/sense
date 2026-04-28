@@ -68,10 +68,13 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 		IndirectCallers: []BlastIndirect{
 			{Symbol: "OrdersController#new", Via: "SessionsController#create", Hops: 2},
 		},
-		AffectedTests: []string{"test/models/user_test.rb"},
-		TotalAffected: 2,
-		SenseMetrics:  BlastMetrics{SymbolsTraversed: 5},
-		NextSteps:     []NextStep{},
+		AffectedTests:          []string{"test/models/user_test.rb"},
+		TotalAffected:          2,
+		AffectedSubclasses:     []BlastCaller{},
+		AffectedViaComposition: []BlastCaller{},
+		AffectedViaIncludes:    []BlastCaller{},
+		SenseMetrics:           BlastMetrics{SymbolsTraversed: 5},
+		NextSteps:              []NextStep{},
 	}
 
 	raw, err := MarshalBlast(in)
@@ -117,12 +120,12 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalBlast: %v", err)
 	}
-	for _, field := range []string{`"risk_factors": []`, `"direct_callers": []`, `"indirect_callers": []`, `"affected_tests": []`, `"next_steps": []`} {
+	for _, field := range []string{`"risk_factors": []`, `"direct_callers": []`, `"indirect_callers": []`, `"affected_tests": []`, `"affected_subclasses": []`, `"affected_via_composition": []`, `"affected_via_includes": []`, `"next_steps": []`} {
 		if !strings.Contains(string(blastBytes), field) {
 			t.Errorf("BlastResponse zero-value missing %s\ngot:\n%s", field, blastBytes)
 		}
 	}
-	for _, nullField := range []string{`"risk_factors": null`, `"direct_callers": null`, `"indirect_callers": null`, `"affected_tests": null`, `"next_steps": null`} {
+	for _, nullField := range []string{`"risk_factors": null`, `"direct_callers": null`, `"indirect_callers": null`, `"affected_tests": null`, `"affected_subclasses": null`, `"affected_via_composition": null`, `"affected_via_includes": null`, `"next_steps": null`} {
 		if strings.Contains(string(blastBytes), nullField) {
 			t.Errorf("BlastResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, blastBytes)
 		}

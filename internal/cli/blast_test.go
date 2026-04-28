@@ -91,14 +91,15 @@ func TestRunBlastHumanSuccess(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		"App::Services::CheckoutService  risk: low  (1 direct caller)",
-		"Direct callers (1):",
+		"App::Services::CheckoutService  risk: low  (2 direct callers)",
+		"Direct callers (2):",
 		"OrdersController#create  app/controllers/orders_controller.rb",
+		"CheckoutServiceTest#test_checkout  test/services/checkout_service_test.rb",
 		"Indirect callers (1):",
 		"WebhookJob#process  via OrdersController#create (2 hops)",
 		"Affected tests (1):",
 		"test/services/checkout_service_test.rb",
-		"Total affected: 2",
+		"Total affected: 3",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q\ngot:\n%s", want, out)
@@ -128,14 +129,14 @@ func TestRunBlastJSONMatchesSchema(t *testing.T) {
 	if parsed.Symbol != "App::Services::CheckoutService" {
 		t.Errorf("symbol = %q", parsed.Symbol)
 	}
-	if len(parsed.DirectCallers) != 1 {
-		t.Errorf("direct_callers = %d, want 1", len(parsed.DirectCallers))
+	if len(parsed.DirectCallers) != 2 {
+		t.Errorf("direct_callers = %d, want 2", len(parsed.DirectCallers))
 	}
 	if len(parsed.IndirectCallers) != 1 {
 		t.Errorf("indirect_callers = %d, want 1", len(parsed.IndirectCallers))
 	}
-	if parsed.TotalAffected != 2 {
-		t.Errorf("total_affected = %d, want 2", parsed.TotalAffected)
+	if parsed.TotalAffected != 3 {
+		t.Errorf("total_affected = %d, want 3", parsed.TotalAffected)
 	}
 }
 
@@ -323,8 +324,9 @@ func TestRunBlastDiffHuman(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"diff:HEAD~1",
-		"Direct callers (1):",
+		"Direct callers (2):",
 		"OrdersController#create",
+		"CheckoutServiceTest#test_checkout",
 		"Indirect callers (1):",
 		"WebhookJob#process",
 	} {
@@ -353,8 +355,8 @@ func TestRunBlastDiffJSONSchema(t *testing.T) {
 	if parsed.Symbol != "diff:HEAD~1" {
 		t.Errorf("symbol = %q, want diff:HEAD~1", parsed.Symbol)
 	}
-	if len(parsed.DirectCallers) != 1 || len(parsed.IndirectCallers) != 1 {
-		t.Errorf("callers direct=%d indirect=%d, want 1/1",
+	if len(parsed.DirectCallers) != 2 || len(parsed.IndirectCallers) != 1 {
+		t.Errorf("callers direct=%d indirect=%d, want 2/1",
 			len(parsed.DirectCallers), len(parsed.IndirectCallers))
 	}
 }

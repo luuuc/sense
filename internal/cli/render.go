@@ -189,6 +189,24 @@ func RenderBlastHuman(w io.Writer, resp mcpio.BlastResponse) {
 			_, _ = fmt.Fprintf(w, "  %s  via %s (%d hops)\n", c.Symbol, c.Via, c.Hops)
 		}
 	}
+	if len(resp.AffectedSubclasses) > 0 {
+		_, _ = fmt.Fprintf(w, "\nAffected subclasses (%d):\n", len(resp.AffectedSubclasses))
+		for _, c := range resp.AffectedSubclasses {
+			_, _ = fmt.Fprintf(w, "  %s  %s\n", c.Symbol, c.File)
+		}
+	}
+	if len(resp.AffectedViaComposition) > 0 {
+		_, _ = fmt.Fprintf(w, "\nAffected via composition (%d):\n", len(resp.AffectedViaComposition))
+		for _, c := range resp.AffectedViaComposition {
+			_, _ = fmt.Fprintf(w, "  %s  %s\n", c.Symbol, c.File)
+		}
+	}
+	if len(resp.AffectedViaIncludes) > 0 {
+		_, _ = fmt.Fprintf(w, "\nAffected via includes (%d):\n", len(resp.AffectedViaIncludes))
+		for _, c := range resp.AffectedViaIncludes {
+			_, _ = fmt.Fprintf(w, "  %s  %s\n", c.Symbol, c.File)
+		}
+	}
 	if len(resp.AffectedTests) > 0 {
 		_, _ = fmt.Fprintf(w, "\nAffected tests (%d):\n", len(resp.AffectedTests))
 		for _, t := range resp.AffectedTests {

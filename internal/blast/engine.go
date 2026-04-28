@@ -1,7 +1,9 @@
 // Package blast computes a symbol's blast radius: the set of symbols
 // that would be affected (directly or indirectly) if the subject
-// changed. The traversal is a reverse-direction BFS on `calls` edges
-// — the subject's callers, their callers, and so on up to MaxHops.
+// changed. The traversal is a reverse-direction BFS on structural
+// edges (calls, inherits, includes, composes, temporal, tests) with
+// confidence decay as the primary depth control and MaxHops as a
+// hard cap.
 //
 // The engine reads through a plain *sql.DB handle so it can be used
 // by any SQLite consumer (CLI in 01-04, MCP server in 01-05, or
@@ -18,10 +20,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/luuuc/sense/internal/model"
 )
+
+const maxResults = 100
 
 // defaultMaxHops matches the pitch's acceptance-criterion call:
 // Options{MaxHops: 3, IncludeTests: true}. Callers that pass
@@ -30,16 +35,18 @@ import (
 // symbol graph.
 const defaultMaxHops = 3
 
+const defaultMinConfidence = 0.5
+
 // Options bounds a blast computation. The zero-value Options{} is a
 // valid "give me sensible defaults" request:
 //
-//   - MaxHops 0 (unset) ⇒ three hops, matching the pitch's acceptance
-//     criterion. A caller that explicitly wants zero traversal (the
-//     subject alone) cannot express it with this field; the blast
-//     question "who calls me, at any distance" is the API's purpose,
-//     so treating zero as "none" would be a surprising way to spend
-//     the zero value.
-//   - MinConfidence 0 ⇒ accept every edge regardless of confidence.
+//   - MaxHops 0 (unset) ⇒ three hops. MaxHops is a hard cap kept for
+//     backward compatibility; confidence decay is the primary depth
+//     control.
+//   - MinConfidence 0 (unset) ⇒ 0.5. This is the cumulative path
+//     confidence threshold: at each BFS hop the edge confidence is
+//     multiplied into the running product, and traversal stops when
+//     the product drops below this value.
 //   - IncludeTests false ⇒ AffectedTests stays empty; callers opt in.
 type Options struct {
 	MaxHops       int
@@ -82,6 +89,13 @@ type Result struct {
 	// DirectTemporalIDs tracks which direct callers were reached via
 	// a temporal edge. Keyed by symbol ID.
 	DirectTemporalIDs map[int64]bool
+
+	// Edge-kind groups: filtered views over the same nodes that appear
+	// in DirectCallers/IndirectCallers. A node appears in at most one
+	// group (the edge kind that discovered it first in BFS order).
+	AffectedSubclasses     []model.Symbol
+	AffectedViaComposition []model.Symbol
+	AffectedViaIncludes    []model.Symbol
 }
 
 // Compute returns the blast radius of symbolIDs under the given
@@ -98,6 +112,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	if opts.MaxHops <= 0 {
 		opts.MaxHops = defaultMaxHops
 	}
+	if opts.MinConfidence <= 0 {
+		opts.MinConfidence = defaultMinConfidence
+	}
 
 	subject, err := loadSymbol(ctx, db, symbolIDs[0])
 	if err != nil {
@@ -107,9 +124,12 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	visited := map[int64]int{}
 	predecessor := map[int64]int64{}
 	viaTemporal := map[int64]bool{}
+	visitedKind := map[int64]string{}
+	pathConf := map[int64]float64{}
 	frontier := make([]int64, 0, len(symbolIDs))
 	for _, id := range symbolIDs {
 		visited[id] = 0
+		pathConf[id] = 1.0
 		frontier = append(frontier, id)
 	}
 
@@ -117,7 +137,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		if err := ctx.Err(); err != nil {
 			return Result{}, fmt.Errorf("blast: cancelled at hop %d: %w", hop, err)
 		}
-		pairs, err := expandFrontier(ctx, db, frontier, opts.MinConfidence)
+		pairs, err := expandFrontier(ctx, db, frontier)
 		if err != nil {
 			return Result{}, fmt.Errorf("blast: hop %d: %w", hop, err)
 		}
@@ -126,9 +146,15 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			if _, seen := visited[pair.source]; seen {
 				continue
 			}
+			cumConf := pathConf[pair.target] * pair.confidence
+			if cumConf < opts.MinConfidence {
+				continue
+			}
 			visited[pair.source] = hop
 			predecessor[pair.source] = pair.target
-			if pair.temporal {
+			visitedKind[pair.source] = pair.kind
+			pathConf[pair.source] = cumConf
+			if pair.kind == "temporal" {
 				viaTemporal[pair.source] = true
 			}
 			next = append(next, pair.source)
@@ -140,7 +166,6 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 
 	// Split visited into direct (hop=1) and indirect (hop>1) callers.
-	// Then hydrate both sets to model.Symbol in a single bulk read.
 	var directIDs, indirectIDs []int64
 	for id, hops := range visited {
 		switch hops {
@@ -152,6 +177,34 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			indirectIDs = append(indirectIDs, id)
 		}
 	}
+
+	totalAffectedCount := len(directIDs) + len(indirectIDs)
+
+	if totalAffectedCount > maxResults {
+		type ranked struct {
+			id   int64
+			conf float64
+		}
+		all := make([]ranked, 0, totalAffectedCount)
+		for _, id := range directIDs {
+			all = append(all, ranked{id, pathConf[id]})
+		}
+		for _, id := range indirectIDs {
+			all = append(all, ranked{id, pathConf[id]})
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i].conf > all[j].conf })
+		all = all[:maxResults]
+
+		kept := make(map[int64]struct{}, maxResults)
+		for _, r := range all {
+			kept[r.id] = struct{}{}
+		}
+
+		directIDs = filterIDs(directIDs, kept)
+		indirectIDs = filterIDs(indirectIDs, kept)
+	}
+
+	// Hydrate both sets to model.Symbol in a single bulk read.
 
 	allIDs := append([]int64{}, directIDs...)
 	allIDs = append(allIDs, indirectIDs...)
@@ -229,15 +282,36 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 	risk, reasons := classifyRisk(len(directCallers), hasTemporalEdge)
 
+	var subclasses, viaComposition, viaIncludes []model.Symbol
+	for _, idSlice := range [2][]int64{directIDs, indirectIDs} {
+		for _, id := range idSlice {
+			sym, ok := symbolsByID[id]
+			if !ok {
+				continue
+			}
+			switch visitedKind[id] {
+			case "inherits":
+				subclasses = append(subclasses, sym)
+			case "composes":
+				viaComposition = append(viaComposition, sym)
+			case "includes":
+				viaIncludes = append(viaIncludes, sym)
+			}
+		}
+	}
+
 	return Result{
-		Symbol:            subject,
-		Risk:              risk,
-		RiskReasons:       reasons,
-		DirectCallers:     directCallers,
-		IndirectCallers:   indirectCallers,
-		AffectedTests:     affectedTests,
-		TotalAffected:     len(directCallers) + len(indirectCallers),
-		DirectTemporalIDs: directTemporalIDs,
+		Symbol:                 subject,
+		Risk:                   risk,
+		RiskReasons:            reasons,
+		DirectCallers:          directCallers,
+		IndirectCallers:        indirectCallers,
+		AffectedTests:          affectedTests,
+		TotalAffected:          totalAffectedCount,
+		DirectTemporalIDs:      directTemporalIDs,
+		AffectedSubclasses:     subclasses,
+		AffectedViaComposition: viaComposition,
+		AffectedViaIncludes:    viaIncludes,
 	}, nil
 }
 
@@ -245,22 +319,23 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 // is the caller we're learning about; target is the node we already
 // visited and are expanding from.
 type edgePair struct {
-	source   int64
-	target   int64
-	temporal bool
+	source     int64
+	target     int64
+	kind       string
+	confidence float64
 }
 
 // expandFrontier runs the BFS hop query: "which symbols reference
-// anything in frontier via calls, composes, includes, or inherits
-// edges at or above MinConfidence?" Returns (source_id, target_id)
-// pairs so the outer loop can track predecessors for Via
-// reconstruction.
+// anything in frontier via structural, temporal, or test edges?"
+// Returns (source_id, target_id, kind, confidence) tuples so the
+// outer loop can track predecessors, edge kinds, and cumulative
+// confidence for grouped output and confidence decay.
 //
 // Large frontiers are chunked to stay under SQLite's default
 // SQLITE_MAX_VARIABLE_NUMBER (999) — at pitch scale (~30K symbols)
 // frontiers are typically small, but the chunking guard keeps the
 // function robust if a hot subject produces an unusually wide hop.
-func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfidence float64) ([]edgePair, error) {
+func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64) ([]edgePair, error) {
 	const chunk = 500
 	var out []edgePair
 	for start := 0; start < len(frontier); start += chunk {
@@ -273,17 +348,16 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfid
 		placeholders := strings.Repeat("?,", len(batch))
 		placeholders = placeholders[:len(placeholders)-1]
 
-		q := `SELECT source_id, target_id, kind FROM sense_edges
+		q := `SELECT source_id, target_id, kind, confidence FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
-		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal')
-		        AND confidence >= ?`
+		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal', 'tests')
+		        AND confidence >= 0.1`
 
-		args := make([]any, 0, len(batch)+1)
+		args := make([]any, 0, len(batch))
 		for _, id := range batch {
 			args = append(args, id)
 		}
-		args = append(args, minConfidence)
 
 		rows, err := db.QueryContext(ctx, q, args...)
 		if err != nil {
@@ -291,12 +365,10 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64, minConfid
 		}
 		for rows.Next() {
 			var p edgePair
-			var kind string
-			if err := rows.Scan(&p.source, &p.target, &kind); err != nil {
+			if err := rows.Scan(&p.source, &p.target, &p.kind, &p.confidence); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			p.temporal = kind == "temporal"
 			out = append(out, p)
 		}
 		if err := rows.Err(); err != nil {
