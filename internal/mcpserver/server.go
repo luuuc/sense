@@ -11,10 +11,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -938,6 +941,7 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 	}
 
 	mcpio.ApplyTokenBudget(&resp, mcpio.DefaultTokenBudget)
+	mcpio.BuildConventionsSummary(&resp)
 
 	h.tracker.Record("sense.conventions", domain,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
@@ -1112,7 +1116,237 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 		}
 	}
 
+	structure, err := buildStructure(ctx, db, resp, langs)
+	if err != nil {
+		return resp, err
+	}
+	resp.Structure = structure
+
 	return resp, nil
+}
+
+// ---------------------------------------------------------------
+// Structural orientation
+// ---------------------------------------------------------------
+
+func buildStructure(ctx context.Context, db *sql.DB, resp mcpio.StatusResponse, langs map[string]mcpio.StatusLanguage) (*mcpio.StatusStructure, error) {
+	ns, err := queryTopNamespaces(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	hubs, err := queryHubSymbols(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := queryEntryPoints(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	fp := buildFingerprint(resp, langs, ns, hubs)
+	return &mcpio.StatusStructure{
+		TopNamespaces: ns,
+		HubSymbols:    hubs,
+		EntryPoints:   entries,
+		Fingerprint:   fp,
+	}, nil
+}
+
+func queryTopNamespaces(ctx context.Context, db *sql.DB) ([]mcpio.StatusNamespace, error) {
+	const q = `SELECT f.path, COUNT(s.id)
+	FROM sense_files f
+	JOIN sense_symbols s ON s.file_id = f.id
+	GROUP BY f.id`
+
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var filePath string
+		var symCount int
+		if err := rows.Scan(&filePath, &symCount); err != nil {
+			return nil, err
+		}
+		ns := namespacePrefixFromPath(filePath)
+		counts[ns] += symCount
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]mcpio.StatusNamespace, 0, len(counts))
+	for name, syms := range counts {
+		out = append(out, mcpio.StatusNamespace{Name: name, Symbols: syms, Kind: "directory"})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbols != out[j].Symbols {
+			return out[i].Symbols > out[j].Symbols
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > 8 {
+		out = out[:8]
+	}
+	return out, nil
+}
+
+func namespacePrefixFromPath(p string) string {
+	first, rest, ok := strings.Cut(p, "/")
+	if !ok {
+		return "."
+	}
+	if second, _, ok := strings.Cut(rest, "/"); ok {
+		return first + "/" + second
+	}
+	return first
+}
+
+func queryHubSymbols(ctx context.Context, db *sql.DB) ([]mcpio.StatusHub, error) {
+	const q = `SELECT s.name, COUNT(e.id) AS in_degree, s.kind
+	FROM sense_symbols s
+	JOIN sense_edges e ON e.target_id = s.id
+	GROUP BY s.id
+	ORDER BY in_degree DESC
+	LIMIT 5`
+
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []mcpio.StatusHub
+	for rows.Next() {
+		var h mcpio.StatusHub
+		if err := rows.Scan(&h.Name, &h.Callers, &h.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+func queryEntryPoints(ctx context.Context, db *sql.DB) ([]mcpio.StatusEntryPoint, error) {
+	// Symbol-based entry points: main or Main functions
+	const symQ = `SELECT s.name, f.path, s.kind
+	FROM sense_symbols s
+	JOIN sense_files f ON f.id = s.file_id
+	WHERE s.name IN ('main', 'Main') AND s.kind = 'function'
+	LIMIT 5`
+
+	rows, err := db.QueryContext(ctx, symQ)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []mcpio.StatusEntryPoint
+	for rows.Next() {
+		var ep mcpio.StatusEntryPoint
+		if err := rows.Scan(&ep.Name, &ep.File, &ep.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, ep)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// File-based entry points: known patterns at root or src/
+	const fileQ = `SELECT path FROM sense_files
+	WHERE (
+	       path IN ('main.go','main.py','main.rs','main.rb','main.java','main.kt','main.scala','main.c','main.cpp')
+	    OR path IN ('src/main.go','src/main.py','src/main.rs','src/main.ts','src/main.js')
+	    OR path IN ('routes.rb','config/routes.rb')
+	    OR path IN ('index.ts','index.tsx','index.js','index.jsx',
+	                'src/index.ts','src/index.tsx','src/index.js','src/index.jsx')
+	    OR path IN ('App.tsx','App.jsx','App.ts','App.js',
+	                'src/App.tsx','src/App.jsx','src/App.ts','src/App.js')
+	)
+	LIMIT 5`
+
+	frows, err := db.QueryContext(ctx, fileQ)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = frows.Close() }()
+
+	seen := make(map[string]bool)
+	for _, ep := range out {
+		seen[ep.File] = true
+	}
+	for frows.Next() {
+		var fpath string
+		if err := frows.Scan(&fpath); err != nil {
+			return nil, err
+		}
+		if seen[fpath] {
+			continue
+		}
+		out = append(out, mcpio.StatusEntryPoint{
+			Name: path.Base(fpath),
+			File: fpath,
+			Kind: "file",
+		})
+	}
+	return out, frows.Err()
+}
+
+func buildFingerprint(resp mcpio.StatusResponse, langs map[string]mcpio.StatusLanguage, ns []mcpio.StatusNamespace, hubs []mcpio.StatusHub) string {
+	// Primary language: the one with the most symbols
+	primaryLang := ""
+	maxSyms := 0
+	for lang, info := range langs {
+		if info.Symbols > maxSyms || (info.Symbols == maxSyms && lang < primaryLang) {
+			maxSyms = info.Symbols
+			primaryLang = lang
+		}
+	}
+	if primaryLang == "" {
+		return ""
+	}
+
+	// Top namespace names
+	nsNames := make([]string, 0, 3)
+	for i, n := range ns {
+		if i >= 3 {
+			break
+		}
+		nsNames = append(nsNames, fmt.Sprintf("%s (%d)", n.Name, n.Symbols))
+	}
+
+	// Hub symbol names
+	hubNames := make([]string, 0, 3)
+	for i, h := range hubs {
+		if i >= 3 {
+			break
+		}
+		hubNames = append(hubNames, h.Name)
+	}
+
+	parts := []string{
+		fmt.Sprintf("%s project.", capitalizeFirst(primaryLang)),
+		fmt.Sprintf("%d files, %d symbols.", resp.Index.Files, resp.Index.Symbols),
+	}
+	if len(nsNames) > 0 {
+		parts = append(parts, fmt.Sprintf("Heaviest areas: %s.", strings.Join(nsNames, ", ")))
+	}
+	if len(hubNames) > 0 {
+		parts = append(parts, fmt.Sprintf("Hub symbols: %s.", strings.Join(hubNames, ", ")))
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func capitalizeFirst(s string) string {
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 // ---------------------------------------------------------------

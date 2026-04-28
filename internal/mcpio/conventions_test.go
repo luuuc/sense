@@ -81,3 +81,38 @@ func TestApplyTokenBudgetEmpty(t *testing.T) {
 		t.Error("expected truncated=false for empty response")
 	}
 }
+
+func TestBuildConventionsSummary(t *testing.T) {
+	resp := ConventionsResponse{
+		Conventions: []ConventionEntry{
+			{Description: "All services inherit ApplicationService"},
+			{Description: "Controllers include Authentication."},
+			{Description: "Tests mirror source structure"},
+		},
+	}
+	BuildConventionsSummary(&resp)
+	want := "All services inherit ApplicationService; Controllers include Authentication; Tests mirror source structure."
+	if resp.Summary != want {
+		t.Errorf("summary mismatch\n got: %q\nwant: %q", resp.Summary, want)
+	}
+}
+
+func TestBuildConventionsSummaryEmpty(t *testing.T) {
+	resp := ConventionsResponse{}
+	BuildConventionsSummary(&resp)
+	if resp.Summary != "" {
+		t.Errorf("expected empty summary for no conventions, got %q", resp.Summary)
+	}
+}
+
+func TestBuildConventionsSummaryFewerThanThree(t *testing.T) {
+	resp := ConventionsResponse{
+		Conventions: []ConventionEntry{
+			{Description: "Single pattern"},
+		},
+	}
+	BuildConventionsSummary(&resp)
+	if resp.Summary != "Single pattern." {
+		t.Errorf("expected 'Single pattern.', got %q", resp.Summary)
+	}
+}
