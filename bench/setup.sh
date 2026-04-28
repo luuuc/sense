@@ -13,8 +13,6 @@ TASKS_DIR="$BENCH_DIR/tasks"
 RESULTS_DIR="$BENCH_DIR/results"
 LIB_DIR="$BENCH_DIR/lib"
 REPOS_DIR="$BENCH_DIR/repos"
-SENSE_REPO="$(cd "$BENCH_DIR/.." && pwd)"
-
 # --- Argument parsing ---
 
 FILTER_TOOLS=""
@@ -49,11 +47,7 @@ matches_filter() {
 
 repo_path() {
   local repo="$1"
-  if [[ "$repo" == "sense" ]]; then
-    echo "$SENSE_REPO"
-  else
-    echo "$REPOS_DIR/$repo"
-  fi
+  echo "$REPOS_DIR/$repo"
 }
 
 timestamp() {
