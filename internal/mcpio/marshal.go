@@ -30,6 +30,17 @@ func MarshalStatus(r StatusResponse) ([]byte, error) {
 	if r.Languages == nil {
 		r.Languages = map[string]StatusLanguage{}
 	}
+	if r.Structure != nil {
+		if r.Structure.TopNamespaces == nil {
+			r.Structure.TopNamespaces = []StatusNamespace{}
+		}
+		if r.Structure.HubSymbols == nil {
+			r.Structure.HubSymbols = []StatusHub{}
+		}
+		if r.Structure.EntryPoints == nil {
+			r.Structure.EntryPoints = []StatusEntryPoint{}
+		}
+	}
 	if r.NextSteps == nil {
 		r.NextSteps = []NextStep{}
 	}

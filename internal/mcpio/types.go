@@ -252,14 +252,42 @@ type Freshness struct {
 // sense.status schema has no `sense_metrics` footer — status is
 // metadata about the index itself, not the result of a query against
 type StatusResponse struct {
-	Index             StatusIndex               `json:"index"`
+	Index             StatusIndex              `json:"index"`
 	Languages         map[string]StatusLanguage `json:"languages"`
-	Freshness         Freshness                 `json:"freshness"`
-	EmbeddingProgress *EmbeddingProgress        `json:"embedding_progress,omitempty"`
-	Session           *StatusSession            `json:"session,omitempty"`
-	Lifetime          *StatusLifetime           `json:"lifetime,omitempty"`
-	Version           *StatusVersion            `json:"version,omitempty"`
-	NextSteps         []NextStep                `json:"next_steps"`
+	Structure         *StatusStructure         `json:"structure,omitempty"`
+	Freshness         Freshness                `json:"freshness"`
+	EmbeddingProgress *EmbeddingProgress       `json:"embedding_progress,omitempty"`
+	Session           *StatusSession           `json:"session,omitempty"`
+	Lifetime          *StatusLifetime          `json:"lifetime,omitempty"`
+	Version           *StatusVersion           `json:"version,omitempty"`
+	NextSteps         []NextStep               `json:"next_steps"`
+}
+
+// StatusStructure provides a project-level structural summary for
+// orientation. Computed fresh from the index on each status call.
+type StatusStructure struct {
+	TopNamespaces []StatusNamespace  `json:"top_namespaces"`
+	HubSymbols    []StatusHub        `json:"hub_symbols"`
+	EntryPoints   []StatusEntryPoint `json:"entry_points"`
+	Fingerprint   string             `json:"fingerprint"`
+}
+
+type StatusNamespace struct {
+	Name    string `json:"name"`
+	Symbols int    `json:"symbols"`
+	Kind    string `json:"kind"`
+}
+
+type StatusHub struct {
+	Name    string `json:"name"`
+	Callers int    `json:"callers"`
+	Kind    string `json:"kind"`
+}
+
+type StatusEntryPoint struct {
+	Name string `json:"name"`
+	File string `json:"file"`
+	Kind string `json:"kind"`
 }
 
 // EmbeddingProgress reports background embedding state. Present only
