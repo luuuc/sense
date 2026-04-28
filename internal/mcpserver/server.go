@@ -30,6 +30,7 @@ import (
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/metrics"
+	"github.com/luuuc/sense/internal/profile"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -171,7 +172,15 @@ func RunWithOptions(opts RunOptions) error {
 		server.WithInstructions(serverInstructions),
 	)
 
-	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker}
+	prof := profile.Load(ctx, adapter.DB())
+	var defaults profile.Defaults
+	if prof != nil {
+		defaults = profile.DefaultsForTier(prof.Tier)
+	} else {
+		defaults = profile.DefaultsForTier(profile.TierMedium)
+	}
+
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker, defaults: defaults}
 
 	s.AddTool(searchTool(), h.handleSearch)
 	s.AddTool(graphTool(), h.handleGraph)
@@ -192,6 +201,7 @@ type handlers struct {
 	search     *search.Engine
 	watchState *mcpio.WatchState
 	tracker    *metrics.Tracker
+	defaults   profile.Defaults
 }
 
 // ---------------------------------------------------------------
@@ -471,11 +481,16 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	language := req.GetString("language", "")
 	minScore := req.GetFloat("min_score", 0.0)
 
+	keywordBias := h.defaults.SearchKeywordWeight - 0.5
+	if keywordBias < 0 {
+		keywordBias = 0
+	}
 	results, meta, err := h.search.Search(ctx, search.Options{
-		Query:    query,
-		Limit:    limit,
-		Language: language,
-		MinScore: minScore,
+		Query:       query,
+		Limit:       limit,
+		Language:    language,
+		MinScore:    minScore,
+		KeywordBias: keywordBias,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sense.search: %w", err)
@@ -584,13 +599,14 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError("sense.blast: pass either 'symbol' or 'diff', not both"), nil
 	}
 
-	maxHops := req.GetInt("max_hops", 3)
-	minConfidence := req.GetFloat("min_confidence", 0.7)
+	maxHops := req.GetInt("max_hops", h.defaults.BlastMaxHops)
+	minConfidence := req.GetFloat("min_confidence", h.defaults.BlastMinConfidence)
 	includeTests := req.GetBool("include_tests", true)
 
 	opts := blast.Options{
 		MaxHops:       maxHops,
 		MinConfidence: minConfidence,
+		MaxResults:    h.defaults.BlastResultCap,
 		IncludeTests:  includeTests,
 	}
 
@@ -915,7 +931,7 @@ func conventionsTool() mcp.Tool {
 
 func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	domain := req.GetString("domain", "")
-	minStrength := req.GetFloat("min_strength", 0.3)
+	minStrength := req.GetFloat("min_strength", h.defaults.ConventionsMinStrength)
 
 	results, symbolCount, err := conventions.Detect(ctx, h.db, conventions.Options{
 		Domain:      domain,
@@ -925,6 +941,7 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		return nil, fmt.Errorf("sense.conventions: %w", err)
 	}
 
+	instanceCap := h.defaults.ConventionsInstanceCap
 	filesAvoided := min(symbolCount/5, 30)
 	resp := mcpio.ConventionsResponse{
 		Conventions: make([]mcpio.ConventionEntry, len(results)),
@@ -939,12 +956,12 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 			Category:       string(c.Category),
 			Description:    c.Description,
 			Strength:       mcpio.Confidence(c.Strength),
-			Instances:      conventions.PickRepresentatives(c.Examples, 3),
+			Instances:      conventions.PickRepresentatives(c.Examples, instanceCap),
 			TotalInstances: c.Instances,
 		}
 	}
 
-	mcpio.ApplyTokenBudget(&resp, mcpio.DefaultTokenBudget)
+	mcpio.ApplyTokenBudget(&resp, h.defaults.ConventionsTokenBudget)
 	mcpio.BuildConventionsSummary(&resp)
 
 	h.tracker.Record("sense.conventions", domain,
@@ -1125,6 +1142,15 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 		return resp, err
 	}
 	resp.Structure = structure
+
+	if prof := profile.Load(ctx, db); prof != nil {
+		resp.Profile = &mcpio.StatusProfile{
+			Tier:            prof.Tier,
+			Symbols:         prof.Symbols,
+			PrimaryLanguage: prof.PrimaryLang,
+			DynamicLanguage: prof.DynamicLang,
+		}
+	}
 
 	return resp, nil
 }

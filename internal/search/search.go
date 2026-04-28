@@ -27,10 +27,11 @@ type Result struct {
 
 // Options controls search behavior.
 type Options struct {
-	Query    string
-	Limit    int
-	Language string
-	MinScore float64
+	Query       string
+	Limit       int
+	Language    string
+	MinScore    float64
+	KeywordBias float64
 }
 
 // Engine orchestrates hybrid search: keyword (FTS5) and vector (HNSW)
@@ -134,6 +135,11 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 
 	vecConfidence := vectorConfidence(vectorResults)
 	kwWeight, vecWeight := fusionWeights(vecConfidence)
+
+	if opts.KeywordBias > 0 && vecWeight > 0 {
+		kwWeight = math.Min(1.0, kwWeight+opts.KeywordBias)
+		vecWeight = math.Max(0.0, 1.0-kwWeight)
+	}
 
 	fused := fuseRRF(keywordResults, vectorResults, kwWeight, vecWeight)
 
