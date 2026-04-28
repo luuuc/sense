@@ -138,7 +138,7 @@ func SiblingSymbolIDs(ctx context.Context, db *sql.DB, symbolID int64) ([]int64,
 }
 
 func filterIDs(ids []int64, keep map[int64]struct{}) []int64 {
-	out := ids[:0]
+	out := make([]int64, 0, len(ids))
 	for _, id := range ids {
 		if _, ok := keep[id]; ok {
 			out = append(out, id)
