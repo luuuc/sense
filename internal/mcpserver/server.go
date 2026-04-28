@@ -901,14 +901,14 @@ func conventionsTool() mcp.Tool {
 			mcp.Description("Filter conventions by domain, e.g. 'models', 'controllers', 'services', 'test'. Matches path substrings."),
 		),
 		mcp.WithNumber("min_strength",
-			mcp.Description("Minimum convention strength 0.0–1.0 (default 0.0). Raise to see only strong, well-established patterns."),
+			mcp.Description("Minimum convention strength 0.0–1.0 (default 0.3). Lower to see weaker patterns, raise to see only strong, well-established ones."),
 		),
 	)
 }
 
 func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	domain := req.GetString("domain", "")
-	minStrength := req.GetFloat("min_strength", 0.0)
+	minStrength := req.GetFloat("min_strength", 0.3)
 
 	results, symbolCount, err := conventions.Detect(ctx, h.db, conventions.Options{
 		Domain:      domain,
@@ -929,13 +929,15 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 	}
 	for i, c := range results {
 		resp.Conventions[i] = mcpio.ConventionEntry{
-			Category:    string(c.Category),
-			Description: c.Description,
-			Instances:   c.Instances,
-			Total:       c.Total,
-			Strength:    mcpio.Confidence(c.Strength),
+			Category:       string(c.Category),
+			Description:    c.Description,
+			Strength:       mcpio.Confidence(c.Strength),
+			Instances:      conventions.PickRepresentatives(c.Examples, 3),
+			TotalInstances: c.Instances,
 		}
 	}
+
+	mcpio.ApplyTokenBudget(&resp, mcpio.DefaultTokenBudget)
 
 	h.tracker.Record("sense.conventions", domain,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
