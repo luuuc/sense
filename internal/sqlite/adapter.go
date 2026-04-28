@@ -29,7 +29,7 @@ var schemaFTSSQL string
 // Bump when schema.sql changes incompatibly — a mismatch triggers
 // auto-rebuild (drop all tables, fresh schema, full scan). Never set
 // before a scan completes successfully; see StampSchemaVersion.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // maxOpenConns is the connection-pool size Open applies. InTx relies on
 // this being 1 — its raw BEGIN/COMMIT approach shares a transaction
@@ -47,26 +47,26 @@ const maxOpenConns = 1
 var ftsTriggerStatements = []string{
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_insert
 	 AFTER INSERT ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring, snippet)
-	     VALUES (new.id, new.name, new.qualified, new.docstring, new.snippet);
+	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring, snippet, name_parts)
+	     VALUES (new.id, new.name, new.qualified, new.docstring, new.snippet, new.name_parts);
 	 END`,
 
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_delete
 	 BEFORE DELETE ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring, snippet)
-	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring, old.snippet);
+	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring, snippet, name_parts)
+	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring, old.snippet, old.name_parts);
 	 END`,
 
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_update
 	 BEFORE UPDATE ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring, snippet)
-	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring, old.snippet);
+	     INSERT INTO sense_symbols_fts(sense_symbols_fts, rowid, name, qualified, docstring, snippet, name_parts)
+	     VALUES ('delete', old.id, old.name, old.qualified, old.docstring, old.snippet, old.name_parts);
 	 END`,
 
 	`CREATE TRIGGER IF NOT EXISTS sense_symbols_fts_update_after
 	 AFTER UPDATE ON sense_symbols BEGIN
-	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring, snippet)
-	     VALUES (new.id, new.name, new.qualified, new.docstring, new.snippet);
+	     INSERT INTO sense_symbols_fts(rowid, name, qualified, docstring, snippet, name_parts)
+	     VALUES (new.id, new.name, new.qualified, new.docstring, new.snippet, new.name_parts);
 	 END`,
 }
 
@@ -200,12 +200,11 @@ func ftsNeedsMigration(ctx context.Context, db *sql.DB) bool {
 	if err != nil {
 		return false
 	}
+	has := map[string]bool{}
 	for _, c := range cols {
-		if c == "snippet" {
-			return false
-		}
+		has[c] = true
 	}
-	return true
+	return !has["snippet"] || !has["name_parts"]
 }
 
 // StampSchemaVersion writes the current SchemaVersion into PRAGMA
@@ -373,8 +372,8 @@ func (a *Adapter) WriteSymbol(ctx context.Context, s *model.Symbol) (int64, erro
 	const q = `
 		INSERT INTO sense_symbols
 			(file_id, name, qualified, kind, visibility, parent_id,
-			 line_start, line_end, docstring, complexity, snippet)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 line_start, line_end, docstring, complexity, snippet, name_parts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id, qualified) DO UPDATE SET
 			name       = excluded.name,
 			kind       = excluded.kind,
@@ -384,19 +383,30 @@ func (a *Adapter) WriteSymbol(ctx context.Context, s *model.Symbol) (int64, erro
 			line_end   = excluded.line_end,
 			docstring  = excluded.docstring,
 			complexity = excluded.complexity,
-			snippet    = excluded.snippet
+			snippet    = excluded.snippet,
+			name_parts = excluded.name_parts
 		RETURNING id`
 
+	nameParts := symbolNameParts(s.Name, s.Qualified)
 	var id int64
 	err := a.db.QueryRowContext(ctx, q,
 		s.FileID, s.Name, s.Qualified, string(s.Kind), s.Visibility,
 		nullableInt64(s.ParentID), s.LineStart, s.LineEnd,
-		s.Docstring, nullableInt(s.Complexity), s.Snippet,
+		s.Docstring, nullableInt(s.Complexity), s.Snippet, nameParts,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("sqlite WriteSymbol: %w", err)
 	}
 	return id, nil
+}
+
+func symbolNameParts(name, qualified string) string {
+	parts := Decompose(name)
+	qParts := Decompose(qualified)
+	if qParts != parts {
+		parts = parts + " " + qParts
+	}
+	return parts
 }
 
 func (a *Adapter) WriteEdge(ctx context.Context, e *model.Edge) (int64, error) {
@@ -443,8 +453,8 @@ func (a *Adapter) PrepareSymbolStmt(ctx context.Context) (*sql.Stmt, error) {
 	const q = `
 		INSERT INTO sense_symbols
 			(file_id, name, qualified, kind, visibility, parent_id,
-			 line_start, line_end, docstring, complexity, snippet)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 line_start, line_end, docstring, complexity, snippet, name_parts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id, qualified) DO UPDATE SET
 			name       = excluded.name,
 			kind       = excluded.kind,
@@ -454,19 +464,20 @@ func (a *Adapter) PrepareSymbolStmt(ctx context.Context) (*sql.Stmt, error) {
 			line_end   = excluded.line_end,
 			docstring  = excluded.docstring,
 			complexity = excluded.complexity,
-			snippet    = excluded.snippet
+			snippet    = excluded.snippet,
+			name_parts = excluded.name_parts
 		RETURNING id`
 	return a.db.PrepareContext(ctx, q)
 }
 
-// ExecSymbolStmt writes a symbol using a prepared statement and returns
-// the row id. The statement must have been created by PrepareSymbolStmt.
+// ExecSymbolStmt writes a symbol using a prepared statement from PrepareSymbolStmt.
 func ExecSymbolStmt(ctx context.Context, stmt *sql.Stmt, s *model.Symbol) (int64, error) {
+	nameParts := symbolNameParts(s.Name, s.Qualified)
 	var id int64
 	err := stmt.QueryRowContext(ctx,
 		s.FileID, s.Name, s.Qualified, string(s.Kind), s.Visibility,
 		nullableInt64(s.ParentID), s.LineStart, s.LineEnd,
-		s.Docstring, nullableInt(s.Complexity), s.Snippet,
+		s.Docstring, nullableInt(s.Complexity), s.Snippet, nameParts,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("sqlite WriteSymbol (prepared): %w", err)

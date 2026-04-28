@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 )
 
@@ -35,7 +36,7 @@ func (a *Adapter) KeywordSearch(ctx context.Context, query string, language stri
 		limit = 10
 	}
 
-	query = sanitizeFTS5Query(query)
+	ftsQuery := buildFTSQuery(query)
 
 	var q string
 	var args []any
@@ -50,7 +51,7 @@ func (a *Adapter) KeywordSearch(ctx context.Context, query string, language stri
 		       AND f.language = ?
 		     ORDER BY rank
 		     LIMIT ?`
-		args = []any{query, language, limit}
+		args = []any{ftsQuery, language, limit}
 	} else {
 		q = `SELECT s.id, s.name, s.qualified, s.kind, s.file_id, s.line_start,
 		            s.snippet, -rank AS score
@@ -59,7 +60,7 @@ func (a *Adapter) KeywordSearch(ctx context.Context, query string, language stri
 		     WHERE sense_symbols_fts MATCH ?
 		     ORDER BY rank
 		     LIMIT ?`
-		args = []any{query, limit}
+		args = []any{ftsQuery, limit}
 	}
 
 	rows, err := a.db.QueryContext(ctx, q, args...)
@@ -80,6 +81,29 @@ func (a *Adapter) KeywordSearch(ctx context.Context, query string, language stri
 		results = append(results, r)
 	}
 	return results, rows.Err()
+}
+
+// buildFTSQuery constructs an FTS5 MATCH expression that searches the
+// original tokens plus decomposed tokens in name_parts. For a query
+// like "PaymentLink", the result is:
+//
+//	("PaymentLink") OR (name_parts:"payment" name_parts:"link")
+func buildFTSQuery(raw string) string {
+	sanitized := sanitizeFTS5Query(raw)
+	decomposed := Decompose(raw)
+	decompTokens := strings.Fields(decomposed)
+	origTokens := strings.Fields(strings.ToLower(raw))
+
+	if len(decompTokens) <= 1 || slices.Equal(decompTokens, origTokens) {
+		return sanitized
+	}
+
+	var parts []string
+	for _, tok := range decompTokens {
+		tok = strings.ReplaceAll(tok, `"`, `""`)
+		parts = append(parts, `name_parts:"`+tok+`"`)
+	}
+	return "(" + sanitized + ") OR (" + strings.Join(parts, " ") + ")"
 }
 
 // SymbolCount returns the total number of symbols in the index.
@@ -352,6 +376,6 @@ func sanitizeFTS5Query(q string) string {
 		tok = strings.ReplaceAll(tok, `"`, `""`)
 		quoted = append(quoted, `"`+tok+`"`)
 	}
-	return strings.Join(quoted, " ")
+	return strings.Join(quoted, " OR ")
 }
 

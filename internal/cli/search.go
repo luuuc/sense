@@ -92,7 +92,7 @@ func RunSearch(args []string, cio IO) int {
 	}
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
-	results, symbolCount, _, err := engine.Search(ctx, search.Options{
+	results, meta, err := engine.Search(ctx, search.Options{
 		Query:    opts.Query,
 		Limit:    opts.Limit,
 		Language: opts.Language,
@@ -110,7 +110,7 @@ func RunSearch(args []string, cio IO) int {
 		return ExitGeneralError
 	}
 
-	resp := buildSearchResponse(results, pathByID, symbolCount)
+	resp := buildSearchResponse(results, pathByID, meta)
 
 	if opts.JSON {
 		out, merr := mcpio.MarshalSearch(resp)
@@ -137,7 +137,7 @@ func collectSearchFileIDs(results []search.Result) []int64 {
 	return ids
 }
 
-func buildSearchResponse(results []search.Result, pathByID map[int64]string, symbolCount int) mcpio.SearchResponse {
+func buildSearchResponse(results []search.Result, pathByID map[int64]string, meta search.SearchMeta) mcpio.SearchResponse {
 	entries := make([]mcpio.SearchResultEntry, len(results))
 	uniqueFiles := map[string]struct{}{}
 	for i, r := range results {
@@ -156,9 +156,14 @@ func buildSearchResponse(results []search.Result, pathByID map[int64]string, sym
 	}
 	filesAvoided := len(uniqueFiles)
 	return mcpio.SearchResponse{
-		Results: entries,
+		Results:    entries,
+		SearchMode: meta.Mode,
+		FusionWeights: mcpio.FusionWeights{
+			Keyword: meta.KeywordWeight,
+			Vector:  meta.VectorWeight,
+		},
 		SenseMetrics: mcpio.SearchMetrics{
-			SymbolsSearched:           symbolCount,
+			SymbolsSearched:           meta.SymbolCount,
 			EstimatedFileReadsAvoided: filesAvoided,
 			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 		},

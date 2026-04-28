@@ -471,7 +471,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	language := req.GetString("language", "")
 	minScore := req.GetFloat("min_score", 0.0)
 
-	results, symbolCount, searchMode, err := h.search.Search(ctx, search.Options{
+	results, meta, err := h.search.Search(ctx, search.Options{
 		Query:    query,
 		Limit:    limit,
 		Language: language,
@@ -510,9 +510,13 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	filesAvoided := len(uniqueFiles)
 	resp := mcpio.SearchResponse{
 		Results:    entries,
-		SearchMode: searchMode,
+		SearchMode: meta.Mode,
+		FusionWeights: mcpio.FusionWeights{
+			Keyword: meta.KeywordWeight,
+			Vector:  meta.VectorWeight,
+		},
 		SenseMetrics: mcpio.SearchMetrics{
-			SymbolsSearched:           symbolCount,
+			SymbolsSearched:           meta.SymbolCount,
 			EstimatedFileReadsAvoided: filesAvoided,
 			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 		},

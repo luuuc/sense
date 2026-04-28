@@ -67,9 +67,16 @@ const (
 	ModeKeyword = "keyword"
 )
 
+// SearchMeta carries non-result metadata from a search invocation.
+type SearchMeta struct {
+	SymbolCount   int
+	Mode          string
+	KeywordWeight float64
+	VectorWeight  float64
+}
+
 // Search runs hybrid search and returns fused, re-ranked results.
-// The mode string is "hybrid" when vector search was used, "keyword" otherwise.
-func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, string, error) {
+func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = 10
 	}
@@ -79,7 +86,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, strin
 
 	symbolCount, err := e.adapter.SymbolCount(ctx)
 	if err != nil {
-		return nil, 0, "", fmt.Errorf("search: %w", err)
+		return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
 	}
 
 	// Fetch more candidates than requested so RRF has enough to fuse.
@@ -116,20 +123,23 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, strin
 		})
 
 		if err := g.Wait(); err != nil {
-			return nil, 0, "", fmt.Errorf("search: %w", err)
+			return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
 		}
 	} else {
 		keywordResults, err = e.adapter.KeywordSearch(ctx, opts.Query, opts.Language, candidateLimit)
 		if err != nil {
-			return nil, 0, "", fmt.Errorf("search: %w", err)
+			return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
 		}
 	}
 
-	fused := fuseRRF(keywordResults, vectorResults)
+	vecConfidence := vectorConfidence(vectorResults)
+	kwWeight, vecWeight := fusionWeights(vecConfidence)
+
+	fused := fuseRRF(keywordResults, vectorResults, kwWeight, vecWeight)
 
 	// Hydrate metadata for vector-only results that have no name/qualified.
 	if err := e.hydrateResults(ctx, fused); err != nil {
-		return nil, 0, "", fmt.Errorf("search: %w", err)
+		return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
 	}
 
 	// Graph centrality re-ranking.
@@ -139,7 +149,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, strin
 	}
 	centrality, err := e.adapter.InboundEdgeCounts(ctx, symbolIDs)
 	if err != nil {
-		return nil, 0, "", fmt.Errorf("search centrality: %w", err)
+		return nil, SearchMeta{}, fmt.Errorf("search centrality: %w", err)
 	}
 	applyGraphCentrality(fused, centrality)
 	applyKindWeights(fused)
@@ -155,7 +165,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, strin
 	}
 	pathByID, err := e.adapter.FilePathsByIDs(ctx, fileIDs)
 	if err != nil {
-		return nil, 0, "", fmt.Errorf("search paths: %w", err)
+		return nil, SearchMeta{}, fmt.Errorf("search paths: %w", err)
 	}
 	applyPathWeights(fused, pathByID)
 
@@ -182,15 +192,39 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, int, strin
 	if canVector {
 		mode = ModeHybrid
 	}
-	return results, symbolCount, mode, nil
+	return results, SearchMeta{
+		SymbolCount:   symbolCount,
+		Mode:          mode,
+		KeywordWeight: kwWeight,
+		VectorWeight:  vecWeight,
+	}, nil
 }
 
 const rrfK = 60
 
+const (
+	confidenceHighThreshold = 0.6
+	confidenceLowThreshold  = 0.4
+)
+
+// fusionWeights returns keyword and vector weights for reciprocal rank
+// fusion based on vector confidence. High confidence → equal weight;
+// low confidence → keyword-biased; very low → keyword-only.
+func fusionWeights(vecConfidence float64) (keyword, vector float64) {
+	switch {
+	case vecConfidence >= confidenceHighThreshold:
+		return 0.5, 0.5
+	case vecConfidence >= confidenceLowThreshold:
+		return 0.7, 0.3
+	default:
+		return 1.0, 0.0
+	}
+}
+
 // fuseRRF merges keyword and vector result lists using reciprocal rank
-// fusion: score(symbol) = Σ 1/(k + rank_in_list). Symbols appearing
-// in both lists get contributions from both, naturally ranking higher.
-func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult) []Result {
+// fusion with configurable weights: score(symbol) = Σ weight/(k + rank).
+// Symbols appearing in both lists get contributions from both.
+func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vecWeight float64) []Result {
 	type entry struct {
 		result Result
 		score  float64
@@ -199,7 +233,7 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult) []Result {
 
 	for rank, kr := range keyword {
 		id := kr.SymbolID
-		rrfScore := 1.0 / float64(rrfK+rank+1)
+		rrfScore := kwWeight / float64(rrfK+rank+1)
 		if e, ok := merged[id]; ok {
 			e.score += rrfScore
 		} else {
@@ -218,17 +252,19 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult) []Result {
 		}
 	}
 
-	for rank, vr := range vector {
-		id := vr.SymbolID
-		rrfScore := 1.0 / float64(rrfK+rank+1)
-		if e, ok := merged[id]; ok {
-			e.score += rrfScore
-		} else {
-			merged[id] = &entry{
-				result: Result{
-					SymbolID: vr.SymbolID,
-				},
-				score: rrfScore,
+	if vecWeight > 0 {
+		for rank, vr := range vector {
+			id := vr.SymbolID
+			rrfScore := vecWeight / float64(rrfK+rank+1)
+			if e, ok := merged[id]; ok {
+				e.score += rrfScore
+			} else {
+				merged[id] = &entry{
+					result: Result{
+						SymbolID: vr.SymbolID,
+					},
+					score: rrfScore,
+				}
 			}
 		}
 	}
@@ -396,6 +432,25 @@ func applyPathWeights(results []Result, pathByID map[int64]string) {
 			}
 		}
 	}
+}
+
+const vectorConfidenceTopK = 3
+
+// vectorConfidence returns the mean cosine similarity of the top-K
+// vector results. Returns 0 when there are no vector results.
+func vectorConfidence(results []VectorResult) float64 {
+	if len(results) == 0 {
+		return 0
+	}
+	n := vectorConfidenceTopK
+	if n > len(results) {
+		n = len(results)
+	}
+	var sum float64
+	for i := range n {
+		sum += float64(results[i].Similarity)
+	}
+	return sum / float64(n)
 }
 
 // applyGraphCentrality boosts scores by graph importance. Symbols with

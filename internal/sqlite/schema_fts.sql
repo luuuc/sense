@@ -9,6 +9,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sense_symbols_fts USING fts5(
     qualified,
     docstring,
     snippet,
+    name_parts,
     content='sense_symbols',
     content_rowid='id'
 );

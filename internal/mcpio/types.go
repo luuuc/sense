@@ -363,10 +363,19 @@ type StatusLanguage struct {
 // `sense search --json` CLI output. Matches the documented example in
 // .doc/definition/06-mcp-and-cli.md exactly.
 type SearchResponse struct {
-	Results      []SearchResultEntry `json:"results"`
-	SearchMode   string              `json:"search_mode"`
-	SenseMetrics SearchMetrics       `json:"sense_metrics"`
-	NextSteps    []NextStep          `json:"next_steps"`
+	Results       []SearchResultEntry `json:"results"`
+	SearchMode    string              `json:"search_mode"`
+	FusionWeights FusionWeights       `json:"fusion_weights"`
+	SenseMetrics  SearchMetrics       `json:"sense_metrics"`
+	NextSteps     []NextStep          `json:"next_steps"`
+}
+
+// FusionWeights reports the keyword/vector weight pair used for
+// reciprocal rank fusion. Present in every search response for
+// diagnostics — helps debug why results changed across queries.
+type FusionWeights struct {
+	Keyword float64 `json:"keyword"`
+	Vector  float64 `json:"vector"`
 }
 
 // SearchResultEntry is a single search hit in the wire response.
