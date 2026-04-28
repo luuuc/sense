@@ -35,6 +35,7 @@ import (
 	_ "github.com/luuuc/sense/internal/extract/languages" // register every extractor
 	"github.com/luuuc/sense/internal/ignore"
 	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/profile"
 	"github.com/luuuc/sense/internal/resolve"
 	"github.com/luuuc/sense/internal/setup"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -252,6 +253,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 		if debt, derr := idx.EmbeddingDebtCount(ctx); derr == nil {
 			embeddingDebt = debt
+		}
+	}
+
+	if prof, perr := profile.Compute(ctx, idx.DB()); perr == nil {
+		if serr := profile.Store(ctx, idx.DB(), prof); serr != nil {
+			_, _ = fmt.Fprintf(warn, "warn: store profile: %v\n", serr)
 		}
 	}
 
