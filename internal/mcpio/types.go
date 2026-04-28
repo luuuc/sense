@@ -260,12 +260,20 @@ type StatusResponse struct {
 	Index             StatusIndex              `json:"index"`
 	Languages         map[string]StatusLanguage `json:"languages"`
 	Structure         *StatusStructure         `json:"structure,omitempty"`
+	Profile           *StatusProfile           `json:"profile,omitempty"`
 	Freshness         Freshness                `json:"freshness"`
 	EmbeddingProgress *EmbeddingProgress       `json:"embedding_progress,omitempty"`
 	Session           *StatusSession           `json:"session,omitempty"`
 	Lifetime          *StatusLifetime          `json:"lifetime,omitempty"`
 	Version           *StatusVersion           `json:"version,omitempty"`
 	NextSteps         []NextStep               `json:"next_steps"`
+}
+
+type StatusProfile struct {
+	Tier            string `json:"tier"`
+	Symbols         int    `json:"symbols"`
+	PrimaryLanguage string `json:"primary_language"`
+	DynamicLanguage bool   `json:"dynamic_language"`
 }
 
 // StatusStructure provides a project-level structural summary for

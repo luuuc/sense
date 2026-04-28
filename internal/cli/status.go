@@ -15,6 +15,7 @@ import (
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/profile"
 	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
 
@@ -116,6 +117,15 @@ func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, 
 	resp.Freshness = computeCLIFreshness(ctx, db, cio.Dir)
 	resp.Version = buildVersionInfo(ctx, db)
 	resp.Lifetime = queryLifetimeCounters(ctx, db)
+
+	if prof := profile.Load(ctx, db); prof != nil {
+		resp.Profile = &mcpio.StatusProfile{
+			Tier:            prof.Tier,
+			Symbols:         prof.Symbols,
+			PrimaryLanguage: prof.PrimaryLang,
+			DynamicLanguage: prof.DynamicLang,
+		}
+	}
 
 	return resp, ExitSuccess
 }
@@ -261,6 +271,18 @@ func renderStatusHuman(cio IO, resp mcpio.StatusResponse) {
 			_, _ = fmt.Fprintf(w, "  %-14s %3d files  %5d symbols   tier: %s\n",
 				lang, sl.Files, sl.Symbols, sl.Tier)
 		}
+	}
+
+	if resp.Profile != nil {
+		_, _ = fmt.Fprintf(w, "\nProfile: %s", resp.Profile.Tier)
+		if resp.Profile.PrimaryLanguage != "" {
+			_, _ = fmt.Fprintf(w, " (primary: %s", resp.Profile.PrimaryLanguage)
+			if resp.Profile.DynamicLanguage {
+				_, _ = fmt.Fprintf(w, ", dynamic")
+			}
+			_, _ = fmt.Fprintf(w, ")")
+		}
+		_, _ = fmt.Fprintln(w)
 	}
 
 	_, _ = fmt.Fprintf(w, "\nFreshness:\n")
