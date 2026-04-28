@@ -61,7 +61,7 @@ func BuildConventionsSummary(r *ConventionsResponse) {
 	}
 	descs := make([]string, n)
 	for i := 0; i < n; i++ {
-		descs[i] = r.Conventions[i].Description
+		descs[i] = strings.TrimRight(r.Conventions[i].Description, ".")
 	}
 	r.Summary = strings.Join(descs, "; ") + "."
 }

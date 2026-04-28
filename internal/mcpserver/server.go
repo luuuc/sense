@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -1150,22 +1152,10 @@ func buildStructure(ctx context.Context, db *sql.DB, resp mcpio.StatusResponse, 
 }
 
 func queryTopNamespaces(ctx context.Context, db *sql.DB) ([]mcpio.StatusNamespace, error) {
-	const q = `SELECT
-	    CASE
-	        WHEN INSTR(f.path, '/') > 0 THEN
-	            CASE
-	                WHEN INSTR(SUBSTR(f.path, INSTR(f.path, '/') + 1), '/') > 0
-	                THEN SUBSTR(f.path, 1, INSTR(f.path, '/') + INSTR(SUBSTR(f.path, INSTR(f.path, '/') + 1), '/') - 1)
-	                ELSE SUBSTR(f.path, 1, INSTR(f.path, '/') - 1)
-	            END
-	        ELSE '.'
-	    END AS ns,
-	    COUNT(s.id) AS sym_count
+	const q = `SELECT f.path, COUNT(s.id)
 	FROM sense_files f
 	JOIN sense_symbols s ON s.file_id = f.id
-	GROUP BY ns
-	ORDER BY sym_count DESC
-	LIMIT 8`
+	GROUP BY f.id`
 
 	rows, err := db.QueryContext(ctx, q)
 	if err != nil {
@@ -1173,16 +1163,45 @@ func queryTopNamespaces(ctx context.Context, db *sql.DB) ([]mcpio.StatusNamespac
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []mcpio.StatusNamespace
+	counts := make(map[string]int)
 	for rows.Next() {
-		var ns mcpio.StatusNamespace
-		if err := rows.Scan(&ns.Name, &ns.Symbols); err != nil {
+		var filePath string
+		var symCount int
+		if err := rows.Scan(&filePath, &symCount); err != nil {
 			return nil, err
 		}
-		ns.Kind = "directory"
-		out = append(out, ns)
+		ns := namespacePrefixFromPath(filePath)
+		counts[ns] += symCount
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]mcpio.StatusNamespace, 0, len(counts))
+	for name, syms := range counts {
+		out = append(out, mcpio.StatusNamespace{Name: name, Symbols: syms, Kind: "directory"})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbols != out[j].Symbols {
+			return out[i].Symbols > out[j].Symbols
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > 8 {
+		out = out[:8]
+	}
+	return out, nil
+}
+
+func namespacePrefixFromPath(p string) string {
+	first, rest, ok := strings.Cut(p, "/")
+	if !ok {
+		return "."
+	}
+	if second, _, ok := strings.Cut(rest, "/"); ok {
+		return first + "/" + second
+	}
+	return first
 }
 
 func queryHubSymbols(ctx context.Context, db *sql.DB) ([]mcpio.StatusHub, error) {
@@ -1323,10 +1342,11 @@ func buildFingerprint(resp mcpio.StatusResponse, langs map[string]mcpio.StatusLa
 }
 
 func capitalizeFirst(s string) string {
-	if s == "" {
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError {
 		return s
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 // ---------------------------------------------------------------
