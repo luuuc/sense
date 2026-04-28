@@ -376,6 +376,6 @@ func sanitizeFTS5Query(q string) string {
 		tok = strings.ReplaceAll(tok, `"`, `""`)
 		quoted = append(quoted, `"`+tok+`"`)
 	}
-	return strings.Join(quoted, " ")
+	return strings.Join(quoted, " OR ")
 }
 
