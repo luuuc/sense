@@ -87,6 +87,7 @@ func RunConventions(args []string, cio IO) int {
 				TotalInstances: c.Instances,
 			}
 		}
+		mcpio.BuildConventionsSummary(&resp)
 		out, err := mcpio.MarshalConventions(resp)
 		if err != nil {
 			_, _ = fmt.Fprintf(cio.Stderr, "sense conventions: %v\n", err)

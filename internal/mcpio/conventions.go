@@ -1,10 +1,13 @@
 package mcpio
 
+import "strings"
+
 const DefaultTokenBudget = 4000
 
 // ConventionsResponse is the shape of the sense.conventions tool's reply
 // and the `sense conventions --json` CLI output.
 type ConventionsResponse struct {
+	Summary      string               `json:"summary,omitempty"`
 	Conventions  []ConventionEntry    `json:"conventions"`
 	Truncated    bool                 `json:"truncated,omitempty"`
 	TokenBudget  int                  `json:"token_budget,omitempty"`
@@ -44,6 +47,23 @@ func estimateTokens(r *ConventionsResponse) int {
 		return 0
 	}
 	return len(out) / 4
+}
+
+// BuildConventionsSummary assembles a one-sentence summary from the
+// top 3 strongest conventions in the response.
+func BuildConventionsSummary(r *ConventionsResponse) {
+	if len(r.Conventions) == 0 {
+		return
+	}
+	n := 3
+	if len(r.Conventions) < n {
+		n = len(r.Conventions)
+	}
+	descs := make([]string, n)
+	for i := 0; i < n; i++ {
+		descs[i] = r.Conventions[i].Description
+	}
+	r.Summary = strings.Join(descs, "; ") + "."
 }
 
 // MarshalConventions renders a ConventionsResponse with the same
