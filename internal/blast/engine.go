@@ -26,7 +26,7 @@ import (
 	"github.com/luuuc/sense/internal/model"
 )
 
-const maxResults = 100
+const defaultMaxResults = 100
 
 // defaultMaxHops matches the pitch's acceptance-criterion call:
 // Options{MaxHops: 3, IncludeTests: true}. Callers that pass
@@ -51,6 +51,7 @@ const defaultMinConfidence = 0.5
 type Options struct {
 	MaxHops       int
 	MinConfidence float64
+	MaxResults    int
 	IncludeTests  bool
 }
 
@@ -114,6 +115,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 	if opts.MinConfidence <= 0 {
 		opts.MinConfidence = defaultMinConfidence
+	}
+	if opts.MaxResults <= 0 {
+		opts.MaxResults = defaultMaxResults
 	}
 
 	subject, err := loadSymbol(ctx, db, symbolIDs[0])
@@ -180,7 +184,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 
 	totalAffectedCount := len(directIDs) + len(indirectIDs)
 
-	if totalAffectedCount > maxResults {
+	if totalAffectedCount > opts.MaxResults {
 		type ranked struct {
 			id   int64
 			conf float64
@@ -193,9 +197,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			all = append(all, ranked{id, pathConf[id]})
 		}
 		sort.Slice(all, func(i, j int) bool { return all[i].conf > all[j].conf })
-		all = all[:maxResults]
+		all = all[:opts.MaxResults]
 
-		kept := make(map[int64]struct{}, maxResults)
+		kept := make(map[int64]struct{}, opts.MaxResults)
 		for _, r := range all {
 			kept[r.id] = struct{}{}
 		}
