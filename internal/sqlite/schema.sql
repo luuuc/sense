@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS sense_symbols (
     docstring   TEXT,
     complexity  INTEGER,
     snippet     TEXT,
+    name_parts  TEXT,
     -- (file_id, qualified) is the Index contract's natural key for Symbol
     -- upserts. Not in the definition doc but required for ON CONFLICT.
     UNIQUE (file_id, qualified)

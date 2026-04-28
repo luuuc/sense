@@ -480,3 +480,53 @@ func TestFTSMigrationAddsSnippet(t *testing.T) {
 		t.Fatalf("expected 1 result for 'belongs_to' after migration, got %d", len(results))
 	}
 }
+
+func TestNamePartsMatchesDecomposed(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "components/payment.tsx", Language: "typescript",
+		Hash: "np1", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "CopyPaymentLink", Qualified: "CopyPaymentLink",
+		Kind: "function", LineStart: 1, LineEnd: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "handleHTTPSError", Qualified: "handleHTTPSError",
+		Kind: "function", LineStart: 25, LineEnd: 40,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := a.KeywordSearch(ctx, "PaymentLink", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected PaymentLink to match CopyPaymentLink via name_parts, got 0 results")
+	}
+	if results[0].Name != "CopyPaymentLink" {
+		t.Errorf("top result = %q, want CopyPaymentLink", results[0].Name)
+	}
+
+	results, err = a.KeywordSearch(ctx, "HTTPS", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected HTTPS to match handleHTTPSError via name_parts, got 0 results")
+	}
+}
