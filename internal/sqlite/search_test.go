@@ -481,6 +481,39 @@ func TestFTSMigrationAddsSnippet(t *testing.T) {
 	}
 }
 
+func TestMultiWordQueryUsesOR(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedSearchIndex(t, ctx, a)
+
+	// "credit" appears only in ProcessPayment's docstring, "user" only in
+	// the User symbol. No single document contains both. With OR, both
+	// should be found; with AND, zero results.
+	results, err := a.KeywordSearch(ctx, "credit user", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("multi-word OR query: got %d results, want at least 2 (ProcessPayment + User)", len(results))
+	}
+	names := map[string]bool{}
+	for _, r := range results {
+		names[r.Name] = true
+	}
+	if !names["ProcessPayment"] {
+		t.Error("expected ProcessPayment (matches 'credit') in results")
+	}
+	if !names["User"] {
+		t.Error("expected User (matches 'user') in results")
+	}
+}
+
 func TestNamePartsMatchesDecomposed(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
