@@ -18,7 +18,134 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-const maxEmbedWorkers = 8
+const maxEmbedWorkers = 4
+
+const embedChunkSize = 512
+
+type embedPool struct {
+	embedders []*embed.ONNXEmbedder
+	workers   int
+}
+
+func newEmbedPool() (*embedPool, error) {
+	ncpu := runtime.NumCPU()
+	workers := ncpu / 2
+	if workers < 2 {
+		workers = 2
+	}
+	if workers > maxEmbedWorkers {
+		workers = maxEmbedWorkers
+	}
+
+	threadsPerWorker := ncpu / workers
+	if threadsPerWorker < 1 {
+		threadsPerWorker = 1
+	}
+
+	embedders := make([]*embed.ONNXEmbedder, workers)
+	for i := range embedders {
+		emb, err := embed.NewBundledEmbedder(threadsPerWorker)
+		if err != nil {
+			for j := 0; j < i; j++ {
+				_ = embedders[j].Close()
+			}
+			return nil, fmt.Errorf("create embedder %d: %w", i, err)
+		}
+		embedders[i] = emb
+	}
+	return &embedPool{embedders: embedders, workers: workers}, nil
+}
+
+func (p *embedPool) embed(ctx context.Context, inputs []embed.EmbedInput) ([][]float32, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+
+	batches := (len(inputs) + embed.BatchSize - 1) / embed.BatchSize
+	workers := p.workers
+	if workers > batches {
+		workers = batches
+	}
+	if workers <= 1 {
+		return p.embedders[0].Embed(ctx, inputs)
+	}
+
+	chunkSize := (len(inputs) + workers - 1) / workers
+	type result struct {
+		vecs [][]float32
+		err  error
+	}
+	results := make([]result, workers)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		start := w * chunkSize
+		if start >= len(inputs) {
+			break
+		}
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		wg.Add(1)
+		go func(idx int, chunk []embed.EmbedInput) {
+			defer wg.Done()
+			vecs, err := p.embedders[idx].Embed(ctx, chunk)
+			if err != nil {
+				results[idx] = result{err: err}
+				cancel()
+				return
+			}
+			results[idx] = result{vecs: vecs}
+		}(w, inputs[start:end])
+	}
+	wg.Wait()
+
+	all := make([][]float32, 0, len(inputs))
+	for _, r := range results {
+		if r.err != nil {
+			return nil, r.err
+		}
+		all = append(all, r.vecs...)
+	}
+	return all, nil
+}
+
+func (p *embedPool) Close() error {
+	var first error
+	for _, emb := range p.embedders {
+		if err := emb.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// migrateEmbeddingModel checks whether the stored embedding model
+// matches the current binary's model. If they differ, it clears all
+// embeddings and removes the HNSW index so everything gets
+// re-embedded with the new model. Returns true if a migration occurred.
+func (h *harness) migrateEmbeddingModel(senseDir string) (bool, error) {
+	stored, err := h.idx.ReadMeta(h.ctx, "embedding_model")
+	if err != nil {
+		return false, fmt.Errorf("read embedding model: %w", err)
+	}
+	if stored == "" || stored == embed.ModelID {
+		return false, nil
+	}
+
+	if err := h.idx.ClearEmbeddings(h.ctx); err != nil {
+		return false, fmt.Errorf("clear embeddings: %w", err)
+	}
+	if err := h.idx.DeleteMeta(h.ctx, "embedding_model"); err != nil {
+		return false, fmt.Errorf("delete embedding model meta: %w", err)
+	}
+	_ = os.Remove(filepath.Join(senseDir, "hnsw.bin"))
+	return true, nil
+}
 
 // EmbedPending generates embeddings for all symbols that lack them and
 // rebuilds the HNSW index. Designed for the MCP server's background
@@ -37,6 +164,12 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root, senseDir strin
 	h.extendMethodSnippets(syms)
 	contextMap := h.buildContextMap(syms)
 
+	fileIDs := uniqueFileIDs(syms)
+	paths, pathErr := idx.FilePathsByIDs(ctx, fileIDs)
+	if pathErr != nil {
+		_, _ = fmt.Fprintf(h.warn, "warn: resolve file paths for embeddings: %v\n", pathErr)
+	}
+
 	inputs := make([]embed.EmbedInput, len(syms))
 	for i, s := range syms {
 		inputs[i] = embed.EmbedInput{
@@ -44,50 +177,70 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root, senseDir strin
 			Kind:          s.Kind,
 			Snippet:       s.Snippet,
 			Context:       contextMap[s.ID],
+			FilePath:      paths[s.FileID],
 		}
 	}
 
-	vecs, err := parallelEmbed(ctx, inputs)
+	pool, err := newEmbedPool()
 	if err != nil {
-		return 0, fmt.Errorf("generate embeddings: %w", err)
+		return 0, fmt.Errorf("create embed pool: %w", err)
 	}
+	defer func() { _ = pool.Close() }()
 
-	err = idx.InTx(ctx, func() error {
-		stmt, err := idx.PrepareEmbeddingStmt(ctx)
+	var total int
+	for i := 0; i < len(inputs); i += embedChunkSize {
+		end := i + embedChunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+
+		vecs, err := pool.embed(ctx, inputs[i:end])
 		if err != nil {
-			return err
+			return total, fmt.Errorf("generate embeddings: %w", err)
 		}
-		defer func() { _ = stmt.Close() }()
-		for i, vec := range vecs {
-			blob := vectorToBlob(vec)
-			if _, err := stmt.ExecContext(ctx, syms[i].ID, blob); err != nil {
-				return fmt.Errorf("write embedding symbol=%d: %w", syms[i].ID, err)
+
+		chunkSyms := syms[i:end]
+		err = idx.InTx(ctx, func() error {
+			stmt, err := idx.PrepareEmbeddingStmt(ctx)
+			if err != nil {
+				return err
 			}
+			defer func() { _ = stmt.Close() }()
+			for j, vec := range vecs {
+				blob := vectorToBlob(vec)
+				if _, err := stmt.ExecContext(ctx, chunkSyms[j].ID, blob); err != nil {
+					return fmt.Errorf("write embedding symbol=%d: %w", chunkSyms[j].ID, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return total, fmt.Errorf("write embeddings: %w", err)
 		}
+		total += len(vecs)
+	}
+
+	if total > 0 {
 		if err := idx.WriteMeta(ctx, "embedding_model", embed.ModelID); err != nil {
-			return fmt.Errorf("write embedding model meta: %w", err)
+			return total, fmt.Errorf("write embedding model meta: %w", err)
 		}
-		return nil
-	})
-	if err != nil {
-		return 0, fmt.Errorf("write embeddings: %w", err)
 	}
 
 	hnswPath := filepath.Join(senseDir, "hnsw.bin")
 	embeddings, err := idx.LoadEmbeddings(ctx)
 	if err != nil {
-		return len(vecs), fmt.Errorf("load embeddings for hnsw: %w", err)
+		return total, fmt.Errorf("load embeddings for hnsw: %w", err)
 	}
 	if len(embeddings) > 0 {
 		if err := search.SaveHNSWIndex(hnswPath, embeddings); err != nil {
-			return len(vecs), fmt.Errorf("save hnsw index: %w", err)
+			return total, fmt.Errorf("save hnsw index: %w", err)
 		}
 	}
 
 	if err := idx.DeleteMeta(ctx, "embedding_watermark"); err != nil {
-		return len(vecs), fmt.Errorf("clear embedding watermark: %w", err)
+		return total, fmt.Errorf("clear embedding watermark: %w", err)
 	}
-	return len(vecs), nil
+	return total, nil
 }
 
 // embedSymbols is pass 3: generate embeddings for symbols in changed files.
@@ -109,6 +262,12 @@ func (h *harness) embedSymbols() error {
 	h.extendMethodSnippets(syms)
 	contextMap := h.buildContextMap(syms)
 
+	fileIDs := uniqueFileIDs(syms)
+	paths, pathErr := h.idx.FilePathsByIDs(h.ctx, fileIDs)
+	if pathErr != nil {
+		_, _ = fmt.Fprintf(h.warn, "warn: resolve file paths for embeddings: %v\n", pathErr)
+	}
+
 	inputs := make([]embed.EmbedInput, len(syms))
 	for i, s := range syms {
 		inputs[i] = embed.EmbedInput{
@@ -116,36 +275,54 @@ func (h *harness) embedSymbols() error {
 			Kind:          s.Kind,
 			Snippet:       s.Snippet,
 			Context:       contextMap[s.ID],
+			FilePath:      paths[s.FileID],
 		}
 	}
 
-	vecs, err := parallelEmbed(h.ctx, inputs)
+	pool, err := newEmbedPool()
 	if err != nil {
-		return fmt.Errorf("generate embeddings: %w", err)
+		return fmt.Errorf("create embed pool: %w", err)
+	}
+	defer func() { _ = pool.Close() }()
+
+	for i := 0; i < len(inputs); i += embedChunkSize {
+		end := i + embedChunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+
+		vecs, err := pool.embed(h.ctx, inputs[i:end])
+		if err != nil {
+			return fmt.Errorf("generate embeddings: %w", err)
+		}
+
+		chunkSyms := syms[i:end]
+		err = h.idx.InTx(h.ctx, func() error {
+			stmt, err := h.idx.PrepareEmbeddingStmt(h.ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = stmt.Close() }()
+			for j, vec := range vecs {
+				blob := vectorToBlob(vec)
+				if _, err := stmt.ExecContext(h.ctx, chunkSyms[j].ID, blob); err != nil {
+					return fmt.Errorf("write embedding symbol=%d: %w", chunkSyms[j].ID, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("write embeddings: %w", err)
+		}
+		h.embedded += len(vecs)
 	}
 
-	err = h.idx.InTx(h.ctx, func() error {
-		stmt, err := h.idx.PrepareEmbeddingStmt(h.ctx)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = stmt.Close() }()
-		for i, vec := range vecs {
-			blob := vectorToBlob(vec)
-			if _, err := stmt.ExecContext(h.ctx, syms[i].ID, blob); err != nil {
-				return fmt.Errorf("write embedding symbol=%d: %w", syms[i].ID, err)
-			}
-		}
+	if h.embedded > 0 {
 		if err := h.idx.WriteMeta(h.ctx, "embedding_model", embed.ModelID); err != nil {
 			return fmt.Errorf("write embedding model meta: %w", err)
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("write embeddings: %w", err)
 	}
 
-	h.embedded = len(vecs)
 	return nil
 }
 
@@ -207,92 +384,16 @@ func (h *harness) tryIncrementalHNSW(path string) (bool, error) {
 	return true, nil
 }
 
-// parallelEmbed fans inputs across multiple ONNXEmbedder instances to
-// saturate available CPU cores. Each embedder owns an independent ONNX
-// session and pre-allocated buffers — no shared mutable state.
-func parallelEmbed(ctx context.Context, inputs []embed.EmbedInput) ([][]float32, error) {
-	batches := (len(inputs) + embed.BatchSize - 1) / embed.BatchSize
-	ncpu := runtime.NumCPU()
-	workers := ncpu
-	if workers > batches {
-		workers = batches
-	}
-	if workers > maxEmbedWorkers {
-		workers = maxEmbedWorkers
-	}
-	if workers <= 1 {
-		emb, err := embed.NewBundledEmbedder(0)
-		if err != nil {
-			return nil, err
+func uniqueFileIDs(syms []sqlite.EmbedSymbol) []int64 {
+	seen := make(map[int64]bool, len(syms))
+	ids := make([]int64, 0, len(syms))
+	for _, s := range syms {
+		if !seen[s.FileID] {
+			seen[s.FileID] = true
+			ids = append(ids, s.FileID)
 		}
-		defer func() { _ = emb.Close() }()
-		return emb.Embed(ctx, inputs)
 	}
-
-	threadsPerWorker := ncpu / workers
-	if threadsPerWorker < 1 {
-		threadsPerWorker = 1
-	}
-
-	embedders := make([]*embed.ONNXEmbedder, workers)
-	for i := range embedders {
-		emb, err := embed.NewBundledEmbedder(threadsPerWorker)
-		if err != nil {
-			for j := 0; j < i; j++ {
-				_ = embedders[j].Close()
-			}
-			return nil, fmt.Errorf("create embedder %d: %w", i, err)
-		}
-		embedders[i] = emb
-	}
-	defer func() {
-		for _, emb := range embedders {
-			_ = emb.Close()
-		}
-	}()
-
-	chunkSize := (len(inputs) + workers - 1) / workers
-	type result struct {
-		vecs [][]float32
-		err  error
-	}
-	results := make([]result, workers)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		start := w * chunkSize
-		if start >= len(inputs) {
-			break
-		}
-		end := start + chunkSize
-		if end > len(inputs) {
-			end = len(inputs)
-		}
-		wg.Add(1)
-		go func(idx int, chunk []embed.EmbedInput) {
-			defer wg.Done()
-			vecs, err := embedders[idx].Embed(ctx, chunk)
-			if err != nil {
-				results[idx] = result{err: err}
-				cancel()
-				return
-			}
-			results[idx] = result{vecs: vecs}
-		}(w, inputs[start:end])
-	}
-	wg.Wait()
-
-	all := make([][]float32, 0, len(inputs))
-	for _, r := range results {
-		if r.err != nil {
-			return nil, r.err
-		}
-		all = append(all, r.vecs...)
-	}
-	return all, nil
+	return ids
 }
 
 // buildContextMap calls ContextForFile for each unique file among the

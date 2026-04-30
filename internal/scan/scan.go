@@ -31,6 +31,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/luuuc/sense/internal/config"
+	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	_ "github.com/luuuc/sense/internal/extract/languages" // register every extractor
 	"github.com/luuuc/sense/internal/ignore"
@@ -217,6 +218,16 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.Temporal = time.Since(t0)
 
+	var modelMigrated bool
+	if opts.EmbeddingsEnabled {
+		if changed, merr := h.migrateEmbeddingModel(senseDir); merr != nil {
+			_, _ = fmt.Fprintf(warn, "warn: embedding model migration: %v\n", merr)
+		} else if changed {
+			modelMigrated = true
+			_, _ = fmt.Fprintf(out, "embedding model changed to %s — re-embedding all symbols\n", embed.ModelID)
+		}
+	}
+
 	if opts.EmbeddingsEnabled && opts.Embed {
 		t0 = time.Now()
 		if err := h.embedSymbols(); err != nil {
@@ -246,7 +257,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	var embeddingDebt int
-	if opts.EmbeddingsEnabled && !opts.Embed && h.changed > 0 {
+	if opts.EmbeddingsEnabled && !opts.Embed && (h.changed > 0 || modelMigrated) {
 		ts := time.Now().UTC().Format(time.RFC3339)
 		if err := idx.WriteMeta(ctx, "embedding_watermark", ts); err != nil {
 			_, _ = fmt.Fprintf(warn, "warn: write embedding watermark: %v\n", err)

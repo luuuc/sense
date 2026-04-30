@@ -19,11 +19,14 @@ const BatchSize = 50
 // MaxSequenceLength is the maximum token sequence length the model accepts.
 const MaxSequenceLength = 256
 
-// ONNXEmbedder wraps an ONNX Runtime session for all-MiniLM-L6-v2 inference.
+// ONNXEmbedder wraps an ONNX Runtime session for transformer model inference.
 // Not safe for concurrent use.
 type ONNXEmbedder struct {
 	session   *ort.DynamicAdvancedSession
 	tokenizer *tokenizer
+
+	dims   int
+	seqLen int
 
 	// Pre-allocated buffers reused across embedBatch calls.
 	inputIDs      []int64
@@ -31,11 +34,15 @@ type ONNXEmbedder struct {
 	tokenTypeIDs  []int64
 }
 
-// NewONNXEmbedder creates an embedder from model and vocabulary bytes.
-// The caller must have previously called InitORTLibrary.
-// intraOpThreads controls per-session thread parallelism; use 0 for the
-// ONNX Runtime default (all cores).
+// NewONNXEmbedder creates an embedder from model and vocabulary bytes
+// using the bundled model's default dimensions and sequence length.
 func NewONNXEmbedder(modelBytes []byte, vocabBytes []byte, intraOpThreads int) (*ONNXEmbedder, error) {
+	return NewONNXEmbedderWithConfig(modelBytes, vocabBytes, intraOpThreads, Dimensions, MaxSequenceLength)
+}
+
+// NewONNXEmbedderWithConfig creates an embedder with configurable output
+// dimensions and max sequence length.
+func NewONNXEmbedderWithConfig(modelBytes []byte, vocabBytes []byte, intraOpThreads, dims, maxSeqLen int) (*ONNXEmbedder, error) {
 	inputNames := []string{"input_ids", "attention_mask", "token_type_ids"}
 	outputNames := []string{"last_hidden_state"}
 
@@ -63,12 +70,14 @@ func NewONNXEmbedder(modelBytes []byte, vocabBytes []byte, intraOpThreads int) (
 		return nil, fmt.Errorf("create ONNX session: %w", err)
 	}
 
-	tok := newTokenizer(vocabBytes, MaxSequenceLength)
+	tok := newTokenizer(vocabBytes, maxSeqLen)
 
-	bufSize := int64(BatchSize) * int64(MaxSequenceLength)
+	bufSize := int64(BatchSize) * int64(maxSeqLen)
 	return &ONNXEmbedder{
 		session:       session,
 		tokenizer:     tok,
+		dims:          dims,
+		seqLen:        maxSeqLen,
 		inputIDs:      make([]int64, bufSize),
 		attentionMask: make([]int64, bufSize),
 		tokenTypeIDs:  make([]int64, bufSize),
@@ -112,7 +121,8 @@ func (e *ONNXEmbedder) Embed(ctx context.Context, inputs []EmbedInput) ([][]floa
 
 func (e *ONNXEmbedder) embedBatch(batch []EmbedInput) ([][]float32, error) {
 	batchSize := int64(len(batch))
-	seqLen := int64(MaxSequenceLength)
+	seqLen := int64(e.seqLen)
+	dims := e.dims
 	needed := batchSize * seqLen
 
 	// Use pre-allocated buffers, sliced to actual batch size.
@@ -155,7 +165,7 @@ func (e *ONNXEmbedder) embedBatch(batch []EmbedInput) ([][]float32, error) {
 	}
 	defer func() { _ = tokenTypeIDsTensor.Destroy() }()
 
-	outputTensor, err := ort.NewEmptyTensor[float32](ort.Shape{batchSize, seqLen, int64(Dimensions)})
+	outputTensor, err := ort.NewEmptyTensor[float32](ort.Shape{batchSize, seqLen, int64(dims)})
 	if err != nil {
 		return nil, fmt.Errorf("create output tensor: %w", err)
 	}
@@ -174,7 +184,7 @@ func (e *ONNXEmbedder) embedBatch(batch []EmbedInput) ([][]float32, error) {
 	results := make([][]float32, batchSize)
 
 	for i := int64(0); i < batchSize; i++ {
-		vec := make([]float32, Dimensions)
+		vec := make([]float32, dims)
 		var tokenCount float32
 
 		for j := int64(0); j < seqLen; j++ {
@@ -182,8 +192,8 @@ func (e *ONNXEmbedder) embedBatch(batch []EmbedInput) ([][]float32, error) {
 				continue
 			}
 			tokenCount++
-			baseIdx := i*seqLen*int64(Dimensions) + j*int64(Dimensions)
-			for k := 0; k < Dimensions; k++ {
+			baseIdx := i*seqLen*int64(dims) + j*int64(dims)
+			for k := 0; k < dims; k++ {
 				vec[k] += output[baseIdx+int64(k)]
 			}
 		}

@@ -13,6 +13,7 @@ type EmbedInput struct {
 	Kind          string
 	Snippet       string
 	Context       string
+	FilePath      string
 }
 
 // ModelID identifies the bundled embedding model and format version.
@@ -34,8 +35,8 @@ type Embedder interface {
 // graph-derived Context is available, it forms the primary content
 // with the code Snippet appended. When Context is absent but
 // structural fields exist (Kind, QualifiedName), they provide a
-// minimal identity header. For queries (no Context, no Kind), the
-// raw Snippet is returned as-is.
+// minimal identity header with file path for directory-level signal.
+// For queries (no Context, no Kind), the raw Snippet is returned as-is.
 func FormatContext(in EmbedInput) string {
 	if in.Context != "" {
 		if in.Snippet != "" {
@@ -44,7 +45,11 @@ func FormatContext(in EmbedInput) string {
 		return in.Context
 	}
 	if in.Kind != "" {
-		s := in.Kind + " " + in.QualifiedName
+		var s string
+		if in.FilePath != "" {
+			s = "File: " + in.FilePath + "\n"
+		}
+		s += in.Kind + " " + in.QualifiedName
 		if in.Snippet != "" {
 			s += "\n" + in.Snippet
 		}
