@@ -29,7 +29,7 @@ No additional tools are configured. Use grep, find, Read, and Bash as needed.
 EOF
 
   # Empty MCP config — no servers
-  echo '{}' > "$workspace/.mcp.json"
+  echo '{"mcpServers":{}}' > "$workspace/.mcp.json"
 }
 
 setup() {
