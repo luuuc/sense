@@ -15,14 +15,15 @@ import (
 
 // Result is a single fused search hit with metadata from both backends.
 type Result struct {
-	SymbolID  int64
-	Name      string
-	Qualified string
-	Kind      string
-	FileID    int64
-	LineStart int
-	Snippet   string
-	Score     float64
+	SymbolID   int64
+	Name       string
+	Qualified  string
+	Kind       string
+	FileID     int64
+	LineStart  int
+	Snippet    string
+	Score      float64
+	References int
 }
 
 // Options controls search behavior.
@@ -96,52 +97,82 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		candidateLimit = 50
 	}
 
-	var keywordResults []sqlite.SearchResult
-	var vectorResults []VectorResult
-
 	e.mu.RLock()
 	vectors := e.vectors
 	e.mu.RUnlock()
 
 	canVector := vectors != nil && vectors.Len() > 0 && e.embedder != nil
 
+	queries := expandQuery(opts.Query)
+
+	// Batch-embed all sub-queries in one call when in hybrid mode.
+	var queryVecs [][]float32
 	if canVector {
-		g, gctx := errgroup.WithContext(ctx)
-
-		g.Go(func() error {
-			var err error
-			keywordResults, err = e.adapter.KeywordSearch(gctx, opts.Query, opts.Language, candidateLimit)
-			return err
-		})
-
-		g.Go(func() error {
-			queryVec, err := EmbedQuery(gctx, e.embedder, opts.Query)
-			if err != nil {
-				return err
-			}
-			vectorResults = vectors.Search(queryVec, candidateLimit)
-			return nil
-		})
-
-		if err := g.Wait(); err != nil {
-			return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
+		inputs := make([]embed.EmbedInput, len(queries))
+		for i, q := range queries {
+			inputs[i] = embed.EmbedInput{Snippet: q}
 		}
-	} else {
-		keywordResults, err = e.adapter.KeywordSearch(ctx, opts.Query, opts.Language, candidateLimit)
+		queryVecs, err = e.embedder.Embed(ctx, inputs)
 		if err != nil {
-			return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
+			return nil, SearchMeta{}, fmt.Errorf("search embed: %w", err)
 		}
 	}
 
-	vecConfidence := vectorConfidence(vectorResults)
-	kwWeight, vecWeight := fusionWeights(vecConfidence)
+	// Run each sub-query through keyword+vector pipeline and fuse per-query.
+	var kwWeight, vecWeight float64
+	queryResults := make([][]Result, len(queries))
+	for i, q := range queries {
+		var kwResults []sqlite.SearchResult
+		var vecResults []VectorResult
 
-	if opts.KeywordBias > 0 && vecWeight > 0 {
-		kwWeight = math.Min(1.0, kwWeight+opts.KeywordBias)
-		vecWeight = math.Max(0.0, 1.0-kwWeight)
+		if canVector {
+			g, gctx := errgroup.WithContext(ctx)
+			g.Go(func() error {
+				var err error
+				kwResults, err = e.adapter.KeywordSearch(gctx, q, opts.Language, candidateLimit)
+				return err
+			})
+			qVec := queryVecs[i]
+			g.Go(func() error {
+				vecResults = vectors.Search(qVec, candidateLimit)
+				return nil
+			})
+			if err := g.Wait(); err != nil {
+				return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
+			}
+		} else {
+			kwResults, err = e.adapter.KeywordSearch(ctx, q, opts.Language, candidateLimit)
+			if err != nil {
+				return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
+			}
+		}
+
+		qKwWeight, qVecWeight := 1.0, 0.0
+		if canVector {
+			vecConf := vectorConfidence(vecResults)
+			qKwWeight, qVecWeight = fusionWeights(vecConf)
+		}
+
+		// Report primary query's weights in metadata.
+		if i == 0 {
+			kwWeight, vecWeight = qKwWeight, qVecWeight
+			if opts.KeywordBias > 0 && vecWeight > 0 {
+				kwWeight = math.Min(1.0, kwWeight+opts.KeywordBias)
+				vecWeight = math.Max(0.0, 1.0-kwWeight)
+				qKwWeight, qVecWeight = kwWeight, vecWeight
+			}
+		}
+
+		queryResults[i] = fuseRRF(kwResults, vecResults, qKwWeight, qVecWeight)
 	}
 
-	fused := fuseRRF(keywordResults, vectorResults, kwWeight, vecWeight)
+	// Merge multi-query results with RRF.
+	var fused []Result
+	if len(queryResults) == 1 {
+		fused = queryResults[0]
+	} else {
+		fused = mergeMultiQuery(queryResults)
+	}
 
 	// Hydrate metadata for vector-only results that have no name/qualified.
 	if err := e.hydrateResults(ctx, fused); err != nil {
@@ -182,6 +213,12 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		return fused[i].Score > fused[j].Score
 	})
 
+	// Graph-augmented enrichment: boost callees of top results.
+	fused, err = e.enrichFromGraph(ctx, fused)
+	if err != nil {
+		return nil, SearchMeta{}, fmt.Errorf("search enrich: %w", err)
+	}
+
 	// Apply min_score filter and limit.
 	var results []Result
 	for _, r := range fused {
@@ -215,7 +252,8 @@ const (
 
 // fusionWeights returns keyword and vector weights for reciprocal rank
 // fusion based on vector confidence. High confidence → equal weight;
-// low confidence → keyword-biased; very low → keyword-only.
+// low confidence → keyword-biased; very low → keyword-heavy but vectors
+// still contribute (floor of 0.2).
 func fusionWeights(vecConfidence float64) (keyword, vector float64) {
 	switch {
 	case vecConfidence >= confidenceHighThreshold:
@@ -223,7 +261,7 @@ func fusionWeights(vecConfidence float64) (keyword, vector float64) {
 	case vecConfidence >= confidenceLowThreshold:
 		return 0.7, 0.3
 	default:
-		return 1.0, 0.0
+		return 0.8, 0.2
 	}
 }
 
@@ -461,15 +499,101 @@ func vectorConfidence(results []VectorResult) float64 {
 
 // applyGraphCentrality boosts scores by graph importance. Symbols with
 // more inbound edges (callers, inheritors, testers) are hub nodes and
-// rank higher. The boost is additive and scaled to not overwhelm the
-// RRF scores: boost = log2(1 + inbound_count) * 0.001.
+// rank higher. The boost is additive and log-scaled:
+// boost = log2(1 + inbound_count) * 0.01.
 func applyGraphCentrality(results []Result, centrality map[int64]int) {
 	if len(centrality) == 0 {
 		return
 	}
 	for i := range results {
 		if count, ok := centrality[results[i].SymbolID]; ok && count > 0 {
-			results[i].Score += math.Log2(1+float64(count)) * 0.001
+			results[i].Score += math.Log2(1+float64(count)) * 0.01
+			results[i].References = count
 		}
 	}
+}
+
+const (
+	enrichTopN     = 3
+	enrichBoost    = 0.15
+	enrichBaseScore = 0.05
+)
+
+// enrichFromGraph boosts callees of the top-N results that appear in the
+// candidate set, and injects missing callees as low-score suggestions.
+// Results must be sorted by score descending before calling.
+func (e *Engine) enrichFromGraph(ctx context.Context, results []Result) ([]Result, error) {
+	if len(results) == 0 {
+		return results, nil
+	}
+
+	// Take top-N symbol IDs.
+	n := enrichTopN
+	if n > len(results) {
+		n = len(results)
+	}
+	topIDs := make([]int64, n)
+	for i := range n {
+		topIDs[i] = results[i].SymbolID
+	}
+
+	// Fetch 1-hop callees.
+	calleeMap, err := e.adapter.CalleeIDs(ctx, topIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect all callee IDs.
+	calleeSet := map[int64]struct{}{}
+	for _, targets := range calleeMap {
+		for _, id := range targets {
+			calleeSet[id] = struct{}{}
+		}
+	}
+	if len(calleeSet) == 0 {
+		return results, nil
+	}
+
+	// Build index of existing results for fast lookup.
+	existing := make(map[int64]int, len(results))
+	for i, r := range results {
+		existing[r.SymbolID] = i
+	}
+
+	// Boost existing candidates that are callees of top results.
+	var missingIDs []int64
+	for id := range calleeSet {
+		if idx, ok := existing[id]; ok {
+			results[idx].Score += enrichBoost
+		} else {
+			missingIDs = append(missingIDs, id)
+		}
+	}
+
+	// Inject missing callees as graph-suggested results.
+	if len(missingIDs) > 0 {
+		syms, err := e.adapter.SymbolsByIDs(ctx, missingIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, sym := range syms {
+			results = append(results, Result{
+				SymbolID:  sym.SymbolID,
+				Name:      sym.Name,
+				Qualified: sym.Qualified,
+				Kind:      sym.Kind,
+				FileID:    sym.FileID,
+				LineStart:  sym.LineStart,
+				Snippet:   sym.Snippet,
+				Score:     enrichBaseScore,
+			})
+		}
+	}
+
+	// Re-sort after boosting and injection.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	return results, nil
 }

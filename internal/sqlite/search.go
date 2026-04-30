@@ -316,6 +316,39 @@ func (a *Adapter) InboundEdgeCounts(ctx context.Context, symbolIDs []int64) (map
 	return out, nil
 }
 
+// CalleeIDs returns outbound "calls" edge targets for each source symbol.
+// Used by graph-augmented search enrichment to find 1-hop callees.
+func (a *Adapter) CalleeIDs(ctx context.Context, symbolIDs []int64) (map[int64][]int64, error) {
+	if len(symbolIDs) == 0 {
+		return nil, nil
+	}
+	out := make(map[int64][]int64, len(symbolIDs))
+	placeholders := make([]byte, 0, len(symbolIDs)*2-1)
+	args := make([]any, len(symbolIDs))
+	for i, id := range symbolIDs {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args[i] = id
+	}
+	q := `SELECT source_id, target_id FROM sense_edges
+	      WHERE source_id IN (` + string(placeholders) + `) AND kind = 'calls'`
+	rows, err := a.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite CalleeIDs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var src, tgt int64
+		if err := rows.Scan(&src, &tgt); err != nil {
+			return nil, fmt.Errorf("sqlite CalleeIDs scan: %w", err)
+		}
+		out[src] = append(out[src], tgt)
+	}
+	return out, rows.Err()
+}
+
 // FilePathsByIDs returns the file path for each of the given file IDs.
 // Used by search re-ranking to apply path-based score weights.
 func (a *Adapter) FilePathsByIDs(ctx context.Context, fileIDs []int64) (map[int64]string, error) {

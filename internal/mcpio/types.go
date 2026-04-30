@@ -393,12 +393,13 @@ type FusionWeights struct {
 
 // SearchResultEntry is a single search hit in the wire response.
 type SearchResultEntry struct {
-	Symbol  string      `json:"symbol"`
-	File    string      `json:"file"`
-	Line    int         `json:"line"`
-	Kind    string      `json:"kind"`
-	Score   SearchScore `json:"score"`
-	Snippet string      `json:"snippet"`
+	Symbol     string      `json:"symbol"`
+	File       string      `json:"file"`
+	Line       int         `json:"line"`
+	Kind       string      `json:"kind"`
+	Score      SearchScore `json:"score"`
+	Snippet    string      `json:"snippet"`
+	References int         `json:"references,omitempty"`
 }
 
 // SearchScore is a fused relevance score. It renders with two decimal
