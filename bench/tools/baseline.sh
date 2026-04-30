@@ -16,12 +16,20 @@ check_ready() {
 write_config() {
   local workspace="$2"
 
+  # Clean-room: wipe prior config, write empty hooks to prevent ambient injection
+  rm -rf "$workspace/.claude" "$workspace/CLAUDE.md" "$workspace/.mcp.json"
+  mkdir -p "$workspace/.claude"
+  echo '{"hooks":[]}' > "$workspace/.claude/settings.json"
+
   cat > "$workspace/CLAUDE.md" << 'EOF'
 Use the available MCP tools for codebase understanding when they would help answer the question.
 Do not spawn Explore agents or sub-agents.
 
 No additional tools are configured. Use grep, find, Read, and Bash as needed.
 EOF
+
+  # Empty MCP config — no servers
+  echo '{}' > "$workspace/.mcp.json"
 }
 
 setup() {
