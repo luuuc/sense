@@ -247,7 +247,7 @@ if $VERIFY_ISOLATION; then
     sense_calls=0
     sense_server=0
     for transcript in "${transcripts[@]}"; do
-      c=$(grep -c '"mcp__sense__' "$transcript" 2>/dev/null || true)
+      c=$(grep -c '"name":"mcp__sense__' "$transcript" 2>/dev/null || true)
       s=$(grep -c '"name":"sense","status"' "$transcript" 2>/dev/null || true)
       sense_calls=$((sense_calls + c))
       sense_server=$((sense_server + s))
@@ -278,6 +278,14 @@ fi
 
 # --- Suppress Sense hook injection for all tools (each tool gets MCP via --mcp-config) ---
 export SENSE_BENCH=1
+
+# Hide bench-root (sense repo) AI config — Claude walks parent dirs and would find it
+BENCH_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
+AI_CONFIG_FILES=(".mcp.json" ".claude" "CLAUDE.md" "AGENT.md" ".cursorrules" ".cursorignore" ".windsurfrules")
+for f in "${AI_CONFIG_FILES[@]}"; do
+  [[ -e "$BENCH_ROOT/$f" ]] && mv "$BENCH_ROOT/$f" "$BENCH_ROOT/$f.bench-hidden"
+done
+trap 'for f in "${AI_CONFIG_FILES[@]}"; do [[ -e "$BENCH_ROOT/$f.bench-hidden" ]] && mv "$BENCH_ROOT/$f.bench-hidden" "$BENCH_ROOT/$f"; done' EXIT
 
 # --- Main loop: tool → repo (setup once) → tasks ---
 
@@ -370,9 +378,10 @@ for tool in "${tools[@]}"; do
     index_meta=$(cat "$setup_result_dir/index_meta.json")
     log "  index ready: $index_meta"
 
-    # Hide repo-level config so only workspace config is active during Claude sessions
-    [[ -f "$rp/.mcp.json" ]] && mv "$rp/.mcp.json" "$rp/.mcp.json.bench-hidden"
-    [[ -d "$rp/.claude" ]] && mv "$rp/.claude" "$rp/.claude.bench-hidden"
+    # Hide repo-level AI config so only workspace config is active during Claude sessions
+    for f in "${AI_CONFIG_FILES[@]}"; do
+      [[ -e "$rp/$f" ]] && mv "$rp/$f" "$rp/$f.bench-hidden"
+    done
 
     # Run all tasks for this tool+repo
     claude_md=$(cat "$workspace/CLAUDE.md")
@@ -465,9 +474,10 @@ print()
       fi
     done
 
-    # Restore repo-level config
-    [[ -f "$rp/.mcp.json.bench-hidden" ]] && mv "$rp/.mcp.json.bench-hidden" "$rp/.mcp.json"
-    [[ -d "$rp/.claude.bench-hidden" ]] && mv "$rp/.claude.bench-hidden" "$rp/.claude"
+    # Restore repo-level AI config
+    for f in "${AI_CONFIG_FILES[@]}"; do
+      [[ -e "$rp/$f.bench-hidden" ]] && mv "$rp/$f.bench-hidden" "$rp/$f"
+    done
 
     # Workspace persists at $RESULTS_DIR/$tool/$repo/.workspace for reuse
   done
