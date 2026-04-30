@@ -24,6 +24,11 @@ const staleThreshold = 24 * time.Hour
 // Run dispatches to the named hook handler. It returns an exit code
 // (always 0 — hooks must not fail the host tool).
 func Run(name string, dir string, stdin io.Reader, stdout io.Writer) int {
+	if os.Getenv("SENSE_BENCH") != "" {
+		writeEmpty(stdout)
+		return 0
+	}
+
 	switch name {
 	case "pre-tool-use":
 		silentRun(dir, stdin, stdout, handlePreToolUse)
