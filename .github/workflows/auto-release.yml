@@ -1,0 +1,67 @@
+name: Auto Release
+
+on:
+  workflow_run:
+    workflows: [CI, CodeQL]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --version
+
+      - name: Compute next version
+        id: version
+        run: |
+          CURRENT=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          NEXT=$(git-cliff --bumped-version 2>/dev/null || echo "")
+          if [ -z "$NEXT" ] || [ "$NEXT" = "$CURRENT" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No version bump needed"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+            echo "Bumping $CURRENT → $NEXT"
+          fi
+
+      - name: Generate CHANGELOG
+        if: steps.version.outputs.skip == 'false'
+        run: |
+          git-cliff --tag "${{ steps.version.outputs.tag }}" --output CHANGELOG.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --staged --quiet || git commit -m "docs: update CHANGELOG for ${{ steps.version.outputs.tag }}"
+          git push origin main
+
+      - name: Create tag
+        if: steps.version.outputs.skip == 'false'
+        run: |
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      # GITHUB_TOKEN pushes don't trigger push-based workflows, so we
+      # explicitly dispatch release.yml after tagging.
+      - name: Trigger release workflow
+        if: steps.version.outputs.skip == 'false'
+        run: gh workflow run release.yml --ref "${{ steps.version.outputs.tag }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
