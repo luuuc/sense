@@ -292,7 +292,7 @@ AI_CONFIG_FILES=(".mcp.json" ".claude" "CLAUDE.md" "AGENT.md" ".cursorrules" ".c
 for f in "${AI_CONFIG_FILES[@]}"; do
   [[ -e "$BENCH_ROOT/$f" ]] && mv "$BENCH_ROOT/$f" "$BENCH_ROOT/$f.bench-hidden"
 done
-trap 'for f in "${AI_CONFIG_FILES[@]}"; do [[ -e "$BENCH_ROOT/$f.bench-hidden" ]] && mv "$BENCH_ROOT/$f.bench-hidden" "$BENCH_ROOT/$f"; done' EXIT
+trap 'for f in "${AI_CONFIG_FILES[@]}"; do [[ -e "$BENCH_ROOT/$f.bench-hidden" ]] && { rm -rf "$BENCH_ROOT/$f"; mv "$BENCH_ROOT/$f.bench-hidden" "$BENCH_ROOT/$f"; }; done' EXIT
 
 # --- Main loop: tool → repo (setup once) → tasks ---
 
