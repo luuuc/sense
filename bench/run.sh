@@ -119,12 +119,19 @@ log() {
 # --- Discover tools and tasks ---
 
 tools=()
-for script in "$TOOLS_DIR"/*.sh; do
-  [[ -f "$script" ]] || continue
-  name="$(basename "$script" .sh)"
-  [[ "$name" == "protocol" ]] && continue
-  matches_filter "$name" "$FILTER_TOOLS" && tools+=("$name")
-done
+if [[ -n "$FILTER_TOOLS" ]]; then
+  # Preserve user-specified order from --tool argument.
+  while IFS= read -r name; do
+    [[ -f "$TOOLS_DIR/$name.sh" ]] && tools+=("$name")
+  done < <(echo "$FILTER_TOOLS" | tr ',' '\n')
+else
+  for script in "$TOOLS_DIR"/*.sh; do
+    [[ -f "$script" ]] || continue
+    name="$(basename "$script" .sh)"
+    [[ "$name" == "protocol" ]] && continue
+    tools+=("$name")
+  done
+fi
 
 tasks=()
 for taskfile in "$TASKS_DIR"/*.yaml; do
