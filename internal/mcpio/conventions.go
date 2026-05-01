@@ -1,6 +1,9 @@
 package mcpio
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 const DefaultTokenBudget = 4000
 
@@ -50,20 +53,44 @@ func estimateTokens(r *ConventionsResponse) int {
 }
 
 // BuildConventionsSummary assembles a one-sentence summary from the
-// top 3 strongest conventions in the response.
+// 3 most type-diverse conventions — those whose instances name the
+// most domain types rather than file patterns.
 func BuildConventionsSummary(r *ConventionsResponse) {
 	if len(r.Conventions) == 0 {
 		return
 	}
+
+	type ranked struct {
+		index    int
+		typeNames int
+	}
+	ranks := make([]ranked, len(r.Conventions))
+	for i, c := range r.Conventions {
+		ranks[i] = ranked{index: i, typeNames: countTypeNames(c.Instances)}
+	}
+	sort.SliceStable(ranks, func(i, j int) bool {
+		return ranks[i].typeNames > ranks[j].typeNames
+	})
+
 	n := 3
-	if len(r.Conventions) < n {
-		n = len(r.Conventions)
+	if len(ranks) < n {
+		n = len(ranks)
 	}
 	descs := make([]string, n)
 	for i := 0; i < n; i++ {
-		descs[i] = strings.TrimRight(r.Conventions[i].Description, ".")
+		descs[i] = strings.TrimRight(r.Conventions[ranks[i].index].Description, ".")
 	}
 	r.Summary = strings.Join(descs, "; ") + "."
+}
+
+func countTypeNames(instances []string) int {
+	count := 0
+	for _, name := range instances {
+		if !strings.Contains(name, ".") {
+			count++
+		}
+	}
+	return count
 }
 
 // MarshalConventions renders a ConventionsResponse with the same

@@ -26,6 +26,7 @@ func BuildDeadCodeResponse(symbols []dead.Symbol, totalSymbols int) DeadCodeResp
 		DeadSymbols:  entries,
 		TotalSymbols: totalSymbols,
 		DeadCount:    len(symbols),
+		Note:         "Symbols with zero incoming edges. May include false positives from dynamic dispatch or reflection.",
 		SenseMetrics: DeadCodeMetrics{
 			SymbolsAnalyzed:           totalSymbols,
 			EstimatedFileReadsAvoided: filesAvoided,

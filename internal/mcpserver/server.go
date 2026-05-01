@@ -1172,13 +1172,27 @@ func buildStructure(ctx context.Context, db *sql.DB, resp mcpio.StatusResponse, 
 	if err != nil {
 		return nil, err
 	}
-	fp := buildFingerprint(resp, langs, ns, hubs)
+	frameworks := loadFrameworks(ctx, db)
+	fp := buildFingerprint(resp, langs, ns, hubs, frameworks)
 	return &mcpio.StatusStructure{
 		TopNamespaces: ns,
 		HubSymbols:    hubs,
 		EntryPoints:   entries,
+		Frameworks:    frameworks,
 		Fingerprint:   fp,
 	}, nil
+}
+
+func loadFrameworks(ctx context.Context, db *sql.DB) []string {
+	val := readMeta(ctx, db, "frameworks")
+	if val == "" {
+		return nil
+	}
+	var frameworks []string
+	if err := json.Unmarshal([]byte(val), &frameworks); err != nil {
+		return nil
+	}
+	return frameworks
 }
 
 func queryTopNamespaces(ctx context.Context, db *sql.DB) ([]mcpio.StatusNamespace, error) {
@@ -1235,7 +1249,10 @@ func namespacePrefixFromPath(p string) string {
 }
 
 func queryHubSymbols(ctx context.Context, db *sql.DB) ([]mcpio.StatusHub, error) {
-	const q = `SELECT s.name, COUNT(e.id) AS in_degree, s.kind
+	const q = `SELECT s.name, COUNT(e.id) AS in_degree, s.kind,
+		(SELECT e2.kind FROM sense_edges e2
+		 WHERE e2.target_id = s.id
+		 GROUP BY e2.kind ORDER BY COUNT(*) DESC LIMIT 1) AS dominant_edge
 	FROM sense_symbols s
 	JOIN sense_edges e ON e.target_id = s.id
 	GROUP BY s.id
@@ -1251,12 +1268,25 @@ func queryHubSymbols(ctx context.Context, db *sql.DB) ([]mcpio.StatusHub, error)
 	var out []mcpio.StatusHub
 	for rows.Next() {
 		var h mcpio.StatusHub
-		if err := rows.Scan(&h.Name, &h.Callers, &h.Kind); err != nil {
+		var dominantEdge string
+		if err := rows.Scan(&h.Name, &h.Callers, &h.Kind, &dominantEdge); err != nil {
 			return nil, err
 		}
+		h.Role = edgeKindToRole(dominantEdge)
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+func edgeKindToRole(edgeKind string) string {
+	switch edgeKind {
+	case "inherits":
+		return "base class"
+	case "includes", "composes":
+		return "mixin"
+	default:
+		return "hub"
+	}
 }
 
 func queryEntryPoints(ctx context.Context, db *sql.DB) ([]mcpio.StatusEntryPoint, error) {
@@ -1325,7 +1355,7 @@ func queryEntryPoints(ctx context.Context, db *sql.DB) ([]mcpio.StatusEntryPoint
 	return out, frows.Err()
 }
 
-func buildFingerprint(resp mcpio.StatusResponse, langs map[string]mcpio.StatusLanguage, ns []mcpio.StatusNamespace, hubs []mcpio.StatusHub) string {
+func buildFingerprint(resp mcpio.StatusResponse, langs map[string]mcpio.StatusLanguage, ns []mcpio.StatusNamespace, hubs []mcpio.StatusHub, frameworks []string) string {
 	// Primary language: the one with the most symbols
 	primaryLang := ""
 	maxSyms := 0
@@ -1348,19 +1378,22 @@ func buildFingerprint(resp mcpio.StatusResponse, langs map[string]mcpio.StatusLa
 		nsNames = append(nsNames, fmt.Sprintf("%s (%d)", n.Name, n.Symbols))
 	}
 
-	// Hub symbol names
+	// Hub symbol descriptions with role hints
 	hubNames := make([]string, 0, 3)
 	for i, h := range hubs {
 		if i >= 3 {
 			break
 		}
-		hubNames = append(hubNames, h.Name)
+		hubNames = append(hubNames, fmt.Sprintf("%s (%s, %s, %d callers)", h.Name, h.Kind, h.Role, h.Callers))
 	}
 
 	parts := []string{
 		fmt.Sprintf("%s project.", capitalizeFirst(primaryLang)),
-		fmt.Sprintf("%d files, %d symbols.", resp.Index.Files, resp.Index.Symbols),
 	}
+	if len(frameworks) > 0 {
+		parts = append(parts, fmt.Sprintf("Frameworks: %s.", strings.Join(frameworks, ", ")))
+	}
+	parts = append(parts, fmt.Sprintf("%d files, %d symbols.", resp.Index.Files, resp.Index.Symbols))
 	if len(nsNames) > 0 {
 		parts = append(parts, fmt.Sprintf("Heaviest areas: %s.", strings.Join(nsNames, ", ")))
 	}

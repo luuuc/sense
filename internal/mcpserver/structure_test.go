@@ -258,7 +258,7 @@ func TestFingerprint(t *testing.T) {
 		{Name: "User", Callers: 2},
 	}
 
-	fp := buildFingerprint(resp, langs, ns, hubs)
+	fp := buildFingerprint(resp, langs, ns, hubs, nil)
 
 	if !strings.Contains(fp, "Ruby project.") {
 		t.Errorf("fingerprint should start with primary language, got %q", fp)
@@ -283,8 +283,8 @@ func TestFingerprintTiedLanguages(t *testing.T) {
 		"python": {Symbols: 5},
 	}
 
-	fp1 := buildFingerprint(resp, langs, nil, nil)
-	fp2 := buildFingerprint(resp, langs, nil, nil)
+	fp1 := buildFingerprint(resp, langs, nil, nil, nil)
+	fp2 := buildFingerprint(resp, langs, nil, nil, nil)
 	if fp1 != fp2 {
 		t.Errorf("fingerprint should be deterministic on tied languages: %q vs %q", fp1, fp2)
 	}

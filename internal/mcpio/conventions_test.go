@@ -1,6 +1,9 @@
 package mcpio
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func makeConventions(n int) []ConventionEntry {
 	entries := make([]ConventionEntry, n)
@@ -85,15 +88,34 @@ func TestApplyTokenBudgetEmpty(t *testing.T) {
 func TestBuildConventionsSummary(t *testing.T) {
 	resp := ConventionsResponse{
 		Conventions: []ConventionEntry{
-			{Description: "All services inherit ApplicationService"},
-			{Description: "Controllers include Authentication."},
-			{Description: "Tests mirror source structure"},
+			{Description: "All services inherit ApplicationService", Instances: []string{"CheckoutService", "PaymentService"}},
+			{Description: "Controllers include Authentication.", Instances: []string{"OrdersController", "UsersController"}},
+			{Description: "Tests mirror source structure", Instances: []string{"checkout_test.rb", "payment_test.rb"}},
 		},
 	}
 	BuildConventionsSummary(&resp)
 	want := "All services inherit ApplicationService; Controllers include Authentication; Tests mirror source structure."
 	if resp.Summary != want {
 		t.Errorf("summary mismatch\n got: %q\nwant: %q", resp.Summary, want)
+	}
+}
+
+func TestBuildConventionsSummaryPrefersTypeNames(t *testing.T) {
+	resp := ConventionsResponse{
+		Conventions: []ConventionEntry{
+			{Description: "test files *_test.rb pattern", Instances: []string{"checkout_test.rb", "payment_test.rb", "order_test.rb"}},
+			{Description: "class files *_service.rb pattern", Instances: []string{"checkout_service.rb", "payment_service.rb"}},
+			{Description: "CheckoutService, PaymentService inherit ApplicationService", Instances: []string{"CheckoutService", "PaymentService", "ShippingService"}},
+			{Description: "OrdersController, UsersController include Authentication", Instances: []string{"OrdersController", "UsersController", "AdminController"}},
+			{Description: "class pattern: Order, User, Product in app/models/", Instances: []string{"Order", "User", "Product"}},
+		},
+	}
+	BuildConventionsSummary(&resp)
+	if strings.Contains(resp.Summary, "_test.rb") || strings.Contains(resp.Summary, "_service.rb") {
+		t.Errorf("summary should prefer type-name conventions over file-name conventions, got: %q", resp.Summary)
+	}
+	if !strings.Contains(resp.Summary, "ApplicationService") || !strings.Contains(resp.Summary, "Authentication") {
+		t.Errorf("summary should include type-rich conventions, got: %q", resp.Summary)
 	}
 }
 

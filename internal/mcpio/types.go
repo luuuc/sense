@@ -282,6 +282,7 @@ type StatusStructure struct {
 	TopNamespaces []StatusNamespace  `json:"top_namespaces"`
 	HubSymbols    []StatusHub        `json:"hub_symbols"`
 	EntryPoints   []StatusEntryPoint `json:"entry_points"`
+	Frameworks    []string           `json:"frameworks,omitempty"`
 	Fingerprint   string             `json:"fingerprint"`
 }
 
@@ -295,6 +296,7 @@ type StatusHub struct {
 	Name    string `json:"name"`
 	Callers int    `json:"callers"`
 	Kind    string `json:"kind"`
+	Role    string `json:"role,omitempty"`
 }
 
 type StatusEntryPoint struct {
@@ -430,6 +432,7 @@ type DeadCodeResponse struct {
 	DeadSymbols  []DeadSymbolEntry `json:"dead_symbols"`
 	TotalSymbols int               `json:"total_symbols"`
 	DeadCount    int               `json:"dead_count"`
+	Note         string            `json:"note,omitempty"`
 	SenseMetrics DeadCodeMetrics   `json:"sense_metrics"`
 	NextSteps    []NextStep        `json:"next_steps"`
 }
