@@ -285,6 +285,8 @@ func (h *harness) embedSymbols() error {
 	}
 	defer func() { _ = pool.Close() }()
 
+	h.progress.setPhase("Embedding...", int64(len(inputs)))
+
 	for i := 0; i < len(inputs); i += embedChunkSize {
 		end := i + embedChunkSize
 		if end > len(inputs) {
@@ -315,6 +317,7 @@ func (h *harness) embedSymbols() error {
 			return fmt.Errorf("write embeddings: %w", err)
 		}
 		h.embedded += len(vecs)
+		h.progress.current.Add(int64(len(vecs)))
 	}
 
 	if h.embedded > 0 {

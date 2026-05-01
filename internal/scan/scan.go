@@ -56,6 +56,7 @@ type Options struct {
 	Sense             string    // sense dir (default: "<Root>/.sense")
 	Output            io.Writer // summary-line sink (default: os.Stderr)
 	Warnings          io.Writer // per-file warning sink (default: os.Stderr)
+	Quiet             bool      // suppress progress display and warning hints; forces non-TTY behavior
 	EmbeddingsEnabled bool      // when true, embeddings are part of the index pipeline
 	Embed             bool      // block until embeddings complete; requires EmbeddingsEnabled. When false, embeddings are deferred and a watermark is written for the MCP server to pick up.
 }
@@ -173,12 +174,15 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		_, _ = fmt.Fprintf(out, "migrated fts index — keyword search will repopulate during this scan\n")
 	}
 
+	prog := newProgress(out, opts.Quiet)
+
 	h := &harness{
 		ctx:            ctx,
 		idx:            idx,
 		out:            out,
 		warn:           warn,
 		root:           root,
+		progress:       prog,
 		parsers:        map[string]*sitter.Parser{},
 		matcher:        matcher,
 		defaultMatcher: ignore.New(ignore.DefaultPatterns()...),
@@ -186,6 +190,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		seenPaths:      map[string]bool{},
 	}
 	defer h.closeParsers()
+
+	prog.start()
+	defer prog.stop()
 
 	start := time.Now()
 	var phases PhaseTiming
@@ -210,6 +217,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.RemoveStale = time.Since(t0)
 
+	prog.setPhase("Resolving edges...", 0)
 	t0 = time.Now()
 	if err := h.resolveAndWriteEdges(); err != nil {
 		return nil, err
@@ -222,6 +230,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.SatisfyInterfaces = time.Since(t0)
 
+	prog.setPhase("Associating tests...", 0)
 	t0 = time.Now()
 	if err := h.associateTests(); err != nil {
 		return nil, err
@@ -298,6 +307,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := idx.StampSchemaVersion(ctx); err != nil {
 		return nil, err
 	}
+	prog.stop()
 	elapsed := time.Since(start)
 
 	res := &Result{
@@ -424,12 +434,13 @@ func addSenseToGitignore(root string) bool {
 // file's transaction because most of them point at targets in other
 // files. The consequence is called out on resolveAndWriteEdges.
 type harness struct {
-	ctx     context.Context
-	idx     *sqlite.Adapter
-	out     io.Writer // summary-line sink
-	warn    io.Writer // per-file warning sink
-	root    string    // repository root directory
-	parsers map[string]*sitter.Parser
+	ctx      context.Context
+	idx      *sqlite.Adapter
+	out      io.Writer // summary-line sink
+	warn     io.Writer // per-file warning sink
+	root     string    // repository root directory
+	progress *progress
+	parsers  map[string]*sitter.Parser
 
 	matcher        *ignore.Matcher
 	defaultMatcher *ignore.Matcher
@@ -526,6 +537,7 @@ func int64Ptr(v int64) *int64 {
 func (h *harness) warnf(format string, args ...any) {
 	h.warnings++
 	_, _ = fmt.Fprintf(h.warn, "warn: "+format+"\n", args...)
+	h.progress.incWarnings()
 }
 
 type walkEntry struct {
@@ -597,6 +609,8 @@ func (h *harness) walkTree(root string) error {
 		return nil
 	}
 
+	h.progress.setPhase("Scanning...", int64(len(entries)))
+
 	// Phase 2: pre-load file hashes for incremental skip.
 	hashMap, err := h.idx.FileHashMap(h.ctx)
 	if err != nil {
@@ -611,8 +625,9 @@ func (h *harness) walkTree(root string) error {
 
 	for i, entry := range entries {
 		g.Go(func() error {
-			fr := parseFileStandalone(gctx, entry.path, entry.rel, hashMap, h.maxFileSizeKB, &mu, h.warn, &h.warnings)
+			fr := parseFileStandalone(gctx, entry.path, entry.rel, hashMap, h.maxFileSizeKB, &mu, h.warn, &h.warnings, h.progress)
 			results[i] = fr
+			h.progress.inc()
 			return nil
 		})
 	}
@@ -841,12 +856,14 @@ func parseFileStandalone(
 	warnMu *sync.Mutex,
 	warnOut io.Writer,
 	warnCount *int,
+	prog *progress,
 ) *fileResult {
 	wf := func(format string, args ...any) {
 		warnMu.Lock()
 		*warnCount++
 		_, _ = fmt.Fprintf(warnOut, "warn: "+format+"\n", args...)
 		warnMu.Unlock()
+		prog.incWarnings()
 	}
 	po := parseOpts{
 		ctx:           ctx,
