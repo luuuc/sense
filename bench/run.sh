@@ -18,6 +18,7 @@ FILTER_TOOLS=""
 FILTER_REPOS=""
 FILTER_TASKS=""
 DRY_RUN=false
+VERIFY_ISOLATION=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,10 +26,11 @@ while [[ $# -gt 0 ]]; do
     --repo)  FILTER_REPOS="$2"; shift 2 ;;
     --task)  FILTER_TASKS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
+    --verify-isolation) VERIFY_ISOLATION=true; shift ;;
     --budget) MAX_BUDGET_USD="$2"; shift 2 ;;
     --timeout) SESSION_TIMEOUT="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: run.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2] [--dry-run] [--budget USD] [--timeout SECS]"
+      echo "Usage: run.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2] [--dry-run] [--verify-isolation] [--budget USD] [--timeout SECS]"
       echo ""
       echo "Runs the competitive evaluation harness: tool × repo × task."
       echo ""
@@ -37,6 +39,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --repo    Comma-separated repo filter (e.g. sense,discourse)"
       echo "  --task    Comma-separated task filter (e.g. callers,blast-radius)"
       echo "  --dry-run Show what would run without executing Claude sessions"
+      echo "  --verify-isolation Scan existing transcripts for Sense MCP contamination"
       echo "  --budget  Max USD per Claude session (default: $MAX_BUDGET_USD)"
       echo "  --timeout Max seconds per Claude session (default: $SESSION_TIMEOUT)"
       exit 0
@@ -116,12 +119,19 @@ log() {
 # --- Discover tools and tasks ---
 
 tools=()
-for script in "$TOOLS_DIR"/*.sh; do
-  [[ -f "$script" ]] || continue
-  name="$(basename "$script" .sh)"
-  [[ "$name" == "protocol" ]] && continue
-  matches_filter "$name" "$FILTER_TOOLS" && tools+=("$name")
-done
+if [[ -n "$FILTER_TOOLS" ]]; then
+  # Preserve user-specified order from --tool argument.
+  while IFS= read -r name; do
+    [[ -f "$TOOLS_DIR/$name.sh" ]] && tools+=("$name")
+  done < <(echo "$FILTER_TOOLS" | tr ',' '\n')
+else
+  for script in "$TOOLS_DIR"/*.sh; do
+    [[ -f "$script" ]] || continue
+    name="$(basename "$script" .sh)"
+    [[ "$name" == "protocol" ]] && continue
+    tools+=("$name")
+  done
+fi
 
 tasks=()
 for taskfile in "$TASKS_DIR"/*.yaml; do
@@ -222,6 +232,68 @@ if $DRY_RUN; then
   exit 0
 fi
 
+# --- Verify isolation: scan existing transcripts for Sense MCP contamination ---
+
+if $VERIFY_ISOLATION; then
+  echo ""
+  echo "=== ISOLATION VERIFICATION ==="
+  echo ""
+  contaminated=0
+  checked=0
+  for tool in "${tools[@]}"; do
+    [[ "$tool" == "sense" ]] && continue
+    # Find all transcripts for this tool
+    transcripts=()
+    while IFS= read -r f; do transcripts+=("$f"); done < <(find "$RESULTS_DIR/$tool" -name 'transcript.json' -size +0c 2>/dev/null)
+    if [[ ${#transcripts[@]} -eq 0 ]]; then
+      echo "  $tool: SKIP (no transcripts found)"
+      continue
+    fi
+    checked=$((checked + 1))
+    # Check all transcripts for Sense MCP tool calls and server connections
+    sense_calls=0
+    sense_server=0
+    for transcript in "${transcripts[@]}"; do
+      c=$(grep -c '"name":"mcp__sense__' "$transcript" 2>/dev/null || true)
+      s=$(grep -c '"name":"sense","status"' "$transcript" 2>/dev/null || true)
+      sense_calls=$((sense_calls + c))
+      sense_server=$((sense_server + s))
+    done
+    if [[ "$sense_calls" -gt 0 || "$sense_server" -gt 0 ]]; then
+      detail=""
+      [[ "$sense_calls" -gt 0 ]] && detail="$sense_calls tool calls"
+      [[ "$sense_server" -gt 0 ]] && detail="${detail:+$detail, }sense server in ${#transcripts[@]} transcripts"
+      echo "  $tool: CONTAMINATED ($detail)"
+      contaminated=$((contaminated + 1))
+    else
+      echo "  $tool: CLEAN"
+    fi
+  done
+  echo ""
+  if [[ $checked -eq 0 ]]; then
+    echo "No transcripts found. Run the benchmark first, then verify."
+    exit 1
+  elif [[ $contaminated -gt 0 ]]; then
+    echo "FAIL: $contaminated/$checked non-sense tools have Sense MCP contamination."
+    echo "Re-run the benchmark with isolation fixes applied."
+    exit 1
+  else
+    echo "PASS: $checked non-sense tools verified clean."
+    exit 0
+  fi
+fi
+
+# --- Suppress Sense hook injection for all tools (each tool gets MCP via --mcp-config) ---
+export SENSE_BENCH=1
+
+# Hide bench-root (sense repo) AI config — Claude walks parent dirs and would find it
+BENCH_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
+AI_CONFIG_FILES=(".mcp.json" ".claude" "CLAUDE.md" "AGENT.md" ".cursorrules" ".cursorignore" ".windsurfrules")
+for f in "${AI_CONFIG_FILES[@]}"; do
+  [[ -e "$BENCH_ROOT/$f" ]] && mv "$BENCH_ROOT/$f" "$BENCH_ROOT/$f.bench-hidden"
+done
+trap 'for f in "${AI_CONFIG_FILES[@]}"; do [[ -e "$BENCH_ROOT/$f.bench-hidden" ]] && mv "$BENCH_ROOT/$f.bench-hidden" "$BENCH_ROOT/$f"; done' EXIT
+
 # --- Main loop: tool → repo (setup once) → tasks ---
 
 run_num=0
@@ -313,6 +385,11 @@ for tool in "${tools[@]}"; do
     index_meta=$(cat "$setup_result_dir/index_meta.json")
     log "  index ready: $index_meta"
 
+    # Hide repo-level AI config so only workspace config is active during Claude sessions
+    for f in "${AI_CONFIG_FILES[@]}"; do
+      [[ -e "$rp/$f" ]] && mv "$rp/$f" "$rp/$f.bench-hidden"
+    done
+
     # Run all tasks for this tool+repo
     claude_md=$(cat "$workspace/CLAUDE.md")
     for task in $(tasks_for_repo "$repo"); do
@@ -402,6 +479,11 @@ print()
         echo "{\"error\": \"claude_session_failed\", \"wall_time_seconds\": $wall_time}" > "$result_dir/run_meta.json"
         failed=$((failed + 1))
       fi
+    done
+
+    # Restore repo-level AI config
+    for f in "${AI_CONFIG_FILES[@]}"; do
+      [[ -e "$rp/$f.bench-hidden" ]] && mv "$rp/$f.bench-hidden" "$rp/$f"
     done
 
     # Workspace persists at $RESULTS_DIR/$tool/$repo/.workspace for reuse

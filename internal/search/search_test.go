@@ -666,7 +666,24 @@ func TestFusionWeightsHybrid(t *testing.T) {
 	}
 }
 
-func TestLowConfidenceExcludesVectorOnlySymbols(t *testing.T) {
+// lowConfidenceEmbedder returns vectors orthogonal to all indexed symbols,
+// ensuring cosine similarity is near zero and triggering the weight floor.
+type lowConfidenceEmbedder struct{}
+
+func (l *lowConfidenceEmbedder) Embed(_ context.Context, inputs []embed.EmbedInput) ([][]float32, error) {
+	vecs := make([][]float32, len(inputs))
+	for i := range inputs {
+		vec := make([]float32, 384)
+		vec[200] = 0.9
+		vec[201] = 0.1
+		vecs[i] = vec
+	}
+	return vecs, nil
+}
+
+func (l *lowConfidenceEmbedder) Close() error { return nil }
+
+func TestLowConfidenceVectorFloor(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
@@ -677,38 +694,114 @@ func TestLowConfidenceExcludesVectorOnlySymbols(t *testing.T) {
 
 	seedFusionIndex(t, ctx, a)
 
-	// Build vector index with very weak embeddings (near-zero similarity).
-	// The default seedFusionIndex embeddings are simple byte patterns,
-	// and the paymentQueryEmbedder produces a different vector.
-	// With only 3 symbols, cosine similarities will be low.
 	embeddings, err := a.LoadEmbeddings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	vectorIdx := search.BuildHNSWIndex(embeddings)
-	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
+	// Use an embedder that produces vectors orthogonal to the index,
+	// guaranteeing low vector confidence (< 0.4).
+	engine := search.NewEngine(a, vectorIdx, &lowConfidenceEmbedder{})
 
 	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// When vector weight is 0, vector-only symbols should not appear.
-	if meta.VectorWeight == 0 {
-		t.Logf("vector confidence below threshold — keyword-only mode")
-		// In keyword-only mode, the "TransactionLog" symbol (which has no
-		// keyword match for "payment") should be absent.
-		results, _, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 50})
-		if err != nil {
-			t.Fatal(err)
+	// With the weight floor, vector weight should be exactly 0.2 when
+	// confidence is below the low threshold.
+	if meta.VectorWeight != 0.2 {
+		t.Errorf("vector weight = %v, want 0.2 (floor)", meta.VectorWeight)
+	}
+	if meta.KeywordWeight != 0.8 {
+		t.Errorf("keyword weight = %v, want 0.8", meta.KeywordWeight)
+	}
+	t.Logf("low confidence floor active: kw=%.2f vec=%.2f", meta.KeywordWeight, meta.VectorWeight)
+}
+
+func TestGraphEnrichmentBoostsCallees(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	// Create a hub function that calls a leaf function.
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "handler.go", Language: "go",
+		Hash: "h1", Symbols: 3, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hub, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "ServeHTTP", Qualified: "pkg.ServeHTTP",
+		Kind: "function", LineStart: 1, LineEnd: 20,
+		Docstring: "serves HTTP requests",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Callee that also matches keyword but with lower rank.
+	callee, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "HandleRoute", Qualified: "pkg.HandleRoute",
+		Kind: "function", LineStart: 25, LineEnd: 40,
+		Docstring: "handles a route",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Unrelated symbol that matches keyword.
+	_, err = a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "HTTPConfig", Qualified: "pkg.HTTPConfig",
+		Kind: "type", LineStart: 45, LineEnd: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Edge: ServeHTTP calls HandleRoute.
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: &hub, TargetID: callee,
+		Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := search.NewEngine(a, nil, nil)
+	results, _, err := engine.Search(ctx, search.Options{Query: "HTTP", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// HandleRoute should be boosted because it's a callee of ServeHTTP (top result).
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// Find HandleRoute's position.
+	var handleRouteScore float64
+	var httpConfigScore float64
+	for _, r := range results {
+		switch r.Name {
+		case "HandleRoute":
+			handleRouteScore = r.Score
+		case "HTTPConfig":
+			httpConfigScore = r.Score
 		}
-		for _, r := range results {
-			if r.Name == "TransactionLog" {
-				t.Errorf("TransactionLog (vector-only match) should not appear when vector weight is 0")
-			}
-		}
-	} else {
-		t.Logf("vector confidence above threshold (kw=%.2f vec=%.2f) — vector-only symbols may appear",
-			meta.KeywordWeight, meta.VectorWeight)
+	}
+
+	if handleRouteScore <= httpConfigScore {
+		t.Errorf("HandleRoute (callee of top result) score=%.4f should be > HTTPConfig score=%.4f",
+			handleRouteScore, httpConfigScore)
+	}
+	t.Logf("enrichment result:")
+	for i, r := range results {
+		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)
 	}
 }

@@ -53,6 +53,23 @@ func staleDir(t *testing.T) string {
 	return dir
 }
 
+func TestRunSenseBenchSuppressesAllHooks(t *testing.T) {
+	dir := indexedDir(t)
+	t.Setenv("SENSE_BENCH", "1")
+
+	hooks := []string{"session-start", "pre-tool-use", "subagent-start", "pre-compact", "post-tool-use"}
+	for _, hook := range hooks {
+		var buf bytes.Buffer
+		code := Run(hook, dir, strings.NewReader(`{"tool_name":"Grep","tool_input":{"pattern":"UserService"}}`), &buf)
+		if code != 0 {
+			t.Errorf("%s: exit code = %d, want 0", hook, code)
+		}
+		if buf.String() != "{}\n" {
+			t.Errorf("%s: output = %q, want {} (SENSE_BENCH should suppress)", hook, buf.String())
+		}
+	}
+}
+
 func TestRunUnknownHook(t *testing.T) {
 	var buf bytes.Buffer
 	code := Run("nonexistent", ".", strings.NewReader("{}"), &buf)

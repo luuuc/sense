@@ -41,6 +41,11 @@ write_config() {
   local workspace="$2"
   local venv="$workspace/$VENV_NAME"
 
+  # Clean-room: wipe prior config, write empty hooks to prevent ambient injection
+  rm -rf "$workspace/.claude" "$workspace/CLAUDE.md" "$workspace/.mcp.json"
+  mkdir -p "$workspace/.claude"
+  echo '{"hooks":[]}' > "$workspace/.claude/settings.json"
+
   cat > "$workspace/.mcp.json" << EOF
 {
   "mcpServers": {

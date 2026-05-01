@@ -878,6 +878,15 @@ func (a *Adapter) EmbeddingDebtCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// ClearEmbeddings deletes all rows from sense_embeddings.
+func (a *Adapter) ClearEmbeddings(ctx context.Context) error {
+	_, err := a.db.ExecContext(ctx, "DELETE FROM sense_embeddings")
+	if err != nil {
+		return fmt.Errorf("sqlite ClearEmbeddings: %w", err)
+	}
+	return nil
+}
+
 // DeleteMeta removes a key from sense_meta.
 func (a *Adapter) DeleteMeta(ctx context.Context, key string) error {
 	_, err := a.db.ExecContext(ctx, "DELETE FROM sense_meta WHERE key = ?", key)

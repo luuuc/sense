@@ -143,12 +143,13 @@ func buildSearchResponse(results []search.Result, pathByID map[int64]string, met
 	for i, r := range results {
 		path := pathByID[r.FileID]
 		entries[i] = mcpio.SearchResultEntry{
-			Symbol:  r.Qualified,
-			File:    path,
-			Line:    r.LineStart,
-			Kind:    r.Kind,
-			Score:   mcpio.SearchScore(r.Score),
-			Snippet: r.Snippet,
+			Symbol:     r.Qualified,
+			File:       path,
+			Line:       r.LineStart,
+			Kind:       r.Kind,
+			Score:      mcpio.SearchScore(r.Score),
+			Snippet:    r.Snippet,
+			References: r.References,
 		}
 		if path != "" {
 			uniqueFiles[path] = struct{}{}
