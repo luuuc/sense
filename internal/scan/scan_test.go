@@ -179,9 +179,9 @@ func TestScanOutputFormat(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// Summary line: "scanned N files (...) in Xms" optionally followed
-	// by edges, then the first-run AI tool integration summary.
-	pattern := regexp.MustCompile(`^scanned 2 files \(\d+ indexed, \d+ changed, \d+ skipped\) in \S+\n(edges: \d+ resolved, \d+ unresolved, \d+ ambiguous\n)?`)
+	// Banner line "Indexing <root>..." followed by summary "scanned N files (...) in Xms"
+	// optionally followed by edges, then the first-run AI tool integration summary.
+	pattern := regexp.MustCompile(`^Indexing .+\.\.\.\nscanned 2 files \(\d+ indexed, \d+ changed, \d+ skipped\) in \S+\n(edges: \d+ resolved, \d+ unresolved, \d+ ambiguous\n)?`)
 	if !pattern.MatchString(buf.String()) {
 		t.Fatalf("output does not match summary pattern\nhave: %q",
 			buf.String())

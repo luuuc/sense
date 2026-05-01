@@ -125,6 +125,13 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		warn = os.Stderr
 	}
 
+	absRoot, _ := filepath.Abs(root)
+	if opts.Embed {
+		_, _ = fmt.Fprintf(out, "Indexing %s (with embeddings)...\n", absRoot)
+	} else {
+		_, _ = fmt.Fprintf(out, "Indexing %s...\n", absRoot)
+	}
+
 	cfg, err := config.Load(root)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
