@@ -225,6 +225,22 @@ def _strip_bare_go_package(symbol):
     return symbol
 
 
+_FILE_EXT_RE = re.compile(
+    r"\.(ts|tsx|js|jsx|rb|py|go|rs|java|kt|scala|php|c|cpp|cs|h|hpp|swift|vue|svelte|ex|exs)$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_path(s):
+    return "/" in s or bool(_FILE_EXT_RE.search(s))
+
+
+def _extract_class_prefix(normalized):
+    symbol = normalized.rsplit(":", 1)[-1] if ":" in normalized else normalized
+    m = re.match(r"^([^.#]+)[.#]", symbol)
+    return m.group(1) if m else None
+
+
 def normalize_caller(entry):
     """Normalize a caller/affected entry for comparison.
 
@@ -248,6 +264,8 @@ def normalize_caller(entry):
         symbol_part = segments[-1]
         if len(segments) >= 2 and segments[1].isdigit():
             symbol_part = segments[-1] if len(segments) > 2 else ""
+        elif not _looks_like_path(segments[0]) and _looks_like_path(":".join(segments[1:])):
+            return _strip_bare_go_package(segments[0])
     else:
         return _strip_bare_go_package(entry)
 
@@ -279,8 +297,27 @@ def score_set_match(response_json, ground_truth, match_key):
     fp = found - expected
     fn = expected - found
 
-    precision = len(tp) / len(found) if found else 0.0
-    recall = len(tp) / len(expected) if expected else 0.0
+    partial_matches = []
+    remaining_fp = set(fp)
+    remaining_fn = set(fn)
+
+    for fp_entry in sorted(fp):
+        cls = _extract_class_prefix(fp_entry)
+        if not cls:
+            continue
+        for fn_entry in sorted(remaining_fn):
+            fn_symbol = fn_entry.rsplit(":", 1)[-1] if ":" in fn_entry else fn_entry
+            if cls == fn_entry or cls == fn_symbol:
+                partial_matches.append({"found": fp_entry, "expected": fn_entry})
+                remaining_fp.discard(fp_entry)
+                remaining_fn.discard(fn_entry)
+                break
+
+    partial_count = len(partial_matches)
+    weighted_tp = len(tp) + 0.5 * partial_count
+
+    precision = weighted_tp / len(found) if found else 0.0
+    recall = weighted_tp / len(expected) if expected else 0.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
     return {
@@ -291,8 +328,9 @@ def score_set_match(response_json, ground_truth, match_key):
         "found_count": len(found),
         "expected_count": len(expected),
         "true_positives": sorted(tp),
-        "false_positives": sorted(fp),
-        "false_negatives": sorted(fn),
+        "false_positives": sorted(remaining_fp),
+        "false_negatives": sorted(remaining_fn),
+        "partial_matches": partial_matches,
     }
 
 
