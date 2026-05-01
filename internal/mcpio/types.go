@@ -432,6 +432,7 @@ type DeadCodeResponse struct {
 	DeadSymbols  []DeadSymbolEntry `json:"dead_symbols"`
 	TotalSymbols int               `json:"total_symbols"`
 	DeadCount    int               `json:"dead_count"`
+	Note         string            `json:"note,omitempty"`
 	SenseMetrics DeadCodeMetrics   `json:"sense_metrics"`
 	NextSteps    []NextStep        `json:"next_steps"`
 }

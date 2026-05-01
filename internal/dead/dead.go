@@ -52,7 +52,12 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: query tests targets: %w", err)
 	}
 
-	candidates = excludeEntryPoints(candidates, testsTargets)
+	interfaceIDs, err := queryInterfaceIDs(ctx, db)
+	if err != nil {
+		return Result{}, fmt.Errorf("dead: query interface IDs: %w", err)
+	}
+
+	candidates = excludeEntryPoints(candidates, testsTargets, interfaceIDs)
 
 	liveContainers, err := findLiveContainers(ctx, db, candidates)
 	if err != nil {
@@ -157,10 +162,29 @@ func queryTestsTargets(ctx context.Context, db *sql.DB) (map[int64]struct{}, err
 	return out, rows.Err()
 }
 
-func excludeEntryPoints(candidates []Symbol, testsTargets map[int64]struct{}) []Symbol {
+func queryInterfaceIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id FROM sense_symbols WHERE kind = 'interface'`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+func excludeEntryPoints(candidates []Symbol, testsTargets, interfaceIDs map[int64]struct{}) []Symbol {
 	var out []Symbol
 	for _, s := range candidates {
-		if isEntryPoint(s, testsTargets) {
+		if isEntryPoint(s, testsTargets, interfaceIDs) {
 			continue
 		}
 		out = append(out, s)
@@ -256,7 +280,7 @@ func excludeIDs(candidates []Symbol, exclude map[int64]struct{}) []Symbol {
 	return out
 }
 
-func isEntryPoint(s Symbol, testsTargets map[int64]struct{}) bool {
+func isEntryPoint(s Symbol, testsTargets map[int64]struct{}, interfaceIDs map[int64]struct{}) bool {
 	if isMainFunction(s) {
 		return true
 	}
@@ -267,6 +291,12 @@ func isEntryPoint(s Symbol, testsTargets map[int64]struct{}) bool {
 		return true
 	}
 	if isConstructor(s) {
+		return true
+	}
+	if isFrameworkHook(s) {
+		return true
+	}
+	if isInterfaceMethod(s, interfaceIDs) {
 		return true
 	}
 	if _, ok := testsTargets[s.ID]; ok {
@@ -306,4 +336,29 @@ func isInTestFile(s Symbol) bool {
 func isConstructor(s Symbol) bool {
 	return s.Name == "initialize" || s.Name == "__init__" || s.Name == "constructor" ||
 		s.Name == "init" || s.Name == "Init"
+}
+
+var frameworkHooks = map[string]struct{}{
+	"setUp": {}, "tearDown": {}, "setUpClass": {}, "tearDownClass": {},
+	"before_action": {}, "after_action": {}, "around_action": {},
+	"before_create": {}, "after_create": {}, "before_save": {}, "after_save": {},
+	"before_destroy": {}, "after_destroy": {}, "before_update": {}, "after_update": {},
+	"before_validation": {}, "after_validation": {},
+	"setup": {}, "teardown": {},
+	"BeforeEach": {}, "AfterEach": {}, "BeforeAll": {}, "AfterAll": {},
+	"componentDidMount": {}, "componentWillUnmount": {}, "componentDidUpdate": {},
+	"ServeHTTP": {},
+}
+
+func isFrameworkHook(s Symbol) bool {
+	_, ok := frameworkHooks[s.Name]
+	return ok
+}
+
+func isInterfaceMethod(s Symbol, interfaceIDs map[int64]struct{}) bool {
+	if s.ParentID == nil {
+		return false
+	}
+	_, ok := interfaceIDs[*s.ParentID]
+	return ok
 }
