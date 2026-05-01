@@ -137,6 +137,16 @@ func RunWithOptions(opts RunOptions) error {
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
 
+	if embedder != nil {
+		reranker, rerankErr := embed.NewBundledReranker(0)
+		if rerankErr != nil {
+			fmt.Fprintf(os.Stderr, "sense mcp: init reranker: %v\n", rerankErr)
+		} else {
+			engine.SetReranker(reranker)
+			defer func() { _ = reranker.Close() }()
+		}
+	}
+
 	embedCtx, cancelEmbed := context.WithCancel(ctx)
 	defer cancelEmbed()
 

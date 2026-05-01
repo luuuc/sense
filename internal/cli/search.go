@@ -92,6 +92,17 @@ func RunSearch(args []string, cio IO) int {
 	}
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
+
+	if embedder != nil {
+		reranker, rerankErr := embed.NewBundledReranker(0)
+		if rerankErr != nil {
+			_, _ = fmt.Fprintln(cio.Stderr, "sense search: init reranker:", rerankErr)
+		} else {
+			engine.SetReranker(reranker)
+			defer func() { _ = reranker.Close() }()
+		}
+	}
+
 	results, meta, err := engine.Search(ctx, search.Options{
 		Query:    opts.Query,
 		Limit:    opts.Limit,

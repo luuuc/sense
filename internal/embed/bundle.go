@@ -16,6 +16,9 @@ var modelBytes []byte
 //go:embed bundle/vocab.txt
 var vocabBytes []byte
 
+//go:embed bundle/reranker.onnx
+var rerankerBytes []byte
+
 // NewBundledEmbedder creates an ONNXEmbedder using the model, vocabulary,
 // and ONNX Runtime library embedded in the binary. It extracts the
 // platform-specific shared library to a cache directory on first use.
@@ -33,6 +36,21 @@ func NewBundledEmbedder(intraOpThreads int) (*ONNXEmbedder, error) {
 	}
 
 	return NewONNXEmbedder(modelBytes, vocabBytes, intraOpThreads)
+}
+
+// NewBundledReranker creates an ONNXReranker using the cross-encoder model
+// and vocabulary embedded in the binary.
+func NewBundledReranker(intraOpThreads int) (*ONNXReranker, error) {
+	libPath, err := ensureORTLib()
+	if err != nil {
+		return nil, fmt.Errorf("extract ONNX Runtime library: %w", err)
+	}
+
+	if err := InitORTLibrary(libPath); err != nil {
+		return nil, fmt.Errorf("init ONNX Runtime: %w", err)
+	}
+
+	return NewONNXReranker(rerankerBytes, vocabBytes, intraOpThreads)
 }
 
 // ensureORTLib extracts the bundled ONNX Runtime shared library to a
