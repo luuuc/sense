@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"strings"
+
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/search"
@@ -803,5 +805,136 @@ func TestGraphEnrichmentBoostsCallees(t *testing.T) {
 	t.Logf("enrichment result:")
 	for i, r := range results {
 		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)
+	}
+}
+
+// boostReranker boosts documents containing the target substring.
+type boostReranker struct {
+	target string
+}
+
+func (b *boostReranker) Score(_ string, docs []string) ([]float32, error) {
+	scores := make([]float32, len(docs))
+	for i, doc := range docs {
+		if strings.Contains(doc, b.target) {
+			scores[i] = 10.0
+		} else {
+			scores[i] = -10.0
+		}
+	}
+	return scores, nil
+}
+
+func TestRerankerChangesOrdering(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	engine := search.NewEngine(a, nil, nil)
+
+	// Without reranker: "ProcessPayment" ranks first for "payment".
+	results1, meta1, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta1.Reranked {
+		t.Error("expected Reranked=false without reranker")
+	}
+	if len(results1) == 0 || results1[0].Qualified != "pkg.ProcessPayment" {
+		t.Fatalf("expected ProcessPayment first without reranker, got %v", results1)
+	}
+
+	// With reranker that boosts "PaymentConfig": it should flip to rank first,
+	// despite ProcessPayment having higher centrality (2 callers).
+	engine.SetReranker(&boostReranker{target: "PaymentConfig"})
+
+	results2, meta2, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta2.Reranked {
+		t.Error("expected Reranked=true with reranker")
+	}
+
+	for i, r := range results2 {
+		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)
+	}
+	if len(results2) == 0 || results2[0].Qualified != "pkg.PaymentConfig" {
+		t.Errorf("reranker should have promoted PaymentConfig to first, got %q", results2[0].Qualified)
+	}
+}
+
+func TestRerankerMetaFlag(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	engine := search.NewEngine(a, nil, nil)
+
+	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Reranked {
+		t.Error("Reranked should be false when no reranker is set")
+	}
+
+	engine.SetReranker(&boostReranker{target: "anything"})
+	_, meta, err = engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Reranked {
+		t.Error("Reranked should be true when reranker is set")
+	}
+}
+
+func TestRerankerGracefulDegradation(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(t, ctx, a)
+
+	engine := search.NewEngine(a, nil, nil)
+
+	// Search with no reranker works normally.
+	results, _, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results without reranker")
+	}
+
+	// Set reranker, then clear it — should degrade back gracefully.
+	engine.SetReranker(&boostReranker{target: "ChargeCard"})
+	engine.SetReranker(nil)
+
+	results2, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Reranked {
+		t.Error("Reranked should be false after clearing reranker")
+	}
+	if len(results2) == 0 {
+		t.Fatal("expected results after clearing reranker")
 	}
 }
