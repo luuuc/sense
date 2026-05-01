@@ -1,8 +1,12 @@
 package mcpio
 
 import (
+	"strings"
+
 	"github.com/luuuc/sense/internal/model"
 )
+
+const testCallerCollapseThreshold = 20
 
 // FileLookup resolves a sense_files row id to its path. Used by
 // BuildGraphResponse / BuildBlastResponse to hydrate edge endpoints.
@@ -16,7 +20,8 @@ type FileLookup func(fileID int64) (path string, ok bool)
 // caller has already loaded the SymbolContext at the right depth
 // from the DB layer.
 type BuildGraphRequest struct {
-	Direction string // "both", "callers", "callees"; "" == "both"
+	Direction       string // "both", "callers", "callees"; "" == "both"
+	SegmentCallers  bool   // split callers into production vs test
 }
 
 // BuildGraphResponse assembles the wire-shape response from the
@@ -80,15 +85,21 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 			}
 		}
 	}
+	var testCallers []CallEdgeRef
 	if wantInbound {
 		for _, e := range sc.Inbound {
 			switch e.Edge.Kind {
 			case model.EdgeCalls:
-				resp.Edges.CalledBy = append(resp.Edges.CalledBy, CallEdgeRef{
+				ref := CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
 					File:       fileRefOrNil(e.Target.FileID, files),
 					Confidence: Confidence(e.Edge.Confidence),
-				})
+				}
+				if req.SegmentCallers && ref.File != nil && IsTestPath(*ref.File) {
+					testCallers = append(testCallers, ref)
+				} else {
+					resp.Edges.CalledBy = append(resp.Edges.CalledBy, ref)
+				}
 			case model.EdgeComposes:
 				resp.Edges.Composes = append(resp.Edges.Composes, ComposeEdgeRef{
 					Symbol: qualifiedOrName(e.Target),
@@ -157,12 +168,16 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		})
 	}
 
-	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) +
+	if len(testCallers) > 0 {
+		resp.TestCallerSummary = buildTestCallerSummary(testCallers)
+	}
+
+	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) + len(testCallers) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
 		len(resp.Edges.Includes) + len(resp.Edges.Imports) + len(resp.Edges.Tests) +
 		len(resp.Edges.Temporal)
 
-	uniqueFiles := countUniqueEdgeFiles(resp)
+	uniqueFiles := countUniqueEdgeFiles(resp, testCallers)
 	resp.SenseMetrics = GraphMetrics{
 		SymbolsReturned:           symbolsReturned,
 		EstimatedFileReadsAvoided: uniqueFiles,
@@ -181,7 +196,7 @@ func qualifiedOrName(s model.Symbol) string {
 	return s.Name
 }
 
-func countUniqueEdgeFiles(resp GraphResponse) int {
+func countUniqueEdgeFiles(resp GraphResponse, testCallers []CallEdgeRef) int {
 	seen := map[string]struct{}{}
 	for _, e := range resp.Edges.Calls {
 		if e.File != nil {
@@ -189,6 +204,11 @@ func countUniqueEdgeFiles(resp GraphResponse) int {
 		}
 	}
 	for _, e := range resp.Edges.CalledBy {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range testCallers {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
@@ -233,4 +253,42 @@ func fileRefOrNil(fileID int64, files FileLookup) *string {
 		return &path
 	}
 	return nil
+}
+
+// buildTestCallerSummary creates a TestCallerSummary from a list of
+// test callers. When the count exceeds the collapse threshold, only
+// 3 unique file path examples are kept.
+func buildTestCallerSummary(callers []CallEdgeRef) *TestCallerSummary {
+	seen := map[string]struct{}{}
+	var examples []string
+	for _, c := range callers {
+		if c.File == nil {
+			continue
+		}
+		if _, dup := seen[*c.File]; dup {
+			continue
+		}
+		seen[*c.File] = struct{}{}
+		examples = append(examples, *c.File)
+	}
+	summary := &TestCallerSummary{
+		Count:    len(callers),
+		Examples: examples,
+	}
+	if len(callers) > testCallerCollapseThreshold && len(examples) > 3 {
+		summary.Examples = examples[:3]
+	}
+	return summary
+}
+
+// IsTestPath returns true if the file path matches common test
+// directory or filename conventions.
+func IsTestPath(path string) bool {
+	return strings.Contains(path, "_test.") ||
+		strings.Contains(path, "/test/") ||
+		strings.Contains(path, "/tests/") ||
+		strings.Contains(path, "/spec/") ||
+		strings.HasPrefix(path, "test/") ||
+		strings.HasPrefix(path, "tests/") ||
+		strings.HasPrefix(path, "spec/")
 }

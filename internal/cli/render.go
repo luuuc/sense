@@ -51,6 +51,9 @@ func RenderGraphHuman(w io.Writer, resp mcpio.GraphResponse) {
 	if s := renderCalls(resp.Edges.CalledBy); s != "" {
 		_, _ = fmt.Fprintf(w, label, "callers", s)
 	}
+	if ts := resp.TestCallerSummary; ts != nil && ts.Count > 0 {
+		_, _ = fmt.Fprintf(w, label, "test cal.", fmt.Sprintf("(%d in %s)", ts.Count, strings.Join(ts.Examples, ", ")))
+	}
 	if s := renderTests(resp.Edges.Tests); s != "" {
 		_, _ = fmt.Fprintf(w, label, "tests", s)
 	}

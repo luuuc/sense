@@ -111,6 +111,9 @@ func normalizeGraphResponse(r *GraphResponse) {
 	if r.Edges.Temporal == nil {
 		r.Edges.Temporal = []TemporalEdgeRef{}
 	}
+	if r.TestCallerSummary != nil && r.TestCallerSummary.Examples == nil {
+		r.TestCallerSummary.Examples = []string{}
+	}
 	if r.NextSteps == nil {
 		r.NextSteps = []NextStep{}
 	}

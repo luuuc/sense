@@ -218,6 +218,115 @@ func TestBuildGraphResponseTemporalDirectionIndependent(t *testing.T) {
 	}
 }
 
+func TestCallerSegmentation(t *testing.T) {
+	filePaths := map[int64]string{
+		1: "app/models/user.rb",
+		2: "app/services/auth.rb",
+		3: "app/controllers/sessions.rb",
+		4: "spec/models/user_spec.rb",
+		5: "spec/services/auth_spec.rb",
+		6: "test/controllers/sessions_test.rb",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			ID: 1, Name: "User", Qualified: "User",
+			Kind: "class", FileID: 1, LineStart: 1, LineEnd: 50,
+		},
+		File: model.File{Path: "app/models/user.rb"},
+		Inbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "AuthService#login", FileID: 2}},
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "SessionsController#create", FileID: 3}},
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "UserSpec#test_login", FileID: 4}},
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "AuthSpec#test_auth", FileID: 5}},
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "SessionsTest#test_create", FileID: 6}},
+		},
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callers", SegmentCallers: true})
+
+	if len(resp.Edges.CalledBy) != 2 {
+		t.Fatalf("CalledBy (production) = %d, want 2", len(resp.Edges.CalledBy))
+	}
+	if resp.TestCallerSummary == nil {
+		t.Fatal("TestCallerSummary is nil, want non-nil")
+	}
+	if resp.TestCallerSummary.Count != 3 {
+		t.Errorf("TestCallerSummary.Count = %d, want 3", resp.TestCallerSummary.Count)
+	}
+	if resp.SenseMetrics.SymbolsReturned != 5 {
+		t.Errorf("SymbolsReturned = %d, want 5 (2 prod + 3 test)", resp.SenseMetrics.SymbolsReturned)
+	}
+
+	// Without SegmentCallers, all callers stay in CalledBy.
+	resp = BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callers", SegmentCallers: false})
+	if len(resp.Edges.CalledBy) != 5 {
+		t.Fatalf("CalledBy (unsegmented) = %d, want 5", len(resp.Edges.CalledBy))
+	}
+	if resp.TestCallerSummary != nil {
+		t.Errorf("TestCallerSummary should be nil when segmentation disabled, got %v", resp.TestCallerSummary)
+	}
+}
+
+func TestCallerSegmentationCollapseOver20(t *testing.T) {
+	testFiles := []string{
+		"spec/models/user_spec.rb",
+		"spec/services/auth_spec.rb",
+		"test/controllers/sessions_test.rb",
+		"spec/integration/user_flow_spec.rb",
+		"test/models/user_test.rb",
+	}
+	filePaths := map[int64]string{1: "app/models/user.rb"}
+	for i := int64(2); i <= 32; i++ {
+		filePaths[i] = testFiles[(i-2)%int64(len(testFiles))]
+	}
+	filePaths[33] = "app/services/auth.rb"
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	var inbound []model.EdgeRef
+	for i := int64(2); i <= 32; i++ {
+		inbound = append(inbound, model.EdgeRef{
+			Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0},
+			Target: model.Symbol{Qualified: "TestCaller", FileID: i},
+		})
+	}
+	inbound = append(inbound, model.EdgeRef{
+		Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0},
+		Target: model.Symbol{Qualified: "AuthService#login", FileID: 33},
+	})
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			ID: 1, Name: "User", Qualified: "User",
+			Kind: "class", FileID: 1, LineStart: 1, LineEnd: 50,
+		},
+		File:    model.File{Path: "app/models/user.rb"},
+		Inbound: inbound,
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callers", SegmentCallers: true})
+
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy (production) = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	if resp.TestCallerSummary == nil {
+		t.Fatal("TestCallerSummary is nil")
+	}
+	if resp.TestCallerSummary.Count != 31 {
+		t.Errorf("TestCallerSummary.Count = %d, want 31", resp.TestCallerSummary.Count)
+	}
+	if len(resp.TestCallerSummary.Examples) != 3 {
+		t.Errorf("TestCallerSummary.Examples = %d, want exactly 3 (truncated from 5 unique paths)", len(resp.TestCallerSummary.Examples))
+	}
+}
+
 func TestBuildGraphResponseTemporalCountsInMetrics(t *testing.T) {
 	coChanges := 3
 	sc := &model.SymbolContext{
