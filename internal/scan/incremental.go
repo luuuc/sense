@@ -106,6 +106,12 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 	}
 	phases.AssociateTests = time.Since(t0)
 
+	t0 = time.Now()
+	if err := h.namingConventionEdges(); err != nil {
+		return nil, fmt.Errorf("naming convention edges: %w", err)
+	}
+	phases.NamingConventions = time.Since(t0)
+
 	if opts.EmbeddingsEnabled {
 		t0 = time.Now()
 		if err := h.embedSymbols(); err != nil {
