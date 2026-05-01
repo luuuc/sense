@@ -10,6 +10,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 
 from scorer import (
+    _extract_class_prefix,
     classify_tool_calls,
     detect_misses,
     extract_json_from_text,
@@ -101,6 +102,134 @@ class TestNormalizeCaller(unittest.TestCase):
 
     def test_bare_symbol_keeps_scan_lowercase(self):
         self.assertEqual(normalize_caller("scan.indexedFile"), "scan.indexedFile")
+
+    # --- Symbol:filepath format (card 1 fix) ---
+
+    def test_symbol_filepath_ts(self):
+        self.assertEqual(
+            normalize_caller("renderToHTMLOrFlight:packages/next/src/server/app-render/app-render.tsx"),
+            "renderToHTMLOrFlight",
+        )
+
+    def test_symbol_filepath_rb(self):
+        self.assertEqual(
+            normalize_caller("PostCreator:app/models/post_creator.rb"),
+            "PostCreator",
+        )
+
+    def test_symbol_filepath_bare_go(self):
+        self.assertEqual(normalize_caller("HandleRequest:main.go"), "HandleRequest")
+
+    def test_symbol_filepath_uppercase(self):
+        self.assertEqual(normalize_caller("Flask:src/flask/app.py"), "Flask")
+
+    def test_symbol_filepath_go_package_stripped(self):
+        self.assertEqual(normalize_caller("gin.Engine:gin.go"), "Engine")
+
+    def test_filepath_symbol_preserved(self):
+        self.assertEqual(
+            normalize_caller("packages/next/src/module.ts:AppPageRouteModule.render"),
+            "packages/next/src/module.ts:AppPageRouteModule.render",
+        )
+
+    def test_filepath_symbol_rb_preserved(self):
+        self.assertEqual(
+            normalize_caller("app/models/post_creator.rb:PostCreator"),
+            "app/models/post_creator.rb:PostCreator",
+        )
+
+    def test_symbol_filepath_method_dot(self):
+        self.assertEqual(
+            normalize_caller("PostCreator.create:app/models/post_creator.rb"),
+            "PostCreator.create",
+        )
+
+    def test_symbol_filepath_method_hash(self):
+        self.assertEqual(
+            normalize_caller("PostCreator#new_topic?:lib/post_creator.rb"),
+            "PostCreator#new_topic?",
+        )
+
+
+class TestExtractClassPrefix(unittest.TestCase):
+    def test_dot_method(self):
+        self.assertEqual(_extract_class_prefix("PostCreator.create"), "PostCreator")
+
+    def test_hash_method(self):
+        self.assertEqual(_extract_class_prefix("PostCreator#new_topic?"), "PostCreator")
+
+    def test_bare_class_no_prefix(self):
+        self.assertIsNone(_extract_class_prefix("PostCreator"))
+
+    def test_file_colon_class_method(self):
+        self.assertEqual(
+            _extract_class_prefix("lib/post_creator.rb:PostCreator#create_topic"),
+            "PostCreator",
+        )
+
+    def test_go_type_method(self):
+        self.assertEqual(_extract_class_prefix("Engine.ServeHTTP"), "Engine")
+
+    def test_no_separator(self):
+        self.assertIsNone(_extract_class_prefix("renderToHTMLOrFlight"))
+
+    def test_over_broad_guard(self):
+        self.assertEqual(
+            _extract_class_prefix("PostGuardian#can_create_post?"),
+            "PostGuardian",
+        )
+
+
+class TestScoreSetMatchPartialCredit(unittest.TestCase):
+    def test_class_method_matches_class(self):
+        response = {"symbols": ["PostCreator.create"]}
+        gt = {"symbols": ["PostCreator"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+        self.assertEqual(result["partial_matches"][0]["found"], "PostCreator.create")
+        self.assertEqual(result["partial_matches"][0]["expected"], "PostCreator")
+        self.assertAlmostEqual(result["precision"], 0.5)
+        self.assertAlmostEqual(result["recall"], 0.5)
+
+    def test_hash_method_matches_class(self):
+        response = {"symbols": ["TopicCreator#create"]}
+        gt = {"symbols": ["TopicCreator"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+        self.assertAlmostEqual(result["f1"], 0.5)
+
+    def test_over_broad_no_match(self):
+        response = {"symbols": ["PostGuardian#can_create_post?"]}
+        gt = {"symbols": ["Post"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 0)
+        self.assertEqual(result["f1"], 0.0)
+
+    def test_one_to_one_pairing(self):
+        response = {"symbols": ["PostCreator.create", "PostCreator#new_topic?"]}
+        gt = {"symbols": ["PostCreator"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+        self.assertEqual(len(result["false_positives"]), 1)
+
+    def test_exact_match_preferred_over_partial(self):
+        response = {"symbols": ["PostCreator", "PostCreator.create"]}
+        gt = {"symbols": ["PostCreator"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(result["true_positives"], ["PostCreator"])
+        self.assertEqual(len(result["partial_matches"]), 0)
+
+    def test_no_partial_when_no_separator(self):
+        response = {"symbols": ["Foo", "Bar"]}
+        gt = {"symbols": ["Baz"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 0)
+
+    def test_file_symbol_partial_with_bare_gt(self):
+        response = {"callers": ["lib/post_creator.rb:PostCreator#create_topic"]}
+        gt = {"callers": ["PostCreator"]}
+        result = score_set_match(response, gt, "callers")
+        self.assertEqual(len(result["partial_matches"]), 1)
 
 
 class TestScoreSetMatch(unittest.TestCase):
