@@ -742,11 +742,11 @@ func TestScanTolerantOfInvalidSource(t *testing.T) {
 	// and the extractor emits what it can. The scan should carry on.
 	writeFile(t, filepath.Join(root, "broken.go"), "package broken\n\nfunc incompl")
 
-	var summary, warnings bytes.Buffer
+	var summary bytes.Buffer
 	res, err := scan.Run(context.Background(), scan.Options{
 		Root:     root,
 		Output:   &summary,
-		Warnings: &warnings,
+		Warnings: io.Discard,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -754,12 +754,21 @@ func TestScanTolerantOfInvalidSource(t *testing.T) {
 	if res.Files != 2 {
 		t.Errorf("Files = %d, want 2", res.Files)
 	}
-	if !strings.Contains(warnings.String(), "parse errors present") {
-		t.Errorf("expected parse-errors warning on Warnings writer, got: %q", warnings.String())
+	if res.Warnings == 0 {
+		t.Error("expected at least one warning for broken.go parse errors")
 	}
 	// Summary writer must be clean — warnings must not leak here.
 	if strings.Contains(summary.String(), "parse errors") {
 		t.Errorf("summary writer leaked warning text: %q", summary.String())
+	}
+	// Warnings log file should exist with grouped content.
+	logPath := filepath.Join(root, ".sense", "warnings.log")
+	logContent, lerr := os.ReadFile(logPath)
+	if lerr != nil {
+		t.Fatalf("expected warnings.log, got error: %v", lerr)
+	}
+	if !strings.Contains(string(logContent), "parse failed") {
+		t.Errorf("warnings.log missing 'parse failed' group, got:\n%s", logContent)
 	}
 }
 
@@ -942,11 +951,10 @@ func TestScan_SizeCapSkipsLargeFiles(t *testing.T) {
 	writeFile(t, filepath.Join(root, "big.rb"), big)
 
 	ctx := context.Background()
-	var warnings bytes.Buffer
 	res, err := scan.Run(ctx, scan.Options{
 		Root:     root,
 		Output:   &bytes.Buffer{},
-		Warnings: &warnings,
+		Warnings: io.Discard,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -954,8 +962,16 @@ func TestScan_SizeCapSkipsLargeFiles(t *testing.T) {
 	if res.Indexed != 1 {
 		t.Errorf("Indexed = %d, want 1 (only small.rb)", res.Indexed)
 	}
-	if !strings.Contains(warnings.String(), "big.rb: skipped") {
-		t.Errorf("expected size-cap skip warning, got: %q", warnings.String())
+	if res.Warnings == 0 {
+		t.Error("expected at least one warning for big.rb size skip")
+	}
+	logPath := filepath.Join(root, ".sense", "warnings.log")
+	logContent, lerr := os.ReadFile(logPath)
+	if lerr != nil {
+		t.Fatalf("expected warnings.log, got error: %v", lerr)
+	}
+	if !strings.Contains(string(logContent), "file too large") {
+		t.Errorf("warnings.log missing 'file too large' group, got:\n%s", logContent)
 	}
 }
 

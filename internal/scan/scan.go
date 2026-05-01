@@ -24,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -175,6 +174,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	prog := newProgress(out, opts.Quiet)
+	wc := newWarningCollector()
 
 	h := &harness{
 		ctx:            ctx,
@@ -183,6 +183,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		warn:           warn,
 		root:           root,
 		progress:       prog,
+		collector:      wc,
 		parsers:        map[string]*sitter.Parser{},
 		matcher:        matcher,
 		defaultMatcher: ignore.New(ignore.DefaultPatterns()...),
@@ -308,6 +309,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, err
 	}
 	prog.stop()
+
+	if err := wc.writeLog(senseDir); err != nil {
+		_, _ = fmt.Fprintf(warn, "warn: write warnings log: %v\n", err)
+	}
+
 	elapsed := time.Since(start)
 
 	res := &Result{
@@ -322,7 +328,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		EmbeddingDebt:  embeddingDebt,
 		Unresolved:     h.unresolved,
 		Ambiguous:      h.ambiguous,
-		Warnings:       h.warnings,
+		Warnings:       wc.count(),
 		DefaultIgnored: h.defaultIgnored,
 		Duration:       elapsed,
 		Phases:         phases,
@@ -434,13 +440,14 @@ func addSenseToGitignore(root string) bool {
 // file's transaction because most of them point at targets in other
 // files. The consequence is called out on resolveAndWriteEdges.
 type harness struct {
-	ctx      context.Context
-	idx      *sqlite.Adapter
-	out      io.Writer // summary-line sink
-	warn     io.Writer // per-file warning sink
-	root     string    // repository root directory
-	progress *progress
-	parsers  map[string]*sitter.Parser
+	ctx       context.Context
+	idx       *sqlite.Adapter
+	out       io.Writer // summary-line sink
+	warn      io.Writer // infrastructure warning sink (not per-file)
+	root      string    // repository root directory
+	progress  *progress
+	collector *warningCollector
+	parsers   map[string]*sitter.Parser
 
 	matcher        *ignore.Matcher
 	defaultMatcher *ignore.Matcher
@@ -484,7 +491,6 @@ type harness struct {
 	embedded       int
 	unresolved     int
 	ambiguous      int
-	warnings       int
 	defaultIgnored int
 }
 
@@ -532,11 +538,8 @@ func int64Ptr(v int64) *int64 {
 	return &v
 }
 
-// warnf logs a per-file warning to h.warn and increments the counter.
-// Warnings are non-fatal: scan continues past them.
-func (h *harness) warnf(format string, args ...any) {
-	h.warnings++
-	_, _ = fmt.Fprintf(h.warn, "warn: "+format+"\n", args...)
+func (h *harness) addWarning(kind warningKind, format string, args ...any) {
+	h.collector.add(kind, fmt.Sprintf(format, args...))
 	h.progress.incWarnings()
 }
 
@@ -619,13 +622,12 @@ func (h *harness) walkTree(root string) error {
 
 	// Phase 3: parallel parse+extract.
 	results := make([]*fileResult, len(entries))
-	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(h.ctx)
 	g.SetLimit(runtime.NumCPU())
 
 	for i, entry := range entries {
 		g.Go(func() error {
-			fr := parseFileStandalone(gctx, entry.path, entry.rel, hashMap, h.maxFileSizeKB, &mu, h.warn, &h.warnings, h.progress)
+			fr := parseFileStandalone(gctx, entry.path, entry.rel, hashMap, h.maxFileSizeKB, h.collector, h.progress)
 			results[i] = fr
 			h.progress.inc()
 			return nil
@@ -698,7 +700,7 @@ func (h *harness) flushBatch(batch []*fileResult) error {
 		h.indexedFiles = h.indexedFiles[:snapIndexed]
 		h.changedFileIDs = h.changedFileIDs[:snapChanged]
 
-		h.warnf("%s: write failed, retrying batch without it: %v", batch[failedIdx].Rel, err)
+		h.addWarning(warnWriteFailed, "%s (%v)", batch[failedIdx].Rel, err)
 		retry := make([]*fileResult, 0, len(batch)-1)
 		for i, fr := range batch {
 			if i != failedIdx {
@@ -745,7 +747,7 @@ func (h *harness) processFile(path, rel string) {
 		return
 	}
 	if err := h.writeFileResult(fr); err != nil {
-		h.warnf("%s: write failed: %v", rel, err)
+		h.addWarning(warnWriteFailed, "%s (%v)", rel, err)
 		return
 	}
 	h.indexed++
@@ -758,7 +760,7 @@ func (h *harness) processFile(path, rel string) {
 type parseOpts struct {
 	ctx           context.Context
 	maxFileSizeKB int
-	warnf         func(string, ...any)
+	warnf         func(warningKind, string, ...any)
 	parserFor     func(extract.Extractor) (*sitter.Parser, bool)
 }
 
@@ -775,11 +777,11 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 	if po.maxFileSizeKB > 0 {
 		info, err := os.Stat(path)
 		if err != nil {
-			po.warnf("%s: stat failed: %v", rel, err)
+			po.warnf(warnMetaError, "%s (%v)", rel, err)
 			return nil
 		}
 		if info.Size() > int64(po.maxFileSizeKB)*1024 {
-			po.warnf("%s: skipped (%d KB > %d KB max)", rel, info.Size()/1024, po.maxFileSizeKB)
+			po.warnf(warnFileTooLarge, "%s (%d KB > %d KB max)", rel, info.Size()/1024, po.maxFileSizeKB)
 			return nil
 		}
 	}
@@ -790,7 +792,7 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 
 	source, err := os.ReadFile(path)
 	if err != nil {
-		po.warnf("%s: read failed: %v", rel, err)
+		po.warnf(warnMetaError, "%s (%v)", rel, err)
 		return nil
 	}
 
@@ -803,7 +805,7 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 
 	if raw, ok := ex.(extract.RawExtractor); ok {
 		if err := safeExtractRaw(raw, source, rel, collected); err != nil {
-			po.warnf("%s: extract failed: %v", rel, err)
+			po.warnf(warnParseFailed, "%s (%v)", rel, err)
 			return nil
 		}
 	} else {
@@ -817,17 +819,17 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 
 		tree := parser.Parse(source, nil)
 		if tree == nil {
-			po.warnf("%s: parse returned nil tree", rel)
+			po.warnf(warnParseFailed, "%s (nil parse tree)", rel)
 			return nil
 		}
 		defer tree.Close()
 
 		if tree.RootNode().HasError() {
-			po.warnf("%s: parse errors present, extracting best-effort", rel)
+			po.warnf(warnParseFailed, "%s (parse errors, best-effort extraction)", rel)
 		}
 
 		if err := safeExtract(ex, tree, source, rel, collected); err != nil {
-			po.warnf("%s: extract failed: %v", rel, err)
+			po.warnf(warnParseFailed, "%s (%v)", rel, err)
 			return nil
 		}
 	}
@@ -853,16 +855,11 @@ func parseFileStandalone(
 	path, rel string,
 	hashMap map[string]sqlite.CachedFile,
 	maxFileSizeKB int,
-	warnMu *sync.Mutex,
-	warnOut io.Writer,
-	warnCount *int,
+	wc *warningCollector,
 	prog *progress,
 ) *fileResult {
-	wf := func(format string, args ...any) {
-		warnMu.Lock()
-		*warnCount++
-		_, _ = fmt.Fprintf(warnOut, "warn: "+format+"\n", args...)
-		warnMu.Unlock()
+	wf := func(kind warningKind, format string, args ...any) {
+		wc.add(kind, fmt.Sprintf(format, args...))
 		prog.incWarnings()
 	}
 	po := parseOpts{
@@ -873,7 +870,7 @@ func parseFileStandalone(
 			p := sitter.NewParser()
 			if err := p.SetLanguage(ex.Grammar()); err != nil {
 				p.Close()
-				wf("%s: parser setup failed: %v", rel, err)
+				wf(warnParseFailed, "%s (%v)", rel, err)
 				return nil, false
 			}
 			return p, true // caller owns — parseFileCore will defer Close
@@ -891,11 +888,11 @@ func (h *harness) parseFile(path, rel string) *fileResult {
 	po := parseOpts{
 		ctx:           h.ctx,
 		maxFileSizeKB: h.maxFileSizeKB,
-		warnf:         h.warnf,
+		warnf:         h.addWarning,
 		parserFor: func(ex extract.Extractor) (*sitter.Parser, bool) {
 			p, err := h.parserFor(ex)
 			if err != nil {
-				h.warnf("%s: parser setup failed: %v", rel, err)
+				h.addWarning(warnParseFailed, "%s (%v)", rel, err)
 				return nil, false
 			}
 			return p, false // harness owns — do not close
@@ -908,7 +905,7 @@ func (h *harness) parseFile(path, rel string) *fileResult {
 	return parseFileCore(po, path, rel, func(hash string) bool {
 		fileID, oldHash, metaErr := h.idx.FileMeta(h.ctx, rel)
 		if metaErr != nil {
-			h.warnf("%s: file meta lookup failed: %v", rel, metaErr)
+			h.addWarning(warnMetaError, "%s (%v)", rel, metaErr)
 			return false
 		}
 		if oldHash != hash {
