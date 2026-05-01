@@ -105,6 +105,7 @@ func main() {
 			if _, err := scan.Run(ctx, scan.Options{
 				Root:              *dir,
 				Warnings:          warnSink,
+				Quiet:             *quietFlag,
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
 				Embed:             *embedFlag,
 			}); err != nil {

@@ -45,11 +45,15 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 		parsers = NewParserCache()
 	}
 
+	wc := newWarningCollector()
+
 	h := &harness{
 		ctx:           ctx,
 		idx:           opts.Idx,
 		out:           out,
 		warn:          warn,
+		progress:      newProgress(out, true),
+		collector:     wc,
 		parsers:       parsers.parsers,
 		matcher:       opts.Matcher,
 		maxFileSizeKB: opts.MaxFileSizeKB,
@@ -132,7 +136,7 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 		Edges:      h.edges,
 		Embedded:   h.embedded,
 		Unresolved: h.unresolved,
-		Warnings:   h.warnings,
+		Warnings:   wc.count(),
 		Duration:   elapsed,
 		Phases:     phases,
 	}
