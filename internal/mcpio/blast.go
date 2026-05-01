@@ -76,6 +76,8 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		})
 	}
 
+	segmentBlastCallers(&resp)
+
 	uniqueFiles := countUniqueBlastFiles(resp)
 	resp.SenseMetrics = BlastMetrics{
 		SymbolsTraversed:          1 + len(r.DirectCallers) + len(r.IndirectCallers),
@@ -153,6 +155,8 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 		fmt.Sprintf("%d modified symbols; %d direct callers", len(results), len(resp.DirectCallers)),
 	}
 
+	segmentBlastCallers(&resp)
+
 	uniqueFiles := countUniqueBlastFiles(resp)
 	resp.SenseMetrics = BlastMetrics{
 		SymbolsTraversed:          len(results) + len(resp.DirectCallers) + len(resp.IndirectCallers),
@@ -191,5 +195,43 @@ func riskRank(r string) int {
 		return 1
 	}
 	return 0
+}
+
+// segmentBlastCallers counts production vs test affected symbols
+// across all caller lists and sets the summary fields.
+func segmentBlastCallers(resp *BlastResponse) {
+	var prod, test int
+	for _, c := range resp.DirectCallers {
+		if IsTestPath(c.File) {
+			test++
+		} else {
+			prod++
+		}
+	}
+	prod += len(resp.IndirectCallers)
+	for _, c := range resp.AffectedSubclasses {
+		if IsTestPath(c.File) {
+			test++
+		} else {
+			prod++
+		}
+	}
+	for _, c := range resp.AffectedViaComposition {
+		if IsTestPath(c.File) {
+			test++
+		} else {
+			prod++
+		}
+	}
+	for _, c := range resp.AffectedViaIncludes {
+		if IsTestPath(c.File) {
+			test++
+		} else {
+			prod++
+		}
+	}
+	test += len(resp.AffectedTests)
+	resp.ProductionAffected = prod
+	resp.TestAffected = test
 }
 
