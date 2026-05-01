@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -19,6 +20,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install git-cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          args: --version
+
+      - name: Generate release notes
+        run: git-cliff --latest --strip header > release-notes.md
+
       # Tree-sitter bindings require CGO, and we ship darwin + linux for both
       # amd64 and arm64. goreleaser-cross bundles osxcross and the gcc
       # cross-toolchains the .goreleaser.yml overrides reference (o64-clang,
@@ -31,6 +40,6 @@ jobs:
             -v "$PWD":/src \
             -w /src \
             ghcr.io/goreleaser/goreleaser-cross:v1.25.5 \
-            release --clean
+            release --clean --release-notes release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
