@@ -163,6 +163,71 @@ func basicTokenize(text string) []string {
 	return tokens
 }
 
+// TokenizePair encodes a (query, document) pair for cross-encoder scoring.
+// Format: [CLS] query_tokens [SEP] doc_tokens [SEP] [PAD]...
+// token_type_ids: 0 for query segment (A), 1 for document segment (B).
+func (t *tokenizer) TokenizePair(query, document string) tokenizeResult {
+	qTokens := t.wordpiece(query)
+	dTokens := t.wordpiece(document)
+
+	// Budget: maxLen - 3 ([CLS], [SEP], [SEP])
+	budget := t.maxLen - 3
+	if budget < 0 {
+		budget = 0
+	}
+
+	// Truncate document first, then query if still over budget.
+	if len(qTokens)+len(dTokens) > budget {
+		dBudget := budget - len(qTokens)
+		if dBudget < 0 {
+			qTokens = qTokens[:budget/2]
+			dBudget = budget - len(qTokens)
+		}
+		if dBudget < len(dTokens) {
+			dTokens = dTokens[:dBudget]
+		}
+	}
+
+	ids := make([]int32, t.maxLen)
+	mask := make([]int32, t.maxLen)
+	typeIDs := make([]int32, t.maxLen)
+
+	pos := 0
+
+	// Segment A: [CLS] query [SEP]
+	ids[pos] = t.clsID
+	mask[pos] = 1
+	pos++
+
+	for _, tok := range qTokens {
+		ids[pos] = tok
+		mask[pos] = 1
+		pos++
+	}
+
+	ids[pos] = t.sepID
+	mask[pos] = 1
+	pos++
+
+	// Segment B: document [SEP]
+	for _, tok := range dTokens {
+		ids[pos] = tok
+		mask[pos] = 1
+		typeIDs[pos] = 1
+		pos++
+	}
+
+	ids[pos] = t.sepID
+	mask[pos] = 1
+	typeIDs[pos] = 1
+
+	return tokenizeResult{
+		InputIDs:      ids,
+		AttentionMask: mask,
+		TokenTypeIDs:  typeIDs,
+	}
+}
+
 func isPunct(r rune) bool {
 	return unicode.IsPunct(r) || unicode.IsSymbol(r)
 }
