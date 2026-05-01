@@ -353,7 +353,20 @@ func buildSearchEngine(ctx context.Context, adapter *sqlite.Adapter, dir string)
 	}
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
+
+	var reranker *embed.ONNXReranker
+	if embedder != nil {
+		r, err := embed.NewBundledReranker(0)
+		if err == nil {
+			reranker = r
+			engine.SetReranker(r)
+		}
+	}
+
 	return engine, embedder, func() {
+		if reranker != nil {
+			_ = reranker.Close()
+		}
 		if embedder != nil {
 			_ = embedder.Close()
 		}

@@ -13,6 +13,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// Reranker scores (query, document) pairs for relevance using a
+// cross-encoder that sees both inputs jointly.
+type Reranker interface {
+	Score(query string, docs []string) ([]float32, error)
+}
+
 // Result is a single fused search hit with metadata from both backends.
 type Result struct {
 	SymbolID   int64
@@ -44,6 +50,7 @@ type Engine struct {
 	adapter  *sqlite.Adapter
 	vectors  VectorIndex
 	embedder embed.Embedder
+	reranker Reranker
 }
 
 // NewEngine creates a search engine. When vectors is nil or embedder
@@ -64,6 +71,14 @@ func (e *Engine) SetVectors(v VectorIndex) {
 	e.mu.Unlock()
 }
 
+// SetReranker sets the cross-encoder reranker. When non-nil, search
+// results are reranked after RRF fusion for improved precision.
+func (e *Engine) SetReranker(r Reranker) {
+	e.mu.Lock()
+	e.reranker = r
+	e.mu.Unlock()
+}
+
 const (
 	ModeHybrid  = "hybrid"
 	ModeKeyword = "keyword"
@@ -75,6 +90,7 @@ type SearchMeta struct {
 	Mode          string
 	KeywordWeight float64
 	VectorWeight  float64
+	Reranked      bool
 }
 
 // Search runs hybrid search and returns fused, re-ranked results.
@@ -99,6 +115,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 
 	e.mu.RLock()
 	vectors := e.vectors
+	reranker := e.reranker
 	e.mu.RUnlock()
 
 	canVector := vectors != nil && vectors.Len() > 0 && e.embedder != nil
@@ -179,6 +196,26 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
 	}
 
+	// Cross-encoder reranking: replace RRF scores with joint relevance scores.
+	reranked := false
+	if reranker != nil && len(fused) > 0 {
+		docs := make([]string, len(fused))
+		for i, r := range fused {
+			docs[i] = r.Kind + " " + r.Qualified
+			if r.Snippet != "" {
+				docs[i] += "\n" + r.Snippet
+			}
+		}
+		scores, rerankErr := reranker.Score(opts.Query, docs)
+		if rerankErr != nil {
+			return nil, SearchMeta{}, fmt.Errorf("search rerank: %w", rerankErr)
+		}
+		for i := range fused {
+			fused[i].Score = float64(scores[i])
+		}
+		reranked = true
+	}
+
 	// Graph centrality re-ranking.
 	symbolIDs := make([]int64, len(fused))
 	for i, r := range fused {
@@ -240,6 +277,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		Mode:          mode,
 		KeywordWeight: kwWeight,
 		VectorWeight:  vecWeight,
+		Reranked:      reranked,
 	}, nil
 }
 
