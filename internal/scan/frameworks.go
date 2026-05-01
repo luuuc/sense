@@ -15,9 +15,9 @@ var frameworkPatterns = map[string][]frameworkRule{
 		{pattern: regexp.MustCompile(`gem\s+['"]hanami['"]`), name: "Hanami"},
 	},
 	"go.mod": {
-		{pattern: regexp.MustCompile(`github\.com/gin-gonic/gin`), name: "Gin"},
-		{pattern: regexp.MustCompile(`github\.com/labstack/echo`), name: "Echo"},
-		{pattern: regexp.MustCompile(`github\.com/gofiber/fiber`), name: "Fiber"},
+		{pattern: regexp.MustCompile(`github\.com/gin-gonic/gin\b`), name: "Gin"},
+		{pattern: regexp.MustCompile(`github\.com/labstack/echo\b`), name: "Echo"},
+		{pattern: regexp.MustCompile(`github\.com/gofiber/fiber\b`), name: "Fiber"},
 	},
 	"package.json": {
 		{pattern: regexp.MustCompile(`"next"`), name: "Next.js"},
