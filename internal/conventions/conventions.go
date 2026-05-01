@@ -10,6 +10,7 @@ import (
 )
 
 const minInstances = 3
+const maxDescriptionNames = 5
 
 type Category string
 
@@ -355,7 +356,7 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		sortExamples(g.examples)
 		out = append(out, Convention{
 			Category:    CategoryInheritance,
-			Description: fmt.Sprintf("%d %s symbols inherit %s", g.count, g.sourceKind, g.targetName),
+			Description: fmt.Sprintf("%s inherit %s (%d total)", topNames(g.examples), g.targetName, g.count),
 			Instances:   g.count,
 			Total:       total,
 			Strength:    float64(g.count) / float64(total),
@@ -430,7 +431,7 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryNaming,
-			Description: fmt.Sprintf("%s symbols use *%s naming", ks.kind, ks.suffix),
+			Description: fmt.Sprintf("%s *%s pattern: %s (%d total)", ks.kind, ks.suffix, topNames(ex), count),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -450,7 +451,7 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryNaming,
-			Description: fmt.Sprintf("%s files use *%s naming", kfs.kind, kfs.suffix),
+			Description: fmt.Sprintf("%s files *%s pattern: %s (%d total)", kfs.kind, kfs.suffix, topNames(ex), count),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -498,7 +499,7 @@ func detectStructure(symbols []symbolRow, filePathByID map[int64]string) []Conve
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryStructure,
-			Description: fmt.Sprintf("%s symbols live in %s/", kd.kind, kd.dir),
+			Description: fmt.Sprintf("%s pattern: %s in %s/ (%d total)", kd.kind, topNames(ex), kd.dir, count),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -565,7 +566,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		sortExamples(g.examples)
 		out = append(out, Convention{
 			Category:    CategoryComposition,
-			Description: fmt.Sprintf("%d %s symbols include %s", g.count, g.sourceKind, g.targetName),
+			Description: fmt.Sprintf("%s include %s (%d total)", topNames(g.examples), g.targetName, g.count),
 			Instances:   g.count,
 			Total:       total,
 			Strength:    float64(g.count) / float64(total),
@@ -640,7 +641,7 @@ func detectTesting(symbols []symbolRow, edges []edgeRow, filePathByID map[int64]
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryTesting,
-			Description: fmt.Sprintf("%d/%d test files use *%s naming", count, total, suffix),
+			Description: fmt.Sprintf("test files *%s pattern: %s (%d/%d total)", suffix, topNames(ex), count, total),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -731,6 +732,10 @@ func PickRepresentatives(examples []Example, max int) []string {
 		names = append(names, examples[idx].Name)
 	}
 	return names
+}
+
+func topNames(examples []Example) string {
+	return strings.Join(PickRepresentatives(examples, maxDescriptionNames), ", ")
 }
 
 func extractFileSuffix(basename string) string {

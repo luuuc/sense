@@ -491,6 +491,50 @@ func TestExamplesPopulated(t *testing.T) {
 	}
 }
 
+func TestDescriptionsContainInstanceNames(t *testing.T) {
+	adapter := setupFixtureIndex(t)
+	ctx := context.Background()
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range conventions {
+		if c.Category == CategoryTesting {
+			continue
+		}
+		hasName := false
+		for _, ex := range c.Examples {
+			if strings.Contains(c.Description, ex.Name) {
+				hasName = true
+				break
+			}
+		}
+		if !hasName {
+			t.Errorf("convention description %q does not contain any instance name from examples %v",
+				c.Description, c.Examples)
+		}
+	}
+
+	inh := findByCategory(conventions, CategoryInheritance)
+	for _, c := range inh {
+		if !strings.Contains(c.Description, "inherit") {
+			t.Errorf("inheritance convention should use 'inherit' format, got %q", c.Description)
+		}
+		if !strings.Contains(c.Description, "total)") {
+			t.Errorf("inheritance convention should contain total count, got %q", c.Description)
+		}
+	}
+
+	struc := findByCategory(conventions, CategoryStructure)
+	for _, c := range struc {
+		if !strings.Contains(c.Description, "pattern:") {
+			t.Errorf("structure convention should use 'pattern:' format, got %q", c.Description)
+		}
+	}
+}
+
 func findByCategory(conventions []Convention, cat Category) []Convention {
 	var out []Convention
 	for _, c := range conventions {
