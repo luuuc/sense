@@ -344,6 +344,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		_, _ = fmt.Fprintf(out, "skipped %d directories (default ignores: %s)\n",
 			res.DefaultIgnored, strings.Join(ignore.DefaultPatterns(), ", "))
 	}
+	if res.Warnings > 0 && !opts.Quiet {
+		_, _ = fmt.Fprintf(out, "%d warnings — see .sense/warnings.log\n", res.Warnings)
+	}
 	if embeddingDebt > 0 {
 		_, _ = fmt.Fprintf(out, "graph, blast, and conventions ready — embeddings deferred (%d symbols)\n", embeddingDebt)
 	}

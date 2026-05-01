@@ -757,7 +757,11 @@ func TestScanTolerantOfInvalidSource(t *testing.T) {
 	if res.Warnings == 0 {
 		t.Error("expected at least one warning for broken.go parse errors")
 	}
-	// Summary writer must be clean — warnings must not leak here.
+	// Summary should contain the hint line pointing to warnings.log.
+	if !strings.Contains(summary.String(), "warnings — see .sense/warnings.log") {
+		t.Errorf("summary missing warning hint line, got: %q", summary.String())
+	}
+	// But individual warning details must not leak into the summary.
 	if strings.Contains(summary.String(), "parse errors") {
 		t.Errorf("summary writer leaked warning text: %q", summary.String())
 	}
