@@ -71,11 +71,22 @@ type NextStep struct {
 // that do not compute it (the CLI in 01-04) omit the block entirely;
 // the MCP server in 01-05 always populates it.
 type GraphResponse struct {
-	Symbol       GraphSymbol  `json:"symbol"`
-	Edges        GraphEdges   `json:"edges"`
-	SenseMetrics GraphMetrics `json:"sense_metrics"`
-	Freshness    *Freshness   `json:"freshness,omitempty"`
-	NextSteps    []NextStep   `json:"next_steps"`
+	Symbol             GraphSymbol        `json:"symbol"`
+	Edges              GraphEdges         `json:"edges"`
+	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
+	SenseMetrics       GraphMetrics       `json:"sense_metrics"`
+	Freshness          *Freshness         `json:"freshness,omitempty"`
+	NextSteps          []NextStep         `json:"next_steps"`
+}
+
+// TestCallerSummary segments test callers out of the main called_by
+// list so the LLM focuses on production callers. When test callers
+// exceed 20, Examples holds 3 representative file paths instead of
+// the full list. Present only when there are test callers; nil
+// otherwise.
+type TestCallerSummary struct {
+	Count    int      `json:"count"`
+	Examples []string `json:"examples"`
 }
 
 // GraphSymbol is the focal symbol's identity block. File is always
@@ -197,6 +208,9 @@ type BlastResponse struct {
 	AffectedSubclasses     []BlastCaller `json:"affected_subclasses"`
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
 	AffectedViaIncludes    []BlastCaller `json:"affected_via_includes"`
+
+	ProductionAffected int `json:"production_affected"`
+	TestAffected       int `json:"test_affected"`
 
 	SenseMetrics BlastMetrics `json:"sense_metrics"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`

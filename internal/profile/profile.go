@@ -183,6 +183,7 @@ type Defaults struct {
 	BlastMaxHops           int
 	BlastMinConfidence     float64
 	BlastResultCap         int
+	GraphSegmentCallers    bool
 }
 
 func DefaultsForTier(tier string) Defaults {
@@ -197,6 +198,7 @@ func DefaultsForTier(tier string) Defaults {
 			BlastMaxHops:           5,
 			BlastMinConfidence:     0.3,
 			BlastResultCap:         200,
+			GraphSegmentCallers:    false,
 		}
 	case TierLarge:
 		return Defaults{
@@ -208,6 +210,7 @@ func DefaultsForTier(tier string) Defaults {
 			BlastMaxHops:           2,
 			BlastMinConfidence:     0.6,
 			BlastResultCap:         75,
+			GraphSegmentCallers:    true,
 		}
 	default:
 		return Defaults{
@@ -219,6 +222,7 @@ func DefaultsForTier(tier string) Defaults {
 			BlastMaxHops:           3,
 			BlastMinConfidence:     0.5,
 			BlastResultCap:         100,
+			GraphSegmentCallers:    true,
 		}
 	}
 }

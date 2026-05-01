@@ -369,7 +369,8 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 
 	resp := mcpio.BuildGraphResponse(sc, lookup, mcpio.BuildGraphRequest{
-		Direction: direction,
+		Direction:      direction,
+		SegmentCallers: h.defaults.GraphSegmentCallers,
 	})
 	h.tracker.Record("sense.graph", symbol,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
@@ -388,13 +389,17 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 func graphHints(resp mcpio.GraphResponse, direction string) []mcpio.NextStep {
 	var hints []mcpio.NextStep
 
-	if len(resp.Edges.CalledBy) >= 5 {
+	totalCallers := len(resp.Edges.CalledBy)
+	if resp.TestCallerSummary != nil {
+		totalCallers += resp.TestCallerSummary.Count
+	}
+	if totalCallers >= 5 {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.blast",
 			Args:   map[string]any{"symbol": resp.Symbol.Qualified},
-			Reason: fmt.Sprintf("%d callers found — check blast radius before changing this symbol", len(resp.Edges.CalledBy)),
+			Reason: fmt.Sprintf("%d callers found — check blast radius before changing this symbol", totalCallers),
 		})
-	} else if len(resp.Edges.CalledBy) == 0 && !isTestFile(resp.Symbol.File) {
+	} else if totalCallers == 0 && !isTestFile(resp.Symbol.File) {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.search",
 			Args:   map[string]any{"query": resp.Symbol.Name},
@@ -458,13 +463,7 @@ func deadCodeHints(resp mcpio.DeadCodeResponse) []mcpio.NextStep {
 }
 
 func isTestFile(path string) bool {
-	return strings.Contains(path, "_test.") ||
-		strings.Contains(path, "/test/") ||
-		strings.Contains(path, "/tests/") ||
-		strings.Contains(path, "/spec/") ||
-		strings.HasPrefix(path, "test/") ||
-		strings.HasPrefix(path, "tests/") ||
-		strings.HasPrefix(path, "spec/")
+	return mcpio.IsTestPath(path)
 }
 
 // ---------------------------------------------------------------

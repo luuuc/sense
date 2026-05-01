@@ -219,7 +219,9 @@ func fixtureBlastDiff() BlastResponse {
 			"test/controllers/orders_controller_test.rb",
 			"test/controllers/sessions_controller_test.rb",
 		},
-		TotalAffected: 6,
+		TotalAffected:      6,
+		ProductionAffected: 6,
+		TestAffected:       3,
 		SenseMetrics: BlastMetrics{
 			SymbolsTraversed:          9,
 			EstimatedFileReadsAvoided: 8,
@@ -250,7 +252,9 @@ func fixtureBlastUserEmailVerified() BlastResponse {
 			"test/controllers/admin/users_controller_test.rb",
 			"test/controllers/orders_controller_test.rb",
 		},
-		TotalAffected: 11,
+		TotalAffected:      11,
+		ProductionAffected: 5,
+		TestAffected:       6,
 		SenseMetrics: BlastMetrics{
 			SymbolsTraversed:          47,
 			EstimatedFileReadsAvoided: 10,
