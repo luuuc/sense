@@ -188,6 +188,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.Walk = time.Since(t0)
 
+	if fw := detectFrameworks(root); len(fw) > 0 {
+		if err := idx.WriteMeta(ctx, "frameworks", frameworksJSON(fw)); err != nil {
+			_, _ = fmt.Fprintf(warn, "warn: write frameworks meta: %v\n", err)
+		}
+	} else {
+		_ = idx.DeleteMeta(ctx, "frameworks")
+	}
+
 	t0 = time.Now()
 	if err := h.removeStaleFiles(); err != nil {
 		return nil, err
