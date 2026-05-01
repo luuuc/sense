@@ -10,6 +10,7 @@ Clone these repos locally before running the harness. Pin to exact commits for r
 | **discourse** | Ruby/Rails | `git clone https://github.com/discourse/discourse.git repos/discourse` | Pin on first clone |
 | **openproject** | Ruby/Rails | `git clone https://github.com/opf/openproject.git repos/openproject` | Pin on first clone |
 | **gin** | Go | `git clone https://github.com/gin-gonic/gin.git repos/gin` | Pin on first clone |
+| **maket** | Ruby/Rails | `git clone https://github.com/maket-store/maket-web.git repos/maket` | Pin on first clone |
 | **nextjs** | TypeScript | `git clone https://github.com/vercel/next.js.git repos/nextjs` | Pin on first clone |
 
 ## Pinning
@@ -44,4 +45,5 @@ git checkout $(python3 -c "import json; print(json.load(open('../PINNED_COMMITS.
 | discourse | ~21,500 | Ruby (~427k lines), TS/JS (~320k lines) |
 | openproject | ~20,600 | Ruby (~509k lines), TS/JS (~164k lines) |
 | gin | ~120 | Go |
+| maket | ~1,243 | Ruby (~207k lines) |
 | nextjs | ~8,000 | TypeScript |
