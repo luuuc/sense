@@ -225,6 +225,16 @@ def _strip_bare_go_package(symbol):
     return symbol
 
 
+_PYTHON_MODULE_RE = re.compile(r"^(?:[a-z][a-z0-9_]*\.){2,}(.+)$")
+
+
+def _strip_python_module_prefix(symbol):
+    m = _PYTHON_MODULE_RE.match(symbol)
+    if m:
+        return m.group(1)
+    return symbol
+
+
 _FILE_EXT_RE = re.compile(
     r"\.(ts|tsx|js|jsx|rb|py|go|rs|java|kt|scala|php|c|cpp|cs|h|hpp|swift|vue|svelte|ex|exs)$",
     re.IGNORECASE,
@@ -237,6 +247,8 @@ def _looks_like_path(s):
 
 def _extract_class_prefix(normalized):
     symbol = normalized.rsplit(":", 1)[-1] if ":" in normalized else normalized
+    if "::" in symbol:
+        symbol = symbol.split("::")[-1]
     m = re.match(r"^([^.#]+)[.#]", symbol)
     return m.group(1) if m else None
 
@@ -265,9 +277,9 @@ def normalize_caller(entry):
         if len(segments) >= 2 and segments[1].isdigit():
             symbol_part = segments[-1] if len(segments) > 2 else ""
         elif not _looks_like_path(segments[0]) and _looks_like_path(":".join(segments[1:])):
-            return _strip_bare_go_package(segments[0])
+            return _strip_python_module_prefix(_strip_bare_go_package(segments[0]))
     else:
-        return _strip_bare_go_package(entry)
+        return _strip_python_module_prefix(_strip_bare_go_package(entry))
 
     symbol_part = symbol_part.rstrip(")]}")
 
@@ -276,6 +288,11 @@ def normalize_caller(entry):
 
     if file_part.endswith(".go"):
         symbol_part = _strip_go_package(file_part, symbol_part)
+
+    if "::" in symbol_part:
+        symbol_part = symbol_part.split("::")[-1]
+
+    symbol_part = _strip_python_module_prefix(symbol_part)
 
     return file_part + ":" + symbol_part
 
@@ -308,6 +325,18 @@ def score_set_match(response_json, ground_truth, match_key):
         for fn_entry in sorted(remaining_fn):
             fn_symbol = fn_entry.rsplit(":", 1)[-1] if ":" in fn_entry else fn_entry
             if cls == fn_entry or cls == fn_symbol:
+                partial_matches.append({"found": fp_entry, "expected": fn_entry})
+                remaining_fp.discard(fp_entry)
+                remaining_fn.discard(fn_entry)
+                break
+
+    for fn_entry in sorted(set(remaining_fn)):
+        cls = _extract_class_prefix(fn_entry)
+        if not cls:
+            continue
+        for fp_entry in sorted(remaining_fp):
+            fp_symbol = fp_entry.rsplit(":", 1)[-1] if ":" in fp_entry else fp_entry
+            if cls == fp_entry or cls == fp_symbol:
                 partial_matches.append({"found": fp_entry, "expected": fn_entry})
                 remaining_fp.discard(fp_entry)
                 remaining_fn.discard(fn_entry)
