@@ -82,6 +82,31 @@ func CollectFileIDs(sc *model.SymbolContext) []int64 {
 	return ids
 }
 
+// CollectGraphFileIDs returns unique file IDs from a GraphResult,
+// including both the root symbol context and all multi-hop layers.
+func CollectGraphFileIDs(gr *model.GraphResult) []int64 {
+	ids := CollectFileIDs(&gr.Root)
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		seen[id] = struct{}{}
+	}
+	for _, layer := range gr.Layers {
+		for _, e := range layer.Outbound {
+			if _, ok := seen[e.Target.FileID]; !ok {
+				seen[e.Target.FileID] = struct{}{}
+				ids = append(ids, e.Target.FileID)
+			}
+		}
+		for _, e := range layer.Inbound {
+			if _, ok := seen[e.Target.FileID]; !ok {
+				seen[e.Target.FileID] = struct{}{}
+				ids = append(ids, e.Target.FileID)
+			}
+		}
+	}
+	return ids
+}
+
 // loadFilePaths bulk-fetches path strings for the given file ids,
 // keyed for O(1) lookup in the mcpio builders. Chunked on
 // SQLITE_MAX_VARIABLE_NUMBER (999) to stay safe on wide graph

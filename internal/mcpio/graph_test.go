@@ -73,12 +73,12 @@ func TestBuildGraphResponseComposesDirection(t *testing.T) {
 	}
 	files := func(int64) (string, bool) { return "", false }
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callees"})
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallees})
 	if len(resp.Edges.Composes) != 1 || resp.Edges.Composes[0].Symbol != "Order" {
 		t.Errorf("callees direction: want only outbound Order, got %v", resp.Edges.Composes)
 	}
 
-	resp = BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callers"})
+	resp = BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
 	if len(resp.Edges.Composes) != 1 || resp.Edges.Composes[0].Symbol != "Profile" {
 		t.Errorf("callers direction: want only inbound Profile, got %v", resp.Edges.Composes)
 	}
@@ -210,7 +210,7 @@ func TestBuildGraphResponseTemporalDirectionIndependent(t *testing.T) {
 	files := func(int64) (string, bool) { return "", false }
 
 	// Temporal should appear regardless of direction filter.
-	for _, dir := range []string{"both", "callers", "callees"} {
+	for _, dir := range []model.Direction{model.DirectionBoth, model.DirectionCallers, model.DirectionCallees} {
 		resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: dir})
 		if len(resp.Edges.Temporal) != 1 {
 			t.Errorf("direction=%q: Temporal = %d, want 1", dir, len(resp.Edges.Temporal))
@@ -247,7 +247,7 @@ func TestCallerSegmentation(t *testing.T) {
 		},
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callers", SegmentCallers: true})
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: true})
 
 	if len(resp.Edges.CalledBy) != 2 {
 		t.Fatalf("CalledBy (production) = %d, want 2", len(resp.Edges.CalledBy))
@@ -263,7 +263,7 @@ func TestCallerSegmentation(t *testing.T) {
 	}
 
 	// Without SegmentCallers, all callers stay in CalledBy.
-	resp = BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callers", SegmentCallers: false})
+	resp = BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: false})
 	if len(resp.Edges.CalledBy) != 5 {
 		t.Fatalf("CalledBy (unsegmented) = %d, want 5", len(resp.Edges.CalledBy))
 	}
@@ -311,7 +311,7 @@ func TestCallerSegmentationCollapseOver20(t *testing.T) {
 		Inbound: inbound,
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: "callers", SegmentCallers: true})
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: true})
 
 	if len(resp.Edges.CalledBy) != 1 {
 		t.Fatalf("CalledBy (production) = %d, want 1", len(resp.Edges.CalledBy))

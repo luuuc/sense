@@ -8,6 +8,11 @@ import (
 
 const testCallerCollapseThreshold = 20
 
+const (
+	MaxGraphDepth = 3
+	MaxPerHop     = 200
+)
+
 // FileLookup resolves a sense_files row id to its path. Used by
 // BuildGraphResponse / BuildBlastResponse to hydrate edge endpoints.
 // A miss returns ("", false); the builder then renders `File` as
@@ -20,7 +25,7 @@ type FileLookup func(fileID int64) (path string, ok bool)
 // caller has already loaded the SymbolContext at the right depth
 // from the DB layer.
 type BuildGraphRequest struct {
-	Direction       string // "both", "callers", "callees"; "" == "both"
+	Direction       model.Direction // DirectionBoth, DirectionCallers, DirectionCallees; "" == both
 	SegmentCallers  bool   // split callers into production vs test
 }
 
@@ -50,80 +55,20 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		},
 	}
 
-	wantOutbound := req.Direction != "callers"
-	wantInbound := req.Direction != "callees"
+	resp.Edges = categorizeEdges(sc.Outbound, sc.Inbound, files, req.Direction)
 
-	if wantOutbound {
-		for _, e := range sc.Outbound {
-			switch e.Edge.Kind {
-			case model.EdgeCalls:
-				resp.Edges.Calls = append(resp.Edges.Calls, CallEdgeRef{
-					Symbol:     qualifiedOrName(e.Target),
-					File:       fileRefOrNil(e.Target.FileID, files),
-					Confidence: Confidence(e.Edge.Confidence),
-				})
-			case model.EdgeInherits:
-				resp.Edges.Inherits = append(resp.Edges.Inherits, InheritEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
-				})
-			case model.EdgeComposes:
-				resp.Edges.Composes = append(resp.Edges.Composes, ComposeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
-				})
-			case model.EdgeIncludes:
-				resp.Edges.Includes = append(resp.Edges.Includes, IncludeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
-				})
-			case model.EdgeImports:
-				resp.Edges.Imports = append(resp.Edges.Imports, ImportEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
-				})
-			}
-		}
-	}
+	// Test-caller segmentation: split test callers out of CalledBy.
 	var testCallers []CallEdgeRef
-	if wantInbound {
-		for _, e := range sc.Inbound {
-			switch e.Edge.Kind {
-			case model.EdgeCalls:
-				ref := CallEdgeRef{
-					Symbol:     qualifiedOrName(e.Target),
-					File:       fileRefOrNil(e.Target.FileID, files),
-					Confidence: Confidence(e.Edge.Confidence),
-				}
-				if req.SegmentCallers && ref.File != nil && IsTestPath(*ref.File) {
-					testCallers = append(testCallers, ref)
-				} else {
-					resp.Edges.CalledBy = append(resp.Edges.CalledBy, ref)
-				}
-			case model.EdgeComposes:
-				resp.Edges.Composes = append(resp.Edges.Composes, ComposeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
-				})
-			case model.EdgeIncludes:
-				resp.Edges.Includes = append(resp.Edges.Includes, IncludeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
-				})
-			case model.EdgeImports:
-				resp.Edges.Imports = append(resp.Edges.Imports, ImportEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
-				})
-			case model.EdgeTests:
-				if path, ok := files(e.Target.FileID); ok {
-					resp.Edges.Tests = append(resp.Edges.Tests, TestEdgeRef{
-						File:       path,
-						Confidence: Confidence(e.Edge.Confidence),
-					})
-				}
+	if req.SegmentCallers && len(resp.Edges.CalledBy) > 0 {
+		prod := resp.Edges.CalledBy[:0]
+		for _, ref := range resp.Edges.CalledBy {
+			if ref.File != nil && IsTestPath(*ref.File) {
+				testCallers = append(testCallers, ref)
+			} else {
+				prod = append(prod, ref)
 			}
 		}
+		resp.Edges.CalledBy = prod
 	}
 
 	// Temporal edges are bidirectional — collect from outbound to get one
@@ -186,6 +131,115 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 	return resp
 }
 
+// BuildFullGraphResponse builds the complete response for a multi-hop
+// graph result, including root edges and any transitive layers.
+// Metrics are recomputed after layers are added so they account for
+// the full traversal, not just depth-1 edges.
+func BuildFullGraphResponse(gr *model.GraphResult, files FileLookup, req BuildGraphRequest) GraphResponse {
+	resp := BuildGraphResponse(&gr.Root, files, req)
+	for i, layer := range gr.Layers {
+		resp.Layers = append(resp.Layers, BuildGraphLayer(layer, i+2, files, req))
+	}
+	resp.Truncated = gr.Truncated
+
+	if len(resp.Layers) > 0 {
+		for _, l := range resp.Layers {
+			resp.SenseMetrics.SymbolsReturned += countEdgeSymbols(l.Edges)
+		}
+		uniqueFiles := countUniqueEdgeFiles(resp, nil)
+		resp.SenseMetrics.EstimatedFileReadsAvoided = uniqueFiles
+		resp.SenseMetrics.EstimatedTokensSaved = uniqueFiles * AvgTokensPerFile
+	}
+	return resp
+}
+
+// BuildGraphLayer converts a model.HopEdges into a wire-format
+// GraphLayer for the given hop depth.
+func BuildGraphLayer(hop model.HopEdges, depth int, files FileLookup, req BuildGraphRequest) GraphLayer {
+	return GraphLayer{
+		Depth: depth,
+		Edges: categorizeEdges(hop.Outbound, hop.Inbound, files, req.Direction),
+	}
+}
+
+// categorizeEdges maps model edge refs into the wire-format GraphEdges
+// shape, dispatching each edge kind to the right bucket. Temporal edges
+// and test-caller segmentation are root-only concerns handled by
+// BuildGraphResponse on top of this.
+func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direction model.Direction) GraphEdges {
+	var edges GraphEdges
+
+	if direction != model.DirectionCallers {
+		for _, e := range outbound {
+			switch e.Edge.Kind {
+			case model.EdgeCalls:
+				edges.Calls = append(edges.Calls, CallEdgeRef{
+					Symbol:     qualifiedOrName(e.Target),
+					File:       fileRefOrNil(e.Target.FileID, files),
+					Confidence: Confidence(e.Edge.Confidence),
+				})
+			case model.EdgeInherits:
+				edges.Inherits = append(edges.Inherits, InheritEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeComposes:
+				edges.Composes = append(edges.Composes, ComposeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeIncludes:
+				edges.Includes = append(edges.Includes, IncludeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeImports:
+				edges.Imports = append(edges.Imports, ImportEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			}
+		}
+	}
+
+	if direction != model.DirectionCallees {
+		for _, e := range inbound {
+			switch e.Edge.Kind {
+			case model.EdgeCalls:
+				edges.CalledBy = append(edges.CalledBy, CallEdgeRef{
+					Symbol:     qualifiedOrName(e.Target),
+					File:       fileRefOrNil(e.Target.FileID, files),
+					Confidence: Confidence(e.Edge.Confidence),
+				})
+			case model.EdgeComposes:
+				edges.Composes = append(edges.Composes, ComposeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeIncludes:
+				edges.Includes = append(edges.Includes, IncludeEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeImports:
+				edges.Imports = append(edges.Imports, ImportEdgeRef{
+					Symbol: qualifiedOrName(e.Target),
+					File:   fileRefOrNil(e.Target.FileID, files),
+				})
+			case model.EdgeTests:
+				if path, ok := files(e.Target.FileID); ok {
+					edges.Tests = append(edges.Tests, TestEdgeRef{
+						File:       path,
+						Confidence: Confidence(e.Edge.Confidence),
+					})
+				}
+			}
+		}
+	}
+
+	return edges
+}
+
 // qualifiedOrName prefers the qualified name but falls back to the
 // bare name when qualified is empty — defensive against extractors
 // that only emit unqualified identifiers for some kinds.
@@ -196,52 +250,66 @@ func qualifiedOrName(s model.Symbol) string {
 	return s.Name
 }
 
+func countEdgeSymbols(edges GraphEdges) int {
+	return len(edges.Calls) + len(edges.CalledBy) +
+		len(edges.Inherits) + len(edges.Composes) +
+		len(edges.Includes) + len(edges.Imports) +
+		len(edges.Tests) + len(edges.Temporal)
+}
+
 func countUniqueEdgeFiles(resp GraphResponse, testCallers []CallEdgeRef) int {
 	seen := map[string]struct{}{}
-	for _, e := range resp.Edges.Calls {
-		if e.File != nil {
-			seen[*e.File] = struct{}{}
-		}
-	}
-	for _, e := range resp.Edges.CalledBy {
-		if e.File != nil {
-			seen[*e.File] = struct{}{}
-		}
+	collectEdgeFiles(resp.Edges, seen)
+	for _, l := range resp.Layers {
+		collectEdgeFiles(l.Edges, seen)
 	}
 	for _, e := range testCallers {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
 	}
-	for _, e := range resp.Edges.Inherits {
+	return len(seen)
+}
+
+func collectEdgeFiles(edges GraphEdges, seen map[string]struct{}) {
+	for _, e := range edges.Calls {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
 	}
-	for _, e := range resp.Edges.Composes {
+	for _, e := range edges.CalledBy {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
 	}
-	for _, e := range resp.Edges.Includes {
+	for _, e := range edges.Inherits {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
 	}
-	for _, e := range resp.Edges.Imports {
+	for _, e := range edges.Composes {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
 	}
-	for _, e := range resp.Edges.Tests {
+	for _, e := range edges.Includes {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range edges.Imports {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range edges.Tests {
 		seen[e.File] = struct{}{}
 	}
-	for _, e := range resp.Edges.Temporal {
+	for _, e := range edges.Temporal {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
 	}
-	return len(seen)
 }
 
 // fileRefOrNil turns a FileID into a *string via FileLookup.

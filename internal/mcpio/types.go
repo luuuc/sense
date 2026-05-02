@@ -73,10 +73,20 @@ type NextStep struct {
 type GraphResponse struct {
 	Symbol             GraphSymbol        `json:"symbol"`
 	Edges              GraphEdges         `json:"edges"`
+	Layers             []GraphLayer       `json:"layers,omitempty"`
+	Truncated          bool               `json:"truncated,omitempty"`
 	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
 	SenseMetrics       GraphMetrics       `json:"sense_metrics"`
 	Freshness          *Freshness         `json:"freshness,omitempty"`
 	NextSteps          []NextStep         `json:"next_steps"`
+}
+
+// GraphLayer holds edges discovered at one BFS hop beyond the root.
+// Depth is the hop number (2, 3, …). Edges use the same shape as the
+// root's edges so the LLM can process them uniformly.
+type GraphLayer struct {
+	Depth int        `json:"depth"`
+	Edges GraphEdges `json:"edges"`
 }
 
 // TestCallerSummary segments test callers out of the main called_by

@@ -29,6 +29,7 @@ import (
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/metrics"
 	"github.com/luuuc/sense/internal/profile"
 	"github.com/luuuc/sense/internal/scan"
@@ -349,11 +350,19 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 
 	depth := req.GetInt("depth", 1)
-	if depth != 1 {
-		return mcp.NewToolResultError("sense.graph: --depth > 1 is not yet supported"), nil
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > mcpio.MaxGraphDepth {
+		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth)), nil
 	}
 
-	direction := req.GetString("direction", "both")
+	direction := model.Direction(req.GetString("direction", "both"))
+	switch direction {
+	case model.DirectionBoth, model.DirectionCallers, model.DirectionCallees:
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: direction must be both, callers, or callees (got %q)", direction)), nil
+	}
 
 	match, err := h.resolveSymbol(ctx, "sense.graph", symbol)
 	if err != nil {
@@ -363,12 +372,12 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return nil, err
 	}
 
-	sc, err := h.adapter.ReadSymbol(ctx, match.ID)
+	gr, err := h.adapter.ReadSymbolGraph(ctx, match.ID, depth, direction, mcpio.MaxPerHop)
 	if err != nil {
 		return nil, fmt.Errorf("sense.graph: read symbol: %w", err)
 	}
 
-	fileIDs := cli.CollectFileIDs(sc)
+	fileIDs := cli.CollectGraphFileIDs(gr)
 	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
 	if err != nil {
 		return nil, fmt.Errorf("sense.graph: load file paths: %w", err)
@@ -378,10 +387,11 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return p, ok
 	}
 
-	resp := mcpio.BuildGraphResponse(sc, lookup, mcpio.BuildGraphRequest{
+	buildReq := mcpio.BuildGraphRequest{
 		Direction:      direction,
 		SegmentCallers: h.defaults.GraphSegmentCallers,
-	})
+	}
+	resp := mcpio.BuildFullGraphResponse(gr, lookup, buildReq)
 	h.tracker.Record("sense.graph", symbol,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
@@ -396,7 +406,7 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func graphHints(resp mcpio.GraphResponse, direction string) []mcpio.NextStep {
+func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.NextStep {
 	var hints []mcpio.NextStep
 
 	totalCallers := len(resp.Edges.CalledBy)
@@ -417,7 +427,7 @@ func graphHints(resp mcpio.GraphResponse, direction string) []mcpio.NextStep {
 		})
 	}
 
-	if direction == "callers" && len(hints) < 2 {
+	if direction == model.DirectionCallers && len(hints) < 2 {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.graph",
 			Args:   map[string]any{"symbol": resp.Symbol.Qualified, "direction": "callees"},
