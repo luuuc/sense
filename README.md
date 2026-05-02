@@ -1,4 +1,4 @@
-[![CI](https://github.com/luuuc/sense/actions/workflows/ci.yml/badge.svg)](https://github.com/luuuc/sense/actions/workflows/ci.yml) [![CodeQL](https://github.com/luuuc/sense/actions/workflows/codeql.yml/badge.svg)](https://github.com/luuuc/sense/actions/workflows/codeql.yml) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12729/badge)](https://www.bestpractices.dev/projects/12729)
+[![CI](https://github.com/luuuc/sense/actions/workflows/ci.yml/badge.svg)](https://github.com/luuuc/sense/actions/workflows/ci.yml)  [![CodeQL](https://github.com/luuuc/sense/actions/workflows/codeql.yml/badge.svg)](https://github.com/luuuc/sense/actions/workflows/codeql.yml) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12729/badge)](https://www.bestpractices.dev/projects/12729)
 
 # Sense ⠎⠑⠝⠎⠑
 
