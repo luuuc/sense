@@ -19,6 +19,8 @@ FILTER_REPOS=""
 FILTER_TASKS=""
 DRY_RUN=false
 VERIFY_ISOLATION=false
+RESET=false
+NUM_RUNS=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,10 +29,12 @@ while [[ $# -gt 0 ]]; do
     --task)  FILTER_TASKS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --verify-isolation) VERIFY_ISOLATION=true; shift ;;
+    --reset) RESET=true; shift ;;
     --budget) MAX_BUDGET_USD="$2"; shift 2 ;;
     --timeout) SESSION_TIMEOUT="$2"; shift 2 ;;
+    --runs) NUM_RUNS="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: run.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2] [--dry-run] [--verify-isolation] [--budget USD] [--timeout SECS]"
+      echo "Usage: run.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2] [--runs N] [--dry-run] [--reset] [--verify-isolation] [--budget USD] [--timeout SECS]"
       echo ""
       echo "Runs the competitive evaluation harness: tool × repo × task."
       echo ""
@@ -38,7 +42,9 @@ while [[ $# -gt 0 ]]; do
       echo "  --tool    Comma-separated tool filter (e.g. sense,baseline)"
       echo "  --repo    Comma-separated repo filter (e.g. sense,discourse)"
       echo "  --task    Comma-separated task filter (e.g. callers,blast-radius)"
+      echo "  --runs    Number of runs per combination for variance estimation (default: 1)"
       echo "  --dry-run Show what would run without executing Claude sessions"
+      echo "  --reset   Delete existing indexes and workspaces to measure fresh scan time"
       echo "  --verify-isolation Scan existing transcripts for Sense MCP contamination"
       echo "  --budget  Max USD per Claude session (default: $MAX_BUDGET_USD)"
       echo "  --timeout Max seconds per Claude session (default: $SESSION_TIMEOUT)"
@@ -71,7 +77,12 @@ check_pinned_commit() {
     return 0
   fi
   local pinned
-  pinned=$(python3 -c "import sys,json; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print(v if v else '')" "$PINNED_COMMITS" "$repo")
+  pinned=$(python3 -c "
+import sys,json
+v=json.load(open(sys.argv[1])).get(sys.argv[2])
+if isinstance(v, dict): v=v.get('commit')
+print(v if v else '')
+" "$PINNED_COMMITS" "$repo")
   if [[ -z "$pinned" ]]; then
     log "  WARNING: no pinned commit for $repo — ground-truth may not match"
     return 0
@@ -202,7 +213,7 @@ for tool in "${tools[@]}"; do
   for task in "${tasks[@]}"; do
     for repo in $(task_repos "$task"); do
       matches_filter "$repo" "$FILTER_REPOS" || continue
-      total_runs=$((total_runs + 1))
+      total_runs=$((total_runs + NUM_RUNS))
     done
   done
 done
@@ -219,11 +230,17 @@ if $DRY_RUN; then
   for tool in "${tools[@]}"; do
     for repo in "${all_repos[@]}"; do
       for task in $(tasks_for_repo "$repo"); do
-        run_num=$((run_num + 1))
-        rp=$(repo_path "$repo")
-        exists="YES"
-        [[ -d "$rp" ]] || exists="MISSING"
-        echo "  [$run_num/$total_runs] tool=$tool repo=$repo ($exists) task=$task"
+        for run_idx in $(seq 1 $NUM_RUNS); do
+          run_num=$((run_num + 1))
+          rp=$(repo_path "$repo")
+          exists="YES"
+          [[ -d "$rp" ]] || exists="MISSING"
+          if [[ $NUM_RUNS -gt 1 ]]; then
+            echo "  [$run_num/$total_runs] tool=$tool repo=$repo ($exists) task=$task run=$run_idx/$NUM_RUNS"
+          else
+            echo "  [$run_num/$total_runs] tool=$tool repo=$repo ($exists) task=$task"
+          fi
+        done
       done
     done
   done
@@ -307,10 +324,12 @@ for tool in "${tools[@]}"; do
     rp=$(repo_path "$repo")
     if [[ ! -d "$rp" ]]; then
       for task in $(tasks_for_repo "$repo"); do
-        run_num=$((run_num + 1))
-        log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
-        log "  SKIP: repo directory not found: $rp"
-        skipped=$((skipped + 1))
+        for run_idx in $(seq 1 $NUM_RUNS); do
+          run_num=$((run_num + 1))
+          log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
+          log "  SKIP: repo directory not found: $rp"
+          skipped=$((skipped + 1))
+        done
       done
       continue
     fi
@@ -320,6 +339,23 @@ for tool in "${tools[@]}"; do
     # Persistent workspace per tool+repo (survives across runs, holds venvs)
     workspace="$RESULTS_DIR/$tool/$repo/.workspace"
     mkdir -p "$workspace"
+
+    if $RESET; then
+      log "  resetting $tool for $repo..."
+      # Remove tool-specific index dirs from repo
+      case "$tool" in
+        codebase-memory-mcp) rm -rf "$workspace/.cbm-cache" ;;
+        gitnexus)  rm -rf "$rp/.gitnexus" ;;
+        grepai)    rm -rf "$rp/.grepai" ;;
+        roam)      rm -rf "$rp/.roam" ;;
+        sense)     rm -rf "$rp/.sense" ;;
+        tokensave) rm -rf "$rp/.tokensave" ;;
+      esac
+      # Remove workspace to force full re-setup
+      rm -rf "$workspace"
+      mkdir -p "$workspace"
+    fi
+
     first_task="$(tasks_for_repo "$repo" | awk '{print $1}')"
     setup_result_dir="$RESULTS_DIR/$tool/$repo/$first_task"
     mkdir -p "$setup_result_dir"
@@ -334,12 +370,14 @@ for tool in "${tools[@]}"; do
       if ! "$TOOLS_DIR/$tool.sh" "$rp" "$workspace" 2>"$setup_result_dir/setup.log"; then
         log "  FAIL: setup failed (see $setup_result_dir/setup.log)"
         for task in $(tasks_for_repo "$repo"); do
-          run_num=$((run_num + 1))
-          log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task — setup failed"
-          result_dir="$RESULTS_DIR/$tool/$repo/$task"
-          mkdir -p "$result_dir"
-          echo '{"index_completeness": "setup_failed"}' > "$result_dir/index_meta.json"
-          failed=$((failed + 1))
+          for run_idx in $(seq 1 $NUM_RUNS); do
+            run_num=$((run_num + 1))
+            log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task — setup failed"
+            result_dir="$RESULTS_DIR/$tool/$repo/$task"
+            mkdir -p "$result_dir"
+            echo '{"index_completeness": "setup_failed"}' > "$result_dir/index_meta.json"
+            failed=$((failed + 1))
+          done
         done
         continue
       fi
@@ -366,17 +404,19 @@ for tool in "${tools[@]}"; do
 
       if [[ "$ready" != "true" ]]; then
         for task in $(tasks_for_repo "$repo"); do
-          run_num=$((run_num + 1))
-          log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task — index not ready"
-          result_dir="$RESULTS_DIR/$tool/$repo/$task"
-          mkdir -p "$result_dir"
-          if [[ "$broken" == "true" ]]; then
-            echo '{"index_completeness": "broken"}' > "$result_dir/index_meta.json"
-            failed=$((failed + 1))
-          else
-            echo '{"index_completeness": "timeout"}' > "$result_dir/index_meta.json"
-            skipped=$((skipped + 1))
-          fi
+          for run_idx in $(seq 1 $NUM_RUNS); do
+            run_num=$((run_num + 1))
+            log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task — index not ready"
+            result_dir="$RESULTS_DIR/$tool/$repo/$task"
+            mkdir -p "$result_dir"
+            if [[ "$broken" == "true" ]]; then
+              echo '{"index_completeness": "broken"}' > "$result_dir/index_meta.json"
+              failed=$((failed + 1))
+            else
+              echo '{"index_completeness": "timeout"}' > "$result_dir/index_meta.json"
+              skipped=$((skipped + 1))
+            fi
+          done
         done
         continue
       fi
@@ -384,6 +424,11 @@ for tool in "${tools[@]}"; do
 
     index_meta=$(cat "$setup_result_dir/index_meta.json")
     log "  index ready: $index_meta"
+
+    # Copy setup timing if available
+    if [[ -f "$workspace/index_meta_setup.json" ]]; then
+      cp "$workspace/index_meta_setup.json" "$setup_result_dir/index_meta_setup.json"
+    fi
 
     # Hide repo-level AI config so only workspace config is active during Claude sessions
     for f in "${AI_CONFIG_FILES[@]}"; do
@@ -393,14 +438,20 @@ for tool in "${tools[@]}"; do
     # Run all tasks for this tool+repo
     claude_md=$(cat "$workspace/CLAUDE.md")
     for task in $(tasks_for_repo "$repo"); do
+      for run_idx in $(seq 1 $NUM_RUNS); do
       run_num=$((run_num + 1))
-      log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
-
-      result_dir="$RESULTS_DIR/$tool/$repo/$task"
+      if [[ $NUM_RUNS -gt 1 ]]; then
+        log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task run=$run_idx/$NUM_RUNS"
+        result_dir="$RESULTS_DIR/$tool/$repo/$task/run-$run_idx"
+      else
+        log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
+        result_dir="$RESULTS_DIR/$tool/$repo/$task"
+      fi
       mkdir -p "$result_dir"
 
-      # Copy index_meta to each task result
+      # Copy index_meta and setup timing to each task result
       echo "$index_meta" > "$result_dir/index_meta.json"
+      [[ -f "$workspace/index_meta_setup.json" ]] && cp "$workspace/index_meta_setup.json" "$result_dir/index_meta_setup.json"
 
       # Render prompt
       rendered=$(task_json "$task" | python3 -c "
@@ -479,6 +530,7 @@ print()
         echo "{\"error\": \"claude_session_failed\", \"wall_time_seconds\": $wall_time}" > "$result_dir/run_meta.json"
         failed=$((failed + 1))
       fi
+      done
     done
 
     # Restore repo-level AI config

@@ -1,0 +1,56 @@
+name: grep-task
+description: Find all locations matching a specific code pattern (exact text search)
+variables: [pattern, description]
+prompt_template: |
+  Find all locations in this codebase that match: {description}
+  Search for the pattern `{pattern}` and list each file with the
+  matching line number and the enclosing function/method name.
+  Do not use Explore agents.
+  Respond with a JSON object: { "matches": ["file:line symbol", ...] }
+
+repos:
+  flask:
+    pattern: "TODO"
+    description: "TODO comments left by developers"
+    ground_truth_file: ground-truth/flask/grep-task.json
+  discourse:
+    pattern: "# frozen_string_literal"
+    description: "files with the frozen_string_literal pragma"
+    ground_truth_file: ground-truth/discourse/grep-task.json
+  openproject:
+    pattern: "raise NotImplementedError"
+    description: "methods that raise NotImplementedError"
+    ground_truth_file: ground-truth/openproject/grep-task.json
+  gin:
+    pattern: "deprecated"
+    description: "deprecated functions or methods"
+    ground_truth_file: ground-truth/gin/grep-task.json
+  maket:
+    pattern: "before_action"
+    description: "before_action callbacks in controllers"
+    ground_truth_file: ground-truth/maket/grep-task.json
+  nextjs:
+    pattern: "process.env"
+    description: "environment variable access via process.env"
+    ground_truth_file: ground-truth/nextjs/grep-task.json
+  javalin:
+    pattern: "@JvmStatic"
+    description: "JVM static annotations"
+    ground_truth_file: ground-truth/javalin/grep-task.json
+  axum:
+    pattern: "async fn"
+    description: "async function definitions"
+    ground_truth_file: ground-truth/axum/grep-task.json
+
+scoring:
+  correctness:
+    type: set_match
+    match_key: matches
+    partial_credit: true
+  metrics:
+    - tool_calls
+    - token_input
+    - token_output
+    - wall_time
+    - misses
+    - index_completeness

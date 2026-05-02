@@ -337,7 +337,8 @@ def score_set_match(response_json, ground_truth, match_key):
 TOOL_CAPABILITIES = {
     "sense": {"search", "graph", "blast", "conventions"},
     "grepai": {"search", "graph"},
-    "crg": {"graph", "search"},
+    "codebase-memory-mcp": {"graph", "search"},
+    "gitnexus": {"search", "graph", "blast"},
     "tokensave": {"search", "graph", "blast"},
     "roam": {"graph", "search"},
     "baseline": set(),
@@ -480,6 +481,23 @@ def detect_misses(tool_calls, tool_name):
     }
 
 
+def _keyword_matches(keyword, text_lower):
+    """Check if a keyword matches text -- exact match first, then word proximity."""
+    if keyword.lower() in text_lower:
+        return True
+    # Word proximity: all significant words within a 200-char window
+    words = [w for w in keyword.lower().split() if len(w) > 3]
+    if len(words) < 2:
+        return False  # single significant word -- exact match only
+    # Sliding window check
+    window = 200
+    for i in range(max(1, len(text_lower) - window + 1)):
+        chunk = text_lower[i:i + window]
+        if all(w in chunk for w in words):
+            return True
+    return False
+
+
 def score_keyword_presence(text, ground_truth, match_key):
     """Score qualitative response by keyword presence."""
     keywords = ground_truth.get(match_key, [])
@@ -487,8 +505,8 @@ def score_keyword_presence(text, ground_truth, match_key):
         keywords = []
 
     text_lower = text.lower()
-    found = [k for k in keywords if k.lower() in text_lower]
-    missing = [k for k in keywords if k.lower() not in text_lower]
+    found = [k for k in keywords if _keyword_matches(k, text_lower)]
+    missing = [k for k in keywords if not _keyword_matches(k, text_lower)]
     score = len(found) / len(keywords) if keywords else 0.0
 
     return {

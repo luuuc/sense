@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from scorer import (
     _extract_class_prefix,
+    _keyword_matches,
     classify_tool_calls,
     detect_misses,
     extract_json_from_text,
@@ -308,6 +309,60 @@ class TestScoreKeywordPresence(unittest.TestCase):
     def test_empty_keywords(self):
         result = score_keyword_presence("anything", {"keywords": []}, "keywords")
         self.assertEqual(result["score"], 0.0)
+
+    def test_word_proximity_match(self):
+        text = "The Engine serves as the central router for all HTTP requests"
+        gt = {"keywords": ["Engine as central router"]}
+        result = score_keyword_presence(text, gt, "keywords")
+        self.assertEqual(result["score"], 1.0)
+        self.assertEqual(result["found_keywords"], ["Engine as central router"])
+
+    def test_word_proximity_no_match_when_words_far_apart(self):
+        text = ("The Engine handles startup. " + "x" * 300 +
+                " The central router is elsewhere.")
+        gt = {"keywords": ["Engine as central router"]}
+        result = score_keyword_presence(text, gt, "keywords")
+        self.assertEqual(result["score"], 0.0)
+
+    def test_word_proximity_single_significant_word_no_fallback(self):
+        # "HTTP web framework" has only 2 significant words (>3 chars):
+        # "framework" — wait, "HTTP" is 4 chars so it counts too.
+        # Single significant word keywords should NOT use proximity.
+        text = "This is a web application"
+        gt = {"keywords": ["web"]}
+        result = score_keyword_presence(text, gt, "keywords")
+        self.assertEqual(result["score"], 1.0)  # exact match works
+
+
+class TestKeywordMatches(unittest.TestCase):
+    def test_exact_match(self):
+        self.assertTrue(_keyword_matches("tree-sitter", "uses tree-sitter for parsing"))
+
+    def test_exact_match_case_insensitive(self):
+        self.assertTrue(_keyword_matches("SQLite", "uses sqlite storage"))
+
+    def test_proximity_match(self):
+        self.assertTrue(_keyword_matches(
+            "Engine as central router",
+            "the engine serves as the central router for requests",
+        ))
+
+    def test_proximity_no_match_far_apart(self):
+        text = "the engine handles startup. " + "x" * 300 + " the central router is here."
+        self.assertFalse(_keyword_matches("Engine as central router", text))
+
+    def test_single_significant_word_exact_only(self):
+        # "large hub" has one word >3 chars ("large") — not enough for proximity.
+        # And "large hub" is not a substring of the text, so no exact match either.
+        self.assertFalse(_keyword_matches("large hub", "this is a large server application"))
+
+    def test_no_significant_words(self):
+        # All words <= 3 chars — no proximity fallback, exact only
+        self.assertFalse(_keyword_matches("foo bar", "contains foo and bar separately"))
+
+    def test_proximity_within_window(self):
+        text = "the context carries the request state efficiently"
+        self.assertTrue(_keyword_matches("Context carries request state", text))
 
 
 class TestExtractJsonFromText(unittest.TestCase):

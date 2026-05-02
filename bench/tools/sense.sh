@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TOOL_NAME="sense"
-TOOL_VERSION="0.30.0"
+TOOL_VERSION=""
 
 usage() {
   echo "Usage: $0 [--check-ready|--write-config] <repo_path> <workspace_path>"
@@ -94,15 +94,20 @@ setup() {
     exit 2
   fi
 
-  local version
-  version=$(sense --version 2>/dev/null || echo "unknown")
-  echo "[$TOOL_NAME] Using sense $version (pinned: $TOOL_VERSION)" >&2
+  TOOL_VERSION=$(sense --version 2>/dev/null || echo "dev")
+  echo "[$TOOL_NAME] Using sense $TOOL_VERSION" >&2
 
   echo "[$TOOL_NAME] Indexing $repo..." >&2
+  local start_time end_time
+  start_time=$(date +%s)
   sense scan --dir "$repo" -embed
+  end_time=$(date +%s)
 
   echo "[$TOOL_NAME] Writing config to $workspace..." >&2
   write_config "$repo" "$workspace"
+
+  # sense scan -embed does parsing + embedding in one pass — no deferred work
+  echo "{\"setup_time_seconds\": $((end_time - start_time)), \"includes_embeddings\": true, \"deferred_embeddings\": false}" > "$workspace/index_meta_setup.json"
 
   echo "[$TOOL_NAME] Setup complete." >&2
 }

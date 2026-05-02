@@ -4,7 +4,7 @@ set -euo pipefail
 # Setup tool indexes for benchmark repos.
 #
 # Run this once (or after adding repos/tools). Indexes persist in repo dirs
-# (.sense/, .roam/, .code-review-graph/, .grepai/, .tokensave/).
+# (.sense/, .roam/, .gitnexus/, .grepai/, .tokensave/, .cbm-cache/).
 # run.sh skips setup when the tool is already indexed.
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
