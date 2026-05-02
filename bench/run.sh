@@ -11,6 +11,7 @@ SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benc
 REF_DIR="$SENSE_BENCH_ROOT/_reference"
 READY_POLL_INTERVAL=5
 READY_POLL_MAX=720  # 60 minutes at 5s intervals
+SETUP_TIMEOUT=600   # 10 minutes max for initial setup
 MAX_BUDGET_USD="1.00"
 SESSION_TIMEOUT=600  # 10 minutes per Claude session
 
@@ -57,6 +58,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Helpers ---
+
+# Portable timeout (macOS has no coreutils timeout)
+run_with_timeout() {
+  local secs="$1"; shift
+  "$@" &
+  local pid=$!
+  ( sleep "$secs" && kill "$pid" 2>/dev/null ) &
+  local watcher=$!
+  wait "$pid" 2>/dev/null
+  local rc=$?
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  return $rc
+}
 
 matches_filter() {
   local value="$1"
@@ -389,7 +404,7 @@ for tool in "${tools[@]}"; do
       "$TOOLS_DIR/$tool.sh" --write-config "$rp" "$workspace"
     else
       log "  setting up $tool for $repo (workspace: $workspace)..."
-      if ! "$TOOLS_DIR/$tool.sh" "$rp" "$workspace" 2>"$setup_result_dir/setup.log"; then
+      if ! run_with_timeout "$SETUP_TIMEOUT" "$TOOLS_DIR/$tool.sh" "$rp" "$workspace" 2>"$setup_result_dir/setup.log"; then
         log "  FAIL: setup failed (see $setup_result_dir/setup.log)"
         for task in $(tasks_for_repo "$repo"); do
           for run_idx in $(seq 1 $NUM_RUNS); do

@@ -12,6 +12,7 @@ REF_DIR="$SENSE_BENCH_ROOT/_reference"
 PINNED_COMMITS="$BENCH_DIR/PINNED_COMMITS.json"
 READY_POLL_INTERVAL=5
 READY_POLL_MAX=720  # 60 minutes at 5s intervals
+SETUP_TIMEOUT=600   # 10 minutes max for initial setup
 
 # --- Argument parsing ---
 
@@ -25,18 +26,20 @@ while [[ $# -gt 0 ]]; do
     --tool)   FILTER_TOOLS="$2"; shift 2 ;;
     --repo)   FILTER_REPOS="$2"; shift 2 ;;
     --report) RUN_REPORT=true; shift ;;
-    --force)  FORCE=true; shift ;;
+    --force)   FORCE=true; shift ;;
+    --timeout) SETUP_TIMEOUT="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: scan.sh [--tool t1,t2] [--repo r1,r2] [--force] [--report]"
+      echo "Usage: scan.sh [--tool t1,t2] [--repo r1,r2] [--force] [--timeout N] [--report]"
       echo ""
       echo "Scan all tool × repo pairs, measuring cold-start timing."
       echo "Skips already-indexed repos unless --force is passed."
       echo ""
       echo "Options:"
-      echo "  --tool    Comma-separated tool filter (e.g. sense,grepai)"
-      echo "  --repo    Comma-separated repo filter (e.g. flask,discourse)"
-      echo "  --force   Delete existing indexes before scanning"
-      echo "  --report  Run report.sh after all scans complete"
+      echo "  --tool      Comma-separated tool filter (e.g. sense,grepai)"
+      echo "  --repo      Comma-separated repo filter (e.g. flask,discourse)"
+      echo "  --force     Delete existing indexes before scanning"
+      echo "  --timeout N Max seconds for setup per tool×repo (default: 600)"
+      echo "  --report    Run report.sh after all scans complete"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -44,6 +47,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Helpers ---
+
+# Portable timeout (macOS has no coreutils timeout)
+run_with_timeout() {
+  local secs="$1"; shift
+  "$@" &
+  local pid=$!
+  ( sleep "$secs" && kill "$pid" 2>/dev/null ) &
+  local watcher=$!
+  wait "$pid" 2>/dev/null
+  local rc=$?
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  return $rc
+}
 
 matches_filter() {
   local value="$1"
@@ -225,10 +242,14 @@ for tool in "${tools[@]}"; do
     result_dir="$RESULTS_DIR/$tool/$repo/$first_task"
     mkdir -p "$result_dir"
 
-    if ! "$TOOLS_DIR/$tool.sh" "$rp" "$workspace" 2>"$result_dir/setup.log"; then
+    if ! run_with_timeout "$SETUP_TIMEOUT" "$TOOLS_DIR/$tool.sh" "$rp" "$workspace" 2>"$result_dir/setup.log"; then
       scan_end=$(date +%s)
       elapsed=$((scan_end - scan_start))
-      log "  FAIL: setup failed after ${elapsed}s (see $result_dir/setup.log)"
+      if [[ $elapsed -ge $SETUP_TIMEOUT ]]; then
+        log "  FAIL: setup timed out after ${elapsed}s (limit: ${SETUP_TIMEOUT}s)"
+      else
+        log "  FAIL: setup failed after ${elapsed}s (see $result_dir/setup.log)"
+      fi
       SUMMARY_TOOLS+=("$tool"); SUMMARY_REPOS+=("$repo"); SUMMARY_TIMES+=("${elapsed}s")
       SUMMARY_EMBEDS+=("—"); SUMMARY_FILES+=("—"); SUMMARY_SYMBOLS+=("—"); SUMMARY_STATUS+=("FAIL")
       scan_fail=$((scan_fail + 1))
