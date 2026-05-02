@@ -10,21 +10,23 @@ import (
 const defaultLimit = 100
 
 type Options struct {
-	Language string
-	Domain   string
-	Limit    int
+	Language        string
+	Domain          string
+	Limit           int
+	ExcludeTestRefs bool
 }
 
 type Symbol struct {
-	ID        int64
-	Name      string
-	Qualified string
-	Kind      string
-	File      string
-	FileID    int64
-	LineStart int
-	LineEnd   int
-	ParentID  *int64
+	ID         int64
+	Name       string
+	Qualified  string
+	Kind       string
+	File       string
+	FileID     int64
+	LineStart  int
+	LineEnd    int
+	ParentID   *int64
+	Confidence string
 }
 
 type Result struct {
@@ -47,6 +49,14 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: query candidates: %w", err)
 	}
 
+	// Interface implementation check: exclude methods whose parent type
+	// implements an interface with callers on the matching method.
+	ifaceAlive, err := queryInterfaceAliveMethods(ctx, db)
+	if err != nil {
+		return Result{}, fmt.Errorf("dead: interface alive methods: %w", err)
+	}
+	candidates = excludeInterfaceImplementors(candidates, ifaceAlive)
+
 	testsTargets, err := queryTestsTargets(ctx, db)
 	if err != nil {
 		return Result{}, fmt.Errorf("dead: query tests targets: %w", err)
@@ -64,6 +74,13 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: live containers: %w", err)
 	}
 	candidates = excludeIDs(candidates, liveContainers)
+
+	implementorIDs, err := queryInterfaceImplementors(ctx, db)
+	if err != nil {
+		return Result{}, fmt.Errorf("dead: interface implementors: %w", err)
+	}
+
+	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs)
 
 	if len(candidates) > opts.Limit {
 		candidates = candidates[:opts.Limit]
@@ -98,14 +115,29 @@ func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
 }
 
 func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, error) {
+	edgeFilter := `SELECT 1 FROM sense_edges e
+			WHERE e.target_id = s.id
+			AND e.kind IN ('calls', 'composes', 'includes', 'inherits')`
+	if opts.ExcludeTestRefs {
+		edgeFilter += `
+			AND NOT EXISTS (
+				SELECT 1 FROM sense_files ef
+				WHERE ef.id = e.file_id
+				AND (ef.path LIKE '%_test.%'
+					OR ef.path LIKE '%/test/%'
+					OR ef.path LIKE '%/tests/%'
+					OR ef.path LIKE '%/spec/%'
+					OR ef.path LIKE '%.test.%'
+					OR ef.path LIKE '%.spec.%'
+					OR ef.path LIKE '%test_%'
+					OR ef.path LIKE '%/__tests__/%')
+			)`
+	}
+
 	q := `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.file_id, s.line_start, s.line_end, s.parent_id
 		FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
-		WHERE NOT EXISTS (
-			SELECT 1 FROM sense_edges e
-			WHERE e.target_id = s.id
-			AND e.kind IN ('calls', 'composes', 'includes', 'inherits')
-		)
+		WHERE NOT EXISTS (` + edgeFilter + `)
 		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface')`
 	var args []any
 
@@ -165,6 +197,27 @@ func queryTestsTargets(ctx context.Context, db *sql.DB) (map[int64]struct{}, err
 func queryInterfaceIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id FROM sense_symbols WHERE kind = 'interface'`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+func queryInterfaceImplementors(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT DISTINCT e.source_id FROM sense_edges e
+		JOIN sense_symbols s ON s.id = e.target_id AND s.kind = 'interface'
+		WHERE e.kind = 'inherits' AND e.source_id IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +380,7 @@ func isInTestFile(s Symbol) bool {
 		strings.Contains(s.File, "/test/") ||
 		strings.Contains(s.File, "/tests/") ||
 		strings.Contains(s.File, "/spec/") ||
+		strings.Contains(s.File, "/__tests__/") ||
 		strings.HasSuffix(s.File, ".spec.ts") ||
 		strings.HasSuffix(s.File, ".spec.js") ||
 		strings.HasSuffix(s.File, ".test.ts") ||
@@ -361,4 +415,80 @@ func isInterfaceMethod(s Symbol, interfaceIDs map[int64]struct{}) bool {
 	}
 	_, ok := interfaceIDs[*s.ParentID]
 	return ok
+}
+
+type ifaceMethodKey struct {
+	parentID   int64
+	methodName string
+}
+
+// queryInterfaceAliveMethods finds method names on interfaces that have
+// callers, then maps those to all types that implement those interfaces.
+// Returns a set of (implementor_parent_id, method_name) pairs that
+// should be excluded from dead code results.
+func queryInterfaceAliveMethods(ctx context.Context, db *sql.DB) (map[ifaceMethodKey]struct{}, error) {
+	// Find interface methods that have callers (alive via dynamic dispatch).
+	// Then find all types that inherit those interfaces.
+	q := `SELECT impl.source_id, im.name
+		FROM sense_symbols im
+		JOIN sense_edges ie ON ie.target_id = im.id AND ie.kind = 'calls'
+		JOIN sense_symbols iface ON im.parent_id = iface.id AND iface.kind = 'interface'
+		JOIN sense_edges impl ON impl.target_id = iface.id AND impl.kind = 'inherits'
+		GROUP BY impl.source_id, im.name`
+
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[ifaceMethodKey]struct{})
+	for rows.Next() {
+		var parentID int64
+		var methodName string
+		if err := rows.Scan(&parentID, &methodName); err != nil {
+			return nil, err
+		}
+		out[ifaceMethodKey{parentID: parentID, methodName: methodName}] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+func excludeInterfaceImplementors(candidates []Symbol, alive map[ifaceMethodKey]struct{}) []Symbol {
+	if len(alive) == 0 {
+		return candidates
+	}
+	var out []Symbol
+	for _, s := range candidates {
+		if s.ParentID != nil {
+			if _, ok := alive[ifaceMethodKey{parentID: *s.ParentID, methodName: s.Name}]; ok {
+				continue
+			}
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+const (
+	ConfidenceDead     = "dead"
+	ConfidencePossibly = "possibly_dead"
+)
+
+func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[int64]struct{}) []Symbol {
+	for i := range candidates {
+		s := &candidates[i]
+		if s.ParentID != nil {
+			if _, ok := interfaceIDs[*s.ParentID]; ok {
+				s.Confidence = ConfidencePossibly
+				continue
+			}
+			if _, ok := implementorIDs[*s.ParentID]; ok {
+				s.Confidence = ConfidencePossibly
+				continue
+			}
+		}
+		s.Confidence = ConfidenceDead
+	}
+	return candidates
 }

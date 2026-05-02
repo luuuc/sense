@@ -265,7 +265,7 @@ func graphTool() mcp.Tool {
 			mcp.Enum("both", "callers", "callees"),
 		),
 		mcp.WithBoolean("dead_code",
-			mcp.Description("When true, return project-wide dead symbols instead of per-symbol edges. Symbol, direction, and depth are ignored."),
+			mcp.Description("When true, return project-wide dead symbols instead of per-symbol edges. Symbol, direction, and depth are ignored. Test-only references are excluded by default (symbols only called from test files are reported as dead)."),
 		),
 		mcp.WithString("language",
 			mcp.Description("Filter dead code results to a specific language, e.g. 'go', 'ruby'. Only used when dead_code is true."),
@@ -455,8 +455,9 @@ func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) 
 	domain := req.GetString("domain", "")
 
 	result, err := dead.FindDead(ctx, h.db, dead.Options{
-		Language: language,
-		Domain:   domain,
+		Language:        language,
+		Domain:          domain,
+		ExcludeTestRefs: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sense.graph dead_code: %w", err)
