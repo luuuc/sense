@@ -35,10 +35,19 @@ Sense gives you structural understanding of the codebase — symbols, relationsh
 
 | Question | Tool |
 |---|---|
+| New to the codebase? Need an overview? | ` + "`sense_orient question=\"How is this codebase structured?\"`" + ` |
 | Who calls X? What does X call? | ` + "`sense_graph symbol=\"X\"`" + ` |
 | Find code related to a concept | ` + "`sense_search query=\"description\"`" + ` |
 | What breaks if I change X? | ` + "`sense_blast symbol=\"X\"`" + ` |
 | What patterns does this project follow? | ` + "`sense_conventions`" + ` |
+
+**Workflows:**
+
+- **Orientation** → ` + "`sense_orient`" + `, or ` + "`sense_search`" + ` with broad concepts + ` + "`sense_conventions`" + `
+- **Impact analysis** → ` + "`sense_blast`" + `
+- **Dependency tracing** → ` + "`sense_graph`" + `
+- **Debugging** → ` + "`sense_search`" + `
+- **Refactoring** → ` + "`sense_conventions`" + ` + ` + "`sense_graph`" + `
 
 **When NOT to use Sense** (use grep instead):
 

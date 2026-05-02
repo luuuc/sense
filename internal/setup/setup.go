@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/luuuc/sense/internal/mcpio"
 )
 
 // Options controls which tools setup configures.
@@ -195,22 +197,9 @@ func writeMCPJSON(root string) (bool, error) {
 	path := filepath.Join(root, ".mcp.json")
 
 	senseCfg := map[string]any{
-		"command": "sense",
-		"args":    []any{"mcp"},
-		"serverInstructions": "When Sense is available and indexed, you MUST use Sense tools " +
-			"instead of grep, glob, or exploration agents for codebase understanding, " +
-			"exploration, and research. Sense provides pre-indexed results that are faster and more complete.\n\n" +
-			"WHEN TO USE SENSE TOOLS:\n" +
-			"- Symbol relationships, callers, dependencies → sense.graph\n" +
-			"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
-			"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
-			"- Project patterns and conventions → sense.conventions\n" +
-			"- Index health, what's indexed → sense.status\n" +
-			"- ANY question about how the codebase works or is structured → start with Sense\n\n" +
-			"WHEN NOT TO USE SENSE TOOLS:\n" +
-			"- Exact text/string search → use grep\n" +
-			"- Reading file contents → use your file reading tool\n" +
-			"- Editing code → Sense is read-only",
+		"command":            "sense",
+		"args":               []any{"mcp"},
+		"serverInstructions": mcpio.ServerInstructions,
 	}
 
 	existing, err := readJSONFile(path)

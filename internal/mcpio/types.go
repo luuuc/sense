@@ -26,6 +26,29 @@ import (
 // source file. Used across all estimation formulas.
 const AvgTokensPerFile = 800
 
+// ServerInstructions is the canonical MCP server instruction text.
+// Used by both the MCP server (serverInstructions) and setup (.mcp.json).
+const ServerInstructions = "When Sense is available and indexed, prefer Sense tools over grep, glob, " +
+	"and file-walking agents for structural and semantic code questions. " +
+	"Sense provides pre-indexed results that are faster and more complete.\n\n" +
+	"WHEN TO USE SENSE TOOLS:\n" +
+	"- Symbol relationships, callers, dependencies → sense.graph\n" +
+	"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
+	"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
+	"- Project patterns and conventions → sense.conventions\n" +
+	"- Codebase orientation, architecture overview → sense.orient\n" +
+	"- Index health, what's indexed → sense.status\n\n" +
+	"WORKFLOWS:\n" +
+	"- Orientation (new to the codebase?) → sense.orient, or sense.search with broad concepts + sense.conventions\n" +
+	"- Impact analysis (changing something?) → sense.blast\n" +
+	"- Dependency tracing (who calls what?) → sense.graph\n" +
+	"- Debugging (where does X happen?) → sense.search\n" +
+	"- Refactoring (what patterns exist?) → sense.conventions + sense.graph\n\n" +
+	"WHEN NOT TO USE SENSE TOOLS:\n" +
+	"- Exact text/string search → use grep\n" +
+	"- Reading file contents → use your file reading tool\n" +
+	"- Editing code → Sense is read-only"
+
 // Confidence is a 0.0-1.0 edge-probability value. It exists as a
 // named type, not a bare float64, solely to pin the wire form: a
 // whole-number value (1.0, 0.0) must render with one decimal place,
@@ -485,6 +508,29 @@ type DeadSymbolEntry struct {
 
 // DeadCodeMetrics is the observability footer for dead code analysis.
 type DeadCodeMetrics struct {
+	SymbolsAnalyzed           int `json:"symbols_analyzed"`
+	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
+}
+
+// ---------------------------------------------------------------
+// Orient response (sense.orient)
+// ---------------------------------------------------------------
+
+// OrientResponse is the shape of the sense.orient tool's reply.
+// It combines structural overview, conventions, and search results
+// into a single orientation response.
+type OrientResponse struct {
+	Fingerprint  string               `json:"fingerprint"`
+	Structure    *StatusStructure     `json:"structure"`
+	Conventions  []ConventionEntry    `json:"conventions"`
+	SearchHits   []SearchResultEntry  `json:"search_hits"`
+	SenseMetrics OrientMetrics        `json:"sense_metrics"`
+	NextSteps    []NextStep           `json:"next_steps"`
+}
+
+// OrientMetrics is the observability footer for orient responses.
+type OrientMetrics struct {
 	SymbolsAnalyzed           int `json:"symbols_analyzed"`
 	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
 	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
