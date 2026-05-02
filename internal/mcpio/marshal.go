@@ -153,6 +153,9 @@ func normalizeBlastResponse(r *BlastResponse) {
 	if r.AffectedViaIncludes == nil {
 		r.AffectedViaIncludes = []BlastCaller{}
 	}
+	if r.References.Examples == nil {
+		r.References.Examples = []BlastCaller{}
+	}
 	if r.NextSteps == nil {
 		r.NextSteps = []NextStep{}
 	}

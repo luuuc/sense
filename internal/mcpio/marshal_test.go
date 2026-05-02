@@ -73,6 +73,7 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 		AffectedSubclasses:     []BlastCaller{},
 		AffectedViaComposition: []BlastCaller{},
 		AffectedViaIncludes:    []BlastCaller{},
+		References:             BlastTierSummary{Count: 0, Examples: []BlastCaller{}},
 		SenseMetrics:           BlastMetrics{SymbolsTraversed: 5},
 		NextSteps:              []NextStep{},
 	}

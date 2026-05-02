@@ -408,7 +408,7 @@ end
 	t.Cleanup(func() { _ = db.Close() })
 
 	userID := idOf(t, adapter, "User")
-	res, err := blast.Compute(ctx, db, []int64{userID}, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(ctx, db, []int64{userID}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -462,7 +462,7 @@ end
 	t.Cleanup(func() { _ = db.Close() })
 
 	baseID := idOf(t, adapter, "ApplicationController")
-	res, err := blast.Compute(ctx, db, []int64{baseID}, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(ctx, db, []int64{baseID}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -805,7 +805,7 @@ func TestGroupedOutputMultiEdge(t *testing.T) {
 	fix.addEdge(t, incl, base, model.EdgeIncludes, 0.9)
 	fix.addEdge(t, caller, base, model.EdgeCalls, 1.0)
 
-	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -839,6 +839,13 @@ func TestGroupedOutputMultiEdge(t *testing.T) {
 	}
 	if !inclIDs[incl] {
 		t.Errorf("AffectedViaIncludes = %+v, want IncluderY", res.AffectedViaIncludes)
+	}
+
+	if res.SymbolTiers[caller] != blast.TierBreaks {
+		t.Errorf("SymbolTiers[caller] = %d, want TierBreaks (%d)", res.SymbolTiers[caller], blast.TierBreaks)
+	}
+	if res.SymbolTiers[comp] != blast.TierReferences {
+		t.Errorf("SymbolTiers[comp] = %d, want TierReferences (%d)", res.SymbolTiers[comp], blast.TierReferences)
 	}
 }
 
@@ -954,13 +961,16 @@ func TestDoubleReachableAppearsInFirstGroup(t *testing.T) {
 	fix.addEdge(t, child, base, model.EdgeInherits, 1.0)
 	fix.addEdge(t, child, base, model.EdgeComposes, 1.0)
 
-	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
 
 	if len(res.DirectCallers) != 1 {
 		t.Errorf("DirectCallers = %d, want 1 (Child appears once)", len(res.DirectCallers))
+	}
+	if len(res.DirectCallers) == 0 {
+		t.Fatal("no direct callers to inspect")
 	}
 	if res.DirectCallers[0].ID != child {
 		t.Errorf("DirectCallers[0] = %d, want %d (Child)", res.DirectCallers[0].ID, child)
@@ -985,5 +995,148 @@ func TestDoubleReachableAppearsInFirstGroup(t *testing.T) {
 	}
 	if groupCount != 1 {
 		t.Errorf("Child appears in %d edge-kind groups, want exactly 1", groupCount)
+	}
+}
+
+// --- Pitch 15-02 fixture tests ---
+
+func TestTierClassification(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "Target")
+	callsCaller := fix.addSymbol(t, "CallsCaller")
+	composesCaller := fix.addSymbol(t, "ComposesCaller")
+	inheritsCaller := fix.addSymbol(t, "InheritsCaller")
+
+	fix.addEdge(t, callsCaller, subject, model.EdgeCalls, 1.0)
+	fix.addEdge(t, composesCaller, subject, model.EdgeComposes, 1.0)
+	fix.addEdge(t, inheritsCaller, subject, model.EdgeInherits, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{subject}, blast.Options{
+		MaxHops:       1,
+		MinConfidence: 0.1,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if res.SymbolTiers[callsCaller] != blast.TierBreaks {
+		t.Errorf("calls edge → tier %d, want TierBreaks (%d)", res.SymbolTiers[callsCaller], blast.TierBreaks)
+	}
+	if res.SymbolTiers[composesCaller] != blast.TierReferences {
+		t.Errorf("composes edge → tier %d, want TierReferences (%d)", res.SymbolTiers[composesCaller], blast.TierReferences)
+	}
+	if res.SymbolTiers[inheritsCaller] != blast.TierReferences {
+		t.Errorf("inherits edge → tier %d, want TierReferences (%d)", res.SymbolTiers[inheritsCaller], blast.TierReferences)
+	}
+}
+
+func TestSelfMethodExclusion(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "self.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	err = adapter.InTx(ctx, func() error {
+		fid, err := adapter.WriteFile(ctx, &model.File{
+			Path: "context.go", Language: "go", Hash: "ctx",
+			Symbols: 3, IndexedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+
+		// Context is a class/type — the blast subject.
+		contextID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: "Context", Qualified: "gin.Context",
+			Kind: model.KindClass, LineStart: 1, LineEnd: 100,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Context.Param is a method ON Context — should be excluded.
+		paramID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: "Param", Qualified: "gin.Context.Param",
+			Kind: model.KindMethod, ParentID: &contextID,
+			LineStart: 10, LineEnd: 15,
+		})
+		if err != nil {
+			return err
+		}
+
+		// ExternalHandler calls Context — external consumer, should appear.
+		externalID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: "ExternalHandler", Qualified: "app.ExternalHandler",
+			Kind: model.KindFunction, LineStart: 200, LineEnd: 220,
+		})
+		if err != nil {
+			return err
+		}
+
+		// Both Param and ExternalHandler call Context.
+		if _, err := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &paramID, TargetID: contextID,
+			Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
+		}); err != nil {
+			return err
+		}
+		if _, err := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &externalID, TargetID: contextID,
+			Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
+		}); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	all, err := adapter.Query(ctx, index.Filter{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	var contextID int64
+	for _, s := range all {
+		if s.Qualified == "gin.Context" {
+			contextID = s.ID
+			break
+		}
+	}
+
+	res, err := blast.Compute(ctx, db, []int64{contextID}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	// Context.Param should be excluded (it's a self-method).
+	for _, c := range res.DirectCallers {
+		if c.Qualified == "gin.Context.Param" {
+			t.Errorf("self-method gin.Context.Param should be excluded from results")
+		}
+	}
+
+	// ExternalHandler should appear.
+	found := false
+	for _, c := range res.DirectCallers {
+		if c.Qualified == "app.ExternalHandler" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("external caller app.ExternalHandler missing from DirectCallers: %+v", res.DirectCallers)
+	}
+
+	if res.TotalAffected != 1 {
+		t.Errorf("TotalAffected = %d, want 1 (only external caller)", res.TotalAffected)
 	}
 }

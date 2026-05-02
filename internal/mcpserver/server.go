@@ -679,7 +679,7 @@ func blastHints(resp mcpio.BlastResponse) []mcpio.NextStep {
 		})
 	}
 
-	if len(resp.AffectedTests) == 0 && resp.TotalAffected > 0 && len(hints) < 2 {
+	if resp.TestsAffectedCount == 0 && len(resp.AffectedTests) == 0 && resp.TotalAffected > 0 && len(hints) < 2 {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.search",
 			Args:   map[string]any{"query": resp.Symbol + " test"},

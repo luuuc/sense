@@ -219,12 +219,24 @@ type BlastResponse struct {
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
 	AffectedViaIncludes    []BlastCaller `json:"affected_via_includes"`
 
+	// Tier 2 — references (composes/inherits/includes). Count + top examples.
+	References BlastTierSummary `json:"references"`
+	// Tier 3 — affected test count (detail omitted to keep response focused).
+	TestsAffectedCount int `json:"tests_affected_count"`
+
 	ProductionAffected int `json:"production_affected"`
 	TestAffected       int `json:"test_affected"`
 
 	SenseMetrics BlastMetrics `json:"sense_metrics"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`
 	NextSteps    []NextStep   `json:"next_steps"`
+}
+
+// BlastTierSummary holds a count plus a capped set of examples for
+// lower-relevance tiers (Tier 2 references).
+type BlastTierSummary struct {
+	Count    int           `json:"count"`
+	Examples []BlastCaller `json:"examples"`
 }
 
 // BlastCaller is the shape of a direct_callers entry.
