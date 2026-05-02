@@ -17,3 +17,28 @@ type SymbolContext struct {
 	Outbound []EdgeRef
 	Inbound  []EdgeRef
 }
+
+// Direction enumerates the traversal direction values accepted by
+// ReadSymbolGraph and the MCP/CLI layers.
+type Direction string
+
+const (
+	DirectionBoth    Direction = "both"
+	DirectionCallers Direction = "callers"
+	DirectionCallees Direction = "callees"
+)
+
+// GraphResult holds multi-hop graph traversal results. Root contains
+// the depth-1 edges (same as ReadSymbol). Layers holds one HopEdges
+// per additional hop (index 0 = depth 2, index 1 = depth 3).
+type GraphResult struct {
+	Root      SymbolContext
+	Layers    []HopEdges
+	Truncated bool
+}
+
+// HopEdges holds edges discovered at one BFS hop beyond the root.
+type HopEdges struct {
+	Outbound []EdgeRef
+	Inbound  []EdgeRef
+}
