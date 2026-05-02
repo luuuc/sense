@@ -94,7 +94,7 @@ if isinstance(v, dict): v=v.get('commit')
 print(v if v else '')
 " "$PINNED_COMMITS" "$repo")
   if [[ -n "$pinned" ]]; then
-    (cd "$dest" && git checkout "$pinned" --quiet)
+    (cd "$dest" && git -c advice.detachedHead=false checkout "$pinned" --quiet)
   fi
 }
 

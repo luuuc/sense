@@ -67,7 +67,7 @@ Benchmark repos live **outside** the Sense project tree in a sibling directory t
 ```
 sense/                              # this project
 ├── bench/
-│   ├── run.sh, setup.sh, ...       # scripts
+│   ├── run.sh, scan.sh, ...        # scripts
 │   ├── tasks/                      # task definitions
 │   ├── ground-truth/               # expected answers
 │   ├── PINNED_COMMITS.json         # repo pins + remotes
@@ -115,7 +115,7 @@ bash bench/score.sh
 bash bench/report.sh --md
 ```
 
-Per-tool repo copies are created automatically by `run.sh` and `setup.sh` (via `git clone --reference` from `_reference/`). You only need to run `bootstrap-repos.sh` once.
+Per-tool repo copies are created automatically by `run.sh` and `scan.sh` (via `git clone --reference` from `_reference/`). You only need to run `bootstrap-repos.sh` once.
 
 ### Partial run (subset of tools/repos/tasks)
 
@@ -162,21 +162,13 @@ The `--reset` flag deletes tool-specific index directories (`.sense/`, `.grepai/
 
 The `--runs N` flag runs each tool/repo/task combination N times, storing results in `run-1/`, `run-2/`, etc. subdirectories. Use N=3 or N=5 for statistical significance.
 
-### `setup.sh` — Pre-index repos
+### `scan.sh` — Index repos (with optional cold-start timing)
 
 ```
-Usage: setup.sh [--tool t1,t2] [--repo r1,r2]
+Usage: scan.sh [--tool t1,t2] [--repo r1,r2] [--force] [--report]
 ```
 
-Indexes all tool x repo pairs without running Claude sessions. Per-tool repo copies are cloned automatically from `_reference/` via `git clone --reference`. Useful for pre-warming indexes before a timed run.
-
-### `rescan.sh` — Measure cold-start scan timing
-
-```
-Usage: rescan.sh [--tool t1,t2] [--repo r1,r2] [--report]
-```
-
-Deletes indexes and re-scans all tool x repo pairs, measuring cold-start timing. No Claude sessions, no transcripts, no scoring — just delete, scan, time, report. Polls `--check-ready` for tools with deferred embeddings (e.g. grepai) so the reported time includes the full index build. Writes `index_meta_setup.json` to the same result locations `run.sh` uses, so `report.sh` picks up the updated timing.
+Indexes all tool x repo pairs without running Claude sessions. Skips already-indexed repos unless `--force` is passed, which deletes existing indexes first for cold-start timing. Polls `--check-ready` for tools with deferred embeddings (e.g. grepai) so the reported time includes the full index build. Writes `index_meta_setup.json` to the same result locations `run.sh` uses, so `report.sh` picks up the updated timing.
 
 ### `score.sh` — Score transcripts
 

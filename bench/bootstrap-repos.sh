@@ -4,7 +4,7 @@ set -euo pipefail
 # Bootstrap reference copies of benchmark repos into $SENSE_BENCH_ROOT/_reference/.
 #
 # These are the "source of truth" copies that ground-truth is generated against.
-# Per-tool copies are created by setup.sh/run.sh using git clone --reference.
+# Per-tool copies are created by scan.sh/run.sh using git clone --reference.
 #
 # Usage:
 #   bash bench/bootstrap-repos.sh               # all repos
@@ -73,7 +73,7 @@ for repo in $repos; do
       continue
     fi
     log "$repo: exists but at wrong commit — fetching and resetting..."
-    (cd "$dest" && git fetch origin "$commit" && git checkout "$commit" --quiet)
+    (cd "$dest" && git fetch origin "$commit" && git -c advice.detachedHead=false checkout "$commit" --quiet)
     cloned=$((cloned + 1))
     continue
   fi
@@ -84,7 +84,7 @@ for repo in $repos; do
     log "$repo: clone FAILED — cleaned up partial directory"
     continue
   fi
-  (cd "$dest" && git checkout "$commit" --quiet)
+  (cd "$dest" && git -c advice.detachedHead=false checkout "$commit" --quiet)
   log "$repo: checked out at ${commit:0:12}"
   cloned=$((cloned + 1))
 done
