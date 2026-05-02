@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TOOL_NAME="tokensave"
-TOOL_VERSION="4.1.4"
+TOOL_VERSION="4.3.2"
 
 usage() {
   echo "Usage: $0 [--check-ready|--write-config] <repo_path> <workspace_path>"
@@ -65,6 +65,11 @@ tokensave provides MCP tools for token-efficient codebase queries:
 - tokensave_impact: what's affected by changing a symbol
 - tokensave_dead_code: find unreachable symbols
 - tokensave_node: get details + source code for a specific symbol
+- tokensave_health: index health and statistics
+- tokensave_gini: code complexity distribution
+- tokensave_dependency_depth: dependency chain depth analysis
+- tokensave_dsm: design structure matrix
+- tokensave_test_risk: test coverage risk assessment
 EOF
 }
 
@@ -84,10 +89,15 @@ setup() {
   echo "[$TOOL_NAME] Using tokensave $version (pinned: $TOOL_VERSION)" >&2
 
   echo "[$TOOL_NAME] Indexing $repo..." >&2
+  local start_time end_time
+  start_time=$(date +%s)
   (cd "$repo" && yes | tokensave init) || (cd "$repo" && tokensave sync)
+  end_time=$(date +%s)
 
   echo "[$TOOL_NAME] Writing config to $workspace..." >&2
   write_config "$repo" "$workspace"
+
+  echo "{\"setup_time_seconds\": $((end_time - start_time)), \"includes_embeddings\": true, \"deferred_embeddings\": false}" > "$workspace/index_meta_setup.json"
 
   echo "[$TOOL_NAME] Setup complete." >&2
 }

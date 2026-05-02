@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TOOL_NAME="roam"
-TOOL_VERSION="11.0.0"
+TOOL_VERSION="12.2.0"
 VENV_NAME=".bench-roam-venv"
 
 usage() {
@@ -69,6 +69,10 @@ roam-code provides MCP tools for codebase navigation:
 - roam_dead_code: find unreachable symbols
 - roam_explore: explore codebase structure
 - roam_deps: dependency analysis
+- roam_understand: explain what a symbol does
+- roam_health: index health and statistics
+- roam_retrieve: retrieve code by graph-aware ranking
+- roam_preflight: pre-check before a code change
 EOF
 }
 
@@ -106,10 +110,15 @@ setup() {
   echo "[$TOOL_NAME] Using roam $version (pinned: $TOOL_VERSION)" >&2
 
   echo "[$TOOL_NAME] Indexing $repo..." >&2
+  local start_time end_time
+  start_time=$(date +%s)
   (cd "$repo" && roam init)
+  end_time=$(date +%s)
 
   echo "[$TOOL_NAME] Writing config to $workspace..." >&2
   write_config "$repo" "$workspace"
+
+  echo "{\"setup_time_seconds\": $((end_time - start_time)), \"includes_embeddings\": true, \"deferred_embeddings\": false}" > "$workspace/index_meta_setup.json"
 
   deactivate
   echo "[$TOOL_NAME] Setup complete." >&2

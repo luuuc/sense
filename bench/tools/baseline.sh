@@ -33,10 +33,15 @@ EOF
 }
 
 setup() {
+  local repo="$1"
   local workspace="$2"
 
   echo "[$TOOL_NAME] Baseline — no MCP tools." >&2
+  local start_time end_time
+  start_time=$(date +%s)
   write_config "$@"
+  end_time=$(date +%s)
+  echo "{\"ready\": true, \"detail\": \"no tool\", \"setup_time_seconds\": $((end_time - start_time)), \"includes_embeddings\": false, \"deferred_embeddings\": false}" > "$workspace/index_meta_setup.json"
   echo "[$TOOL_NAME] Setup complete." >&2
 }
 

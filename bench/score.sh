@@ -66,20 +66,31 @@ for tool_dir in "$RESULTS_DIR"/*/; do
       task=$(basename "$task_dir")
       matches_filter "$task" "$FILTER_TASKS" || continue
 
-      transcript="$task_dir/transcript.json"
-      if [[ ! -f "$transcript" ]]; then
-        skipped=$((skipped + 1))
-        continue
-      fi
+      # Score transcript in the task dir (single-run) or in run-N subdirs (multi-run)
+      score_dir() {
+        local dir="$1" label="$2"
+        local transcript="$dir/transcript.json"
+        if [[ ! -f "$transcript" ]]; then
+          skipped=$((skipped + 1))
+          return
+        fi
+        log "Scoring: $label"
+        if python3 "$LIB_DIR/scorer.py" "$dir" "$BENCH_DIR" "$tool" "$repo" "$task" > "$dir/scored.json" 2>"$dir/score.log"; then
+          scored=$((scored + 1))
+        else
+          log "  ERROR: scoring failed (see $dir/score.log)"
+          errors=$((errors + 1))
+        fi
+      }
 
-      log "Scoring: tool=$tool repo=$repo task=$task"
-
-      if python3 "$LIB_DIR/scorer.py" "$task_dir" "$BENCH_DIR" "$tool" "$repo" "$task" > "$task_dir/scored.json" 2>"$task_dir/score.log"; then
-        scored=$((scored + 1))
-      else
-        log "  ERROR: scoring failed (see $task_dir/score.log)"
-        errors=$((errors + 1))
+      if [[ -f "$task_dir/transcript.json" ]]; then
+        score_dir "$task_dir" "tool=$tool repo=$repo task=$task"
       fi
+      for run_dir in "$task_dir"/run-*/; do
+        [[ -d "$run_dir" ]] || continue
+        run_id=$(basename "$run_dir")
+        score_dir "$run_dir" "tool=$tool repo=$repo task=$task $run_id"
+      done
     done
   done
 done
@@ -87,3 +98,9 @@ done
 log ""
 log "=== Scoring complete ==="
 log "  Scored: $scored | Errors: $errors | Skipped (no transcript): $skipped"
+
+# Regenerate the report if any transcripts were scored
+if [[ $scored -gt 0 ]]; then
+  log "Regenerating results/report.md ..."
+  "$BENCH_DIR/report.sh" --md
+fi

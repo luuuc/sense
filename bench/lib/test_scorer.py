@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from scorer import (
     _extract_class_prefix,
+    _keyword_matches,
+    _strip_python_module_prefix,
     classify_tool_calls,
     detect_misses,
     extract_json_from_text,
@@ -150,6 +152,66 @@ class TestNormalizeCaller(unittest.TestCase):
             "PostCreator#new_topic?",
         )
 
+    # --- Ruby :: namespace stripping ---
+
+    def test_ruby_nested_namespace(self):
+        self.assertEqual(
+            normalize_caller("app/controllers/pickups_controller.rb:Admin::Orders::PickupsController"),
+            "app/controllers/pickups_controller.rb:PickupsController",
+        )
+
+    def test_ruby_namespace_with_method(self):
+        self.assertEqual(
+            normalize_caller("app/controllers/pickups_controller.rb:42 Admin::Orders::PickupsController#index"),
+            "app/controllers/pickups_controller.rb:PickupsController#index",
+        )
+
+    def test_ruby_single_namespace(self):
+        self.assertEqual(
+            normalize_caller("app/models/post.rb:42 Blog::Post"),
+            "app/models/post.rb:Post",
+        )
+
+    # --- Python module prefix stripping ---
+
+    def test_python_module_bare(self):
+        self.assertEqual(normalize_caller("flask.app._make_timedelta"), "_make_timedelta")
+
+    def test_python_module_file_attached(self):
+        self.assertEqual(
+            normalize_caller("src/flask/app.py:flask.app._make_timedelta"),
+            "src/flask/app.py:_make_timedelta",
+        )
+
+    def test_python_module_space_separated(self):
+        self.assertEqual(
+            normalize_caller("src/flask/app.py:42 flask.app._make_timedelta"),
+            "src/flask/app.py:_make_timedelta",
+        )
+
+    def test_python_module_uppercase_final(self):
+        self.assertEqual(normalize_caller("flask.app.Flask"), "Flask")
+
+    def test_python_single_segment_not_stripped(self):
+        self.assertEqual(normalize_caller("node.getValue"), "node.getValue")
+
+    # --- Go regression tests ---
+
+    def test_go_package_still_stripped(self):
+        self.assertEqual(
+            normalize_caller("internal/scan/scan.go:42 scan.Scanner"),
+            "internal/scan/scan.go:Scanner",
+        )
+
+    def test_go_bare_still_stripped(self):
+        self.assertEqual(normalize_caller("gin.Engine"), "Engine")
+
+    def test_go_type_method_preserved(self):
+        self.assertEqual(
+            normalize_caller("internal/scan/scan.go:Scanner.Run"),
+            "internal/scan/scan.go:Scanner.Run",
+        )
+
 
 class TestExtractClassPrefix(unittest.TestCase):
     def test_dot_method(self):
@@ -178,6 +240,41 @@ class TestExtractClassPrefix(unittest.TestCase):
             _extract_class_prefix("PostGuardian#can_create_post?"),
             "PostGuardian",
         )
+
+    def test_ruby_namespace_with_method(self):
+        self.assertEqual(
+            _extract_class_prefix("Admin::Orders::PickupsController#index"),
+            "PickupsController",
+        )
+
+    def test_ruby_namespace_dot_method(self):
+        self.assertEqual(
+            _extract_class_prefix("Admin::PickupsController.create"),
+            "PickupsController",
+        )
+
+    def test_ruby_namespace_no_method(self):
+        self.assertIsNone(_extract_class_prefix("Admin::PickupsController"))
+
+
+class TestStripPythonModulePrefix(unittest.TestCase):
+    def test_two_segments(self):
+        self.assertEqual(_strip_python_module_prefix("flask.app._make_timedelta"), "_make_timedelta")
+
+    def test_three_segments(self):
+        self.assertEqual(_strip_python_module_prefix("werkzeug.routing.map.Map"), "Map")
+
+    def test_single_segment_not_stripped(self):
+        self.assertEqual(_strip_python_module_prefix("flask.Flask"), "flask.Flask")
+
+    def test_go_style_not_stripped(self):
+        self.assertEqual(_strip_python_module_prefix("gin.Engine"), "gin.Engine")
+
+    def test_no_dots(self):
+        self.assertEqual(_strip_python_module_prefix("Flask"), "Flask")
+
+    def test_uppercase_prefix_not_stripped(self):
+        self.assertEqual(_strip_python_module_prefix("Flask.app.run"), "Flask.app.run")
 
 
 class TestScoreSetMatchPartialCredit(unittest.TestCase):
@@ -230,6 +327,98 @@ class TestScoreSetMatchPartialCredit(unittest.TestCase):
         gt = {"callers": ["PostCreator"]}
         result = score_set_match(response, gt, "callers")
         self.assertEqual(len(result["partial_matches"]), 1)
+
+    def test_reverse_partial_response_less_specific(self):
+        response = {"symbols": ["PostCreator"]}
+        gt = {"symbols": ["PostCreator#create"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+        self.assertEqual(result["partial_matches"][0]["found"], "PostCreator")
+        self.assertEqual(result["partial_matches"][0]["expected"], "PostCreator#create")
+        self.assertAlmostEqual(result["f1"], 0.5)
+
+    def test_reverse_partial_dot_method(self):
+        response = {"symbols": ["Engine"]}
+        gt = {"symbols": ["Engine.ServeHTTP"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+
+    def test_bidirectional_both_directions(self):
+        response = {"symbols": ["A.method1", "B"]}
+        gt = {"symbols": ["A", "B#method2"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 2)
+        self.assertEqual(len(result["false_positives"]), 0)
+        self.assertEqual(len(result["false_negatives"]), 0)
+
+
+class TestIntegrationNormalization(unittest.TestCase):
+    def test_discourse_callers_ruby_namespace(self):
+        response = {"callers": [
+            "lib/post_creator.rb:PostCreator#create!",
+            "lib/post_creator.rb:PostCreator#create_topic",
+            "lib/topic_creator.rb:TopicCreator#create_shared_draft",
+            "plugins/chat/lib/chat/channel_archive_service.rb:Chat::ChannelArchiveService#create_post",
+        ]}
+        gt = {"callers": [
+            "lib/post_creator.rb:PostCreator#create!",
+            "lib/post_creator.rb:PostCreator#create_topic",
+            "lib/topic_creator.rb:TopicCreator#create_shared_draft",
+            "plugins/chat/lib/chat/channel_archive_service.rb:ArchiveValidationError#create_post",
+        ]}
+        result = score_set_match(response, gt, "callers")
+        self.assertEqual(len(result["true_positives"]), 3)
+        self.assertEqual(len(result["partial_matches"]), 0)
+        self.assertEqual(len(result["false_positives"]), 1)
+        self.assertEqual(len(result["false_negatives"]), 1)
+
+    def test_discourse_callers_response_less_specific(self):
+        response = {"callers": [
+            "lib/post_creator.rb:PostCreator",
+            "lib/topic_creator.rb:TopicCreator",
+        ]}
+        gt = {"callers": [
+            "lib/post_creator.rb:PostCreator#create!",
+            "lib/topic_creator.rb:TopicCreator#create_shared_draft",
+        ]}
+        result = score_set_match(response, gt, "callers")
+        self.assertEqual(len(result["true_positives"]), 0)
+        self.assertEqual(len(result["partial_matches"]), 2)
+        self.assertAlmostEqual(result["f1"], 0.5)
+
+    def test_flask_dead_code_python_module_prefix(self):
+        response = {"dead_symbols": [
+            "flask.helpers._called_with_wrong_args",
+            "flask.logging.has_level_handler",
+            "FlaskGroup",
+        ]}
+        gt = {"dead_symbols": [
+            "_called_with_wrong_args",
+            "has_level_handler",
+            "FlaskGroup",
+        ]}
+        result = score_set_match(response, gt, "dead_symbols")
+        self.assertEqual(len(result["true_positives"]), 3)
+        self.assertEqual(result["f1"], 1.0)
+
+    def test_gin_dead_code_go_prefix(self):
+        response = {"dead_symbols": [
+            "gin.BasicAuth",
+            "gin.CustomRecovery",
+            "gin.ErrorLogger",
+            "WrapF",
+        ]}
+        gt = {"dead_symbols": [
+            "BasicAuth",
+            "CustomRecovery",
+            "ErrorLogger",
+            "WrapF",
+            "WrapH",
+        ]}
+        result = score_set_match(response, gt, "dead_symbols")
+        self.assertEqual(len(result["true_positives"]), 4)
+        self.assertAlmostEqual(result["precision"], 1.0)
+        self.assertAlmostEqual(result["recall"], 4 / 5)
 
 
 class TestScoreSetMatch(unittest.TestCase):
@@ -308,6 +497,60 @@ class TestScoreKeywordPresence(unittest.TestCase):
     def test_empty_keywords(self):
         result = score_keyword_presence("anything", {"keywords": []}, "keywords")
         self.assertEqual(result["score"], 0.0)
+
+    def test_word_proximity_match(self):
+        text = "The Engine serves as the central router for all HTTP requests"
+        gt = {"keywords": ["Engine as central router"]}
+        result = score_keyword_presence(text, gt, "keywords")
+        self.assertEqual(result["score"], 1.0)
+        self.assertEqual(result["found_keywords"], ["Engine as central router"])
+
+    def test_word_proximity_no_match_when_words_far_apart(self):
+        text = ("The Engine handles startup. " + "x" * 300 +
+                " The central router is elsewhere.")
+        gt = {"keywords": ["Engine as central router"]}
+        result = score_keyword_presence(text, gt, "keywords")
+        self.assertEqual(result["score"], 0.0)
+
+    def test_word_proximity_single_significant_word_no_fallback(self):
+        # "HTTP web framework" has only 2 significant words (>3 chars):
+        # "framework" — wait, "HTTP" is 4 chars so it counts too.
+        # Single significant word keywords should NOT use proximity.
+        text = "This is a web application"
+        gt = {"keywords": ["web"]}
+        result = score_keyword_presence(text, gt, "keywords")
+        self.assertEqual(result["score"], 1.0)  # exact match works
+
+
+class TestKeywordMatches(unittest.TestCase):
+    def test_exact_match(self):
+        self.assertTrue(_keyword_matches("tree-sitter", "uses tree-sitter for parsing"))
+
+    def test_exact_match_case_insensitive(self):
+        self.assertTrue(_keyword_matches("SQLite", "uses sqlite storage"))
+
+    def test_proximity_match(self):
+        self.assertTrue(_keyword_matches(
+            "Engine as central router",
+            "the engine serves as the central router for requests",
+        ))
+
+    def test_proximity_no_match_far_apart(self):
+        text = "the engine handles startup. " + "x" * 300 + " the central router is here."
+        self.assertFalse(_keyword_matches("Engine as central router", text))
+
+    def test_single_significant_word_exact_only(self):
+        # "large hub" has one word >3 chars ("large") — not enough for proximity.
+        # And "large hub" is not a substring of the text, so no exact match either.
+        self.assertFalse(_keyword_matches("large hub", "this is a large server application"))
+
+    def test_no_significant_words(self):
+        # All words <= 3 chars — no proximity fallback, exact only
+        self.assertFalse(_keyword_matches("foo bar", "contains foo and bar separately"))
+
+    def test_proximity_within_window(self):
+        text = "the context carries the request state efficiently"
+        self.assertTrue(_keyword_matches("Context carries request state", text))
 
 
 class TestExtractJsonFromText(unittest.TestCase):

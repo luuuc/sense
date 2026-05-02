@@ -1,12 +1,17 @@
 {
-  "query": "topic creation and post publishing",
   "symbols": [
+    "PostCreator#create",
     "PostCreator",
-    "Topic",
-    "Post",
-    "TopicsController",
-    "TopicCreator"
+    "TopicCreator#create",
+    "TopicCreator",
+    "NewPostManager#perform",
+    "PostsController#create",
+    "TopicPublisher#publish!",
+    "NewPostManager#perform_create_post",
+    "PostCreator#create_topic",
+    "TopicPublisher"
   ],
-  "_note": "From .doc/validation/09-03-discourse search queries",
-  "status": "initial"
+  "_note": "Covers the complete topic creation and post publishing pipeline. PostsController#create is the HTTP entry point; NewPostManager#perform gates approval/queuing then calls perform_create_post which instantiates PostCreator. PostCreator#create orchestrates post saving and calls create_topic (which uses TopicCreator#create) for new topics. TopicPublisher#publish! handles shared-draft-to-live publishing. Verified by grep in app/ at d73e448.",
+  "_generated_by": "gen-ground-truth.sh",
+  "status": "verified"
 }

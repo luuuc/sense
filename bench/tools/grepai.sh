@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TOOL_NAME="grepai"
-TOOL_VERSION="0.3.0"
+TOOL_VERSION="0.35.0"
 OLLAMA_MODEL="nomic-embed-text"
 
 usage() {
@@ -102,13 +102,19 @@ setup() {
   echo "[$TOOL_NAME] Using grepai $version (pinned: $TOOL_VERSION)" >&2
 
   echo "[$TOOL_NAME] Initializing $repo..." >&2
+  local start_time end_time
+  start_time=$(date +%s)
   (cd "$repo" && grepai init --yes --provider ollama --backend gob) || true
 
   echo "[$TOOL_NAME] Starting background watcher..." >&2
   (cd "$repo" && grepai watch --background) || true
+  end_time=$(date +%s)
 
   echo "[$TOOL_NAME] Writing config to $workspace..." >&2
   write_config "$repo" "$workspace"
+
+  # grepai defers embedding to background watcher — init returns before embeddings complete
+  echo "{\"setup_time_seconds\": $((end_time - start_time)), \"includes_embeddings\": false, \"deferred_embeddings\": true}" > "$workspace/index_meta_setup.json"
 
   echo "[$TOOL_NAME] Setup complete." >&2
 }
