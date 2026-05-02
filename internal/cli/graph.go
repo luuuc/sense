@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/model"
 )
 
 // graphHelp mirrors the `sense graph` example block in
@@ -43,15 +44,14 @@ Exit codes:
      'sense scan --force' lands in pitch 01-06)
 `
 
-// GraphDirection names the traversal direction flag values. Exported
-// so the MCP wrapper in 01-05 can reuse the same vocabulary on the
-// wire.
-type GraphDirection string
+// GraphDirection aliases model.Direction so existing callers and tests
+// in the cli package keep compiling without an import change.
+type GraphDirection = model.Direction
 
 const (
-	DirectionBoth    GraphDirection = "both"
-	DirectionCallers GraphDirection = "callers"
-	DirectionCallees GraphDirection = "callees"
+	DirectionBoth    = model.DirectionBoth
+	DirectionCallers = model.DirectionCallers
+	DirectionCallees = model.DirectionCallees
 )
 
 // graphOptions is the parsed flag shape for the graph subcommand.
@@ -82,8 +82,11 @@ func RunGraph(args []string, cio IO) int {
 		}
 		return ExitGeneralError
 	}
-	if opts.Depth != 1 {
-		_, _ = fmt.Fprintln(cio.Stderr, "sense graph: --depth > 1 is not yet supported")
+	if opts.Depth < 1 {
+		opts.Depth = 1
+	}
+	if opts.Depth > mcpio.MaxGraphDepth {
+		_, _ = fmt.Fprintf(cio.Stderr, "sense graph: --depth %d exceeds maximum of %d\n", opts.Depth, mcpio.MaxGraphDepth)
 		return ExitGeneralError
 	}
 
@@ -113,13 +116,13 @@ func RunGraph(args []string, cio IO) int {
 		return ExitSymbolIssue
 	}
 
-	sc, err := adapter.ReadSymbol(ctx, matches[0].ID)
+	gr, err := adapter.ReadSymbolGraph(ctx, matches[0].ID, opts.Depth, opts.Direction, mcpio.MaxPerHop)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense graph:", err)
 		return ExitGeneralError
 	}
 
-	fileIDs := CollectFileIDs(sc)
+	fileIDs := CollectGraphFileIDs(gr)
 	pathByID, err := LoadFilePaths(ctx, adapter.DB(), fileIDs)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense graph:", err)
@@ -130,9 +133,10 @@ func RunGraph(args []string, cio IO) int {
 		return p, ok
 	}
 
-	resp := mcpio.BuildGraphResponse(sc, lookup, mcpio.BuildGraphRequest{
-		Direction: string(opts.Direction),
-	})
+	buildReq := mcpio.BuildGraphRequest{
+		Direction: opts.Direction,
+	}
+	resp := mcpio.BuildFullGraphResponse(gr, lookup, buildReq)
 
 	if opts.JSON {
 		out, merr := mcpio.MarshalGraph(resp)

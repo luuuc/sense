@@ -352,16 +352,16 @@ func TestRunGraphDirectionCallees(t *testing.T) {
 	}
 }
 
-func TestRunGraphDepthTwoRejected(t *testing.T) {
+func TestRunGraphDepthExceedsMax(t *testing.T) {
 	dir := seedGraphProject(t)
 	var stdout, stderr bytes.Buffer
-	code := RunGraph([]string{"--depth", "2", "App::Services::CheckoutService"},
+	code := RunGraph([]string{"--depth", "4", "App::Services::CheckoutService"},
 		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
 	if code != ExitGeneralError {
 		t.Errorf("exit=%d, want %d", code, ExitGeneralError)
 	}
-	if !strings.Contains(stderr.String(), "--depth > 1") {
-		t.Errorf("expected --depth > 1 message, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "exceeds maximum") {
+		t.Errorf("expected max depth message, got: %s", stderr.String())
 	}
 }
 
@@ -442,4 +442,194 @@ func TestRunGraphUnreadableIndexExit1(t *testing.T) {
 	if strings.Contains(stderr.String(), "corrupt") {
 		t.Errorf("permission error should not be labeled corrupt, got: %s", stderr.String())
 	}
+}
+
+// seedGraphProjectDeep builds a 3-hop call chain:
+//
+//	D → C → B → A
+//
+// where → means "calls". Querying A with direction=callers at depth 1
+// returns B, depth 2 returns B+C, depth 3 returns B+C+D.
+func seedGraphProjectDeep(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	files := []model.File{
+		{Path: "a.rb", Language: "ruby", Hash: "a", IndexedAt: time.Now()},
+		{Path: "b.rb", Language: "ruby", Hash: "b", IndexedAt: time.Now()},
+		{Path: "c.rb", Language: "ruby", Hash: "c", IndexedAt: time.Now()},
+		{Path: "d.rb", Language: "ruby", Hash: "d", IndexedAt: time.Now()},
+	}
+	fids := make([]int64, len(files))
+	for i := range files {
+		id, werr := adapter.WriteFile(ctx, &files[i])
+		if werr != nil {
+			t.Fatalf("WriteFile: %v", werr)
+		}
+		fids[i] = id
+	}
+
+	syms := []model.Symbol{
+		{FileID: fids[0], Name: "A", Qualified: "A", Kind: "method", LineStart: 1, LineEnd: 5},
+		{FileID: fids[1], Name: "B", Qualified: "B", Kind: "method", LineStart: 1, LineEnd: 5},
+		{FileID: fids[2], Name: "C", Qualified: "C", Kind: "method", LineStart: 1, LineEnd: 5},
+		{FileID: fids[3], Name: "D", Qualified: "D", Kind: "method", LineStart: 1, LineEnd: 5},
+	}
+	sids := make([]int64, len(syms))
+	for i := range syms {
+		id, werr := adapter.WriteSymbol(ctx, &syms[i])
+		if werr != nil {
+			t.Fatalf("WriteSymbol: %v", werr)
+		}
+		sids[i] = id
+	}
+
+	// D→C→B→A call chain
+	edges := []model.Edge{
+		{SourceID: &sids[1], TargetID: sids[0], Kind: model.EdgeCalls, FileID: fids[1], Confidence: 1.0},
+		{SourceID: &sids[2], TargetID: sids[1], Kind: model.EdgeCalls, FileID: fids[2], Confidence: 1.0},
+		{SourceID: &sids[3], TargetID: sids[2], Kind: model.EdgeCalls, FileID: fids[3], Confidence: 1.0},
+	}
+	for i := range edges {
+		if _, werr := adapter.WriteEdge(ctx, &edges[i]); werr != nil {
+			t.Fatalf("WriteEdge: %v", werr)
+		}
+	}
+	return dir
+}
+
+func TestRunGraphDepthCallers(t *testing.T) {
+	dir := seedGraphProjectDeep(t)
+
+	t.Run("depth=1 returns direct caller only", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"--depth", "1", "--direction", "callers", "--json", "A"},
+			IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSuccess {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var resp mcpio.GraphResponse
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if len(resp.Edges.CalledBy) != 1 || resp.Edges.CalledBy[0].Symbol != "B" {
+			t.Errorf("depth=1 called_by = %v, want [B]", resp.Edges.CalledBy)
+		}
+		if len(resp.Layers) != 0 {
+			t.Errorf("depth=1 layers = %d, want 0", len(resp.Layers))
+		}
+	})
+
+	t.Run("depth=2 returns direct + transitive callers", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"--depth", "2", "--direction", "callers", "--json", "A"},
+			IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSuccess {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var resp mcpio.GraphResponse
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if len(resp.Edges.CalledBy) != 1 || resp.Edges.CalledBy[0].Symbol != "B" {
+			t.Errorf("depth=2 edges.called_by = %v, want [B]", resp.Edges.CalledBy)
+		}
+		if len(resp.Layers) != 1 {
+			t.Fatalf("depth=2 layers = %d, want 1", len(resp.Layers))
+		}
+		if resp.Layers[0].Depth != 2 {
+			t.Errorf("layer depth = %d, want 2", resp.Layers[0].Depth)
+		}
+		if len(resp.Layers[0].Edges.CalledBy) != 1 || resp.Layers[0].Edges.CalledBy[0].Symbol != "C" {
+			t.Errorf("depth=2 layer called_by = %v, want [C]", resp.Layers[0].Edges.CalledBy)
+		}
+	})
+
+	t.Run("depth=3 returns full 3-hop chain", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"--depth", "3", "--direction", "callers", "--json", "A"},
+			IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSuccess {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var resp mcpio.GraphResponse
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if len(resp.Edges.CalledBy) != 1 || resp.Edges.CalledBy[0].Symbol != "B" {
+			t.Errorf("depth=3 edges.called_by = %v, want [B]", resp.Edges.CalledBy)
+		}
+		if len(resp.Layers) != 2 {
+			t.Fatalf("depth=3 layers = %d, want 2", len(resp.Layers))
+		}
+		if resp.Layers[0].Edges.CalledBy[0].Symbol != "C" {
+			t.Errorf("depth=3 layer[0] = %v, want C", resp.Layers[0].Edges.CalledBy)
+		}
+		if resp.Layers[1].Depth != 3 {
+			t.Errorf("layer[1] depth = %d, want 3", resp.Layers[1].Depth)
+		}
+		if len(resp.Layers[1].Edges.CalledBy) != 1 || resp.Layers[1].Edges.CalledBy[0].Symbol != "D" {
+			t.Errorf("depth=3 layer[1] = %v, want [D]", resp.Layers[1].Edges.CalledBy)
+		}
+	})
+
+	t.Run("depth=2 callees direction", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"--depth", "2", "--direction", "callees", "--json", "D"},
+			IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSuccess {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var resp mcpio.GraphResponse
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if len(resp.Edges.Calls) != 1 || resp.Edges.Calls[0].Symbol != "C" {
+			t.Errorf("depth=2 callees calls = %v, want [C]", resp.Edges.Calls)
+		}
+		if len(resp.Layers) != 1 {
+			t.Fatalf("depth=2 callees layers = %d, want 1", len(resp.Layers))
+		}
+		if len(resp.Layers[0].Edges.Calls) != 1 || resp.Layers[0].Edges.Calls[0].Symbol != "B" {
+			t.Errorf("depth=2 callees layer = %v, want [B]", resp.Layers[0].Edges.Calls)
+		}
+	})
+
+	t.Run("deduplication across hops", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		code := RunGraph([]string{"--depth", "3", "--direction", "callees", "--json", "D"},
+			IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+		if code != ExitSuccess {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var resp mcpio.GraphResponse
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		seen := map[string]bool{}
+		for _, e := range resp.Edges.Calls {
+			if seen[e.Symbol] {
+				t.Errorf("duplicate in edges: %s", e.Symbol)
+			}
+			seen[e.Symbol] = true
+		}
+		for _, layer := range resp.Layers {
+			for _, e := range layer.Edges.Calls {
+				if seen[e.Symbol] {
+					t.Errorf("duplicate across layers: %s", e.Symbol)
+				}
+				seen[e.Symbol] = true
+			}
+		}
+	})
 }

@@ -28,33 +28,42 @@ func RenderGraphHuman(w io.Writer, resp mcpio.GraphResponse) {
 	_, _ = fmt.Fprintf(w, "%s  (%s)\n", resp.Symbol.Name, resp.Symbol.Kind)
 	_, _ = fmt.Fprintf(w, "  %s:%d-%d\n", resp.Symbol.File, resp.Symbol.LineStart, resp.Symbol.LineEnd)
 
-	// Group order matches the pitch example: inherits → calls →
-	// callers → tests. Labels are padded to a shared width so the
-	// edge lists line up on a common left edge.
 	const label = "  %-9s %s\n"
 
-	if s := renderInherits(resp.Edges.Inherits); s != "" {
-		_, _ = fmt.Fprintf(w, label, "inherits", s)
-	}
-	if s := renderComposes(resp.Edges.Composes); s != "" {
-		_, _ = fmt.Fprintf(w, label, "composes", s)
-	}
-	if s := renderIncludes(resp.Edges.Includes); s != "" {
-		_, _ = fmt.Fprintf(w, label, "includes", s)
-	}
-	if s := renderImports(resp.Edges.Imports); s != "" {
-		_, _ = fmt.Fprintf(w, label, "imports", s)
-	}
-	if s := renderCalls(resp.Edges.Calls); s != "" {
-		_, _ = fmt.Fprintf(w, label, "calls", s)
-	}
-	if s := renderCalls(resp.Edges.CalledBy); s != "" {
-		_, _ = fmt.Fprintf(w, label, "callers", s)
-	}
+	renderEdgeGroup(w, label, resp.Edges)
 	if ts := resp.TestCallerSummary; ts != nil && ts.Count > 0 {
 		_, _ = fmt.Fprintf(w, label, "test cal.", fmt.Sprintf("(%d in %s)", ts.Count, strings.Join(ts.Examples, ", ")))
 	}
-	if s := renderTests(resp.Edges.Tests); s != "" {
+
+	for _, layer := range resp.Layers {
+		_, _ = fmt.Fprintf(w, "\n  ── depth %d ──\n", layer.Depth)
+		renderEdgeGroup(w, label, layer.Edges)
+	}
+	if resp.Truncated {
+		_, _ = fmt.Fprintf(w, "\n  (results truncated — per-hop limit reached)\n")
+	}
+}
+
+func renderEdgeGroup(w io.Writer, label string, edges mcpio.GraphEdges) {
+	if s := renderInherits(edges.Inherits); s != "" {
+		_, _ = fmt.Fprintf(w, label, "inherits", s)
+	}
+	if s := renderComposes(edges.Composes); s != "" {
+		_, _ = fmt.Fprintf(w, label, "composes", s)
+	}
+	if s := renderIncludes(edges.Includes); s != "" {
+		_, _ = fmt.Fprintf(w, label, "includes", s)
+	}
+	if s := renderImports(edges.Imports); s != "" {
+		_, _ = fmt.Fprintf(w, label, "imports", s)
+	}
+	if s := renderCalls(edges.Calls); s != "" {
+		_, _ = fmt.Fprintf(w, label, "calls", s)
+	}
+	if s := renderCalls(edges.CalledBy); s != "" {
+		_, _ = fmt.Fprintf(w, label, "callers", s)
+	}
+	if s := renderTests(edges.Tests); s != "" {
 		_, _ = fmt.Fprintf(w, label, "tests", s)
 	}
 }

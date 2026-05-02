@@ -571,6 +571,127 @@ func (a *Adapter) ReadSymbol(ctx context.Context, id int64) (*model.SymbolContex
 	}, nil
 }
 
+// ReadSymbolGraph performs a multi-hop BFS from the given symbol.
+// Depth 1 behaves identically to ReadSymbol. At depth 2+, the BFS
+// expands the frontier in the requested direction, deduplicating
+// against already-visited nodes. MaxPerHop caps new symbols per hop;
+// zero means unlimited.
+func (a *Adapter) ReadSymbolGraph(ctx context.Context, id int64, depth int, direction model.Direction, maxPerHop int) (*model.GraphResult, error) {
+	root, err := a.ReadSymbol(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	result := &model.GraphResult{Root: *root}
+	if depth <= 1 {
+		return result, nil
+	}
+
+	visited := map[int64]struct{}{id: {}}
+	frontier := graphFrontier(&result.Root, direction, visited)
+
+	for hop := 2; hop <= depth; hop++ {
+		if len(frontier) == 0 {
+			break
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("graph depth: cancelled at hop %d: %w", hop, err)
+		}
+
+		var layer model.HopEdges
+		var nextFrontier []int64
+		hopSymbols := 0
+
+		expand := func(symID int64, outbound bool, dest *[]model.EdgeRef) error {
+			refs, err := a.loadEdges(ctx, symID, outbound)
+			if err != nil {
+				return fmt.Errorf("graph depth hop %d: %w", hop, err)
+			}
+			for _, e := range refs {
+				if !expandableEdge(e, visited) {
+					continue
+				}
+				visited[e.Target.ID] = struct{}{}
+				*dest = append(*dest, e)
+				nextFrontier = append(nextFrontier, e.Target.ID)
+				hopSymbols++
+				if maxPerHop > 0 && hopSymbols >= maxPerHop {
+					result.Truncated = true
+					return nil
+				}
+			}
+			return nil
+		}
+
+		for _, symID := range frontier {
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("graph depth: cancelled at hop %d: %w", hop, err)
+			}
+			if maxPerHop > 0 && hopSymbols >= maxPerHop {
+				result.Truncated = true
+				break
+			}
+			if direction != model.DirectionCallees {
+				if err := expand(symID, false, &layer.Inbound); err != nil {
+					return nil, err
+				}
+				if result.Truncated {
+					break
+				}
+			}
+			if direction != model.DirectionCallers {
+				if err := expand(symID, true, &layer.Outbound); err != nil {
+					return nil, err
+				}
+				if result.Truncated {
+					break
+				}
+			}
+		}
+		if len(layer.Inbound) > 0 || len(layer.Outbound) > 0 {
+			result.Layers = append(result.Layers, layer)
+		}
+		if result.Truncated {
+			break
+		}
+		frontier = nextFrontier
+	}
+	return result, nil
+}
+
+// expandableEdge returns true if the edge should be followed during
+// BFS — filters out zero-ID targets, temporal (co-change) edges, and
+// already-visited nodes.
+func expandableEdge(e model.EdgeRef, visited map[int64]struct{}) bool {
+	if e.Target.ID == 0 || e.Edge.Kind == model.EdgeTemporal {
+		return false
+	}
+	_, seen := visited[e.Target.ID]
+	return !seen
+}
+
+// graphFrontier extracts the initial BFS frontier from the root's
+// edges, filtered by direction. Discovered IDs are added to visited.
+func graphFrontier(sc *model.SymbolContext, direction model.Direction, visited map[int64]struct{}) []int64 {
+	var frontier []int64
+	if direction != model.DirectionCallees {
+		for _, e := range sc.Inbound {
+			if expandableEdge(e, visited) {
+				visited[e.Target.ID] = struct{}{}
+				frontier = append(frontier, e.Target.ID)
+			}
+		}
+	}
+	if direction != model.DirectionCallers {
+		for _, e := range sc.Outbound {
+			if expandableEdge(e, visited) {
+				visited[e.Target.ID] = struct{}{}
+				frontier = append(frontier, e.Target.ID)
+			}
+		}
+	}
+	return frontier
+}
+
 func (a *Adapter) Query(ctx context.Context, f index.Filter) ([]model.Symbol, error) {
 	limit := int64(f.Limit)
 	if limit <= 0 {

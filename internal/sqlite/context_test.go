@@ -303,3 +303,237 @@ func TestContextForFileEmpty(t *testing.T) {
 		t.Errorf("expected nil for file with no symbols, got %d entries", len(result))
 	}
 }
+
+// seedChain builds a linear call chain of length n:
+//
+//	sym[n-1] → sym[n-2] → … → sym[1] → sym[0]
+//
+// Returns the symbol IDs in order sym[0]…sym[n-1].
+func seedChain(t *testing.T, ctx context.Context, a *sqlite.Adapter, n int) []int64 {
+	t.Helper()
+	ids := make([]int64, n)
+	for i := range n {
+		fid, err := a.WriteFile(ctx, &model.File{
+			Path: fmt.Sprintf("chain_%d.rb", i), Language: "ruby",
+			Hash: fmt.Sprintf("ch%d", i), IndexedAt: time.Now(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sid, err := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: fmt.Sprintf("S%d", i),
+			Qualified: fmt.Sprintf("S%d", i),
+			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = sid
+	}
+	for i := 1; i < n; i++ {
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: model.Int64Ptr(ids[i]), TargetID: ids[i-1],
+			Kind: model.EdgeCalls, FileID: 1, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return ids
+}
+
+func TestReadSymbolGraphDepth(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	// Chain: S3 → S2 → S1 → S0
+	ids := seedChain(t, ctx, a, 4)
+
+	t.Run("depth=1 returns root only", func(t *testing.T) {
+		gr, err := a.ReadSymbolGraph(ctx, ids[0], 1, "both", 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gr.Layers) != 0 {
+			t.Errorf("layers = %d, want 0", len(gr.Layers))
+		}
+		if len(gr.Root.Inbound) != 1 {
+			t.Errorf("root inbound = %d, want 1 (S1)", len(gr.Root.Inbound))
+		}
+	})
+
+	t.Run("depth=2 adds one layer", func(t *testing.T) {
+		gr, err := a.ReadSymbolGraph(ctx, ids[0], 2, "callers", 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gr.Layers) != 1 {
+			t.Fatalf("layers = %d, want 1", len(gr.Layers))
+		}
+		if len(gr.Layers[0].Inbound) != 1 {
+			t.Errorf("layer[0] inbound = %d, want 1 (S2)", len(gr.Layers[0].Inbound))
+		}
+	})
+
+	t.Run("depth=3 adds two layers", func(t *testing.T) {
+		gr, err := a.ReadSymbolGraph(ctx, ids[0], 3, "callers", 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gr.Layers) != 2 {
+			t.Fatalf("layers = %d, want 2", len(gr.Layers))
+		}
+		if gr.Root.Inbound[0].Target.Qualified != "S1" {
+			t.Errorf("root caller = %s, want S1", gr.Root.Inbound[0].Target.Qualified)
+		}
+		if gr.Layers[0].Inbound[0].Target.Qualified != "S2" {
+			t.Errorf("layer[0] caller = %s, want S2", gr.Layers[0].Inbound[0].Target.Qualified)
+		}
+		if gr.Layers[1].Inbound[0].Target.Qualified != "S3" {
+			t.Errorf("layer[1] caller = %s, want S3", gr.Layers[1].Inbound[0].Target.Qualified)
+		}
+	})
+
+	t.Run("callees direction", func(t *testing.T) {
+		gr, err := a.ReadSymbolGraph(ctx, ids[3], 2, "callees", 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gr.Root.Outbound) != 1 || gr.Root.Outbound[0].Target.Qualified != "S2" {
+			t.Errorf("root callee = %v, want [S2]", gr.Root.Outbound)
+		}
+		if len(gr.Layers) != 1 {
+			t.Fatalf("layers = %d, want 1", len(gr.Layers))
+		}
+		if len(gr.Layers[0].Outbound) != 1 || gr.Layers[0].Outbound[0].Target.Qualified != "S1" {
+			t.Errorf("layer callee = %v, want [S1]", gr.Layers[0].Outbound)
+		}
+	})
+
+	t.Run("dedup prevents cycles", func(t *testing.T) {
+		gr, err := a.ReadSymbolGraph(ctx, ids[0], 3, "both", 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, e := range gr.Root.Inbound {
+			seen[e.Target.Qualified] = true
+		}
+		for _, e := range gr.Root.Outbound {
+			seen[e.Target.Qualified] = true
+		}
+		for _, layer := range gr.Layers {
+			for _, e := range layer.Inbound {
+				if seen[e.Target.Qualified] {
+					t.Errorf("duplicate across layers: %s", e.Target.Qualified)
+				}
+				seen[e.Target.Qualified] = true
+			}
+			for _, e := range layer.Outbound {
+				if seen[e.Target.Qualified] {
+					t.Errorf("duplicate across layers: %s", e.Target.Qualified)
+				}
+				seen[e.Target.Qualified] = true
+			}
+		}
+	})
+}
+
+func TestReadSymbolGraphTruncation(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	// Star topology: hub has 10 callers, each caller has its own caller.
+	hubFile, err := a.WriteFile(ctx, &model.File{
+		Path: "hub.rb", Language: "ruby",
+		Hash: "hub", IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: hubFile, Name: "Hub", Qualified: "Hub",
+		Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 10 {
+		fid, _ := a.WriteFile(ctx, &model.File{
+			Path: fmt.Sprintf("caller_%d.rb", i), Language: "ruby",
+			Hash: fmt.Sprintf("c%d", i), IndexedAt: time.Now(),
+		})
+		callerID, _ := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: fmt.Sprintf("Caller%d", i),
+			Qualified: fmt.Sprintf("Caller%d", i),
+			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+		})
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: model.Int64Ptr(callerID), TargetID: hubID,
+			Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// Each caller has its own grandparent caller
+		gfid, _ := a.WriteFile(ctx, &model.File{
+			Path: fmt.Sprintf("grand_%d.rb", i), Language: "ruby",
+			Hash: fmt.Sprintf("g%d", i), IndexedAt: time.Now(),
+		})
+		grandID, _ := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: gfid, Name: fmt.Sprintf("Grand%d", i),
+			Qualified: fmt.Sprintf("Grand%d", i),
+			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+		})
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: model.Int64Ptr(grandID), TargetID: callerID,
+			Kind: model.EdgeCalls, FileID: gfid, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("maxPerHop=3 truncates at hop 2", func(t *testing.T) {
+		gr, err := a.ReadSymbolGraph(ctx, hubID, 2, "callers", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !gr.Truncated {
+			t.Error("expected Truncated=true")
+		}
+		// Root should have all 10 callers (depth-1 is not capped by maxPerHop)
+		if len(gr.Root.Inbound) != 10 {
+			t.Errorf("root inbound = %d, want 10", len(gr.Root.Inbound))
+		}
+		// Layer should exist with partial results
+		if len(gr.Layers) != 1 {
+			t.Fatalf("layers = %d, want 1", len(gr.Layers))
+		}
+		if len(gr.Layers[0].Inbound) != 3 {
+			t.Errorf("layer inbound = %d, want 3 (maxPerHop)", len(gr.Layers[0].Inbound))
+		}
+	})
+
+	t.Run("maxPerHop=0 means unlimited", func(t *testing.T) {
+		gr, err := a.ReadSymbolGraph(ctx, hubID, 2, "callers", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gr.Truncated {
+			t.Error("expected Truncated=false with unlimited cap")
+		}
+		if len(gr.Layers) != 1 {
+			t.Fatalf("layers = %d, want 1", len(gr.Layers))
+		}
+		if len(gr.Layers[0].Inbound) != 10 {
+			t.Errorf("layer inbound = %d, want 10", len(gr.Layers[0].Inbound))
+		}
+	})
+}
