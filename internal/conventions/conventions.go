@@ -11,6 +11,8 @@ import (
 
 const minInstances = 3
 const maxDescriptionNames = 5
+const minPrevalence = 0.10
+const minPrevalenceInstances = 5
 
 type Category string
 
@@ -20,6 +22,9 @@ const (
 	CategoryStructure    Category = "structure"
 	CategoryComposition  Category = "composition"
 	CategoryTesting      Category = "testing"
+	CategoryDesignPattern Category = "design_pattern"
+	CategoryFramework    Category = "framework"
+	CategoryArchitecture Category = "architecture"
 )
 
 type Example struct {
@@ -77,6 +82,9 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	conventions = append(conventions, detectStructure(symbols, filePathByID)...)
 	conventions = append(conventions, detectComposition(symbols, edges, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectTesting(symbols, edges, filePathByID, symbolByID)...)
+	conventions = append(conventions, detectDesignPatterns(symbols, symbolByID, filePathByID)...)
+	conventions = append(conventions, detectFrameworkIdioms(symbols, edges, symbolByID, filePathByID)...)
+	conventions = append(conventions, detectArchitectureLayers(symbols, edges, symbolByID, filePathByID)...)
 
 	sort.Slice(conventions, func(i, j int) bool {
 		if conventions[i].Category != conventions[j].Category {
@@ -87,6 +95,18 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 		}
 		return conventions[i].Description < conventions[j].Description
 	})
+
+	{
+		filtered := conventions[:0]
+		for _, c := range conventions {
+			prevalent := c.Instances >= minPrevalenceInstances ||
+				(c.Total > 0 && float64(c.Instances)/float64(c.Total) >= minPrevalence)
+			if prevalent {
+				filtered = append(filtered, c)
+			}
+		}
+		conventions = filtered
+	}
 
 	if opts.Domain != "" {
 		filtered := conventions[:0]
@@ -356,7 +376,7 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		sortExamples(g.examples)
 		out = append(out, Convention{
 			Category:    CategoryInheritance,
-			Description: fmt.Sprintf("%s inherit %s (%d total)", topNames(g.examples), g.targetName, g.count),
+			Description: fmt.Sprintf("%d %s extend %s as a base class (%s)", g.count, pluralize(g.sourceKind), g.targetName, topNames(g.examples)),
 			Instances:   g.count,
 			Total:       total,
 			Strength:    float64(g.count) / float64(total),
@@ -431,7 +451,7 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryNaming,
-			Description: fmt.Sprintf("%s *%s pattern: %s (%d total)", ks.kind, ks.suffix, topNames(ex), count),
+			Description: fmt.Sprintf("%s use *%s naming convention (%s — %d of %d)", pluralize(ks.kind), ks.suffix, topNames(ex), count, total),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -451,7 +471,7 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryNaming,
-			Description: fmt.Sprintf("%s files *%s pattern: %s (%d total)", kfs.kind, kfs.suffix, topNames(ex), count),
+			Description: fmt.Sprintf("%s files use *%s naming convention (%s — %d of %d)", kfs.kind, kfs.suffix, topNames(ex), count, total),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -499,7 +519,7 @@ func detectStructure(symbols []symbolRow, filePathByID map[int64]string) []Conve
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryStructure,
-			Description: fmt.Sprintf("%s pattern: %s in %s/ (%d total)", kd.kind, topNames(ex), kd.dir, count),
+			Description: fmt.Sprintf("%s are grouped in %s/ (%s — %d of %d)", pluralize(kd.kind), kd.dir, topNames(ex), count, total),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -566,7 +586,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		sortExamples(g.examples)
 		out = append(out, Convention{
 			Category:    CategoryComposition,
-			Description: fmt.Sprintf("%s include %s (%d total)", topNames(g.examples), g.targetName, g.count),
+			Description: fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), g.targetName, topNames(g.examples)),
 			Instances:   g.count,
 			Total:       total,
 			Strength:    float64(g.count) / float64(total),
@@ -641,7 +661,7 @@ func detectTesting(symbols []symbolRow, edges []edgeRow, filePathByID map[int64]
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryTesting,
-			Description: fmt.Sprintf("test files *%s pattern: %s (%d/%d total)", suffix, topNames(ex), count, total),
+			Description: fmt.Sprintf("Test files use *%s naming convention (%s — %d of %d test files)", suffix, topNames(ex), count, total),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -691,8 +711,14 @@ func categoryOrder(c Category) int {
 		return 3
 	case CategoryTesting:
 		return 4
+	case CategoryDesignPattern:
+		return 5
+	case CategoryFramework:
+		return 6
+	case CategoryArchitecture:
+		return 7
 	}
-	return 5
+	return 8
 }
 
 func hasMatchingExample(examples []Example, domain string) bool {
@@ -747,4 +773,327 @@ func extractFileSuffix(basename string) string {
 		return nameOnly[idx:] + ext
 	}
 	return ""
+}
+
+var serviceEntryPoints = map[string]bool{
+	"call": true, "execute": true, "perform": true, "run": true,
+	"handle": true, "process": true, "invoke": true,
+}
+
+func detectDesignPatterns(symbols []symbolRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
+	childrenByParent := map[int64][]symbolRow{}
+	for _, s := range symbols {
+		if s.parentID != nil {
+			childrenByParent[*s.parentID] = append(childrenByParent[*s.parentID], s)
+		}
+	}
+
+	var serviceObjects []Example
+	for parentID, children := range childrenByParent {
+		parent, ok := symbolByID[parentID]
+		if !ok || (parent.kind != "class" && parent.kind != "struct") {
+			continue
+		}
+		var methods []symbolRow
+		for _, c := range children {
+			if c.kind == "function" || c.kind == "method" {
+				methods = append(methods, c)
+			}
+		}
+		if len(methods) == 0 || len(methods) > 2 {
+			continue
+		}
+		for _, m := range methods {
+			if serviceEntryPoints[strings.ToLower(m.name)] {
+				serviceObjects = append(serviceObjects, Example{
+					Name: parent.name,
+					Path: filePathByID[parent.fileID],
+				})
+				break
+			}
+		}
+	}
+
+	var out []Convention
+	if len(serviceObjects) >= minInstances {
+		sortExamples(serviceObjects)
+		totalParents := countParents(symbols)
+		out = append(out, Convention{
+			Category:    CategoryDesignPattern,
+			Description: fmt.Sprintf("Service object pattern: %s use a single entry-point method (call/execute/perform) — %d of %d classes", topNames(serviceObjects), len(serviceObjects), totalParents),
+			Instances:   len(serviceObjects),
+			Total:       totalParents,
+			Strength:    safeStrength(len(serviceObjects), totalParents),
+			Examples:    serviceObjects,
+		})
+	}
+	return out
+}
+
+func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
+	var out []Convention
+
+	// Rails concerns: modules in paths containing "concerns" included by multiple classes
+	type concernGroup struct {
+		module   symbolRow
+		includers []Example
+	}
+	concerns := map[int64]*concernGroup{}
+	for _, e := range edges {
+		if e.kind != "includes" {
+			continue
+		}
+		tgt, ok := symbolByID[e.targetID]
+		if !ok || tgt.kind != "module" {
+			continue
+		}
+		fp := filePathByID[tgt.fileID]
+		if !strings.Contains(fp, "concerns") && !strings.Contains(fp, "concern") {
+			continue
+		}
+		src, ok := symbolByID[e.sourceID]
+		if !ok {
+			continue
+		}
+		g, exists := concerns[e.targetID]
+		if !exists {
+			g = &concernGroup{module: tgt}
+			concerns[e.targetID] = g
+		}
+		g.includers = append(g.includers, Example{Name: src.name, Path: filePathByID[src.fileID]})
+	}
+	var concernExamples []Example
+	for _, g := range concerns {
+		if len(g.includers) < minInstances {
+			continue
+		}
+		concernExamples = append(concernExamples, Example{
+			Name: g.module.name,
+			Path: filePathByID[g.module.fileID],
+		})
+	}
+	if len(concernExamples) >= 1 {
+		sortExamples(concernExamples)
+		totalModules := countByKind(symbols, "module")
+		for _, g := range concerns {
+			if len(g.includers) < minInstances {
+				continue
+			}
+			sortExamples(g.includers)
+			out = append(out, Convention{
+				Category:    CategoryFramework,
+				Description: fmt.Sprintf("Concern pattern: %s is mixed into %d classes (%s) for shared behavior", g.module.name, len(g.includers), topNames(g.includers)),
+				Instances:   len(g.includers),
+				Total:       totalModules,
+				Strength:    safeStrength(len(g.includers), totalModules),
+				Examples:    g.includers,
+			})
+		}
+	}
+
+	// Go interface satisfaction: interfaces implemented by multiple structs
+	type ifaceGroup struct {
+		iface       symbolRow
+		implementors []Example
+	}
+	ifaces := map[int64]*ifaceGroup{}
+	for _, e := range edges {
+		if e.kind != "inherits" {
+			continue
+		}
+		tgt, ok := symbolByID[e.targetID]
+		if !ok || tgt.kind != "interface" {
+			continue
+		}
+		src, ok := symbolByID[e.sourceID]
+		if !ok || (src.kind != "struct" && src.kind != "class") {
+			continue
+		}
+		g, exists := ifaces[e.targetID]
+		if !exists {
+			g = &ifaceGroup{iface: tgt}
+			ifaces[e.targetID] = g
+		}
+		g.implementors = append(g.implementors, Example{Name: src.name, Path: filePathByID[src.fileID]})
+	}
+	for _, g := range ifaces {
+		if len(g.implementors) < minInstances {
+			continue
+		}
+		sortExamples(g.implementors)
+		totalStructs := countByKind(symbols, "struct", "class")
+		out = append(out, Convention{
+			Category:    CategoryFramework,
+			Description: fmt.Sprintf("Interface contract: %s is satisfied by %d types (%s) — polymorphic dispatch point", g.iface.name, len(g.implementors), topNames(g.implementors)),
+			Instances:   len(g.implementors),
+			Total:       totalStructs,
+			Strength:    safeStrength(len(g.implementors), totalStructs),
+			Examples:    g.implementors,
+		})
+	}
+
+	// Hook patterns: use* functions (React/TypeScript only)
+	var hooks []Example
+	for _, s := range symbols {
+		if s.kind != "function" {
+			continue
+		}
+		fp := filePathByID[s.fileID]
+		ext := path.Ext(fp)
+		if ext != ".js" && ext != ".jsx" && ext != ".ts" && ext != ".tsx" {
+			continue
+		}
+		if strings.HasPrefix(s.name, "use") && len(s.name) > 3 && s.name[3] >= 'A' && s.name[3] <= 'Z' {
+			hooks = append(hooks, Example{Name: s.name, Path: filePathByID[s.fileID]})
+		}
+	}
+	if len(hooks) >= minInstances {
+		sortExamples(hooks)
+		totalFuncs := countByKind(symbols, "function")
+		out = append(out, Convention{
+			Category:    CategoryFramework,
+			Description: fmt.Sprintf("React hook pattern: %s — custom hooks encapsulate stateful logic (%d hooks)", topNames(hooks), len(hooks)),
+			Instances:   len(hooks),
+			Total:       totalFuncs,
+			Strength:    safeStrength(len(hooks), totalFuncs),
+			Examples:    hooks,
+		})
+	}
+
+	return out
+}
+
+func detectArchitectureLayers(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
+	symbolDir := map[int64]string{}
+	for _, s := range symbols {
+		fp, ok := filePathByID[s.fileID]
+		if !ok {
+			continue
+		}
+		parts := strings.Split(fp, "/")
+		if len(parts) >= 2 {
+			symbolDir[s.id] = parts[len(parts)-2]
+		}
+	}
+
+	type dirPair struct{ from, to string }
+	callCounts := map[dirPair]int{}
+	for _, e := range edges {
+		if e.kind != "calls" {
+			continue
+		}
+		fromDir := symbolDir[e.sourceID]
+		toDir := symbolDir[e.targetID]
+		if fromDir == "" || toDir == "" || fromDir == toDir {
+			continue
+		}
+		callCounts[dirPair{fromDir, toDir}]++
+	}
+
+	totalCrossDirCalls := 0
+	for _, count := range callCounts {
+		totalCrossDirCalls += count
+	}
+
+	type layerEvidence struct {
+		from, to string
+		count    int
+	}
+	var oneWay []layerEvidence
+	for pair, count := range callCounts {
+		if count < minInstances {
+			continue
+		}
+		reverse := callCounts[dirPair{pair.to, pair.from}]
+		if reverse == 0 {
+			oneWay = append(oneWay, layerEvidence{from: pair.from, to: pair.to, count: count})
+		}
+	}
+
+	var out []Convention
+	for _, le := range oneWay {
+		var examples []Example
+		for _, e := range edges {
+			if e.kind != "calls" {
+				continue
+			}
+			if symbolDir[e.sourceID] == le.from && symbolDir[e.targetID] == le.to {
+				src := symbolByID[e.sourceID]
+				examples = append(examples, Example{
+					Name: src.name,
+					Path: filePathByID[src.fileID],
+				})
+				if len(examples) >= 10 {
+					break
+				}
+			}
+		}
+		sortExamples(examples)
+		deduped := dedupeExamples(examples)
+		out = append(out, Convention{
+			Category:    CategoryArchitecture,
+			Description: fmt.Sprintf("Layer boundary: %s/ depends on %s/ (%d calls, never reversed) — unidirectional dependency", le.from, le.to, le.count),
+			Instances:   le.count,
+			Total:       totalCrossDirCalls,
+			Strength:    safeStrength(le.count, totalCrossDirCalls),
+			Examples:    deduped,
+		})
+	}
+	return out
+}
+
+func countParents(symbols []symbolRow) int {
+	n := 0
+	for _, s := range symbols {
+		if s.parentID == nil && (s.kind == "class" || s.kind == "struct") {
+			n++
+		}
+	}
+	return n
+}
+
+func countByKind(symbols []symbolRow, kinds ...string) int {
+	kindSet := map[string]bool{}
+	for _, k := range kinds {
+		kindSet[k] = true
+	}
+	n := 0
+	for _, s := range symbols {
+		if kindSet[s.kind] {
+			n++
+		}
+	}
+	return n
+}
+
+func safeStrength(instances, total int) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(instances) / float64(total)
+}
+
+func pluralize(kind string) string {
+	if strings.HasSuffix(kind, "ss") || strings.HasSuffix(kind, "ch") ||
+		strings.HasSuffix(kind, "sh") || strings.HasSuffix(kind, "x") {
+		return kind + "es"
+	}
+	if strings.HasSuffix(kind, "s") {
+		return kind + "es"
+	}
+	return kind + "s"
+}
+
+func dedupeExamples(examples []Example) []Example {
+	seen := map[string]bool{}
+	var out []Example
+	for _, e := range examples {
+		key := e.Name + ":" + e.Path
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, e)
+	}
+	return out
 }
