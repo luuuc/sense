@@ -256,6 +256,13 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		return nil, SearchMeta{}, fmt.Errorf("search enrich: %w", err)
 	}
 
+	// Parent promotion: when 2+ methods of the same class appear in top
+	// results, replace them with the parent class at the highest score.
+	fused, err = e.promoteParents(ctx, fused, opts.Limit)
+	if err != nil {
+		return nil, SearchMeta{}, fmt.Errorf("search promote: %w", err)
+	}
+
 	// Apply min_score filter and limit.
 	var results []Result
 	for _, r := range fused {
@@ -634,4 +641,102 @@ func (e *Engine) enrichFromGraph(ctx context.Context, results []Result) ([]Resul
 	})
 
 	return results, nil
+}
+
+const parentPromotionThreshold = 2
+
+// promoteParents replaces multiple child methods from the same parent
+// class/struct with the parent symbol when 2+ children appear in the
+// top-K results. The parent inherits the highest child score.
+func (e *Engine) promoteParents(ctx context.Context, results []Result, limit int) ([]Result, error) {
+	if len(results) == 0 {
+		return results, nil
+	}
+
+	topK := limit
+	if topK > len(results) {
+		topK = len(results)
+	}
+
+	topIDs := make([]int64, topK)
+	for i := range topK {
+		topIDs[i] = results[i].SymbolID
+	}
+
+	parents, err := e.adapter.ParentSymbols(ctx, topIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(parents) == 0 {
+		return results, nil
+	}
+
+	type parentGroup struct {
+		info     sqlite.ParentInfo
+		children []int
+		maxScore float64
+	}
+	groups := map[int64]*parentGroup{}
+	for i := range topK {
+		pi, ok := parents[results[i].SymbolID]
+		if !ok {
+			continue
+		}
+		g, exists := groups[pi.ParentID]
+		if !exists {
+			g = &parentGroup{info: pi}
+			groups[pi.ParentID] = g
+		}
+		g.children = append(g.children, i)
+		if results[i].Score > g.maxScore {
+			g.maxScore = results[i].Score
+		}
+	}
+
+	existing := map[int64]bool{}
+	for _, r := range results {
+		existing[r.SymbolID] = true
+	}
+
+	remove := map[int]bool{}
+	var promoted []Result
+	for _, g := range groups {
+		if len(g.children) < parentPromotionThreshold {
+			continue
+		}
+		if existing[g.info.ParentID] {
+			continue
+		}
+		for _, idx := range g.children {
+			remove[idx] = true
+		}
+		promoted = append(promoted, Result{
+			SymbolID:  g.info.ParentID,
+			Name:      g.info.Name,
+			Qualified: g.info.Qualified,
+			Kind:      g.info.Kind,
+			FileID:    g.info.FileID,
+			LineStart: g.info.LineStart,
+			Snippet:   g.info.Snippet,
+			Score:     g.maxScore,
+		})
+	}
+
+	if len(promoted) == 0 {
+		return results, nil
+	}
+
+	var out []Result
+	for i, r := range results {
+		if !remove[i] {
+			out = append(out, r)
+		}
+	}
+	out = append(out, promoted...)
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Score > out[j].Score
+	})
+
+	return out, nil
 }
