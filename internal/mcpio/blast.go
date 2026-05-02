@@ -6,43 +6,72 @@ import (
 	"github.com/luuuc/sense/internal/blast"
 )
 
+const (
+	tier1Cap         = 30
+	tier2ExamplesCap = 5
+)
+
 // BuildBlastResponse assembles a wire BlastResponse from the blast
-// engine's Result plus a file-path lookup for caller symbols. The
-// engine's Result holds model.Symbol records (with FileID) and
-// pre-resolved AffectedTests file paths; this builder turns both
-// into the documented (symbol, file) / (symbol, via, hops) shapes.
-//
-// A FileLookup miss renders an empty File string — DirectCallers
-// are by construction indexed symbols (they live in sense_symbols),
-// so the only way to miss is a race between the blast read and the
-// file-path read. Empty is more honest than omitting the entry.
+// engine's Result plus a file-path lookup for caller symbols. Results
+// are partitioned by relevance tier:
+//   - Tier 1 (breaks): full detail, capped at 30 items
+//   - Tier 2 (references): count + top 5 examples
+//   - Tier 3 (tests): count only
 func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 	resp := BlastResponse{
-		Symbol:        qualifiedOrName(r.Symbol),
-		Risk:          r.Risk,
-		RiskFactors:   append([]string{}, r.RiskReasons...),
-		AffectedTests: append([]string{}, r.AffectedTests...),
-		TotalAffected: r.TotalAffected,
+		Symbol:             qualifiedOrName(r.Symbol),
+		Risk:               r.Risk,
+		RiskFactors:        append([]string{}, r.RiskReasons...),
+		AffectedTests:      append([]string{}, r.AffectedTests...),
+		TotalAffected:      r.TotalAffected,
+		TestsAffectedCount: len(r.AffectedTests),
 	}
+
+	hasTiers := len(r.SymbolTiers) > 0
+	tier1Count := 0
+	var tier2All []BlastCaller
 
 	for _, c := range r.DirectCallers {
 		var file string
 		if path, ok := files(c.FileID); ok {
 			file = path
 		}
-		resp.DirectCallers = append(resp.DirectCallers, BlastCaller{
+		entry := BlastCaller{
 			Symbol:      qualifiedOrName(c),
 			File:        file,
 			ViaTemporal: r.DirectTemporalIDs[c.ID],
-		})
+		}
+
+		if !hasTiers || r.SymbolTiers[c.ID] == blast.TierBreaks {
+			if tier1Count < tier1Cap {
+				resp.DirectCallers = append(resp.DirectCallers, entry)
+				tier1Count++
+			}
+		} else {
+			tier2All = append(tier2All, entry)
+		}
 	}
 	for _, hop := range r.IndirectCallers {
-		resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
-			Symbol:      qualifiedOrName(hop.Symbol),
-			Via:         qualifiedOrName(hop.Via),
-			Hops:        hop.Hops,
-			ViaTemporal: hop.ViaTemporal,
-		})
+		if !hasTiers || r.SymbolTiers[hop.Symbol.ID] == blast.TierBreaks {
+			if tier1Count < tier1Cap {
+				resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
+					Symbol:      qualifiedOrName(hop.Symbol),
+					Via:         qualifiedOrName(hop.Via),
+					Hops:        hop.Hops,
+					ViaTemporal: hop.ViaTemporal,
+				})
+				tier1Count++
+			}
+		} else {
+			var file string
+			if path, ok := files(hop.Symbol.FileID); ok {
+				file = path
+			}
+			tier2All = append(tier2All, BlastCaller{
+				Symbol: qualifiedOrName(hop.Symbol),
+				File:   file,
+			})
+		}
 	}
 
 	for _, s := range r.AffectedSubclasses {
@@ -50,30 +79,36 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		resp.AffectedSubclasses = append(resp.AffectedSubclasses, BlastCaller{
-			Symbol: qualifiedOrName(s),
-			File:   file,
-		})
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file}
+		resp.AffectedSubclasses = append(resp.AffectedSubclasses, entry)
+		tier2All = append(tier2All, entry)
 	}
 	for _, s := range r.AffectedViaComposition {
 		var file string
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		resp.AffectedViaComposition = append(resp.AffectedViaComposition, BlastCaller{
-			Symbol: qualifiedOrName(s),
-			File:   file,
-		})
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file}
+		resp.AffectedViaComposition = append(resp.AffectedViaComposition, entry)
+		tier2All = append(tier2All, entry)
 	}
 	for _, s := range r.AffectedViaIncludes {
 		var file string
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, BlastCaller{
-			Symbol: qualifiedOrName(s),
-			File:   file,
-		})
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file}
+		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, entry)
+		tier2All = append(tier2All, entry)
+	}
+
+	examples := tier2All
+	if len(examples) > tier2ExamplesCap {
+		examples = examples[:tier2ExamplesCap]
+	}
+	resp.References = BlastTierSummary{
+		Count:    len(tier2All),
+		Examples: examples,
 	}
 
 	segmentBlastCallers(&resp)

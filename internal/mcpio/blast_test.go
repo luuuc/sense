@@ -143,3 +143,76 @@ func TestBuildBlastResponseViaTemporal(t *testing.T) {
 		t.Errorf("Risk = %q, want medium", resp.Risk)
 	}
 }
+
+func TestBuildBlastResponseTier1Cap(t *testing.T) {
+	// Build a Result with 50 Tier-1 (calls-edge) direct callers.
+	// The response should cap at 30.
+	var directCallers []model.Symbol
+	tiers := make(map[int64]blast.Tier)
+	for i := int64(1); i <= 50; i++ {
+		directCallers = append(directCallers, model.Symbol{
+			ID: i, Qualified: "Caller" + string(rune('A'+i)),
+			FileID: 100,
+		})
+		tiers[i] = blast.TierBreaks
+	}
+
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:          blast.RiskHigh,
+		RiskReasons:   []string{"50 direct callers"},
+		DirectCallers: directCallers,
+		AffectedTests: []string{},
+		TotalAffected: 50,
+		SymbolTiers:   tiers,
+	}
+
+	resp := BuildBlastResponse(r, noFiles)
+
+	if len(resp.DirectCallers) != 30 {
+		t.Errorf("DirectCallers = %d, want 30 (tier1 cap)", len(resp.DirectCallers))
+	}
+	if resp.TotalAffected != 50 {
+		t.Errorf("TotalAffected = %d, want 50 (pre-cap count preserved)", resp.TotalAffected)
+	}
+}
+
+func TestBuildBlastResponseTierPartitioning(t *testing.T) {
+	// 3 Tier-1 callers and 2 Tier-2 callers. Tier-2 items should
+	// appear in References, not DirectCallers.
+	tiers := map[int64]blast.Tier{
+		1: blast.TierBreaks,
+		2: blast.TierBreaks,
+		3: blast.TierBreaks,
+		4: blast.TierReferences,
+		5: blast.TierReferences,
+	}
+
+	r := blast.Result{
+		Symbol:      model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:        blast.RiskLow,
+		RiskReasons: []string{"5 direct callers"},
+		DirectCallers: []model.Symbol{
+			{ID: 1, Qualified: "A", FileID: 10},
+			{ID: 2, Qualified: "B", FileID: 10},
+			{ID: 3, Qualified: "C", FileID: 10},
+			{ID: 4, Qualified: "D", FileID: 10},
+			{ID: 5, Qualified: "E", FileID: 10},
+		},
+		AffectedTests: []string{},
+		TotalAffected: 5,
+		SymbolTiers:   tiers,
+	}
+
+	resp := BuildBlastResponse(r, noFiles)
+
+	if len(resp.DirectCallers) != 3 {
+		t.Errorf("DirectCallers = %d, want 3 (Tier 1 only)", len(resp.DirectCallers))
+	}
+	if resp.References.Count != 2 {
+		t.Errorf("References.Count = %d, want 2", resp.References.Count)
+	}
+	if len(resp.References.Examples) != 2 {
+		t.Errorf("References.Examples = %d, want 2 (both shown, under cap)", len(resp.References.Examples))
+	}
+}

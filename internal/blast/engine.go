@@ -55,6 +55,51 @@ type Options struct {
 	IncludeTests  bool
 }
 
+// Tier classifies a blast result by its relevance to breakage.
+type Tier int
+
+const (
+	TierBreaks     Tier = 1 // Direct API consumers — calls/temporal edges
+	TierReferences Tier = 2 // Associations, composition, inheritance — reference but unlikely to break
+	TierTests      Tier = 3 // Test code exercising the symbol
+)
+
+// classifyTier maps an edge kind to its relevance tier.
+func classifyTier(edgeKind string) Tier {
+	switch edgeKind {
+	case "calls", "temporal":
+		return TierBreaks
+	case "tests":
+		return TierTests
+	default:
+		return TierReferences
+	}
+}
+
+// isTypeKind returns true if the symbol kind represents a type/class
+// container whose own methods should be excluded from blast results.
+func isTypeKind(kind model.SymbolKind) bool {
+	switch kind {
+	case model.KindClass, model.KindModule, model.KindInterface, model.KindType:
+		return true
+	}
+	return false
+}
+
+// kindDecay returns the confidence multiplier for an edge kind during
+// BFS traversal. Weak edge kinds decay faster, causing paths through
+// composition/test edges to hit the MinConfidence floor sooner.
+func kindDecay(edgeKind string) float64 {
+	switch edgeKind {
+	case "composes", "includes", "inherits":
+		return 0.3
+	case "tests":
+		return 0.5
+	default:
+		return 1.0
+	}
+}
+
 // CallerHop describes one indirect caller — a symbol reachable from
 // the subject via more than one calls-edge step. Via is the caller
 // one hop closer to the subject (predecessor on the BFS shortest
@@ -97,6 +142,10 @@ type Result struct {
 	AffectedSubclasses     []model.Symbol
 	AffectedViaComposition []model.Symbol
 	AffectedViaIncludes    []model.Symbol
+
+	// SymbolTiers classifies each affected symbol by relevance tier.
+	// Keyed by symbol ID. Used by response shapers to cap output.
+	SymbolTiers map[int64]Tier
 }
 
 // Compute returns the blast radius of symbolIDs under the given
@@ -150,7 +199,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			if _, seen := visited[pair.source]; seen {
 				continue
 			}
-			cumConf := pathConf[pair.target] * pair.confidence
+			cumConf := pathConf[pair.target] * pair.confidence * kindDecay(pair.kind)
 			if cumConf < opts.MinConfidence {
 				continue
 			}
@@ -236,14 +285,40 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 	symbolsByID[subject.ID] = subject
 
+	// Self-method exclusion: when the subject is a type/class, exclude
+	// symbols whose parent IS the subject (they are part of the type,
+	// not consumers of it).
+	seedSet := make(map[int64]struct{}, len(symbolIDs))
+	for _, id := range symbolIDs {
+		seedSet[id] = struct{}{}
+	}
+	excludeSelf := isTypeKind(subject.Kind)
+	isSelfMethod := func(sym model.Symbol) bool {
+		if !excludeSelf {
+			return false
+		}
+		if sym.ParentID == nil {
+			return false
+		}
+		_, isSeed := seedSet[*sym.ParentID]
+		return isSeed
+	}
+
+	excluded := 0
 	directCallers := make([]model.Symbol, 0, len(directIDs))
 	directTemporalIDs := map[int64]bool{}
 	for _, id := range directIDs {
-		if sym, ok := symbolsByID[id]; ok {
-			directCallers = append(directCallers, sym)
-			if viaTemporal[id] {
-				directTemporalIDs[id] = true
-			}
+		sym, ok := symbolsByID[id]
+		if !ok {
+			continue
+		}
+		if isSelfMethod(sym) {
+			excluded++
+			continue
+		}
+		directCallers = append(directCallers, sym)
+		if viaTemporal[id] {
+			directTemporalIDs[id] = true
 		}
 	}
 	sortSymbolsByID(directCallers)
@@ -252,6 +327,10 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	for _, id := range indirectIDs {
 		sym, ok := symbolsByID[id]
 		if !ok {
+			continue
+		}
+		if isSelfMethod(sym) {
+			excluded++
 			continue
 		}
 		via := symbolsByID[predecessor[id]]
@@ -263,6 +342,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		})
 	}
 	sortHopsByID(indirectCallers)
+	totalAffectedCount -= excluded
 
 	affectedTests := []string{}
 	if opts.IncludeTests {
@@ -286,11 +366,23 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 	risk, reasons := classifyRisk(len(directCallers), hasTemporalEdge)
 
+	symbolTiers := make(map[int64]Tier, len(directIDs)+len(indirectIDs))
+	for _, id := range directIDs {
+		if sym, ok := symbolsByID[id]; ok && !isSelfMethod(sym) {
+			symbolTiers[id] = classifyTier(visitedKind[id])
+		}
+	}
+	for _, id := range indirectIDs {
+		if sym, ok := symbolsByID[id]; ok && !isSelfMethod(sym) {
+			symbolTiers[id] = classifyTier(visitedKind[id])
+		}
+	}
+
 	var subclasses, viaComposition, viaIncludes []model.Symbol
 	for _, idSlice := range [2][]int64{directIDs, indirectIDs} {
 		for _, id := range idSlice {
 			sym, ok := symbolsByID[id]
-			if !ok {
+			if !ok || isSelfMethod(sym) {
 				continue
 			}
 			switch visitedKind[id] {
@@ -316,6 +408,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
+		SymbolTiers:            symbolTiers,
 	}, nil
 }
 

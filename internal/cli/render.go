@@ -219,7 +219,18 @@ func RenderBlastHuman(w io.Writer, resp mcpio.BlastResponse) {
 			_, _ = fmt.Fprintf(w, "  %s  %s\n", c.Symbol, c.File)
 		}
 	}
-	if len(resp.AffectedTests) > 0 {
+	if resp.References.Count > 0 {
+		_, _ = fmt.Fprintf(w, "\nReferences — tier 2 (%d):\n", resp.References.Count)
+		for _, ex := range resp.References.Examples {
+			_, _ = fmt.Fprintf(w, "  %s  %s\n", ex.Symbol, ex.File)
+		}
+		if resp.References.Count > len(resp.References.Examples) {
+			_, _ = fmt.Fprintf(w, "  ... and %d more\n", resp.References.Count-len(resp.References.Examples))
+		}
+	}
+	if resp.TestsAffectedCount > 0 {
+		_, _ = fmt.Fprintf(w, "\nTests affected: %d\n", resp.TestsAffectedCount)
+	} else if len(resp.AffectedTests) > 0 {
 		_, _ = fmt.Fprintf(w, "\nAffected tests (%d):\n", len(resp.AffectedTests))
 		for _, t := range resp.AffectedTests {
 			_, _ = fmt.Fprintf(w, "  %s\n", t)
