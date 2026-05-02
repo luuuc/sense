@@ -20,13 +20,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install git-cliff
+      - name: Generate release notes
         uses: orhun/git-cliff-action@v4
         with:
-          args: --version
-
-      - name: Generate release notes
-        run: git-cliff --latest --strip header > release-notes.md
+          args: --latest --strip header
+          output: release-notes.md
 
       # Tree-sitter bindings require CGO, and we ship darwin + linux for both
       # amd64 and arm64. goreleaser-cross bundles osxcross and the gcc
