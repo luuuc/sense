@@ -60,6 +60,34 @@ Activate the venv (`source bench/.venv/bin/activate`) in each new shell before r
 
 Python tools (roam) get dedicated virtualenvs created by their setup scripts — no system install needed.
 
+## Repo layout
+
+Benchmark repos live **outside** the Sense project tree in a sibling directory to avoid config contamination and cross-tool index leakage:
+
+```
+sense/                              # this project
+├── bench/
+│   ├── run.sh, setup.sh, ...       # scripts
+│   ├── tasks/                      # task definitions
+│   ├── ground-truth/               # expected answers
+│   ├── PINNED_COMMITS.json         # repo pins + remotes
+│   └── results/                    # scored output (gitignored)
+│
+../sense-benchmark/                  # sibling dir (auto-created by bootstrap)
+├── _reference/                      # ground-truth generation copies
+│   ├── flask/
+│   ├── discourse/
+│   └── ...
+├── sense/                           # per-tool repo copies
+│   ├── flask/
+│   └── ...
+├── baseline/
+├── grepai/
+└── ...
+```
+
+The sibling path is configurable via `SENSE_BENCH_ROOT` (defaults to `../sense-benchmark` relative to the Sense project root). Each tool gets its own repo copy so indexes (`.sense/`, `.grepai/`, etc.) are structurally isolated.
+
 ## Quick start: clean run
 
 This is the full workflow from clone to scored report. Each step is idempotent — safe to re-run.
@@ -68,36 +96,26 @@ This is the full workflow from clone to scored report. Each step is idempotent �
 # 1. Activate the bench venv
 source bench/.venv/bin/activate
 
-# 2. Clone repos (skip any you already have)
-cd bench/repos
-git clone --depth=1 https://github.com/pallets/flask.git flask
-git clone --depth=1 https://github.com/discourse/discourse.git discourse
-git clone --depth=1 https://github.com/opf/openproject.git openproject
-git clone --depth=1 https://github.com/gin-gonic/gin.git gin
-git clone --depth=1 https://github.com/maket-store/maket-web.git maket
-git clone --depth=1 https://github.com/vercel/next.js.git nextjs
-git clone --depth=1 https://github.com/javalin/javalin.git javalin
-git clone --depth=1 https://github.com/tokio-rs/axum.git axum
-cd ..
+# 2. Bootstrap reference repos at pinned commits
+bash bench/bootstrap-repos.sh
 
-# 3. Pin repos to known commits (optional — repos/PINNED_COMMITS.json tracks these)
-# The runner warns if a repo is at a different commit than pinned.
-
-# 4. Generate ground truth from scratch (for set_match tasks)
+# 3. Generate ground truth from scratch (for set_match tasks)
 bash bench/gen-ground-truth.sh
 
-# 5. Dry run to see the full matrix
+# 4. Dry run to see the full matrix
 bash bench/run.sh --dry-run
 
-# 6. Run with fresh indexes and N=3 for variance
+# 5. Run with fresh indexes and N=3 for variance
 bash bench/run.sh --reset --runs 3
 
-# 7. Score all transcripts
+# 6. Score all transcripts
 bash bench/score.sh
 
-# 8. Generate report (also auto-runs after scoring)
+# 7. Generate report (also auto-runs after scoring)
 bash bench/report.sh --md
 ```
+
+Per-tool repo copies are created automatically by `run.sh` and `setup.sh` (via `git clone --reference` from `_reference/`). You only need to run `bootstrap-repos.sh` once.
 
 ### Partial run (subset of tools/repos/tasks)
 
@@ -113,6 +131,14 @@ bash bench/run.sh --tool sense,grepai,baseline --repo flask,gin --task callers,b
 ```
 
 ## Script reference
+
+### `bootstrap-repos.sh` — Clone reference repos
+
+```
+Usage: bootstrap-repos.sh [--repo r1,r2]
+```
+
+Clones benchmark repos into `$SENSE_BENCH_ROOT/_reference/` at the commits pinned in `PINNED_COMMITS.json`. Run once after cloning the Sense project, or after adding a new repo to `PINNED_COMMITS.json`.
 
 ### `run.sh` — Run Claude sessions
 
@@ -132,9 +158,25 @@ Options:
   --timeout Max seconds per Claude session (default: 600)
 ```
 
-The `--reset` flag deletes tool-specific index directories (`.sense/`, `.roam/`, `.gitnexus/`, `.grepai/`, `.tokensave/`, `.cbm-cache/`) and workspaces, forcing a full re-index. This is required to capture accurate scan timing in `index_meta_setup.json`.
+The `--reset` flag deletes tool-specific index directories (`.sense/`, `.grepai/`, `.gitnexus/`, `.roam/`, `.tokensave/`, `.cbm-cache/`) and workspaces, forcing a full re-index. This is required to capture accurate scan timing in `index_meta_setup.json`.
 
 The `--runs N` flag runs each tool/repo/task combination N times, storing results in `run-1/`, `run-2/`, etc. subdirectories. Use N=3 or N=5 for statistical significance.
+
+### `setup.sh` — Pre-index repos
+
+```
+Usage: setup.sh [--tool t1,t2] [--repo r1,r2]
+```
+
+Indexes all tool x repo pairs without running Claude sessions. Per-tool repo copies are cloned automatically from `_reference/` via `git clone --reference`. Useful for pre-warming indexes before a timed run.
+
+### `rescan.sh` — Measure cold-start scan timing
+
+```
+Usage: rescan.sh [--tool t1,t2] [--repo r1,r2] [--report]
+```
+
+Deletes indexes and re-scans all tool x repo pairs, measuring cold-start timing. No Claude sessions, no transcripts, no scoring — just delete, scan, time, report. Polls `--check-ready` for tools with deferred embeddings (e.g. grepai) so the reported time includes the full index build. Writes `index_meta_setup.json` to the same result locations `run.sh` uses, so `report.sh` picks up the updated timing.
 
 ### `score.sh` — Score transcripts
 
@@ -143,6 +185,10 @@ Usage: score.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2]
 ```
 
 Scores each transcript against ground truth. Writes `scored.json` next to each `transcript.json`. Automatically regenerates `results/report.md` after scoring.
+
+### `rescore-all.sh` — Batch re-score all transcripts
+
+No arguments. Finds every `transcript.json` under `results/` and re-scores it against current ground truth. Useful after updating ground-truth files or the scorer itself.
 
 ### `report.sh` — Generate report
 
@@ -158,23 +204,14 @@ Generates comparison tables. The markdown report includes: metric legend, per-ta
 Usage: gen-ground-truth.sh [--repo r1,r2] [--task t1,t2]
 ```
 
-Generates ground truth from grep/static analysis (not from Sense) to avoid circular validation bias. Supports callers, blast-radius, and dead-code tasks. Semantic-search and qualitative tasks require manual curation.
-
-### `setup.sh` — Pre-index repos
-
-```
-Usage: setup.sh [--tool t1,t2] [--repo r1,r2]
-```
-
-Indexes all tool x repo pairs. Equivalent to running `run.sh` but without Claude sessions. Useful for pre-warming indexes before a timed run.
+Generates ground truth from grep/static analysis (not from Sense) to avoid circular validation bias. Reads repos from `$SENSE_BENCH_ROOT/_reference/`. Supports callers, blast-radius, dead-code, semantic-search, data-flow, grep-task, and test-file tasks. Qualitative tasks (orient, conventions, refactor) require manual keyword curation.
 
 ## Results directory
 
 ```
-results/
+bench/results/
   <tool>/
     <repo>/
-      .workspace/           — Persistent workspace (venvs, configs)
       <task>/
         transcript.json     — Claude session output (stream-json JSONL)
         scored.json         — Scored metrics and correctness
@@ -187,6 +224,9 @@ results/
         run-2/
   report.md                 — Markdown comparison table
   report.json               — Machine-readable report
+
+../sense-benchmark/<tool>/<repo>/
+  .workspace/               — Persistent workspace (venvs, MCP configs, CLAUDE.md)
 ```
 
 ## Adding a task
