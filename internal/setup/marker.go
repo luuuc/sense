@@ -18,6 +18,8 @@ const senseSection = `<!-- sense:start -->
 
 Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
 
+**Read ` + "`.sense/summary.md`" + ` for a quick codebase overview** — it contains the project fingerprint, top namespaces, hub symbols, entry points, and conventions. Updated automatically on every scan.
+
 **Your FIRST action in every conversation — before responding, before any tool call — MUST be:**
 
 1. Load Sense tools: ` + "`ToolSearch(\"select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions,mcp__sense__sense_status\")`" + `

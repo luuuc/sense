@@ -39,6 +39,7 @@ import (
 	"github.com/luuuc/sense/internal/resolve"
 	"github.com/luuuc/sense/internal/setup"
 	"github.com/luuuc/sense/internal/sqlite"
+	"github.com/luuuc/sense/internal/summary"
 )
 
 // Options bounds a scan run. Zero values select sensible defaults.
@@ -303,6 +304,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		if serr := profile.Store(ctx, idx.DB(), prof); serr != nil {
 			_, _ = fmt.Fprintf(warn, "warn: store profile: %v\n", serr)
 		}
+	}
+
+	if serr := summary.Generate(ctx, idx.DB(), senseDir); serr != nil {
+		_, _ = fmt.Fprintf(warn, "warn: generate summary: %v\n", serr)
 	}
 
 	if err := idx.StampSchemaVersion(ctx); err != nil {
