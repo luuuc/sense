@@ -490,7 +490,7 @@ if unique_names:
             continue
         candidate_files.append(fp)
 
-    # For each file, check which symbols it contains
+    # For each file, tokenize into words and set-intersect with symbol names
     name_set = set(unique_names)
     for fp in candidate_files:
         try:
@@ -498,9 +498,9 @@ if unique_names:
                 content = f.read()
         except IOError:
             continue
-        for name in unique_names:
-            if re.search(r'\b' + re.escape(name) + r'\b', content):
-                sym_ref_files[name].add(fp)
+        file_words = set(re.findall(r'\w+', content))
+        for name in file_words & name_set:
+            sym_ref_files[name].add(fp)
 
     os.unlink(patterns_path)
 
