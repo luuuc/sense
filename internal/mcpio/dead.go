@@ -10,13 +10,18 @@ func BuildDeadCodeResponse(symbols []dead.Symbol, totalSymbols int) DeadCodeResp
 	entries := make([]DeadSymbolEntry, len(symbols))
 	uniqueFiles := map[string]struct{}{}
 	for i, s := range symbols {
+		confidence := s.Confidence
+		if confidence == "" {
+			confidence = dead.ConfidenceDead
+		}
 		entries[i] = DeadSymbolEntry{
-			Symbol:    s.Name,
-			Qualified: s.Qualified,
-			File:      s.File,
-			LineStart: s.LineStart,
-			LineEnd:   s.LineEnd,
-			Kind:      s.Kind,
+			Symbol:     s.Name,
+			Qualified:  s.Qualified,
+			File:       s.File,
+			LineStart:  s.LineStart,
+			LineEnd:    s.LineEnd,
+			Kind:       s.Kind,
+			Confidence: confidence,
 		}
 		uniqueFiles[s.File] = struct{}{}
 	}
