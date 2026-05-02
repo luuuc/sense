@@ -12,11 +12,13 @@ set -euo pipefail
 # and a _note explaining how it was generated.
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 GT_DIR="$BENCH_DIR/ground-truth"
-REPOS_DIR="$BENCH_DIR/repos"
+SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
+REPOS_DIR="$SENSE_BENCH_ROOT/_reference"
 TASKS_DIR="$BENCH_DIR/tasks"
 LIB_DIR="$BENCH_DIR/lib"
-PINNED="$REPOS_DIR/PINNED_COMMITS.json"
+PINNED="$BENCH_DIR/PINNED_COMMITS.json"
 
 FILTER_REPOS=""
 FILTER_TASKS=""

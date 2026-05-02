@@ -8,11 +8,14 @@ set -euo pipefail
 # run.sh skips setup when the tool is already indexed.
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 TOOLS_DIR="$BENCH_DIR/tools"
 TASKS_DIR="$BENCH_DIR/tasks"
 RESULTS_DIR="$BENCH_DIR/results"
 LIB_DIR="$BENCH_DIR/lib"
-REPOS_DIR="$BENCH_DIR/repos"
+SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
+REF_DIR="$SENSE_BENCH_ROOT/_reference"
+PINNED_COMMITS="$BENCH_DIR/PINNED_COMMITS.json"
 # --- Argument parsing ---
 
 FILTER_TOOLS=""
@@ -45,9 +48,37 @@ matches_filter() {
   echo "$filter" | tr ',' '\n' | grep -qx "$value"
 }
 
-repo_path() {
-  local repo="$1"
-  echo "$REPOS_DIR/$repo"
+tool_repo_path() {
+  local tool="$1" repo="$2"
+  echo "$SENSE_BENCH_ROOT/$tool/$repo"
+}
+
+ensure_tool_repo() {
+  local tool="$1" repo="$2"
+  local dest
+  dest=$(tool_repo_path "$tool" "$repo")
+  if [[ -d "$dest/.git" ]]; then
+    return 0
+  fi
+  local ref="$REF_DIR/$repo"
+  if [[ ! -d "$ref/.git" ]]; then
+    log "  ERROR: reference repo missing: $ref"
+    log "  Run: bash bench/bootstrap-repos.sh --repo $repo"
+    return 1
+  fi
+  log "  cloning $repo for $tool (--reference from _reference/)..."
+  mkdir -p "$(dirname "$dest")"
+  git clone --quiet --reference "$ref" "$ref" "$dest"
+  local pinned
+  pinned=$(python3 -c "
+import sys,json
+v=json.load(open(sys.argv[1])).get(sys.argv[2])
+if isinstance(v, dict): v=v.get('commit')
+print(v if v else '')
+" "$PINNED_COMMITS" "$repo")
+  if [[ -n "$pinned" ]]; then
+    (cd "$dest" && git checkout "$pinned" --quiet)
+  fi
 }
 
 timestamp() {
@@ -106,15 +137,15 @@ already_ready=0
 for tool in "${tools[@]}"; do
   for repo in "${all_repos[@]}"; do
     num=$((num + 1))
-    rp=$(repo_path "$repo")
 
-    if [[ ! -d "$rp" ]]; then
-      log "[$num/$total] $tool × $repo — SKIP (repo not found: $rp)"
+    if ! ensure_tool_repo "$tool" "$repo"; then
+      log "[$num/$total] $tool × $repo — SKIP (reference repo not available)"
       continue
     fi
+    rp=$(tool_repo_path "$tool" "$repo")
 
     # Check if already ready (use a throwaway workspace for tools that need it)
-    workspace="$RESULTS_DIR/$tool/$repo/.workspace"
+    workspace="$SENSE_BENCH_ROOT/$tool/$repo/.workspace"
     mkdir -p "$workspace"
 
     "$TOOLS_DIR/$tool.sh" --check-ready "$rp" "$workspace" >/dev/null 2>/dev/null && rc=0 || rc=$?

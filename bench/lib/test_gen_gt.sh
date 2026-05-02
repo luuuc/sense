@@ -15,7 +15,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 mkdir -p "$TMPDIR/repos" "$TMPDIR/ground-truth" "$TMPDIR/tasks" "$TMPDIR/lib"
 ln -s "$FIXTURES/fakerepo" "$TMPDIR/repos/fakerepo"
-cp "$FIXTURES/PINNED_COMMITS.json" "$TMPDIR/repos/PINNED_COMMITS.json"
+cp "$FIXTURES/PINNED_COMMITS.json" "$TMPDIR/PINNED_COMMITS.json"
 cp "$FIXTURES/tasks/"*.yaml "$TMPDIR/tasks/"
 cp "$BENCH_DIR/lib/parse_task.py" "$TMPDIR/lib/"
 

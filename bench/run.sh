@@ -2,11 +2,13 @@
 set -euo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 TOOLS_DIR="$BENCH_DIR/tools"
 TASKS_DIR="$BENCH_DIR/tasks"
 RESULTS_DIR="$BENCH_DIR/results"
 LIB_DIR="$BENCH_DIR/lib"
-REPOS_DIR="$BENCH_DIR/repos"
+SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
+REF_DIR="$SENSE_BENCH_ROOT/_reference"
 READY_POLL_INTERVAL=5
 READY_POLL_MAX=720  # 60 minutes at 5s intervals
 MAX_BUDGET_USD="1.00"
@@ -63,12 +65,40 @@ matches_filter() {
   echo "$filter" | tr ',' '\n' | grep -qx "$value"
 }
 
-repo_path() {
-  local repo="$1"
-  echo "$REPOS_DIR/$repo"
+tool_repo_path() {
+  local tool="$1" repo="$2"
+  echo "$SENSE_BENCH_ROOT/$tool/$repo"
 }
 
-PINNED_COMMITS="$REPOS_DIR/PINNED_COMMITS.json"
+ensure_tool_repo() {
+  local tool="$1" repo="$2"
+  local dest
+  dest=$(tool_repo_path "$tool" "$repo")
+  if [[ -d "$dest/.git" ]]; then
+    return 0
+  fi
+  local ref="$REF_DIR/$repo"
+  if [[ ! -d "$ref/.git" ]]; then
+    log "  ERROR: reference repo missing: $ref"
+    log "  Run: bash bench/bootstrap-repos.sh --repo $repo"
+    return 1
+  fi
+  log "  cloning $repo for $tool (--reference from _reference/)..."
+  mkdir -p "$(dirname "$dest")"
+  git clone --quiet --reference "$ref" "$ref" "$dest"
+  local pinned
+  pinned=$(python3 -c "
+import sys,json
+v=json.load(open(sys.argv[1])).get(sys.argv[2])
+if isinstance(v, dict): v=v.get('commit')
+print(v if v else '')
+" "$PINNED_COMMITS" "$repo")
+  if [[ -n "$pinned" ]]; then
+    (cd "$dest" && git checkout "$pinned" --quiet)
+  fi
+}
+
+PINNED_COMMITS="$BENCH_DIR/PINNED_COMMITS.json"
 
 check_pinned_commit() {
   local repo="$1"
@@ -232,9 +262,9 @@ if $DRY_RUN; then
       for task in $(tasks_for_repo "$repo"); do
         for run_idx in $(seq 1 $NUM_RUNS); do
           run_num=$((run_num + 1))
-          rp=$(repo_path "$repo")
+          rp=$(tool_repo_path "$tool" "$repo")
           exists="YES"
-          [[ -d "$rp" ]] || exists="MISSING"
+          [[ -d "$REF_DIR/$repo/.git" ]] || exists="MISSING"
           if [[ $NUM_RUNS -gt 1 ]]; then
             echo "  [$run_num/$total_runs] tool=$tool repo=$repo ($exists) task=$task run=$run_idx/$NUM_RUNS"
           else
@@ -303,14 +333,6 @@ fi
 # --- Suppress Sense hook injection for all tools (each tool gets MCP via --mcp-config) ---
 export SENSE_BENCH=1
 
-# Hide bench-root (sense repo) AI config — Claude walks parent dirs and would find it
-BENCH_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
-AI_CONFIG_FILES=(".mcp.json" ".claude" "CLAUDE.md" "AGENT.md" ".cursorrules" ".cursorignore" ".windsurfrules")
-for f in "${AI_CONFIG_FILES[@]}"; do
-  [[ -e "$BENCH_ROOT/$f" ]] && mv "$BENCH_ROOT/$f" "$BENCH_ROOT/$f.bench-hidden"
-done
-trap 'for f in "${AI_CONFIG_FILES[@]}"; do [[ -e "$BENCH_ROOT/$f.bench-hidden" ]] && { rm -rf "$BENCH_ROOT/$f"; mv "$BENCH_ROOT/$f.bench-hidden" "$BENCH_ROOT/$f"; }; done' EXIT
-
 # --- Main loop: tool → repo (setup once) → tasks ---
 
 run_num=0
@@ -320,24 +342,24 @@ skipped=0
 
 for tool in "${tools[@]}"; do
   for repo in "${all_repos[@]}"; do
-    # Check repo exists
-    rp=$(repo_path "$repo")
-    if [[ ! -d "$rp" ]]; then
+    # Ensure per-tool repo copy exists (clones from _reference/ if needed)
+    if ! ensure_tool_repo "$tool" "$repo"; then
       for task in $(tasks_for_repo "$repo"); do
         for run_idx in $(seq 1 $NUM_RUNS); do
           run_num=$((run_num + 1))
           log "[$run_num/$total_runs] tool=$tool repo=$repo task=$task"
-          log "  SKIP: repo directory not found: $rp"
+          log "  SKIP: reference repo not available"
           skipped=$((skipped + 1))
         done
       done
       continue
     fi
+    rp=$(tool_repo_path "$tool" "$repo")
 
     check_pinned_commit "$repo" "$rp"
 
     # Persistent workspace per tool+repo (survives across runs, holds venvs)
-    workspace="$RESULTS_DIR/$tool/$repo/.workspace"
+    workspace="$SENSE_BENCH_ROOT/$tool/$repo/.workspace"
     mkdir -p "$workspace"
 
     if $RESET; then
@@ -429,11 +451,6 @@ for tool in "${tools[@]}"; do
     if [[ -f "$workspace/index_meta_setup.json" ]]; then
       cp "$workspace/index_meta_setup.json" "$setup_result_dir/index_meta_setup.json"
     fi
-
-    # Hide repo-level AI config so only workspace config is active during Claude sessions
-    for f in "${AI_CONFIG_FILES[@]}"; do
-      [[ -e "$rp/$f" ]] && mv "$rp/$f" "$rp/$f.bench-hidden"
-    done
 
     # Run all tasks for this tool+repo
     claude_md=$(cat "$workspace/CLAUDE.md")
@@ -531,11 +548,6 @@ print()
         failed=$((failed + 1))
       fi
       done
-    done
-
-    # Restore repo-level AI config
-    for f in "${AI_CONFIG_FILES[@]}"; do
-      [[ -e "$rp/$f.bench-hidden" ]] && mv "$rp/$f.bench-hidden" "$rp/$f"
     done
 
     # Workspace persists at $RESULTS_DIR/$tool/$repo/.workspace for reuse
