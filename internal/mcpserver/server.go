@@ -38,19 +38,7 @@ import (
 	"github.com/luuuc/sense/internal/version"
 )
 
-const serverInstructions = "When Sense is available and indexed, prefer Sense tools over grep, glob, " +
-	"and file-walking agents for structural and semantic code questions. " +
-	"Sense provides pre-indexed results that are faster and more complete.\n\n" +
-	"WHEN TO USE SENSE TOOLS:\n" +
-	"- Symbol relationships, callers, dependencies → sense.graph\n" +
-	"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
-	"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
-	"- Project patterns and conventions → sense.conventions\n" +
-	"- Index health, what's indexed → sense.status\n\n" +
-	"WHEN NOT TO USE SENSE TOOLS:\n" +
-	"- Exact text/string search → use grep\n" +
-	"- Reading file contents → use your file reading tool\n" +
-	"- Editing code → Sense is read-only"
+const serverInstructions = mcpio.ServerInstructions
 
 // RunOptions configures the MCP server.
 type RunOptions struct {
@@ -197,6 +185,7 @@ func RunWithOptions(opts RunOptions) error {
 	s.AddTool(graphTool(), h.handleGraph)
 	s.AddTool(blastTool(), h.handleBlast)
 	s.AddTool(conventionsTool(), h.handleConventions)
+	s.AddTool(orientTool(), h.handleOrient)
 	s.AddTool(statusTool(), h.handleStatus)
 
 	return server.ServeStdio(s)
@@ -223,8 +212,9 @@ func searchTool() mcp.Tool {
 	return mcp.NewTool("sense.search",
 		mcp.WithDescription("Find symbols by semantic and keyword matching across all indexed code. "+
 			"Use this instead of grep when the question is about concepts, functionality, or behavior — "+
-			"not exact strings. Returns ranked symbols with file locations, kinds, and relevance scores, "+
-			"without reading any source files into context."),
+			"not exact strings. Also useful for exploring architecture by searching broad concepts "+
+			"(e.g., 'routing', 'middleware', 'database'). Returns ranked symbols with file locations, "+
+			"kinds, and relevance scores, without reading any source files into context."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Search",
 			ReadOnlyHint:    mcp.ToBoolPtr(true),
@@ -314,6 +304,25 @@ func blastTool() mcp.Tool {
 		),
 		mcp.WithBoolean("include_tests",
 			mcp.Description("Include affected test files in the results (default true)"),
+		),
+	)
+}
+
+func orientTool() mcp.Tool {
+	return mcp.NewTool("sense.orient",
+		mcp.WithDescription("Get a quick orientation of the codebase: structure, key symbols, conventions, "+
+			"and optionally search results for specific concepts. Use this as your FIRST call when exploring "+
+			"an unfamiliar codebase. Combines structure overview, conventions, and concept search into one response. "+
+			"Pass a question to focus the orientation on a specific area (e.g., 'How does routing work?')."),
+		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			Title:           "Sense Orient",
+			ReadOnlyHint:    mcp.ToBoolPtr(true),
+			DestructiveHint: mcp.ToBoolPtr(false),
+			IdempotentHint:  mcp.ToBoolPtr(true),
+			OpenWorldHint:   mcp.ToBoolPtr(false),
+		}),
+		mcp.WithString("question",
+			mcp.Description("Optional free-text question to focus the orientation, e.g. 'How is this codebase structured?', 'How does auth work?', 'What handles routing?'. When omitted, returns a general overview."),
 		),
 	)
 }
@@ -930,7 +939,8 @@ func conventionsTool() mcp.Tool {
 		mcp.WithDescription("Detect project conventions and recurring patterns: inheritance hierarchies, "+
 			"naming conventions, structural patterns, composition styles, and testing approaches. "+
 			"Use this instead of reading multiple files to understand how existing code is structured "+
-			"or what patterns to follow when writing new code. "+
+			"or what patterns to follow when writing new code. Essential for codebase orientation — "+
+			"reveals the architectural patterns that define how this project is built. "+
 			"Returns conventions with strength scores and instance counts, scoped by domain if specified."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Sense Conventions",
@@ -1013,6 +1023,186 @@ func conventionsHints(resp mcpio.ConventionsResponse, domain string) []mcpio.Nex
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.conventions",
 			Reason: "scoped results — run without domain filter for project-wide patterns",
+		})
+	}
+
+	if len(hints) > 2 {
+		hints = hints[:2]
+	}
+	return hints
+}
+
+// ---------------------------------------------------------------
+// sense.orient handler
+// ---------------------------------------------------------------
+
+func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	question := req.GetString("question", "")
+
+	statusResp, err := buildStatusResponse(ctx, h.db, h.dir, h.watchState)
+	if err != nil {
+		return nil, fmt.Errorf("sense.orient: %w", err)
+	}
+
+	convResults, symbolCount, err := conventions.Detect(ctx, h.db, conventions.Options{
+		MinStrength: 0.5,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sense.orient: conventions: %w", err)
+	}
+
+	instanceCap := h.defaults.ConventionsInstanceCap
+	convEntries := make([]mcpio.ConventionEntry, 0, min(len(convResults), 5))
+	for i, c := range convResults {
+		if i >= 5 {
+			break
+		}
+		convEntries = append(convEntries, mcpio.ConventionEntry{
+			Category:       string(c.Category),
+			Description:    c.Description,
+			Strength:       mcpio.Confidence(c.Strength),
+			Instances:      conventions.PickRepresentatives(c.Examples, instanceCap),
+			TotalInstances: c.Instances,
+		})
+	}
+
+	var searchHits []mcpio.SearchResultEntry
+	filesAvoided := 0
+
+	if question != "" {
+		concepts := extractConcepts(question)
+		if len(concepts) == 0 {
+			concepts = []string{question}
+		}
+		seen := map[string]bool{}
+		for _, concept := range concepts {
+			keywordBias := h.defaults.SearchKeywordWeight - 0.5
+			if keywordBias < 0 {
+				keywordBias = 0
+			}
+			results, _, searchErr := h.search.Search(ctx, search.Options{
+				Query:       concept,
+				Limit:       5,
+				KeywordBias: keywordBias,
+			})
+			if searchErr != nil {
+				continue
+			}
+
+			fileIDs := make([]int64, len(results))
+			for i, r := range results {
+				fileIDs[i] = r.FileID
+			}
+			pathByID, pathErr := cli.LoadFilePaths(ctx, h.db, fileIDs)
+			if pathErr != nil {
+				continue
+			}
+
+			for _, r := range results {
+				if seen[r.Qualified] {
+					continue
+				}
+				seen[r.Qualified] = true
+				searchHits = append(searchHits, mcpio.SearchResultEntry{
+					Symbol:  r.Qualified,
+					File:    pathByID[r.FileID],
+					Line:    r.LineStart,
+					Kind:    r.Kind,
+					Score:   mcpio.SearchScore(r.Score),
+					Snippet: r.Snippet,
+				})
+				filesAvoided++
+			}
+		}
+		if len(searchHits) > 15 {
+			searchHits = searchHits[:15]
+		}
+	}
+
+	structureAvoided := 5
+	convAvoided := min(symbolCount/5, 10)
+	totalAvoided := structureAvoided + convAvoided + filesAvoided
+
+	resp := mcpio.OrientResponse{
+		Fingerprint: statusResp.Structure.Fingerprint,
+		Structure:   statusResp.Structure,
+		Conventions: convEntries,
+		SearchHits:  searchHits,
+		SenseMetrics: mcpio.OrientMetrics{
+			SymbolsAnalyzed:           symbolCount,
+			EstimatedFileReadsAvoided: totalAvoided,
+			EstimatedTokensSaved:      totalAvoided * mcpio.AvgTokensPerFile,
+		},
+	}
+
+	resp.NextSteps = orientHints(resp, question)
+
+	h.tracker.Record("sense.orient", question,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
+
+	out, err := mcpio.MarshalOrient(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense.orient: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+func extractConcepts(question string) []string {
+	stop := map[string]bool{
+		"how": true, "does": true, "the": true, "this": true, "what": true,
+		"is": true, "are": true, "where": true, "which": true, "can": true,
+		"do": true, "it": true, "its": true, "a": true, "an": true,
+		"in": true, "of": true, "for": true, "to": true, "and": true,
+		"or": true, "with": true, "from": true, "by": true, "on": true,
+		"about": true, "work": true, "works": true, "structured": true,
+		"codebase": true, "project": true, "code": true, "i": true,
+		"me": true, "tell": true, "show": true, "explain": true,
+		"understand": true, "overview": true, "get": true, "give": true,
+	}
+
+	words := strings.FieldsFunc(strings.ToLower(question), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+
+	var concepts []string
+	seen := map[string]bool{}
+	for _, w := range words {
+		if len(w) < 3 || stop[w] || seen[w] {
+			continue
+		}
+		seen[w] = true
+		concepts = append(concepts, w)
+	}
+
+	if len(concepts) > 5 {
+		concepts = concepts[:5]
+	}
+	return concepts
+}
+
+func orientHints(resp mcpio.OrientResponse, question string) []mcpio.NextStep {
+	var hints []mcpio.NextStep
+
+	if len(resp.SearchHits) > 0 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.graph",
+			Args:   map[string]any{"symbol": resp.SearchHits[0].Symbol},
+			Reason: "explore relationships of the top search hit",
+		})
+	}
+
+	if len(resp.Conventions) > 0 && len(hints) < 2 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.conventions",
+			Reason: "dive deeper into project conventions",
+		})
+	}
+
+	if question == "" && len(hints) < 2 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.search",
+			Args:   map[string]any{"query": "entry point main handler"},
+			Reason: "search for entry points and request handlers",
 		})
 	}
 
