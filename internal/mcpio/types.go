@@ -498,12 +498,13 @@ type DeadCodeResponse struct {
 
 // DeadSymbolEntry is a single dead symbol in the response.
 type DeadSymbolEntry struct {
-	Symbol    string `json:"symbol"`
-	Qualified string `json:"qualified"`
-	File      string `json:"file"`
-	LineStart int    `json:"line_start"`
-	LineEnd   int    `json:"line_end"`
-	Kind      string `json:"kind"`
+	Symbol     string `json:"symbol"`
+	Qualified  string `json:"qualified"`
+	File       string `json:"file"`
+	LineStart  int    `json:"line_start"`
+	LineEnd    int    `json:"line_end"`
+	Kind       string `json:"kind"`
+	Confidence string `json:"confidence"`
 }
 
 // DeadCodeMetrics is the observability footer for dead code analysis.

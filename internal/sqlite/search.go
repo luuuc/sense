@@ -395,6 +395,71 @@ func (a *Adapter) FilePathsByIDs(ctx context.Context, fileIDs []int64) (map[int6
 	return out, nil
 }
 
+// ParentInfo holds metadata about a parent symbol, returned by ParentSymbols.
+type ParentInfo struct {
+	ParentID  int64
+	Name      string
+	Qualified string
+	Kind      string
+	FileID    int64
+	LineStart int
+	Snippet   string
+}
+
+// ParentSymbols returns parent symbol info for each child symbol ID.
+// The result map is keyed by child symbol ID. Only symbols that have
+// a non-null parent_id are included.
+func (a *Adapter) ParentSymbols(ctx context.Context, childIDs []int64) (map[int64]ParentInfo, error) {
+	if len(childIDs) == 0 {
+		return nil, nil
+	}
+	out := make(map[int64]ParentInfo, len(childIDs))
+	const chunk = 500
+	for start := 0; start < len(childIDs); start += chunk {
+		end := start + chunk
+		if end > len(childIDs) {
+			end = len(childIDs)
+		}
+		if err := a.parentSymbolsBatch(ctx, childIDs[start:end], out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (a *Adapter) parentSymbolsBatch(ctx context.Context, batch []int64, out map[int64]ParentInfo) error {
+	placeholders := make([]byte, 0, len(batch)*2-1)
+	args := make([]any, len(batch))
+	for i, id := range batch {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args[i] = id
+	}
+	q := `SELECT s.id, p.id, p.name, p.qualified, p.kind, p.file_id, p.line_start, p.snippet
+	      FROM sense_symbols s
+	      JOIN sense_symbols p ON s.parent_id = p.id
+	      WHERE s.id IN (` + string(placeholders) + `)`
+	rows, err := a.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("sqlite ParentSymbols: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var childID int64
+		var pi ParentInfo
+		var snippet sql.NullString
+		if err := rows.Scan(&childID, &pi.ParentID, &pi.Name, &pi.Qualified,
+			&pi.Kind, &pi.FileID, &pi.LineStart, &snippet); err != nil {
+			return fmt.Errorf("sqlite ParentSymbols scan: %w", err)
+		}
+		pi.Snippet = snippet.String
+		out[childID] = pi
+	}
+	return rows.Err()
+}
+
 // sanitizeFTS5Query quotes each whitespace-delimited token so that
 // FTS5 operator characters (*, ", OR, AND, NOT, NEAR, ^, :) in user
 // input are treated as literals. Embedded double-quotes are escaped
