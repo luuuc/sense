@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from scorer import (
     _extract_class_prefix,
     _keyword_matches,
+    _strip_class_qualifier,
     _strip_python_module_prefix,
     classify_tool_calls,
     detect_misses,
@@ -104,6 +105,17 @@ class TestNormalizeCaller(unittest.TestCase):
 
     def test_bare_symbol_keeps_scan_lowercase(self):
         self.assertEqual(normalize_caller("scan.indexedFile"), "scan.indexedFile")
+
+    # --- PascalCase class qualifier preserved in normalize ---
+
+    def test_bare_preserves_class_method_dot(self):
+        self.assertEqual(normalize_caller("Server.renderToHTML"), "Server.renderToHTML")
+
+    def test_bare_preserves_class_method_hash(self):
+        self.assertEqual(normalize_caller("Flask#wsgi_app"), "Flask#wsgi_app")
+
+    def test_bare_go_then_class_preserved(self):
+        self.assertEqual(normalize_caller("gin.Engine.ServeHTTP"), "Engine.ServeHTTP")
 
     # --- Symbol:filepath format (card 1 fix) ---
 
@@ -350,6 +362,20 @@ class TestScoreSetMatchPartialCredit(unittest.TestCase):
         self.assertEqual(len(result["partial_matches"]), 2)
         self.assertEqual(len(result["false_positives"]), 0)
         self.assertEqual(len(result["false_negatives"]), 0)
+
+    def test_class_method_matches_bare_method(self):
+        response = {"symbols": ["Server.renderToHTML"]}
+        gt = {"symbols": ["renderToHTML"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+        self.assertAlmostEqual(result["f1"], 0.5)
+
+    def test_bare_method_matches_class_method(self):
+        response = {"symbols": ["wsgi_app"]}
+        gt = {"symbols": ["Flask.wsgi_app"]}
+        result = score_set_match(response, gt, "symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+        self.assertAlmostEqual(result["f1"], 0.5)
 
 
 class TestIntegrationNormalization(unittest.TestCase):

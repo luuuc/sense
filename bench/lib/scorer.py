@@ -225,6 +225,24 @@ def _strip_bare_go_package(symbol):
     return symbol
 
 
+def _strip_class_qualifier(symbol):
+    """Strip PascalCase class qualifier from a symbol.
+
+    Handles TypeScript/Ruby/Python patterns where the class name
+    prefixes the method: 'Server.renderToHTML' -> 'renderToHTML',
+    'Flask.wsgi_app' -> 'wsgi_app'. Only strips when the prefix
+    starts with uppercase (to distinguish from Go package prefixes
+    which are handled by _strip_bare_go_package).
+    """
+    m = re.match(r"^([A-Z][A-Za-z0-9_]*)\.(.+)$", symbol)
+    if m:
+        return m.group(2)
+    m = re.match(r"^([A-Z][A-Za-z0-9_]*)#(.+)$", symbol)
+    if m:
+        return m.group(2)
+    return symbol
+
+
 _PYTHON_MODULE_RE = re.compile(r"^(?:[a-z][a-z0-9_]*\.){2,}(.+)$")
 
 
@@ -320,11 +338,16 @@ def score_set_match(response_json, ground_truth, match_key):
 
     for fp_entry in sorted(fp):
         cls = _extract_class_prefix(fp_entry)
-        if not cls:
-            continue
+        fp_bare = fp_entry.rsplit(":", 1)[-1] if ":" in fp_entry else fp_entry
+        fp_stripped = _strip_class_qualifier(fp_bare)
         for fn_entry in sorted(remaining_fn):
             fn_symbol = fn_entry.rsplit(":", 1)[-1] if ":" in fn_entry else fn_entry
-            if cls == fn_entry or cls == fn_symbol:
+            matched = False
+            if cls and (cls == fn_entry or cls == fn_symbol):
+                matched = True
+            elif fp_stripped != fp_bare and (fp_stripped == fn_entry or fp_stripped == fn_symbol):
+                matched = True
+            if matched:
                 partial_matches.append({"found": fp_entry, "expected": fn_entry})
                 remaining_fp.discard(fp_entry)
                 remaining_fn.discard(fn_entry)
@@ -332,11 +355,16 @@ def score_set_match(response_json, ground_truth, match_key):
 
     for fn_entry in sorted(set(remaining_fn)):
         cls = _extract_class_prefix(fn_entry)
-        if not cls:
-            continue
+        fn_bare = fn_entry.rsplit(":", 1)[-1] if ":" in fn_entry else fn_entry
+        fn_stripped = _strip_class_qualifier(fn_bare)
         for fp_entry in sorted(remaining_fp):
             fp_symbol = fp_entry.rsplit(":", 1)[-1] if ":" in fp_entry else fp_entry
-            if cls == fp_entry or cls == fp_symbol:
+            matched = False
+            if cls and (cls == fp_entry or cls == fp_symbol):
+                matched = True
+            elif fn_stripped != fn_bare and (fn_stripped == fp_entry or fn_stripped == fp_symbol):
+                matched = True
+            if matched:
                 partial_matches.append({"found": fp_entry, "expected": fn_entry})
                 remaining_fp.discard(fp_entry)
                 remaining_fn.discard(fn_entry)
