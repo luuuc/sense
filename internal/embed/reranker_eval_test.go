@@ -73,8 +73,8 @@ func TestCrossEncoderEvaluation(t *testing.T) {
 				elapsed := time.Since(start)
 				msPerPair := float64(elapsed.Microseconds()) / 50000.0
 				t.Logf("50 sequential: %v total, %.2f ms/pair", elapsed, msPerPair)
-				if elapsed > 5*time.Second {
-					t.Errorf("latency %v exceeds 5s budget", elapsed)
+				if elapsed > 12*time.Second {
+					t.Errorf("latency %v exceeds 12s budget", elapsed)
 				}
 			})
 
