@@ -10,6 +10,7 @@ import (
 
 	"github.com/luuuc/sense/internal/ignore"
 	"github.com/luuuc/sense/internal/sqlite"
+	"github.com/luuuc/sense/internal/summary"
 )
 
 // IncrementalOptions controls an incremental re-index.
@@ -122,6 +123,13 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 			return nil, fmt.Errorf("embed symbols: %w", err)
 		}
 		phases.Embed = time.Since(t0)
+	}
+
+	if h.changed > 0 || h.removed > 0 {
+		senseDir := filepath.Join(opts.Root, ".sense")
+		if serr := summary.Generate(ctx, opts.Idx.DB(), senseDir); serr != nil {
+			_, _ = fmt.Fprintf(warn, "warn: generate summary: %v\n", serr)
+		}
 	}
 
 	elapsed := time.Since(start)
