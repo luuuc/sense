@@ -72,12 +72,14 @@ func handlePreToolUse(ctx context.Context, input json.RawMessage, adapter *sqlit
 		return handleAgent(ctx, req, adapter)
 	case "Bash":
 		return handleBash(ctx, req, adapter)
+	case "Glob":
+		return nil, nil
 	default:
-		return handleGrepGlob(ctx, req, adapter)
+		return handleGrep(ctx, req, adapter)
 	}
 }
 
-func handleGrepGlob(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
+func handleGrep(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
 	pattern := extractPattern(req)
 	if pattern == "" {
 		return nil, nil
@@ -97,7 +99,7 @@ func handleGrepGlob(ctx context.Context, req preToolUseInput, adapter *sqlite.Ad
 		return nil, nil
 	}
 
-	return denyOrAdvise(ctx, adapter, len(symbols), pattern, "grep"), nil
+	return buildAdvice(len(symbols), pattern, "grep"), nil
 }
 
 func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
@@ -141,7 +143,7 @@ func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapte
 	if pattern != "" && isSymbolShaped(pattern) {
 		symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
 		if err == nil && len(symbols) > 0 {
-			return denyOrAdvise(ctx, adapter, len(symbols), pattern, "bash grep"), nil
+			return buildAdvice(len(symbols), pattern, "bash grep"), nil
 		}
 		if isMultiWordPattern(pattern) {
 			return advise(fmt.Sprintf(
@@ -159,19 +161,13 @@ func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapte
 	return nil, nil
 }
 
-// denyOrAdvise blocks the tool call when the index is fresh, or adds
-// advisory context when it is stale (> 24h since last scan).
-func denyOrAdvise(ctx context.Context, adapter *sqlite.Adapter, count int, pattern, source string) any {
+func buildAdvice(count int, pattern, source string) *hookResponse {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Sense has %d indexed symbol(s) matching %q. Use Sense MCP tools instead of %s:\n", count, pattern, source)
+	fmt.Fprintf(&sb, "Sense has %d indexed symbol(s) matching %q. Consider Sense MCP tools instead of %s:\n", count, pattern, source)
 	fmt.Fprintf(&sb, "- sense_graph symbol=%q for callers/callees\n", pattern)
 	fmt.Fprintf(&sb, "- sense_search query=%q for semantic matches\n", pattern)
 	fmt.Fprintf(&sb, "Load tools first: %s", toolSearchCmd)
-
-	if age := indexAge(ctx, adapter); age > staleThreshold {
-		return &hookResponse{AdditionalContext: sb.String()}
-	}
-	return deny(sb.String())
+	return &hookResponse{AdditionalContext: sb.String()}
 }
 
 func extractPattern(req preToolUseInput) string {
@@ -228,17 +224,20 @@ func needsValue(flag string) bool {
 	return false
 }
 
-// isSymbolShaped returns true if the pattern looks like a symbol name
-// rather than a regex. Symbol-shaped: word chars, dots, colons, #.
-// Regex-shaped: contains *, +, |, (, [, {, ?, ^, $.
 func isSymbolShaped(pattern string) bool {
+	if len(pattern) < 2 {
+		return false
+	}
+	if strings.Contains(pattern, "/") {
+		return false
+	}
 	for _, c := range pattern {
 		switch c {
 		case '*', '+', '|', '(', ')', '[', ']', '{', '}', '?', '^', '$', '\\':
 			return false
 		}
 	}
-	return len(pattern) >= 2
+	return !hasCodeExtension(pattern)
 }
 
 func hasExplorationKeyword(prompt string) bool {

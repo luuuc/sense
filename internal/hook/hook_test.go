@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/luuuc/sense/internal/scan"
 	_ "modernc.org/sqlite"
@@ -37,21 +36,6 @@ func indexedDir(t *testing.T) string {
 	return root
 }
 
-func staleDir(t *testing.T) string {
-	t.Helper()
-	dir := indexedDir(t)
-	dbPath := filepath.Join(dir, ".sense", "index.db")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	old := time.Now().Add(-48 * time.Hour).Format(time.RFC3339Nano)
-	if _, err := db.Exec(`UPDATE sense_files SET indexed_at = ?`, old); err != nil {
-		t.Fatal(err)
-	}
-	return dir
-}
 
 func TestRunSenseBenchSuppressesAllHooks(t *testing.T) {
 	dir := indexedDir(t)
@@ -147,21 +131,36 @@ func TestSubagentStartReturnsGuidance(t *testing.T) {
 	}
 }
 
-func TestPreToolUseSymbolMatch(t *testing.T) {
+func TestPreToolUseSymbolMatchAdvises(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Grep","tool_input":{"pattern":"UserService"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp denyResponse
+	var resp hookResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if resp.Output.Decision != "deny" {
-		t.Fatalf("expected deny decision, got %q", resp.Output.Decision)
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected advisory context for known symbol")
 	}
-	if !strings.Contains(resp.Output.Reason, "sense_graph") {
-		t.Error("expected sense_graph suggestion in deny reason")
+	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
+		t.Error("expected sense_graph suggestion in advisory")
+	}
+}
+
+func TestPreToolUseFilePathNoOp(t *testing.T) {
+	dir := indexedDir(t)
+	cases := []string{
+		`{"tool_name":"Grep","tool_input":{"pattern":"internal/hook/pre_tool_use.go"}}`,
+		`{"tool_name":"Grep","tool_input":{"pattern":"main.go"}}`,
+	}
+	for _, input := range cases {
+		var buf bytes.Buffer
+		Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+		if buf.String() != "{}\n" {
+			t.Errorf("file-path pattern should be no-op, got %q for input %s", buf.String(), input)
+		}
 	}
 }
 
@@ -216,18 +215,37 @@ func TestPreToolUseAgentAllowNonExplore(t *testing.T) {
 	}
 }
 
-func TestPreToolUseBashGrepDeny(t *testing.T) {
+func TestPreToolUseGlobPassthrough(t *testing.T) {
+	dir := indexedDir(t)
+	cases := []string{
+		`{"tool_name":"Glob","tool_input":{"pattern":"src/controllers/**/*.rb"}}`,
+		`{"tool_name":"Glob","tool_input":{"pattern":"internal/hook/*.go"}}`,
+		`{"tool_name":"Glob","tool_input":{"pattern":"UserService"}}`,
+	}
+	for _, input := range cases {
+		var buf bytes.Buffer
+		Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+		if buf.String() != "{}\n" {
+			t.Errorf("Glob should always pass through, got %q for input %s", buf.String(), input)
+		}
+	}
+}
+
+func TestPreToolUseBashGrepAdvises(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Bash","tool_input":{"command":"grep -rn UserService ."}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp denyResponse
+	var resp hookResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if resp.Output.Decision != "deny" {
-		t.Fatalf("expected deny for bash grep of known symbol, got %q", resp.Output.Decision)
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected advisory for bash grep of known symbol")
+	}
+	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
+		t.Error("expected sense_graph suggestion in advisory")
 	}
 }
 
@@ -257,48 +275,6 @@ func TestPreToolUseExploreAgentDeny(t *testing.T) {
 	}
 }
 
-func TestPreToolUseStaleIndexAdvisesInsteadOfDeny(t *testing.T) {
-	dir := staleDir(t)
-	input := `{"tool_name":"Grep","tool_input":{"pattern":"UserService"}}`
-	var buf bytes.Buffer
-	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
-
-	var deny denyResponse
-	if err := json.Unmarshal(buf.Bytes(), &deny); err == nil && deny.Output.Decision == "deny" {
-		t.Fatal("stale index should advise, not deny")
-	}
-
-	var resp hookResponse
-	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
-		t.Fatalf("parse response: %v", err)
-	}
-	if resp.AdditionalContext == "" {
-		t.Fatal("expected additionalContext for stale index")
-	}
-	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
-		t.Error("expected sense_graph suggestion in advisory")
-	}
-}
-
-func TestPreToolUseBashStaleIndexAdvises(t *testing.T) {
-	dir := staleDir(t)
-	input := `{"tool_name":"Bash","tool_input":{"command":"grep -rn UserService ."}}`
-	var buf bytes.Buffer
-	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
-
-	var deny denyResponse
-	if err := json.Unmarshal(buf.Bytes(), &deny); err == nil && deny.Output.Decision == "deny" {
-		t.Fatal("stale index should advise, not deny")
-	}
-
-	var resp hookResponse
-	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
-		t.Fatalf("parse response: %v", err)
-	}
-	if resp.AdditionalContext == "" {
-		t.Fatal("expected additionalContext for stale bash grep")
-	}
-}
 
 func TestExtractBashPattern(t *testing.T) {
 	cases := []struct {
@@ -343,6 +319,11 @@ func TestIsSymbolShaped(t *testing.T) {
 		{"[a-z]+", false},
 		{"a", false},
 		{"", false},
+		{"src/controllers/user.rb", false},
+		{"internal/hook/pre_tool_use.go", false},
+		{"main.go", false},
+		{"app.py", false},
+		{"models/**/*.rb", false},
 	}
 	for _, tc := range cases {
 		if got := isSymbolShaped(tc.pattern); got != tc.want {
