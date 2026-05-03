@@ -38,18 +38,10 @@ type ConventionsMetrics struct {
 // token count (chars/4) fits within budget. Modifies r in place.
 func ApplyTokenBudget(r *ConventionsResponse, budget int) {
 	r.TokenBudget = budget
-	for len(r.Conventions) > 0 && estimateTokens(r) > budget {
+	for len(r.Conventions) > 0 && estimateJSONTokens(r) > budget {
 		r.Conventions = r.Conventions[:len(r.Conventions)-1]
 		r.Truncated = true
 	}
-}
-
-func estimateTokens(r *ConventionsResponse) int {
-	out, err := marshalPretty(r)
-	if err != nil {
-		return 0
-	}
-	return len(out) / 4
 }
 
 // BuildConventionsSummary assembles a one-sentence summary from the
