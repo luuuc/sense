@@ -464,6 +464,14 @@ var demotedPathSegments = []struct {
 	{"_test.rb", 0.5},
 	{"_spec.rb", 0.5},
 	{"_test.go", 0.5},
+	{".test.ts", 0.5},
+	{".test.js", 0.5},
+	{".spec.ts", 0.5},
+	{".spec.js", 0.5},
+	{"Test.java", 0.5},
+	{"Test.kt", 0.5},
+	{"_test.py", 0.5},
+	{"/__tests__/", 0.5},
 }
 
 // demotedPathPrefixes lists root-level test/spec directories that should
