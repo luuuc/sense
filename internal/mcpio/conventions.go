@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const DefaultTokenBudget = 4000
+const DefaultTokenBudget = 6000
 
 // ConventionsResponse is the shape of the sense.conventions tool's reply
 // and the `sense conventions --json` CLI output.

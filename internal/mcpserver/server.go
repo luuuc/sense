@@ -1053,9 +1053,10 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 	}
 
 	instanceCap := h.defaults.ConventionsInstanceCap
-	convEntries := make([]mcpio.ConventionEntry, 0, min(len(convResults), 5))
+	convCap := h.defaults.OrientConventionsCap
+	convEntries := make([]mcpio.ConventionEntry, 0, min(len(convResults), convCap))
 	for i, c := range convResults {
-		if i >= 5 {
+		if i >= convCap {
 			break
 		}
 		convEntries = append(convEntries, mcpio.ConventionEntry{
@@ -1115,8 +1116,8 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 				filesAvoided++
 			}
 		}
-		if len(searchHits) > 15 {
-			searchHits = searchHits[:15]
+		if len(searchHits) > h.defaults.OrientSearchHitsCap {
+			searchHits = searchHits[:h.defaults.OrientSearchHitsCap]
 		}
 	}
 
@@ -1135,6 +1136,8 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 			EstimatedTokensSaved:      totalAvoided * mcpio.AvgTokensPerFile,
 		},
 	}
+
+	mcpio.ApplyOrientTokenBudget(&resp, h.defaults.OrientTokenBudget)
 
 	resp.NextSteps = orientHints(resp, question)
 
