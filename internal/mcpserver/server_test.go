@@ -183,6 +183,59 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
+	// 2b. sense.graph direction=callers defaults to depth=2
+	t.Run("sense.graph_callers_depth_default", func(t *testing.T) {
+		resp := send("tools/call", map[string]any{
+			"name":      "sense.graph",
+			"arguments": map[string]any{"symbol": "extract.Register", "direction": "callers"},
+		})
+		assertToolResult(t, resp, "sense.graph")
+		text := extractToolText(t, resp)
+
+		var graph struct {
+			Layers []struct {
+				Depth int `json:"depth"`
+			} `json:"layers"`
+		}
+		if err := json.Unmarshal([]byte(text), &graph); err != nil {
+			t.Fatalf("parse graph JSON: %v\n%s", err, text)
+		}
+		if len(graph.Layers) == 0 {
+			t.Fatal("direction=callers with no explicit depth should default to depth=2 and produce layers")
+		}
+		found := false
+		for _, l := range graph.Layers {
+			if l.Depth == 2 {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected a layer at depth=2 for callers default")
+		}
+	})
+
+	// 2c. sense.graph direction=callees defaults to depth=1 (no layers)
+	t.Run("sense.graph_callees_depth_default", func(t *testing.T) {
+		resp := send("tools/call", map[string]any{
+			"name":      "sense.graph",
+			"arguments": map[string]any{"symbol": "extract.Register", "direction": "callees"},
+		})
+		assertToolResult(t, resp, "sense.graph")
+		text := extractToolText(t, resp)
+
+		var graph struct {
+			Layers []struct {
+				Depth int `json:"depth"`
+			} `json:"layers"`
+		}
+		if err := json.Unmarshal([]byte(text), &graph); err != nil {
+			t.Fatalf("parse graph JSON: %v\n%s", err, text)
+		}
+		if len(graph.Layers) != 0 {
+			t.Errorf("direction=callees with no explicit depth should default to depth=1 (no layers), got %d layers", len(graph.Layers))
+		}
+	})
+
 	// 3. tools/call: sense.blast
 	t.Run("sense.blast", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{

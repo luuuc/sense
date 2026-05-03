@@ -358,19 +358,23 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError("sense.graph: missing required parameter 'symbol'"), nil
 	}
 
-	depth := req.GetInt("depth", 1)
-	if depth < 1 {
-		depth = 1
-	}
-	if depth > mcpio.MaxGraphDepth {
-		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth)), nil
-	}
-
 	direction := model.Direction(req.GetString("direction", "both"))
 	switch direction {
 	case model.DirectionBoth, model.DirectionCallers, model.DirectionCallees:
 	default:
 		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: direction must be both, callers, or callees (got %q)", direction)), nil
+	}
+
+	defaultDepth := 1
+	if direction == model.DirectionCallers {
+		defaultDepth = 2
+	}
+	depth := req.GetInt("depth", defaultDepth)
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > mcpio.MaxGraphDepth {
+		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth)), nil
 	}
 
 	match, err := h.resolveSymbol(ctx, "sense.graph", symbol)
