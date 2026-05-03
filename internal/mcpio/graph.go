@@ -355,6 +355,7 @@ func IsTestPath(path string) bool {
 	return strings.Contains(path, "_test.") ||
 		strings.Contains(path, "/test/") ||
 		strings.Contains(path, "/tests/") ||
+		strings.Contains(path, "/testdata/") ||
 		strings.Contains(path, "/spec/") ||
 		strings.HasPrefix(path, "test/") ||
 		strings.HasPrefix(path, "tests/") ||

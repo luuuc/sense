@@ -524,12 +524,20 @@ type DeadCodeMetrics struct {
 type OrientResponse struct {
 	Fingerprint  string               `json:"fingerprint"`
 	Structure    *StatusStructure     `json:"structure"`
+	KeyTypes     []KeyTypeEntry       `json:"key_types,omitempty"`
 	Conventions  []ConventionEntry    `json:"conventions"`
 	SearchHits   []SearchResultEntry  `json:"search_hits"`
 	Truncated    bool                 `json:"truncated,omitempty"`
 	TokenBudget  int                  `json:"token_budget,omitempty"`
 	SenseMetrics OrientMetrics        `json:"sense_metrics"`
 	NextSteps    []NextStep           `json:"next_steps"`
+}
+
+type KeyTypeEntry struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	File      string `json:"file"`
+	Refs      int    `json:"refs"`
 }
 
 // OrientMetrics is the observability footer for orient responses.

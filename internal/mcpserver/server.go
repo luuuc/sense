@@ -1060,9 +1060,21 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 	instanceCap := h.defaults.ConventionsInstanceCap
 	convCap := h.defaults.OrientConventionsCap
 	convEntries := make([]mcpio.ConventionEntry, 0, min(len(convResults), convCap))
-	for i, c := range convResults {
-		if i >= convCap {
-			break
+	var keyTypes []mcpio.KeyTypeEntry
+	for _, c := range convResults {
+		if c.Category == conventions.CategoryKeyTypes {
+			for _, ex := range c.Examples {
+				keyTypes = append(keyTypes, mcpio.KeyTypeEntry{
+					Name: ex.Name,
+					Kind: ex.Kind,
+					File: ex.Path,
+					Refs: ex.EdgeCount,
+				})
+			}
+			continue
+		}
+		if len(convEntries) >= convCap {
+			continue
 		}
 		convEntries = append(convEntries, mcpio.ConventionEntry{
 			Category:       string(c.Category),
@@ -1134,6 +1146,7 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 	resp := mcpio.OrientResponse{
 		Fingerprint: statusResp.Structure.Fingerprint,
 		Structure:   statusResp.Structure,
+		KeyTypes:    keyTypes,
 		Conventions: convEntries,
 		SearchHits:  searchHits,
 		SenseMetrics: mcpio.OrientMetrics{

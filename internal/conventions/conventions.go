@@ -7,6 +7,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/luuuc/sense/internal/mcpio"
 )
 
 const minInstances = 3
@@ -26,11 +28,13 @@ const (
 	CategoryDesignPattern Category = "design_pattern"
 	CategoryFramework    Category = "framework"
 	CategoryArchitecture Category = "architecture"
+	CategoryKeyTypes     Category = "key_types"
 )
 
 type Example struct {
 	Name      string
 	Path      string
+	Kind      string
 	EdgeCount int
 }
 
@@ -88,6 +92,7 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	conventions = append(conventions, detectDesignPatterns(symbols, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectFrameworkIdioms(symbols, edges, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectArchitectureLayers(symbols, edges, symbolByID, filePathByID)...)
+	conventions = append(conventions, detectKeyTypes(symbols, edges, filePathByID, conventions)...)
 
 	enrichEdgeCounts(conventions, symbols, edges, filePathByID)
 
@@ -722,6 +727,8 @@ func categoryOrder(c Category) int {
 		return 6
 	case CategoryArchitecture:
 		return 7
+	case CategoryKeyTypes:
+		return 8
 	}
 	return 8
 }
@@ -1052,6 +1059,82 @@ func countParents(symbols []symbolRow) int {
 		}
 	}
 	return n
+}
+
+func detectKeyTypes(symbols []symbolRow, edges []edgeRow, filePathByID map[int64]string, existing []Convention) []Convention {
+	typeKinds := map[string]bool{"struct": true, "class": true, "interface": true, "type": true}
+	inbound := make(map[int64]int)
+	for _, e := range edges {
+		inbound[e.targetID]++
+	}
+
+	surfaced := map[string]bool{}
+	for _, c := range existing {
+		for _, ex := range c.Examples {
+			surfaced[ex.Name] = true
+		}
+	}
+
+	type candidate struct {
+		sym   symbolRow
+		path  string
+		count int
+	}
+	var candidates []candidate
+	for _, s := range symbols {
+		if !typeKinds[s.kind] {
+			continue
+		}
+		fp := filePathByID[s.fileID]
+		if mcpio.IsTestPath(fp) {
+			continue
+		}
+		c := inbound[s.id]
+		if c == 0 {
+			continue
+		}
+		candidates = append(candidates, candidate{sym: s, path: fp, count: c})
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].count > candidates[j].count
+	})
+
+	const maxKeyTypes = 8
+	var examples []Example
+	for _, c := range candidates {
+		if surfaced[c.sym.name] {
+			continue
+		}
+		if len(examples) >= maxKeyTypes {
+			break
+		}
+		examples = append(examples, Example{
+			Name:      c.sym.name,
+			Path:      c.path,
+			Kind:      c.sym.kind,
+			EdgeCount: c.count,
+		})
+		surfaced[c.sym.name] = true
+	}
+
+	if len(examples) == 0 {
+		return nil
+	}
+
+	var parts []string
+	for _, e := range examples {
+		parts = append(parts, fmt.Sprintf("%s (%d refs)", e.Name, e.EdgeCount))
+	}
+	totalTypes := countByKind(symbols, "struct", "class", "interface", "type")
+	return []Convention{{
+		Category:    CategoryKeyTypes,
+		Description: fmt.Sprintf("Key domain types: %s — most-referenced types in the codebase", strings.Join(parts, ", ")),
+		Instances:   len(examples),
+		Total:       totalTypes,
+		Strength:    1.0,
+		Examples:    examples,
+	}}
 }
 
 func countByKind(symbols []symbolRow, kinds ...string) int {
