@@ -16,6 +16,48 @@ const (
 )
 
 func fetchLatestTag() (string, error) {
+	// Use the redirect from /releases/latest — not subject to API rate limits.
+	if tag, err := fetchLatestTagRedirect(); err == nil && tag != "" {
+		return tag, nil
+	}
+
+	return fetchLatestTagAPI()
+}
+
+func fetchLatestTagRedirect() (string, error) {
+	u := fmt.Sprintf("https://github.com/%s/releases/latest", repo)
+	client := &http.Client{
+		Timeout: httpTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	req, err := http.NewRequest("HEAD", u, nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		return "", fmt.Errorf("expected 302, got %d", resp.StatusCode)
+	}
+
+	loc := resp.Header.Get("Location")
+	const marker = "/releases/tag/"
+	idx := strings.LastIndex(loc, marker)
+	if idx < 0 {
+		return "", fmt.Errorf("no tag in redirect URL")
+	}
+	return strings.TrimPrefix(loc[idx+len(marker):], "v"), nil
+}
+
+func fetchLatestTagAPI() (string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 	client := &http.Client{Timeout: httpTimeout}
 
@@ -36,7 +78,7 @@ func fetchLatestTag() (string, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("GitHub API: %s", resp.Status)
+		return "", fmt.Errorf("GitHub API: %s (rate limit may be exceeded — set GITHUB_TOKEN to authenticate)", resp.Status)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))

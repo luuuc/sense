@@ -81,11 +81,22 @@ if [ -n "${VERSION:-}" ]; then
   echo "Pinned version: ${VERSION}"
 else
   echo "Fetching latest sense release..."
-  TAG="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+
+  # Resolve via redirect (not subject to API rate limits).
+  TAG=""
+  if command -v curl >/dev/null 2>&1; then
+    REDIRECT_URL="$(curl -sIL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+    TAG="$(echo "$REDIRECT_URL" | sed -n 's|.*/releases/tag/\(.*\)|\1|p')"
+  fi
+
+  # Fall back to API if redirect did not yield a tag.
+  if [ -z "$TAG" ]; then
+    TAG="$(fetch "https://api.github.com/repos/${REPO}/releases/latest" \
+      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')" || true
+  fi
 
   if [ -z "$TAG" ]; then
-    echo "Error: could not determine latest release" >&2
+    echo "Error: could not determine latest release (GitHub API rate limit may be exceeded — set GITHUB_TOKEN to authenticate)" >&2
     exit 1
   fi
 
