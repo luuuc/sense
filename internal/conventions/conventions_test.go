@@ -794,3 +794,163 @@ func TestDetectDesignPatternsEmpty(t *testing.T) {
 	}
 }
 
+func setupGoFrameworkFixture(t *testing.T) *sqlite.Adapter {
+	t.Helper()
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	files := []model.File{
+		{Path: "gin.go", Language: "go", Hash: "g1", Symbols: 1, IndexedAt: now},
+		{Path: "routergroup.go", Language: "go", Hash: "g2", Symbols: 1, IndexedAt: now},
+		{Path: "auth.go", Language: "go", Hash: "g3", Symbols: 1, IndexedAt: now},
+		{Path: "logger.go", Language: "go", Hash: "g4", Symbols: 1, IndexedAt: now},
+		{Path: "recovery.go", Language: "go", Hash: "g5", Symbols: 1, IndexedAt: now},
+		{Path: "cors.go", Language: "go", Hash: "g6", Symbols: 1, IndexedAt: now},
+	}
+	fileIDs := make(map[string]int64)
+	for i := range files {
+		id, err := adapter.WriteFile(ctx, &files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileIDs[files[i].Path] = id
+	}
+
+	type symDef struct {
+		fileKey   string
+		name      string
+		qualified string
+		kind      string
+	}
+	symDefs := []symDef{
+		// Type aliases (kind="type" in Go = alias/newtype)
+		{"gin.go", "HandlerFunc", "gin.HandlerFunc", "type"},
+		{"gin.go", "HandlersChain", "gin.HandlersChain", "type"},
+		{"gin.go", "Params", "gin.Params", "type"},
+		{"gin.go", "H", "gin.H", "type"},
+		// Structs
+		{"gin.go", "Engine", "gin.Engine", "class"},
+		{"routergroup.go", "RouterGroup", "gin.RouterGroup", "class"},
+		// Router method
+		{"routergroup.go", "Use", "gin.RouterGroup.Use", "method"},
+		// Middleware factories (functions)
+		{"logger.go", "Logger", "gin.Logger", "function"},
+		{"recovery.go", "Recovery", "gin.Recovery", "function"},
+		{"auth.go", "BasicAuth", "gin.BasicAuth", "function"},
+		{"cors.go", "CORS", "gin.CORS", "function"},
+	}
+
+	symIDs := make(map[string]int64)
+	for _, sd := range symDefs {
+		fid := fileIDs[sd.fileKey]
+		s := &model.Symbol{
+			FileID:    fid,
+			Name:      sd.name,
+			Qualified: sd.qualified,
+			Kind:      model.SymbolKind(sd.kind),
+			LineStart: 1,
+			LineEnd:   10,
+		}
+		id, err := adapter.WriteSymbol(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		symIDs[sd.qualified] = id
+	}
+
+	type edgeDef struct {
+		source string
+		target string
+		kind   string
+		file   string
+	}
+	edgeDefs := []edgeDef{
+		// Router method calls middleware factories
+		{"gin.RouterGroup.Use", "gin.Logger", "calls", "routergroup.go"},
+		{"gin.RouterGroup.Use", "gin.Recovery", "calls", "routergroup.go"},
+		{"gin.RouterGroup.Use", "gin.BasicAuth", "calls", "routergroup.go"},
+		{"gin.RouterGroup.Use", "gin.CORS", "calls", "routergroup.go"},
+	}
+	for _, ed := range edgeDefs {
+		srcID := symIDs[ed.source]
+		tgtID := symIDs[ed.target]
+		fid := fileIDs[ed.file]
+		e := &model.Edge{
+			SourceID:   &srcID,
+			TargetID:   tgtID,
+			Kind:       model.EdgeKind(ed.kind),
+			FileID:     fid,
+			Confidence: 1.0,
+		}
+		if _, err := adapter.WriteEdge(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return adapter
+}
+
+func TestDetectGoTypeAliases(t *testing.T) {
+	adapter := setupGoFrameworkFixture(t)
+	ctx := context.Background()
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, c := range conventions {
+		if strings.Contains(c.Description, "Type aliases") {
+			found = true
+			if c.Instances < 2 {
+				t.Errorf("type alias convention should have at least 2 instances, got %d", c.Instances)
+			}
+			if c.Category != CategoryStructure {
+				t.Errorf("type alias convention category = %q, want %q", c.Category, CategoryStructure)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("expected Type aliases convention to be detected")
+	}
+}
+
+func TestDetectGoMiddlewareFactories(t *testing.T) {
+	adapter := setupGoFrameworkFixture(t)
+	ctx := context.Background()
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, c := range conventions {
+		if strings.Contains(c.Description, "Middleware factories") {
+			found = true
+			if c.Instances < 3 {
+				t.Errorf("middleware factory convention should have at least 3 instances, got %d", c.Instances)
+			}
+			if c.Category != CategoryFramework {
+				t.Errorf("middleware factory convention category = %q, want %q", c.Category, CategoryFramework)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("expected Middleware factories convention to be detected")
+	}
+}
+
