@@ -73,41 +73,53 @@ func TestExtractConcepts(t *testing.T) {
 
 func TestOrientHints(t *testing.T) {
 	tests := []struct {
-		name     string
-		resp     mcpio.OrientResponse
-		question string
-		wantLen  int
-		wantTool string
+		name      string
+		resp      mcpio.OrientResponse
+		wantLen   int
+		wantTool  string
+		wantTool2 string
 	}{
 		{
-			name: "with search hits suggests graph",
+			name: "hub symbol and search hit",
 			resp: mcpio.OrientResponse{
+				Structure: &mcpio.StatusStructure{
+					HubSymbols: []mcpio.StatusHub{{Name: "Run", Callers: 42, Kind: "function"}},
+				},
 				SearchHits: []mcpio.SearchResultEntry{
 					{Symbol: "Router", Kind: "struct"},
 				},
+			},
+			wantLen:   2,
+			wantTool:  "sense.graph",
+			wantTool2: "sense.blast",
+		},
+		{
+			name: "hub symbol and key symbol interface",
+			resp: mcpio.OrientResponse{
+				Structure: &mcpio.StatusStructure{
+					HubSymbols: []mcpio.StatusHub{{Name: "Close", Callers: 10, Kind: "method"}},
+				},
 				Conventions: []mcpio.ConventionEntry{
-					{Category: "naming"},
+					{Category: "framework", KeySymbol: "IRoutes"},
 				},
 			},
-			question: "routing",
-			wantLen:  2,
+			wantLen:   2,
+			wantTool:  "sense.graph",
+			wantTool2: "sense.graph",
+		},
+		{
+			name: "hub symbol only",
+			resp: mcpio.OrientResponse{
+				Structure: &mcpio.StatusStructure{
+					HubSymbols: []mcpio.StatusHub{{Name: "Open", Callers: 5, Kind: "function"}},
+				},
+			},
+			wantLen:  1,
 			wantTool: "sense.graph",
 		},
 		{
-			name: "no search hits with conventions",
-			resp: mcpio.OrientResponse{
-				Conventions: []mcpio.ConventionEntry{
-					{Category: "naming"},
-				},
-			},
-			question: "",
-			wantLen:  2,
-			wantTool: "sense.conventions",
-		},
-		{
-			name:     "empty response no question suggests search",
+			name:     "empty response suggests search",
 			resp:     mcpio.OrientResponse{},
-			question: "",
 			wantLen:  1,
 			wantTool: "sense.search",
 		},
@@ -115,12 +127,17 @@ func TestOrientHints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hints := orientHints(tt.resp, tt.question)
+			hints := orientHints(tt.resp)
 			if len(hints) != tt.wantLen {
 				t.Fatalf("orientHints: got %d hints, want %d: %+v", len(hints), tt.wantLen, hints)
 			}
 			if hints[0].Tool != tt.wantTool {
 				t.Errorf("orientHints[0].Tool = %q, want %q", hints[0].Tool, tt.wantTool)
+			}
+			if tt.wantTool2 != "" && len(hints) > 1 {
+				if hints[1].Tool != tt.wantTool2 {
+					t.Errorf("orientHints[1].Tool = %q, want %q", hints[1].Tool, tt.wantTool2)
+				}
 			}
 		})
 	}

@@ -25,6 +25,7 @@ type ConventionEntry struct {
 	Strength       Confidence `json:"strength"`
 	Instances      []string   `json:"instances"`
 	TotalInstances int        `json:"total_instances"`
+	KeySymbol      string     `json:"key_symbol,omitempty"`
 }
 
 // ConventionsMetrics is the observability footer.

@@ -401,13 +401,16 @@ func TestPickRepresentatives(t *testing.T) {
 		{"exactly three", []Example{
 			{Name: "A", Path: "a"}, {Name: "B", Path: "b"}, {Name: "C", Path: "c"},
 		}, 3, []string{"A", "B", "C"}},
-		{"four picks first/middle/last", []Example{
-			{Name: "A", Path: "a"}, {Name: "B", Path: "b"}, {Name: "C", Path: "c"}, {Name: "D", Path: "d"},
-		}, 3, []string{"A", "C", "D"}},
-		{"six picks first/middle/last", []Example{
+		{"picks by edge count descending", []Example{
+			{Name: "A", Path: "a", EdgeCount: 2},
+			{Name: "B", Path: "b", EdgeCount: 10},
+			{Name: "C", Path: "c", EdgeCount: 5},
+			{Name: "D", Path: "d", EdgeCount: 1},
+		}, 3, []string{"B", "C", "A"}},
+		{"zero edge counts preserves input order", []Example{
 			{Name: "A", Path: "a"}, {Name: "B", Path: "b"}, {Name: "C", Path: "c"},
 			{Name: "D", Path: "d"}, {Name: "E", Path: "e"}, {Name: "F", Path: "f"},
-		}, 3, []string{"A", "D", "F"}},
+		}, 3, []string{"A", "B", "C"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
