@@ -89,8 +89,8 @@ func TestDefaultsForTierValues(t *testing.T) {
 	if large.ConventionsMinStrength != 0.35 {
 		t.Errorf("large ConventionsMinStrength = %.2f, want 0.35", large.ConventionsMinStrength)
 	}
-	if large.ConventionsTokenBudget != 4000 {
-		t.Errorf("large ConventionsTokenBudget = %d, want 4000", large.ConventionsTokenBudget)
+	if large.ConventionsTokenBudget != 5000 {
+		t.Errorf("large ConventionsTokenBudget = %d, want 5000", large.ConventionsTokenBudget)
 	}
 }
 

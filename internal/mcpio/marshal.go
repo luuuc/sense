@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 )
 
 // MarshalGraph renders a GraphResponse as pretty-printed JSON bytes.
@@ -104,6 +105,14 @@ func marshalPretty(v any) ([]byte, error) {
 		return nil, fmt.Errorf("mcpio: marshal: %w", err)
 	}
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+func estimateJSONTokens(v any) int {
+	out, err := marshalPretty(v)
+	if err != nil {
+		return math.MaxInt
+	}
+	return len(out) / 4
 }
 
 // normalizeGraphResponse replaces nil slice fields with empty

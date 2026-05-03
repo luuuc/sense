@@ -526,6 +526,8 @@ type OrientResponse struct {
 	Structure    *StatusStructure     `json:"structure"`
 	Conventions  []ConventionEntry    `json:"conventions"`
 	SearchHits   []SearchResultEntry  `json:"search_hits"`
+	Truncated    bool                 `json:"truncated,omitempty"`
+	TokenBudget  int                  `json:"token_budget,omitempty"`
 	SenseMetrics OrientMetrics        `json:"sense_metrics"`
 	NextSteps    []NextStep           `json:"next_steps"`
 }

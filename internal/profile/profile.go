@@ -184,6 +184,9 @@ type Defaults struct {
 	BlastMinConfidence     float64
 	BlastResultCap         int
 	GraphSegmentCallers    bool
+	OrientTokenBudget      int
+	OrientConventionsCap   int
+	OrientSearchHitsCap    int
 }
 
 func DefaultsForTier(tier string) Defaults {
@@ -194,35 +197,44 @@ func DefaultsForTier(tier string) Defaults {
 			SearchVectorWeight:     0.5,
 			ConventionsMinStrength: 0.15,
 			ConventionsInstanceCap: 5,
-			ConventionsTokenBudget: 6000,
+			ConventionsTokenBudget: 8000,
 			BlastMaxHops:           5,
 			BlastMinConfidence:     0.3,
 			BlastResultCap:         200,
 			GraphSegmentCallers:    false,
+			OrientTokenBudget:      8000,
+			OrientConventionsCap:   5,
+			OrientSearchHitsCap:    15,
 		}
 	case TierLarge:
 		return Defaults{
 			SearchKeywordWeight:    0.6,
 			SearchVectorWeight:     0.4,
 			ConventionsMinStrength: 0.35,
-			ConventionsInstanceCap: 3,
-			ConventionsTokenBudget: 4000,
+			ConventionsInstanceCap: 5,
+			ConventionsTokenBudget: 5000,
 			BlastMaxHops:           2,
 			BlastMinConfidence:     0.6,
 			BlastResultCap:         75,
 			GraphSegmentCallers:    true,
+			OrientTokenBudget:      4000,
+			OrientConventionsCap:   3,
+			OrientSearchHitsCap:    5,
 		}
 	default:
 		return Defaults{
 			SearchKeywordWeight:    0.5,
 			SearchVectorWeight:     0.5,
 			ConventionsMinStrength: 0.30,
-			ConventionsInstanceCap: 3,
-			ConventionsTokenBudget: 4000,
+			ConventionsInstanceCap: 5,
+			ConventionsTokenBudget: 6000,
 			BlastMaxHops:           3,
 			BlastMinConfidence:     0.5,
 			BlastResultCap:         100,
 			GraphSegmentCallers:    true,
+			OrientTokenBudget:      6000,
+			OrientConventionsCap:   5,
+			OrientSearchHitsCap:    10,
 		}
 	}
 }

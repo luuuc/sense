@@ -358,19 +358,23 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError("sense.graph: missing required parameter 'symbol'"), nil
 	}
 
-	depth := req.GetInt("depth", 1)
-	if depth < 1 {
-		depth = 1
-	}
-	if depth > mcpio.MaxGraphDepth {
-		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth)), nil
-	}
-
 	direction := model.Direction(req.GetString("direction", "both"))
 	switch direction {
 	case model.DirectionBoth, model.DirectionCallers, model.DirectionCallees:
 	default:
 		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: direction must be both, callers, or callees (got %q)", direction)), nil
+	}
+
+	defaultDepth := 1
+	if direction == model.DirectionCallers {
+		defaultDepth = 2
+	}
+	depth := req.GetInt("depth", defaultDepth)
+	if depth < 1 {
+		depth = 1
+	}
+	if depth > mcpio.MaxGraphDepth {
+		return mcp.NewToolResultError(fmt.Sprintf("sense.graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth)), nil
 	}
 
 	match, err := h.resolveSymbol(ctx, "sense.graph", symbol)
@@ -1053,9 +1057,10 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 	}
 
 	instanceCap := h.defaults.ConventionsInstanceCap
-	convEntries := make([]mcpio.ConventionEntry, 0, min(len(convResults), 5))
+	convCap := h.defaults.OrientConventionsCap
+	convEntries := make([]mcpio.ConventionEntry, 0, min(len(convResults), convCap))
 	for i, c := range convResults {
-		if i >= 5 {
+		if i >= convCap {
 			break
 		}
 		convEntries = append(convEntries, mcpio.ConventionEntry{
@@ -1115,8 +1120,8 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 				filesAvoided++
 			}
 		}
-		if len(searchHits) > 15 {
-			searchHits = searchHits[:15]
+		if len(searchHits) > h.defaults.OrientSearchHitsCap {
+			searchHits = searchHits[:h.defaults.OrientSearchHitsCap]
 		}
 	}
 
@@ -1135,6 +1140,8 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 			EstimatedTokensSaved:      totalAvoided * mcpio.AvgTokensPerFile,
 		},
 	}
+
+	mcpio.ApplyOrientTokenBudget(&resp, h.defaults.OrientTokenBudget)
 
 	resp.NextSteps = orientHints(resp, question)
 

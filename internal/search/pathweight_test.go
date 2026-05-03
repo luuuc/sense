@@ -40,6 +40,21 @@ func TestApplyPathWeights(t *testing.T) {
 		{"fixtures nested", "plugins/chat/spec/fixtures/uploads.yml", "demoted"},
 		{"Go testdata", "internal/embed/testdata/vocab.txt", "demoted"},
 
+		// JavaScript/TypeScript test files
+		{"TS test file", "src/components/Button.test.ts", "demoted"},
+		{"JS test file", "src/utils/helpers.test.js", "demoted"},
+		{"TS spec file", "src/services/auth.spec.ts", "demoted"},
+		{"JS spec file", "src/services/auth.spec.js", "demoted"},
+		{"Jest __tests__ dir", "src/__tests__/integration.ts", "demoted"},
+
+		// JVM test files
+		{"Java test file", "src/test/java/com/example/UserTest.java", "demoted"},
+		{"Kotlin test file", "src/test/kotlin/com/example/UserTest.kt", "demoted"},
+
+		// Python test files
+		{"Python test file", "app/services/auth_test.py", "demoted"},
+		{"Python test nested", "src/utils/helpers_test.py", "demoted"},
+
 		// Generated code
 		{"generated protobuf", "app/generated/api_pb.rb", "demoted"},
 
@@ -95,6 +110,9 @@ func TestApplyPathWeightsPenaltyValues(t *testing.T) {
 		{"spec gets 0.5", "app/services/spec/foo_spec.rb", 0.5},
 		{"test file gets 0.5", "internal/scan/scan_test.go", 0.5},
 		{"generated gets 0.4", "app/generated/schema.rb", 0.4},
+		{"TS test gets 0.5", "src/Button.test.ts", 0.5},
+		{"Java test gets 0.5", "src/UserTest.java", 0.5},
+		{"Python test gets 0.5", "tests/auth_test.py", 0.5},
 		{"source gets 1.1", "app/models/user.rb", sourceBoost},
 	}
 
