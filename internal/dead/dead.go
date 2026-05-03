@@ -433,7 +433,7 @@ func queryInterfaceAliveMethods(ctx context.Context, db *sql.DB) (map[ifaceMetho
 		FROM sense_symbols im
 		JOIN sense_edges ie ON ie.target_id = im.id AND ie.kind = 'calls'
 		JOIN sense_symbols iface ON im.parent_id = iface.id AND iface.kind = 'interface'
-		JOIN sense_edges impl ON impl.target_id = iface.id AND impl.kind = 'inherits'
+		JOIN sense_edges impl ON impl.target_id = iface.id AND impl.kind = 'inherits' AND impl.source_id IS NOT NULL
 		GROUP BY impl.source_id, im.name`
 
 	rows, err := db.QueryContext(ctx, q)

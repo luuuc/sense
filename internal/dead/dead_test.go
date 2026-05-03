@@ -553,6 +553,35 @@ func standaloneUnused() {}
 	}
 }
 
+func TestFindDeadNullSourceID(t *testing.T) {
+	db, _ := setupFixture(t)
+	ctx := context.Background()
+
+	// Insert an 'inherits' edge with NULL source_id — legal per schema,
+	// but previously crashed queryInterfaceAliveMethods via rows.Scan.
+	var targetID, fileID int64
+	err := db.QueryRowContext(ctx,
+		`SELECT s.id, s.file_id FROM sense_symbols s WHERE s.kind = 'class' ORDER BY s.id LIMIT 1`,
+	).Scan(&targetID, &fileID)
+	if err != nil {
+		t.Fatalf("finding a target symbol: %v", err)
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO sense_edges (source_id, target_id, kind, file_id) VALUES (NULL, ?, 'inherits', ?)`,
+		targetID, fileID)
+	if err != nil {
+		t.Fatalf("inserting NULL source_id edge: %v", err)
+	}
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead should not error with NULL source_id edges: %v", err)
+	}
+	if result.TotalSymbols == 0 {
+		t.Fatal("TotalSymbols = 0, want > 0")
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
