@@ -171,6 +171,9 @@ func TestRenderMainAreas(t *testing.T) {
 		t.Errorf("expected internal/server namespace, got: %s", got)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+		if strings.HasPrefix(line, "  Next:") {
+			continue
+		}
 		if !strings.HasPrefix(line, "- `") {
 			t.Errorf("expected bullet format, got line: %s", line)
 		}
@@ -180,6 +183,9 @@ func TestRenderMainAreas(t *testing.T) {
 	}
 	if !strings.Contains(got, "functions") {
 		t.Errorf("expected dominant kind description, got: %s", got)
+	}
+	if !strings.Contains(got, "Next:") {
+		t.Errorf("expected Next: hints, got: %s", got)
 	}
 }
 
@@ -197,6 +203,9 @@ func TestRenderKeyAbstractions(t *testing.T) {
 	}
 	if !strings.Contains(got, "incoming edges") {
 		t.Errorf("expected 'incoming edges' label, got: %s", got)
+	}
+	if !strings.Contains(got, "sense_graph") {
+		t.Errorf("expected sense_graph next-step hint, got: %s", got)
 	}
 }
 
@@ -217,6 +226,9 @@ func TestRenderReadingPath(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.TrimSpace(got), "1.") {
 		t.Errorf("expected numbered list, got: %s", got)
+	}
+	if !strings.Contains(got, "sense_search") {
+		t.Errorf("expected sense_search next-step hint, got: %s", got)
 	}
 }
 

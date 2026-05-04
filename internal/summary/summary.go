@@ -194,6 +194,7 @@ func renderMainAreas(ctx context.Context, db *sql.DB) (string, error) {
 	var b strings.Builder
 	for _, e := range entries {
 		fmt.Fprintf(&b, "- `%s/` — %s (%d symbols)\n", e.name, e.desc, e.symbols)
+		fmt.Fprintf(&b, "  Next: `sense_conventions domain=\"%s\"` or `sense_search query=\"%s\"`\n", e.name, e.name)
 	}
 	return b.String(), nil
 }
@@ -251,6 +252,7 @@ func renderKeyAbstractions(ctx context.Context, db *sql.DB) (string, error) {
 			return "", err
 		}
 		fmt.Fprintf(&b, "- `%s` (%s) — %d incoming edges\n", name, kind, callers)
+		fmt.Fprintf(&b, "  Next: `sense_graph symbol=\"%s\"` or `sense_blast symbol=\"%s\"`\n", name, name)
 	}
 	if b.Len() == 0 {
 		return "", nil
@@ -332,6 +334,7 @@ func renderReadingPath(ctx context.Context, db *sql.DB) (string, error) {
 	if len(entries) == 0 {
 		return "", nil
 	}
+	entries = append(entries, "\nNext: `sense_search query=\"entry point\"` or `sense_conventions` for project patterns")
 	return strings.Join(entries, "\n") + "\n", nil
 }
 
