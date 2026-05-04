@@ -477,10 +477,10 @@ type SearchResultEntry struct {
 	References int         `json:"references,omitempty"`
 }
 
-// SearchScore is a fused relevance score. It renders with two decimal
-// places on the wire so JSON consumers see `0.03` instead of
-// `0.032786885245901636`. The documented examples show two-decimal
-// scores (`0.92`, `0.87`).
+// SearchScore is a relative relevance score. Scores are normalized
+// then boosted by graph centrality, so values may exceed 1.0 for
+// hub symbols with many callers. Renders with two decimal places
+// on the wire (`0.92`, `1.17`).
 type SearchScore float64
 
 func (s SearchScore) MarshalJSON() ([]byte, error) {

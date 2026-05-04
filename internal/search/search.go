@@ -431,8 +431,8 @@ func normalizeScores(results []Result) {
 }
 
 const (
-	TestPathDemotion = 0.5 // symbols in test file paths
-	TestNameDemotion = 0.3 // symbols whose name signals test/mock
+	testPathDemotion = 0.5 // symbols in test file paths
+	testNameDemotion = 0.3 // symbols whose name signals test/mock
 )
 
 var testNamePrefixes = []string{"Test", "Mock", "Fake", "Stub"}
@@ -444,7 +444,7 @@ func applyKindWeights(results []Result) {
 		}
 		for _, prefix := range testNamePrefixes {
 			if strings.HasPrefix(results[i].Name, prefix) {
-				results[i].Score *= TestNameDemotion
+				results[i].Score *= testNameDemotion
 				break
 			}
 		}
@@ -462,34 +462,34 @@ var demotedPathSegments = []struct {
 	{"db/post_migrate/", 0.3},
 	{"script/", 0.3},
 	{"scripts/", 0.3},
-	{"/test/", TestPathDemotion},
-	{"/tests/", TestPathDemotion},
-	{"/spec/", TestPathDemotion},
-	{"/mock/", TestPathDemotion},
-	{"/mocks/", TestPathDemotion},
-	{"/fixture/", TestPathDemotion},
-	{"/fixtures/", TestPathDemotion},
+	{"/test/", testPathDemotion},
+	{"/tests/", testPathDemotion},
+	{"/spec/", testPathDemotion},
+	{"/mock/", testPathDemotion},
+	{"/mocks/", testPathDemotion},
+	{"/fixture/", testPathDemotion},
+	{"/fixtures/", testPathDemotion},
 	{"/generated/", 0.4},
-	{"/testdata/", TestPathDemotion},
-	{"_test.rb", TestPathDemotion},
-	{"_spec.rb", TestPathDemotion},
-	{"_test.go", TestPathDemotion},
-	{".test.ts", TestPathDemotion},
-	{".test.js", TestPathDemotion},
-	{".spec.ts", TestPathDemotion},
-	{".spec.js", TestPathDemotion},
-	{"Test.java", TestPathDemotion},
-	{"Test.kt", TestPathDemotion},
-	{"_test.py", TestPathDemotion},
-	{"/__tests__/", TestPathDemotion},
+	{"/testdata/", testPathDemotion},
+	{"_test.rb", testPathDemotion},
+	{"_spec.rb", testPathDemotion},
+	{"_test.go", testPathDemotion},
+	{".test.ts", testPathDemotion},
+	{".test.js", testPathDemotion},
+	{".spec.ts", testPathDemotion},
+	{".spec.js", testPathDemotion},
+	{"Test.java", testPathDemotion},
+	{"Test.kt", testPathDemotion},
+	{"_test.py", testPathDemotion},
+	{"/__tests__/", testPathDemotion},
 }
 
 var demotedPathPrefixes = []struct {
 	prefix  string
 	penalty float64
 }{
-	{"spec/", TestPathDemotion},
-	{"test/", TestPathDemotion},
+	{"spec/", testPathDemotion},
+	{"test/", testPathDemotion},
 }
 
 // boostedPathPrefixes lists path prefixes for primary source directories
@@ -557,9 +557,9 @@ func vectorConfidence(results []VectorResult) float64 {
 	return sum / float64(n)
 }
 
-// CentralityCoefficient controls the multiplicative centrality boost.
+// centralityCoefficient controls the multiplicative centrality boost.
 // 50 callers → 1.28x; 200 callers → 1.39x; 1 caller → 1.05x.
-const CentralityCoefficient = 0.05
+const centralityCoefficient = 0.05
 
 func applyGraphCentrality(results []Result, centrality map[int64]int) {
 	if len(centrality) == 0 {
@@ -567,7 +567,7 @@ func applyGraphCentrality(results []Result, centrality map[int64]int) {
 	}
 	for i := range results {
 		if count, ok := centrality[results[i].SymbolID]; ok && count > 0 {
-			boost := 1.0 + math.Log2(1+float64(count))*CentralityCoefficient
+			boost := 1.0 + math.Log2(1+float64(count))*centralityCoefficient
 			results[i].Score *= boost
 			results[i].References = count
 		}
