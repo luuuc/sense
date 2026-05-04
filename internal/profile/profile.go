@@ -184,9 +184,6 @@ type Defaults struct {
 	BlastMinConfidence     float64
 	BlastResultCap         int
 	GraphSegmentCallers    bool
-	OrientTokenBudget      int
-	OrientConventionsCap   int
-	OrientSearchHitsCap    int
 }
 
 func DefaultsForTier(tier string) Defaults {
@@ -202,9 +199,6 @@ func DefaultsForTier(tier string) Defaults {
 			BlastMinConfidence:     0.3,
 			BlastResultCap:         200,
 			GraphSegmentCallers:    false,
-			OrientTokenBudget:      8000,
-			OrientConventionsCap:   5,
-			OrientSearchHitsCap:    15,
 		}
 	case TierLarge:
 		return Defaults{
@@ -217,9 +211,6 @@ func DefaultsForTier(tier string) Defaults {
 			BlastMinConfidence:     0.6,
 			BlastResultCap:         75,
 			GraphSegmentCallers:    true,
-			OrientTokenBudget:      4000,
-			OrientConventionsCap:   3,
-			OrientSearchHitsCap:    5,
 		}
 	default:
 		return Defaults{
@@ -232,9 +223,6 @@ func DefaultsForTier(tier string) Defaults {
 			BlastMinConfidence:     0.5,
 			BlastResultCap:         100,
 			GraphSegmentCallers:    true,
-			OrientTokenBudget:      6000,
-			OrientConventionsCap:   5,
-			OrientSearchHitsCap:    10,
 		}
 	}
 }
