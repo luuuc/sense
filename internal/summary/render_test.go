@@ -209,6 +209,77 @@ func TestRenderKeyAbstractions(t *testing.T) {
 	}
 }
 
+func TestRenderKeyAbstractionsFiltersUtility(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.db")
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+
+	now := time.Now()
+	fid, err := adapter.WriteFile(ctx, &model.File{
+		Path: "internal/core/core.go", Language: "go",
+		Hash: "aaa", Symbols: 3, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	closeID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Close", Qualified: "core.Close",
+		Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Run", Qualified: "core.Run",
+		Kind: model.KindFunction, LineStart: 10, LineEnd: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "caller", Qualified: "core.caller",
+		Kind: model.KindFunction, LineStart: 60, LineEnd: 70,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, targetID := range []int64{closeID, runID} {
+		_, err = adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: model.Int64Ptr(callerID), TargetID: targetID,
+			Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = adapter.Close()
+
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	got, err := renderKeyAbstractions(ctx, db)
+	if err != nil {
+		t.Fatalf("renderKeyAbstractions: %v", err)
+	}
+
+	if strings.Contains(got, "core.Close") {
+		t.Errorf("expected Close filtered as utility hub, got: %s", got)
+	}
+	if !strings.Contains(got, "core.Run") {
+		t.Errorf("expected core.Run to be present, got: %s", got)
+	}
+}
+
 func TestRenderReadingPath(t *testing.T) {
 	db, cleanup := seedTestDB(t)
 	defer cleanup()

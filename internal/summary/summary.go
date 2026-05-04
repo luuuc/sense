@@ -231,28 +231,43 @@ func dominantKindDesc(kinds map[string]int) string {
 	}
 }
 
+var utilitySymbols = map[string]bool{
+	"Close": true, "Error": true, "String": true, "make": true,
+	"len": true, "append": true, "New": true, "init": true,
+	"Format": true, "Write": true, "Read": true, "Reset": true,
+	"MarshalJSON": true, "UnmarshalJSON": true,
+}
+
 func renderKeyAbstractions(ctx context.Context, db *sql.DB) (string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT s.qualified, COUNT(e.id) AS in_degree, s.kind
+	rows, err := db.QueryContext(ctx, `SELECT s.qualified, s.name, COUNT(e.id) AS in_degree, s.kind, f.path
 		FROM sense_symbols s
 		JOIN sense_edges e ON e.target_id = s.id
+		JOIN sense_files f ON f.id = s.file_id
+		WHERE f.path NOT LIKE '%testdata%'
+		  AND f.path NOT LIKE '%fixture%'
+		  AND f.path NOT LIKE '%vendor%'
 		GROUP BY s.id
 		ORDER BY in_degree DESC
-		LIMIT 8`)
+		LIMIT 30`)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = rows.Close() }()
 
 	var b strings.Builder
-	for rows.Next() {
-		var name string
+	n := 0
+	for rows.Next() && n < 8 {
+		var qualified, name, kind, fpath string
 		var callers int
-		var kind string
-		if err := rows.Scan(&name, &callers, &kind); err != nil {
+		if err := rows.Scan(&qualified, &name, &callers, &kind, &fpath); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "- `%s` (%s) — %d incoming edges\n", name, kind, callers)
-		fmt.Fprintf(&b, "  Next: `sense_graph symbol=\"%s\"` or `sense_blast symbol=\"%s\"`\n", name, name)
+		if utilitySymbols[name] {
+			continue
+		}
+		fmt.Fprintf(&b, "- `%s` (%s) — %d incoming edges\n", qualified, kind, callers)
+		fmt.Fprintf(&b, "  Next: `sense_graph symbol=\"%s\"` or `sense_blast symbol=\"%s\"`\n", qualified, qualified)
+		n++
 	}
 	if b.Len() == 0 {
 		return "", nil
