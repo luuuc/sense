@@ -96,14 +96,25 @@ type NextStep struct {
 // that do not compute it (the CLI in 01-04) omit the block entirely;
 // the MCP server in 01-05 always populates it.
 type GraphResponse struct {
-	Symbol             GraphSymbol        `json:"symbol"`
-	Edges              GraphEdges         `json:"edges"`
-	Layers             []GraphLayer       `json:"layers,omitempty"`
-	Truncated          bool               `json:"truncated,omitempty"`
-	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
-	SenseMetrics       GraphMetrics       `json:"-"`
-	Freshness          *Freshness         `json:"freshness,omitempty"`
-	NextSteps          []NextStep         `json:"next_steps"`
+	Symbol             GraphSymbol            `json:"symbol"`
+	Edges              GraphEdges             `json:"edges"`
+	DispatchInferred   []DispatchInferredRef  `json:"dispatch_inferred,omitempty"`
+	Layers             []GraphLayer           `json:"layers,omitempty"`
+	Truncated          bool                   `json:"truncated,omitempty"`
+	TestCallerSummary  *TestCallerSummary     `json:"test_caller_summary,omitempty"`
+	SenseMetrics       GraphMetrics           `json:"-"`
+	Freshness          *Freshness             `json:"freshness,omitempty"`
+	NextSteps          []NextStep             `json:"next_steps"`
+}
+
+// DispatchInferredRef is a caller discovered through interface dispatch —
+// the caller invokes a method on a type connected via inherits edges,
+// not the queried symbol directly.
+type DispatchInferredRef struct {
+	Symbol     string     `json:"symbol"`
+	File       *string    `json:"file"`
+	Via        string     `json:"via"`
+	Confidence Confidence `json:"confidence"`
 }
 
 // GraphLayer holds edges discovered at one BFS hop beyond the root.

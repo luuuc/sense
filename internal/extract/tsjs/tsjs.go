@@ -917,7 +917,7 @@ func (w *walker) walkClassBody(n *sitter.Node, methodScope []string, classQualif
 
 // handleStimulusClass handles anonymous (or oddly-named) default-export classes
 // in Stimulus controller files. Uses the convention-derived name from the file path.
-func (w *walker) handleStimulusClass(n *sitter.Node, scope []string) error {
+func (w *walker) handleStimulusClass(n *sitter.Node, _ []string) error {
 	qualified := w.stimulusName
 
 	if err := w.emit.Symbol(extract.EmittedSymbol{
@@ -1067,7 +1067,7 @@ func inferStimulusController(filePath string) string {
 		segments[i] = snakeToPascal(seg)
 	}
 	last := len(segments) - 1
-	segments[last] = segments[last] + "Controller"
+	segments[last] += "Controller"
 	return strings.Join(segments, "::")
 }
 

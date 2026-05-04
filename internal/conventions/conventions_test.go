@@ -228,8 +228,8 @@ func TestDetectAllCategories(t *testing.T) {
 	}
 
 	// Check testing category
-	testing_ := findByCategory(conventions, CategoryTesting)
-	if len(testing_) == 0 {
+	testingConvs := findByCategory(conventions, CategoryTesting)
+	if len(testingConvs) == 0 {
 		t.Error("expected testing conventions")
 	}
 

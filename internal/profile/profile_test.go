@@ -272,6 +272,7 @@ func TestStoreAndLoad(t *testing.T) {
 	loaded := Load(ctx, db)
 	if loaded == nil {
 		t.Fatal("Load returned nil")
+		return
 	}
 	if loaded.Tier != original.Tier {
 		t.Errorf("tier = %q, want %q", loaded.Tier, original.Tier)

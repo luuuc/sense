@@ -606,7 +606,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 	return out
 }
 
-func detectTesting(symbols []symbolRow, edges []edgeRow, filePathByID map[int64]string, symbolByID map[int64]symbolRow) []Convention {
+func detectTesting(_ []symbolRow, edges []edgeRow, filePathByID map[int64]string, symbolByID map[int64]symbolRow) []Convention {
 	// Detect test file naming conventions from files with "tests" edges
 	testFileIDs := map[int64]struct{}{}
 	for _, e := range edges {
@@ -748,7 +748,7 @@ func sortExamples(examples []Example) {
 	})
 }
 
-func PickRepresentatives(examples []Example, max int) []string {
+func PickRepresentatives(examples []Example, limit int) []string {
 	if len(examples) == 0 {
 		return nil
 	}
@@ -757,7 +757,7 @@ func PickRepresentatives(examples []Example, max int) []string {
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].EdgeCount > sorted[j].EdgeCount
 	})
-	n := max
+	n := limit
 	if n > len(sorted) {
 		n = len(sorted)
 	}

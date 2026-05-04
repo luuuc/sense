@@ -40,6 +40,16 @@ import (
 
 const serverInstructions = mcpio.ServerInstructions
 
+const (
+	// Skip interface resolution when direct callers already provide sufficient evidence.
+	InterfaceResolutionThreshold = 3
+	// Interface-dispatch inferred callers are structural but indirect.
+	DispatchInferredConfidence = 0.8
+	// Caps to bound query-time work when an interface has many implementors.
+	maxDispatchEquivalents = 20
+	maxDispatchInferred    = 50
+)
+
 // RunOptions configures the MCP server.
 type RunOptions struct {
 	Dir        string
@@ -243,7 +253,9 @@ func graphTool() mcp.Tool {
 			"inheritance, composition, includes, imports, and test coverage. "+
 			"Use this instead of grep or file reading when the user asks about relationships, dependencies, "+
 			"callers, or how a symbol connects to the rest of the codebase. "+
-			"Returns a pre-computed graph from the Sense index with no context window cost for file contents.\n\n"+
+			"Returns a pre-computed graph from the Sense index with no context window cost for file contents. "+
+			"For symbols called through interfaces or traits, dispatch-inferred callers appear in a separate "+
+			"dispatch_inferred field (confidence 0.8).\n\n"+
 			"When dead_code is true, returns project-wide dead symbols (zero incoming references) instead of "+
 			"per-symbol edges. The symbol, direction, and depth parameters are ignored in this mode."),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
@@ -385,6 +397,14 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		SegmentCallers: h.defaults.GraphSegmentCallers,
 	}
 	resp := mcpio.BuildFullGraphResponse(gr, lookup, buildReq)
+
+	if direction != model.DirectionCallees {
+		inferred := h.resolveDispatchCallers(ctx, &gr.Root, &resp, lookup)
+		if len(inferred) > 0 {
+			resp.DispatchInferred = inferred
+		}
+	}
+
 	h.tracker.Record("sense.graph", symbol,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
 
@@ -397,6 +417,74 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return nil, fmt.Errorf("sense.graph: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.SymbolContext, resp *mcpio.GraphResponse, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {
+	sym := root.Symbol
+	if sym.Kind != model.KindMethod || sym.ParentID == nil {
+		return nil
+	}
+	if len(resp.Edges.CalledBy) >= InterfaceResolutionThreshold {
+		return nil
+	}
+
+	equivIDs, err := sqlite.DispatchMethodIDs(ctx, h.db, sym.ID)
+	if err != nil || len(equivIDs) == 0 {
+		return nil
+	}
+	if len(equivIDs) > maxDispatchEquivalents {
+		equivIDs = equivIDs[:maxDispatchEquivalents]
+	}
+
+	directCallers := make(map[string]struct{}, len(resp.Edges.CalledBy))
+	for _, c := range resp.Edges.CalledBy {
+		directCallers[c.Symbol] = struct{}{}
+	}
+
+	var inferred []mcpio.DispatchInferredRef
+	for _, eqID := range equivIDs {
+		if len(inferred) >= maxDispatchInferred {
+			break
+		}
+		eqSym, err := h.adapter.ReadSymbol(ctx, eqID)
+		if err != nil {
+			continue
+		}
+		via := qualifiedOrNameRef(eqSym.Symbol)
+
+		for _, e := range eqSym.Inbound {
+			if e.Edge.Kind != model.EdgeCalls {
+				continue
+			}
+			if len(inferred) >= maxDispatchInferred {
+				break
+			}
+			callerName := qualifiedOrNameRef(e.Target)
+			if _, dup := directCallers[callerName]; dup {
+				continue
+			}
+			directCallers[callerName] = struct{}{}
+
+			var filePath *string
+			if p, ok := lookup(e.Target.FileID); ok {
+				filePath = &p
+			}
+			inferred = append(inferred, mcpio.DispatchInferredRef{
+				Symbol:     callerName,
+				File:       filePath,
+				Via:        via,
+				Confidence: mcpio.Confidence(DispatchInferredConfidence),
+			})
+		}
+	}
+	return inferred
+}
+
+func qualifiedOrNameRef(s model.Symbol) string {
+	if s.Qualified != "" {
+		return s.Qualified
+	}
+	return s.Name
 }
 
 func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.NextStep {

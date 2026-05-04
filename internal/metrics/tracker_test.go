@@ -58,6 +58,7 @@ func TestTrackerTopQuery(t *testing.T) {
 	top := tr.TopQuery()
 	if top == nil {
 		t.Fatal("expected non-nil top query")
+		return
 	}
 	if top.Tool != "sense.blast" {
 		t.Errorf("top tool = %q, want sense.blast", top.Tool)

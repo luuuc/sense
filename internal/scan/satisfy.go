@@ -85,6 +85,7 @@ func (h *harness) satisfyInterfaces() error {
 				sym:     *s,
 				methods: map[string]bool{},
 			}
+		default:
 		}
 	}
 

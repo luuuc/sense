@@ -4,6 +4,65 @@ linters:
   enable:
     - errcheck
     - staticcheck
+    - govet
+    - gosec
+    - ineffassign
+    - unconvert
+    - gocritic
+    - exhaustive
+    - unused
+    - misspell
+    - dupword
+    - revive
+    - nolintlint
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
   exclusions:
     paths:
       - bench/lib/test_fixtures
+    rules:
+      # dupword: SQL NULL repetitions and embedded Ruby/test fixtures are fine
+      - linters: [dupword]
+        path: _test\.go
+      - linters: [dupword]
+        path: cmd/sense/main\.go
+      # gosec: test files legitimately use weak RNG, broad perms, variable paths
+      - linters: [gosec]
+        path: _test\.go
+      # gosec: benchmark fixtures use weak RNG and broad file ops
+      - linters: [gosec]
+        path: internal/benchmark/
+      # gosec: suppress rules that are false positives for a CLI tool
+      - linters: [gosec]
+        text: "G118:"
+      - linters: [gosec]
+        text: "G202:"
+      - linters: [gosec]
+        text: "G204:"
+      - linters: [gosec]
+        text: "G301:"
+      - linters: [gosec]
+        text: "G302:"
+      - linters: [gosec]
+        text: "G304:"
+      - linters: [gosec]
+        text: "G306:"
+      - linters: [gosec]
+        text: "G602:"
+      - linters: [gosec]
+        text: "G703:"
+      # revive: don't require doc comments on every export — CLI tool, not a library
+      - linters: [revive]
+        text: "exported: "
+      - linters: [revive]
+        text: "package-comments: "
+      # revive: blank imports are used for side-effect registration (SQLite driver, extractors)
+      - linters: [revive]
+        text: "blank-imports: "
+      # revive: indent-error-flow is noisy in CLI command handlers
+      - linters: [revive]
+        text: "indent-error-flow: "

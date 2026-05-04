@@ -73,7 +73,8 @@ func writeMarkerFile(path, section string) (bool, error) {
 
 	content := string(data)
 
-	if strings.Contains(content, markerStart) {
+	switch {
+	case strings.Contains(content, markerStart):
 		startIdx := strings.Index(content, markerStart)
 		endIdx := strings.Index(content, markerEnd)
 		if endIdx < 0 {
@@ -82,9 +83,9 @@ func writeMarkerFile(path, section string) (bool, error) {
 			endIdx += len(markerEnd)
 			content = content[:startIdx] + section + content[endIdx:]
 		}
-	} else if len(content) == 0 {
+	case len(content) == 0:
 		content = section + "\n"
-	} else {
+	default:
 		sep := "\n\n"
 		if strings.HasSuffix(content, "\n\n") {
 			sep = ""
