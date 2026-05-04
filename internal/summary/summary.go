@@ -365,6 +365,7 @@ func renderKnownNoise(ctx context.Context, db *sql.DB) (string, error) {
 		{"%example%", "example code; not part of core architecture"},
 	}
 
+	seen := make(map[string]bool)
 	var b strings.Builder
 	for _, p := range noisePatterns {
 		var count int
@@ -375,6 +376,10 @@ func renderKnownNoise(ctx context.Context, db *sql.DB) (string, error) {
 		}
 		if count > 0 {
 			prefix := longestNoisePrefix(ctx, db, p.like)
+			if seen[prefix] {
+				continue
+			}
+			seen[prefix] = true
 			fmt.Fprintf(&b, "- `%s` — %s (%d files)\n", prefix, p.desc, count)
 		}
 	}
