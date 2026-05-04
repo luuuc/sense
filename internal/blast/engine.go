@@ -28,6 +28,9 @@ import (
 
 const defaultMaxResults = 100
 
+// MaxFrontierWidth caps BFS frontier per hop — distinct from the SQL batch chunk (500).
+const MaxFrontierWidth = 500
+
 // defaultMaxHops matches the pitch's acceptance-criterion call:
 // Options{MaxHops: 3, IncludeTests: true}. Callers that pass
 // MaxHops: 0 get three hops of traversal — deep enough to be useful
@@ -86,15 +89,32 @@ func isTypeKind(kind model.SymbolKind) bool {
 	return false
 }
 
+const (
+	// InheritsDecay — type hierarchy is a strong structural signal.
+	InheritsDecay = 0.7
+	// ComposesDecay — field/association; ORM relationships survive 2 hops.
+	ComposesDecay = 0.5
+	// IncludesDecay — mixins/imports are weak, prune early.
+	IncludesDecay = 0.3
+	// StructuralMinConf — lowered floor for structural edges (composes/inherits/includes) so ORM chains survive 2 hops.
+	StructuralMinConf = 0.2
+	// TestsDecay — test edges are weaker than structural edges but stronger than includes.
+	TestsDecay = 0.5
+)
+
 // kindDecay returns the confidence multiplier for an edge kind during
-// BFS traversal. Weak edge kinds decay faster, causing paths through
-// composition/test edges to hit the MinConfidence floor sooner.
+// BFS traversal. Per-kind values ensure ORM associations (composes)
+// survive two hops while mixins/imports prune early.
 func kindDecay(edgeKind string) float64 {
 	switch edgeKind {
-	case "composes", "includes", "inherits":
-		return 0.3
+	case "inherits":
+		return InheritsDecay
+	case "composes":
+		return ComposesDecay
+	case "includes":
+		return IncludesDecay
 	case "tests":
-		return 0.5
+		return TestsDecay
 	default:
 		return 1.0
 	}
@@ -146,6 +166,8 @@ type Result struct {
 	// SymbolTiers classifies each affected symbol by relevance tier.
 	// Keyed by symbol ID. Used by response shapers to cap output.
 	SymbolTiers map[int64]Tier
+
+	Truncated bool
 }
 
 // Compute returns the blast radius of symbolIDs under the given
@@ -186,6 +208,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		frontier = append(frontier, id)
 	}
 
+	truncated := false
 	for hop := 1; hop <= opts.MaxHops; hop++ {
 		if err := ctx.Err(); err != nil {
 			return Result{}, fmt.Errorf("blast: cancelled at hop %d: %w", hop, err)
@@ -200,7 +223,11 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 				continue
 			}
 			cumConf := pathConf[pair.target] * pair.confidence * kindDecay(pair.kind)
-			if cumConf < opts.MinConfidence {
+			minConf := opts.MinConfidence
+			if pair.kind == "composes" || pair.kind == "inherits" || pair.kind == "includes" {
+				minConf = StructuralMinConf
+			}
+			if cumConf < minConf {
 				continue
 			}
 			visited[pair.source] = hop
@@ -211,6 +238,24 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 				viaTemporal[pair.source] = true
 			}
 			next = append(next, pair.source)
+		}
+		// Cap frontier width: evicted nodes are removed from visited so they
+		// may be re-discovered via a stronger path in a later hop. This is
+		// intentional — it preserves the highest-confidence paths.
+		if len(next) > MaxFrontierWidth {
+			sort.Slice(next, func(i, j int) bool {
+				return pathConf[next[i]] > pathConf[next[j]]
+			})
+			evicted := next[MaxFrontierWidth:]
+			next = next[:MaxFrontierWidth]
+			for _, id := range evicted {
+				delete(visited, id)
+				delete(predecessor, id)
+				delete(visitedKind, id)
+				delete(pathConf, id)
+				delete(viaTemporal, id)
+			}
+			truncated = true
 		}
 		if len(next) == 0 {
 			break
@@ -409,6 +454,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
 		SymbolTiers:            symbolTiers,
+		Truncated:              truncated,
 	}, nil
 }
 

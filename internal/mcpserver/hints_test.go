@@ -518,3 +518,50 @@ func assertSameHints(t *testing.T, name string, want, got []mcpio.NextStep) {
 		}
 	}
 }
+
+func TestResponseCapsNextSteps(t *testing.T) {
+	graphResp := mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{Qualified: "X", File: "x.go"},
+		Edges:  mcpio.GraphEdges{CalledBy: make([]mcpio.CallEdgeRef, 20)},
+	}
+	if n := len(graphHints(graphResp, "callers")); n > mcpio.MaxNextSteps {
+		t.Errorf("graphHints returned %d hints, max is %d", n, mcpio.MaxNextSteps)
+	}
+
+	searchResp := mcpio.SearchResponse{
+		Results: []mcpio.SearchResultEntry{
+			{Symbol: "A", File: "pkg/a.go", Score: 0.95},
+			{Symbol: "B", File: "pkg/a.go", Score: 0.9},
+			{Symbol: "C", File: "pkg/a.go", Score: 0.85},
+		},
+	}
+	if n := len(searchHints(searchResp)); n > mcpio.MaxNextSteps {
+		t.Errorf("searchHints returned %d hints, max is %d", n, mcpio.MaxNextSteps)
+	}
+
+	blastResp := mcpio.BlastResponse{
+		Risk:          "high",
+		TotalAffected: 10,
+	}
+	if n := len(blastHints(blastResp)); n > mcpio.MaxNextSteps {
+		t.Errorf("blastHints returned %d hints, max is %d", n, mcpio.MaxNextSteps)
+	}
+
+	convResp := mcpio.ConventionsResponse{
+		Conventions: []mcpio.ConventionEntry{
+			{Strength: 0.9, Description: "test pattern"},
+		},
+	}
+	if n := len(conventionsHints(convResp, "models")); n > mcpio.MaxNextSteps {
+		t.Errorf("conventionsHints returned %d hints, max is %d", n, mcpio.MaxNextSteps)
+	}
+
+	statusResp := mcpio.StatusResponse{
+		Freshness: mcpio.Freshness{StaleFilesSeen: intPtr(5)},
+	}
+	if n := len(statusHints(statusResp, 0)); n > mcpio.MaxNextSteps {
+		t.Errorf("statusHints returned %d hints, max is %d", n, mcpio.MaxNextSteps)
+	}
+}
+
+func intPtr(v int) *int { return &v }

@@ -25,6 +25,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		AffectedTests:      append([]string{}, r.AffectedTests...),
 		TotalAffected:      r.TotalAffected,
 		TestsAffectedCount: len(r.AffectedTests),
+		Truncated:          r.Truncated,
 	}
 
 	hasTiers := len(r.SymbolTiers) > 0

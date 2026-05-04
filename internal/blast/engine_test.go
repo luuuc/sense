@@ -1140,3 +1140,114 @@ func TestSelfMethodExclusion(t *testing.T) {
 		t.Errorf("TotalAffected = %d, want 1 (only external caller)", res.TotalAffected)
 	}
 }
+
+// TestBlastFollowsCompositionTwoHops verifies that a User --composes--> Post
+// --calls--> Validator chain is fully traversed: Post at hop 1 and Validator
+// at hop 2 should both appear in blast results.
+func TestBlastFollowsCompositionTwoHops(t *testing.T) {
+	fix := newFixtureDB(t)
+	user := fix.addSymbol(t, "User")
+	post := fix.addSymbol(t, "Post")
+	validator := fix.addSymbol(t, "Validator")
+
+	// Post composes User (reverse: blast from User sees Post)
+	fix.addEdge(t, post, user, model.EdgeComposes, 1.0)
+	// Validator calls Post (reverse: blast from Post sees Validator)
+	fix.addEdge(t, validator, post, model.EdgeCalls, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{user}, blast.Options{
+		MaxHops: 3,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	foundPost := false
+	for _, c := range res.DirectCallers {
+		if c.ID == post {
+			foundPost = true
+		}
+	}
+	if !foundPost {
+		t.Errorf("Post should appear at hop 1 (composes), got DirectCallers: %+v", res.DirectCallers)
+	}
+
+	foundValidator := false
+	for _, hop := range res.IndirectCallers {
+		if hop.Symbol.ID == validator {
+			foundValidator = true
+		}
+	}
+	if !foundValidator {
+		t.Errorf("Validator should appear at hop 2 (calls via Post), got IndirectCallers: %+v", res.IndirectCallers)
+	}
+}
+
+func TestBlastCapsFrontierWidth(t *testing.T) {
+	fix := newFixtureDB(t)
+	hub := fix.addSymbol(t, "Hub")
+
+	callerCount := blast.MaxFrontierWidth + 100
+	for i := 0; i < callerCount; i++ {
+		caller := fix.addSymbol(t, fmt.Sprintf("Caller%d", i))
+		fix.addEdge(t, caller, hub, model.EdgeCalls, 1.0)
+	}
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{hub}, blast.Options{
+		MaxHops:    2,
+		MaxResults: callerCount + 10,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if !res.Truncated {
+		t.Error("expected Truncated=true when frontier exceeds MaxFrontierWidth")
+	}
+	if res.TotalAffected > blast.MaxFrontierWidth {
+		t.Errorf("TotalAffected = %d, want <= %d", res.TotalAffected, blast.MaxFrontierWidth)
+	}
+}
+
+// TestBlastPrunesCompositionThreeHops verifies that three consecutive
+// composition hops get pruned: cumulative confidence 0.5^3 = 0.125 < StructuralMinConf (0.2).
+func TestBlastPrunesCompositionThreeHops(t *testing.T) {
+	fix := newFixtureDB(t)
+	a := fix.addSymbol(t, "A")
+	b := fix.addSymbol(t, "B")
+	c := fix.addSymbol(t, "C")
+	d := fix.addSymbol(t, "D")
+
+	fix.addEdge(t, b, a, model.EdgeComposes, 1.0)
+	fix.addEdge(t, c, b, model.EdgeComposes, 1.0)
+	fix.addEdge(t, d, c, model.EdgeComposes, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{a}, blast.Options{
+		MaxHops: 4,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	// B at hop 1: 1.0 * 1.0 * 0.5 = 0.5 >= 0.2 ✓
+	// C at hop 2: 0.5 * 1.0 * 0.5 = 0.25 >= 0.2 ✓
+	// D at hop 3: 0.25 * 1.0 * 0.5 = 0.125 < 0.2 ✗ (pruned)
+	foundD := false
+	for _, c := range res.DirectCallers {
+		if c.ID == d {
+			foundD = true
+		}
+	}
+	for _, hop := range res.IndirectCallers {
+		if hop.Symbol.ID == d {
+			foundD = true
+		}
+	}
+	if foundD {
+		t.Errorf("D at hop 3 should be pruned (0.5^3=0.125 < StructuralMinConf 0.2)")
+	}
+
+	if res.TotalAffected != 2 {
+		t.Errorf("TotalAffected = %d, want 2 (B + C survive, D pruned)", res.TotalAffected)
+	}
+}

@@ -142,9 +142,6 @@ func TestMCPIntegration(t *testing.T) {
 			Edges struct {
 				CalledBy []any `json:"called_by"`
 			} `json:"edges"`
-			SenseMetrics struct {
-				SymbolsReturned *int `json:"symbols_returned"`
-			} `json:"sense_metrics"`
 			Freshness *struct {
 				IndexAgeSeconds *int64 `json:"index_age_seconds"`
 				StaleFilesSeen  *int   `json:"stale_files_seen"`
@@ -250,11 +247,6 @@ func TestMCPIntegration(t *testing.T) {
 			Risk          string `json:"risk"`
 			DirectCallers []any  `json:"direct_callers"`
 			TotalAffected int    `json:"total_affected"`
-			SenseMetrics  struct {
-				SymbolsTraversed          int `json:"symbols_traversed"`
-				EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
-				EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
-			} `json:"sense_metrics"`
 		}
 		if err := json.Unmarshal([]byte(text), &blastResp); err != nil {
 			t.Fatalf("parse blast JSON: %v\n%s", err, text)
@@ -269,12 +261,6 @@ func TestMCPIntegration(t *testing.T) {
 		}
 		if len(blastResp.DirectCallers) < 5 {
 			t.Errorf("direct_callers = %d, want >= 5", len(blastResp.DirectCallers))
-		}
-		if blastResp.SenseMetrics.EstimatedFileReadsAvoided == 0 {
-			t.Error("expected non-zero estimated_file_reads_avoided")
-		}
-		if blastResp.SenseMetrics.EstimatedTokensSaved == 0 {
-			t.Error("expected non-zero estimated_tokens_saved")
 		}
 	})
 

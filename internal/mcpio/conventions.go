@@ -14,7 +14,7 @@ type ConventionsResponse struct {
 	Conventions  []ConventionEntry    `json:"conventions"`
 	Truncated    bool                 `json:"truncated,omitempty"`
 	TokenBudget  int                  `json:"token_budget,omitempty"`
-	SenseMetrics ConventionsMetrics   `json:"sense_metrics"`
+	SenseMetrics ConventionsMetrics   `json:"-"`
 	NextSteps    []NextStep           `json:"next_steps"`
 }
 

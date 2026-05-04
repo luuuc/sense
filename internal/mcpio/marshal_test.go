@@ -38,8 +38,7 @@ func TestMarshalGraphRoundTrip(t *testing.T) {
 			Tests:    []TestEdgeRef{{File: "test/services/checkout_service_test.rb", Confidence: 0.8}},
 			Temporal: []TemporalEdgeRef{},
 		},
-		SenseMetrics: GraphMetrics{SymbolsReturned: 3},
-		NextSteps:    []NextStep{},
+		NextSteps: []NextStep{},
 	}
 
 	raw, err := MarshalGraph(in)
@@ -74,8 +73,7 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 		AffectedViaComposition: []BlastCaller{},
 		AffectedViaIncludes:    []BlastCaller{},
 		References:             BlastTierSummary{Count: 0, Examples: []BlastCaller{}},
-		SenseMetrics:           BlastMetrics{SymbolsTraversed: 5},
-		NextSteps:              []NextStep{},
+		NextSteps: []NextStep{},
 	}
 
 	raw, err := MarshalBlast(in)
@@ -97,10 +95,7 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 // declares — without this test, a future edit to remove a
 // normalizer would break the contract silently.
 //
-// The savings fields on SenseMetrics render as `null` by policy
-// (pitch 01-05: honest stub until 04-03 lands real estimation),
-// so the test explicitly allows null there and elsewhere — it only
-// enforces that the named slice fields carry `[]`.
+// This test enforces that all named slice fields carry `[]`, not `null`.
 func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	graphBytes, err := MarshalGraph(GraphResponse{})
 	if err != nil {
@@ -130,6 +125,92 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 		if strings.Contains(string(blastBytes), nullField) {
 			t.Errorf("BlastResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, blastBytes)
 		}
+	}
+}
+
+func TestResponseOmitsMetrics(t *testing.T) {
+	graph := GraphResponse{
+		Symbol:       GraphSymbol{Name: "X", Qualified: "X", File: "x.go", Kind: "function"},
+		SenseMetrics: GraphMetrics{SymbolsReturned: 99, EstimatedFileReadsAvoided: 10, EstimatedTokensSaved: 8000},
+	}
+	graphBytes, err := MarshalGraph(graph)
+	if err != nil {
+		t.Fatalf("MarshalGraph: %v", err)
+	}
+	if strings.Contains(string(graphBytes), "sense_metrics") {
+		t.Errorf("graph response should not contain sense_metrics:\n%s", graphBytes)
+	}
+
+	bl := BlastResponse{
+		Symbol:       "Y",
+		Risk:         "low",
+		RiskFactors:  []string{"1 direct caller"},
+		SenseMetrics: BlastMetrics{SymbolsTraversed: 50, EstimatedFileReadsAvoided: 5, EstimatedTokensSaved: 4000},
+	}
+	blastBytes, err := MarshalBlast(bl)
+	if err != nil {
+		t.Fatalf("MarshalBlast: %v", err)
+	}
+	if strings.Contains(string(blastBytes), "sense_metrics") {
+		t.Errorf("blast response should not contain sense_metrics:\n%s", blastBytes)
+	}
+
+	sr := SearchResponse{
+		Results:      []SearchResultEntry{{Symbol: "Z", File: "z.go", Kind: "function", Score: 0.9}},
+		SearchMode:   "hybrid",
+		SenseMetrics: SearchMetrics{SymbolsSearched: 100, EstimatedFileReadsAvoided: 3, EstimatedTokensSaved: 2400},
+	}
+	searchBytes, err := MarshalSearch(sr)
+	if err != nil {
+		t.Fatalf("MarshalSearch: %v", err)
+	}
+	if strings.Contains(string(searchBytes), "sense_metrics") {
+		t.Errorf("search response should not contain sense_metrics:\n%s", searchBytes)
+	}
+
+	conv := ConventionsResponse{
+		Conventions:  []ConventionEntry{{Category: "naming", Description: "test", Strength: 0.8, Instances: []string{"a"}, TotalInstances: 1}},
+		SenseMetrics: ConventionsMetrics{SymbolsAnalyzed: 200, EstimatedFileReadsAvoided: 10, EstimatedTokensSaved: 8000},
+	}
+	convBytes, err := MarshalConventions(conv)
+	if err != nil {
+		t.Fatalf("MarshalConventions: %v", err)
+	}
+	if strings.Contains(string(convBytes), "sense_metrics") {
+		t.Errorf("conventions response should not contain sense_metrics:\n%s", convBytes)
+	}
+
+	dc := DeadCodeResponse{
+		DeadSymbols:  []DeadSymbolEntry{{Symbol: "W", Qualified: "W", File: "w.go", Kind: "function"}},
+		TotalSymbols: 100,
+		DeadCount:    1,
+		SenseMetrics: DeadCodeMetrics{SymbolsAnalyzed: 100, EstimatedFileReadsAvoided: 1, EstimatedTokensSaved: 800},
+	}
+	dcBytes, err := MarshalDeadCode(dc)
+	if err != nil {
+		t.Fatalf("MarshalDeadCode: %v", err)
+	}
+	if strings.Contains(string(dcBytes), "sense_metrics") {
+		t.Errorf("dead code response should not contain sense_metrics:\n%s", dcBytes)
+	}
+}
+
+func TestResponseRetainsFreshness(t *testing.T) {
+	age := int64(42)
+	stale := 2
+	graph := GraphResponse{
+		Symbol:    GraphSymbol{Name: "X", Qualified: "X", File: "x.go", Kind: "function"},
+		Freshness: &Freshness{IndexAgeSeconds: &age, StaleFilesSeen: &stale},
+	}
+	graphBytes, err := MarshalGraph(graph)
+	if err != nil {
+		t.Fatalf("MarshalGraph: %v", err)
+	}
+	if !strings.Contains(string(graphBytes), "freshness") {
+		t.Errorf("graph response should contain freshness when set:\n%s", graphBytes)
+	}
+	if !strings.Contains(string(graphBytes), "index_age_seconds") {
+		t.Errorf("freshness should contain index_age_seconds:\n%s", graphBytes)
 	}
 }
 
