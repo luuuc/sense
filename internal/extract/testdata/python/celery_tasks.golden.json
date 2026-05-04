@@ -1,0 +1,106 @@
+{
+  "symbols": [
+    {
+      "name": "Mailer",
+      "qualified": "Mailer",
+      "kind": "class",
+      "line_start": 26,
+      "line_end": 28
+    },
+    {
+      "name": "send",
+      "qualified": "Mailer.send",
+      "kind": "method",
+      "parent": "Mailer",
+      "line_start": 27,
+      "line_end": 28
+    },
+    {
+      "name": "PaymentGateway",
+      "qualified": "PaymentGateway",
+      "kind": "class",
+      "line_start": 31,
+      "line_end": 33
+    },
+    {
+      "name": "charge",
+      "qualified": "PaymentGateway.charge",
+      "kind": "method",
+      "parent": "PaymentGateway",
+      "line_start": 32,
+      "line_end": 33
+    },
+    {
+      "name": "RETRY_LIMIT",
+      "qualified": "RETRY_LIMIT",
+      "kind": "constant",
+      "line_start": 5,
+      "line_end": 5
+    },
+    {
+      "name": "cleanup_expired",
+      "qualified": "cleanup_expired",
+      "kind": "function",
+      "line_start": 22,
+      "line_end": 23
+    },
+    {
+      "name": "process_payment",
+      "qualified": "process_payment",
+      "kind": "function",
+      "line_start": 15,
+      "line_end": 18
+    },
+    {
+      "name": "send_email",
+      "qualified": "send_email",
+      "kind": "function",
+      "line_start": 9,
+      "line_end": 11
+    }
+  ],
+  "edges": [
+    {
+      "source": "cleanup_expired",
+      "target": "Session.delete_expired",
+      "kind": "calls",
+      "line": 23,
+      "confidence": 1
+    },
+    {
+      "source": "process_payment",
+      "target": "Order.find",
+      "kind": "calls",
+      "line": 16,
+      "confidence": 1
+    },
+    {
+      "source": "process_payment",
+      "target": "PaymentGateway",
+      "kind": "calls",
+      "line": 17,
+      "confidence": 1
+    },
+    {
+      "source": "process_payment",
+      "target": "gateway.charge",
+      "kind": "calls",
+      "line": 18,
+      "confidence": 1
+    },
+    {
+      "source": "send_email",
+      "target": "Mailer",
+      "kind": "calls",
+      "line": 10,
+      "confidence": 1
+    },
+    {
+      "source": "send_email",
+      "target": "mailer.send",
+      "kind": "calls",
+      "line": 11,
+      "confidence": 1
+    }
+  ]
+}
