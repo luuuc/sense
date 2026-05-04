@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/luuuc/sense/internal/sqlite"
@@ -459,10 +460,12 @@ func readFrameworks(ctx context.Context, db *sql.DB) map[string]struct{} {
 		return out
 	}
 	var names []string
-	if json.Unmarshal([]byte(raw), &names) == nil {
-		for _, n := range names {
-			out[n] = struct{}{}
-		}
+	if err := json.Unmarshal([]byte(raw), &names); err != nil {
+		log.Printf("dead: corrupt frameworks meta: %v", err)
+		return out
+	}
+	for _, n := range names {
+		out[n] = struct{}{}
 	}
 	return out
 }
