@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/luuuc/sense/internal/sqlite"
 )
 
 const defaultLimit = 100
@@ -49,9 +51,7 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: query candidates: %w", err)
 	}
 
-	// Interface implementation check: exclude methods whose parent type
-	// implements an interface with callers on the matching method.
-	ifaceAlive, err := queryInterfaceAliveMethods(ctx, db)
+	ifaceAlive, err := sqlite.InterfaceAliveMethods(ctx, db)
 	if err != nil {
 		return Result{}, fmt.Errorf("dead: interface alive methods: %w", err)
 	}
@@ -417,51 +417,14 @@ func isInterfaceMethod(s Symbol, interfaceIDs map[int64]struct{}) bool {
 	return ok
 }
 
-type ifaceMethodKey struct {
-	parentID   int64
-	methodName string
-}
-
-// queryInterfaceAliveMethods finds method names on interfaces that have
-// callers, then maps those to all types that implement those interfaces.
-// Returns a set of (implementor_parent_id, method_name) pairs that
-// should be excluded from dead code results.
-func queryInterfaceAliveMethods(ctx context.Context, db *sql.DB) (map[ifaceMethodKey]struct{}, error) {
-	// Find interface methods that have callers (alive via dynamic dispatch).
-	// Then find all types that inherit those interfaces.
-	q := `SELECT impl.source_id, im.name
-		FROM sense_symbols im
-		JOIN sense_edges ie ON ie.target_id = im.id AND ie.kind = 'calls'
-		JOIN sense_symbols iface ON im.parent_id = iface.id AND iface.kind = 'interface'
-		JOIN sense_edges impl ON impl.target_id = iface.id AND impl.kind = 'inherits' AND impl.source_id IS NOT NULL
-		GROUP BY impl.source_id, im.name`
-
-	rows, err := db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := make(map[ifaceMethodKey]struct{})
-	for rows.Next() {
-		var parentID int64
-		var methodName string
-		if err := rows.Scan(&parentID, &methodName); err != nil {
-			return nil, err
-		}
-		out[ifaceMethodKey{parentID: parentID, methodName: methodName}] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
-func excludeInterfaceImplementors(candidates []Symbol, alive map[ifaceMethodKey]struct{}) []Symbol {
+func excludeInterfaceImplementors(candidates []Symbol, alive map[sqlite.InterfaceMethodKey]struct{}) []Symbol {
 	if len(alive) == 0 {
 		return candidates
 	}
 	var out []Symbol
 	for _, s := range candidates {
 		if s.ParentID != nil {
-			if _, ok := alive[ifaceMethodKey{parentID: *s.ParentID, methodName: s.Name}]; ok {
+			if _, ok := alive[sqlite.InterfaceMethodKey{ParentID: *s.ParentID, MethodName: s.Name}]; ok {
 				continue
 			}
 		}
