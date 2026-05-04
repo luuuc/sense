@@ -18,13 +18,12 @@ const senseSection = `<!-- sense:start -->
 
 Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
 
-**Read ` + "`.sense/summary.md`" + ` for a quick codebase overview** — it contains the project fingerprint, top namespaces, hub symbols, entry points, and conventions. Updated automatically on every scan.
-
 **Your FIRST action in every conversation — before responding, before any tool call — MUST be:**
 
-1. Load Sense tools: ` + "`ToolSearch(\"select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions,mcp__sense__sense_status\")`" + `
-2. Call ` + "`sense_status`" + ` to confirm index health
-3. Use Sense tools for ALL codebase understanding — exploration, research, architecture, callers, dependencies, search
+1. Read ` + "`.sense/summary.md`" + ` — it is the cold-start map (project fingerprint, top namespaces, hub symbols, entry points, conventions)
+2. Load Sense tools: ` + "`ToolSearch(\"select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions,mcp__sense__sense_status\")`" + `
+3. Call ` + "`sense_status`" + ` to confirm index health
+4. Use Sense tools for ALL codebase understanding — exploration, research, architecture, callers, dependencies, search
 
 **You MUST NOT:**
 
@@ -37,7 +36,6 @@ Sense gives you structural understanding of the codebase — symbols, relationsh
 
 | Question | Tool |
 |---|---|
-| New to the codebase? Need an overview? | ` + "`sense_orient question=\"How is this codebase structured?\"`" + ` |
 | Who calls X? What does X call? | ` + "`sense_graph symbol=\"X\"`" + ` |
 | Find code related to a concept | ` + "`sense_search query=\"description\"`" + ` |
 | What breaks if I change X? | ` + "`sense_blast symbol=\"X\"`" + ` |
@@ -45,7 +43,7 @@ Sense gives you structural understanding of the codebase — symbols, relationsh
 
 **Workflows:**
 
-- **Orientation** → ` + "`sense_orient`" + `, or ` + "`sense_search`" + ` with broad concepts + ` + "`sense_conventions`" + `
+- **Orientation** → read ` + "`.sense/summary.md`" + `, then ` + "`sense_search`" + ` with broad concepts + ` + "`sense_conventions`" + `
 - **Impact analysis** → ` + "`sense_blast`" + `
 - **Dependency tracing** → ` + "`sense_graph`" + `
 - **Debugging** → ` + "`sense_search`" + `
