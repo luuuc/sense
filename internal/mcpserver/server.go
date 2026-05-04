@@ -992,6 +992,7 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 			Strength:       mcpio.Confidence(c.Strength),
 			Instances:      conventions.PickRepresentatives(c.Examples, instanceCap),
 			TotalInstances: c.Instances,
+			KeySymbol:      c.KeySymbol,
 		}
 	}
 
@@ -1069,6 +1070,7 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 			Strength:       mcpio.Confidence(c.Strength),
 			Instances:      conventions.PickRepresentatives(c.Examples, instanceCap),
 			TotalInstances: c.Instances,
+			KeySymbol:      c.KeySymbol,
 		})
 	}
 
@@ -1143,7 +1145,7 @@ func (h *handlers) handleOrient(ctx context.Context, req mcp.CallToolRequest) (*
 
 	mcpio.ApplyOrientTokenBudget(&resp, h.defaults.OrientTokenBudget)
 
-	resp.NextSteps = orientHints(resp, question)
+	resp.NextSteps = orientHints(resp)
 
 	h.tracker.Record("sense.orient", question,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
@@ -1188,25 +1190,35 @@ func extractConcepts(question string) []string {
 	return concepts
 }
 
-func orientHints(resp mcpio.OrientResponse, question string) []mcpio.NextStep {
+func orientHints(resp mcpio.OrientResponse) []mcpio.NextStep {
 	var hints []mcpio.NextStep
 
-	if len(resp.SearchHits) > 0 {
+	if resp.Structure != nil && len(resp.Structure.HubSymbols) > 0 {
+		hub := resp.Structure.HubSymbols[0]
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.graph",
-			Args:   map[string]any{"symbol": resp.SearchHits[0].Symbol},
-			Reason: "explore relationships of the top search hit",
+			Args:   map[string]any{"symbol": hub.Name},
+			Reason: fmt.Sprintf("explore relationships of %s (%d callers)", hub.Name, hub.Callers),
 		})
 	}
 
-	if len(resp.Conventions) > 0 && len(hints) < 2 {
+	if iface := firstKeySymbol(resp.Conventions); iface != "" && len(hints) < 2 {
 		hints = append(hints, mcpio.NextStep{
-			Tool:   "sense.conventions",
-			Reason: "dive deeper into project conventions",
+			Tool:   "sense.graph",
+			Args:   map[string]any{"symbol": iface, "direction": "callers"},
+			Reason: fmt.Sprintf("see implementors and callers of interface %s", iface),
 		})
 	}
 
-	if question == "" && len(hints) < 2 {
+	if len(resp.SearchHits) > 0 && len(hints) < 2 {
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense.blast",
+			Args:   map[string]any{"symbol": resp.SearchHits[0].Symbol},
+			Reason: fmt.Sprintf("assess change risk for %s", resp.SearchHits[0].Symbol),
+		})
+	}
+
+	if len(hints) == 0 {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.search",
 			Args:   map[string]any{"query": "entry point main handler"},
@@ -1218,6 +1230,15 @@ func orientHints(resp mcpio.OrientResponse, question string) []mcpio.NextStep {
 		hints = hints[:2]
 	}
 	return hints
+}
+
+func firstKeySymbol(convs []mcpio.ConventionEntry) string {
+	for _, c := range convs {
+		if c.KeySymbol != "" {
+			return c.KeySymbol
+		}
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------

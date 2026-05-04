@@ -10,6 +10,7 @@ import (
 )
 
 const minInstances = 3
+const minInterfaceInstances = 2
 const maxDescriptionNames = 5
 const minPrevalence = 0.10
 const minPrevalenceInstances = 5
@@ -28,8 +29,9 @@ const (
 )
 
 type Example struct {
-	Name string
-	Path string
+	Name      string
+	Path      string
+	EdgeCount int
 }
 
 type Convention struct {
@@ -39,6 +41,7 @@ type Convention struct {
 	Total       int
 	Strength    float64
 	Examples    []Example
+	KeySymbol   string
 }
 
 type Options struct {
@@ -85,6 +88,8 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	conventions = append(conventions, detectDesignPatterns(symbols, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectFrameworkIdioms(symbols, edges, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectArchitectureLayers(symbols, edges, symbolByID, filePathByID)...)
+
+	enrichEdgeCounts(conventions, symbols, edges, filePathByID)
 
 	sort.Slice(conventions, func(i, j int) bool {
 		if conventions[i].Category != conventions[j].Category {
@@ -740,22 +745,18 @@ func PickRepresentatives(examples []Example, max int) []string {
 	if len(examples) == 0 {
 		return nil
 	}
-	if len(examples) <= max {
-		names := make([]string, len(examples))
-		for i, e := range examples {
-			names[i] = e.Name
-		}
-		return names
+	sorted := make([]Example, len(examples))
+	copy(sorted, examples)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].EdgeCount > sorted[j].EdgeCount
+	})
+	n := max
+	if n > len(sorted) {
+		n = len(sorted)
 	}
-	indices := []int{0, len(examples) / 2, len(examples) - 1}
-	seen := map[int]struct{}{}
-	var names []string
-	for _, idx := range indices {
-		if _, ok := seen[idx]; ok {
-			continue
-		}
-		seen[idx] = struct{}{}
-		names = append(names, examples[idx].Name)
+	names := make([]string, n)
+	for i := 0; i < n; i++ {
+		names[i] = sorted[i].Name
 	}
 	return names
 }
@@ -917,7 +918,7 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 		g.implementors = append(g.implementors, Example{Name: src.name, Path: filePathByID[src.fileID]})
 	}
 	for _, g := range ifaces {
-		if len(g.implementors) < minInstances {
+		if len(g.implementors) < minInterfaceInstances {
 			continue
 		}
 		sortExamples(g.implementors)
@@ -929,6 +930,7 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 			Total:       totalStructs,
 			Strength:    safeStrength(len(g.implementors), totalStructs),
 			Examples:    g.implementors,
+			KeySymbol:   g.iface.name,
 		})
 	}
 
@@ -1082,6 +1084,27 @@ func pluralize(kind string) string {
 		return kind + "es"
 	}
 	return kind + "s"
+}
+
+func enrichEdgeCounts(conventions []Convention, symbols []symbolRow, edges []edgeRow, filePathByID map[int64]string) {
+	type namePathKey struct{ name, path string }
+	inbound := make(map[int64]int, len(symbols))
+	for _, e := range edges {
+		inbound[e.targetID]++
+	}
+	lookup := make(map[namePathKey]int, len(symbols))
+	for _, s := range symbols {
+		key := namePathKey{s.name, filePathByID[s.fileID]}
+		if c := inbound[s.id]; c > lookup[key] {
+			lookup[key] = c
+		}
+	}
+	for ci := range conventions {
+		for ei := range conventions[ci].Examples {
+			ex := &conventions[ci].Examples[ei]
+			ex.EdgeCount = lookup[namePathKey{ex.Name, ex.Path}]
+		}
+	}
 }
 
 func dedupeExamples(examples []Example) []Example {
