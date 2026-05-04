@@ -171,7 +171,7 @@ func TestRenderMainAreas(t *testing.T) {
 		t.Errorf("expected internal/server namespace, got: %s", got)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
-		if strings.HasPrefix(line, "  Next:") {
+		if strings.HasPrefix(line, "*") {
 			continue
 		}
 		if !strings.HasPrefix(line, "- `") {
@@ -184,8 +184,8 @@ func TestRenderMainAreas(t *testing.T) {
 	if !strings.Contains(got, "functions") {
 		t.Errorf("expected dominant kind description, got: %s", got)
 	}
-	if !strings.Contains(got, "Next:") {
-		t.Errorf("expected Next: hints, got: %s", got)
+	if !strings.Contains(got, "sense_conventions") {
+		t.Errorf("expected section-level hint, got: %s", got)
 	}
 }
 
@@ -205,7 +205,10 @@ func TestRenderKeyAbstractions(t *testing.T) {
 		t.Errorf("expected 'incoming edges' label, got: %s", got)
 	}
 	if !strings.Contains(got, "sense_graph") {
-		t.Errorf("expected sense_graph next-step hint, got: %s", got)
+		t.Errorf("expected sense_graph section-level hint, got: %s", got)
+	}
+	if strings.Count(got, "sense_graph") != 1 {
+		t.Errorf("expected exactly one sense_graph hint (section-level), got %d", strings.Count(got, "sense_graph"))
 	}
 }
 
@@ -296,7 +299,7 @@ func TestRenderReadingPath(t *testing.T) {
 		t.Errorf("expected testdata filtered out, got: %s", got)
 	}
 	if !strings.HasPrefix(strings.TrimSpace(got), "1.") {
-		t.Errorf("expected numbered list, got: %s", got)
+		t.Errorf("expected numbered list starting at 1, got: %s", got)
 	}
 	if !strings.Contains(got, "sense_search") {
 		t.Errorf("expected sense_search next-step hint, got: %s", got)
@@ -317,5 +320,50 @@ func TestRenderKnownNoise(t *testing.T) {
 	}
 	if !strings.Contains(got, "ignore for architecture") {
 		t.Errorf("expected noise description, got: %s", got)
+	}
+}
+
+func TestCommonPrefix(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want string
+	}{
+		{"a/b/c", "a/b/d", "a/b"},
+		{"a/b/c", "a/b/c", "a/b"},
+		{"foo", "bar", ""},
+		{"a/b", "a/c", "a"},
+		{"", "a/b", ""},
+		{"a/b", "", ""},
+		{"internal/extract/testdata", "internal/scan/testdata", "internal"},
+	}
+	for _, tt := range tests {
+		got := commonPrefix(tt.a, tt.b)
+		if got != tt.want {
+			t.Errorf("commonPrefix(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestDominantKindDesc(t *testing.T) {
+	tests := []struct {
+		kinds map[string]int
+		want  string
+	}{
+		{nil, "code"},
+		{map[string]int{}, "code"},
+		{map[string]int{"function": 10}, "functions"},
+		{map[string]int{"method": 5, "function": 2}, "methods"},
+		{map[string]int{"class": 3}, "classes"},
+		{map[string]int{"module": 1}, "modules"},
+		{map[string]int{"type": 4}, "types"},
+		{map[string]int{"interface": 2}, "interfaces"},
+		{map[string]int{"constant": 7}, "constants"},
+		{map[string]int{"unknown": 1}, "unknowns"},
+	}
+	for _, tt := range tests {
+		got := dominantKindDesc(tt.kinds)
+		if got != tt.want {
+			t.Errorf("dominantKindDesc(%v) = %q, want %q", tt.kinds, got, tt.want)
+		}
 	}
 }

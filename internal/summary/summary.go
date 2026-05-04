@@ -192,9 +192,9 @@ func renderMainAreas(ctx context.Context, db *sql.DB) (string, error) {
 	}
 
 	var b strings.Builder
+	b.WriteString("*Explore any area: `sense_conventions domain=\"...\"` or `sense_search query=\"...\"`*\n")
 	for _, e := range entries {
 		fmt.Fprintf(&b, "- `%s/` — %s (%d symbols)\n", e.name, e.desc, e.symbols)
-		fmt.Fprintf(&b, "  Next: `sense_conventions domain=\"%s\"` or `sense_search query=\"%s\"`\n", e.name, e.name)
 	}
 	return b.String(), nil
 }
@@ -215,7 +215,7 @@ func dominantKindDesc(kinds map[string]int) string {
 	case "function":
 		return "functions"
 	case "method":
-		return "methods and types"
+		return "methods"
 	case "class":
 		return "classes"
 	case "module":
@@ -239,7 +239,7 @@ var utilitySymbols = map[string]bool{
 }
 
 func renderKeyAbstractions(ctx context.Context, db *sql.DB) (string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT s.qualified, s.name, COUNT(e.id) AS in_degree, s.kind, f.path
+	rows, err := db.QueryContext(ctx, `SELECT s.qualified, s.name, COUNT(e.id) AS in_degree, s.kind
 		FROM sense_symbols s
 		JOIN sense_edges e ON e.target_id = s.id
 		JOIN sense_files f ON f.id = s.file_id
@@ -255,21 +255,24 @@ func renderKeyAbstractions(ctx context.Context, db *sql.DB) (string, error) {
 	defer func() { _ = rows.Close() }()
 
 	var b strings.Builder
+	b.WriteString("*Drill into any symbol: `sense_graph symbol=\"...\"` or `sense_blast symbol=\"...\"`*\n")
 	n := 0
-	for rows.Next() && n < 8 {
-		var qualified, name, kind, fpath string
+	for rows.Next() {
+		var qualified, name, kind string
 		var callers int
-		if err := rows.Scan(&qualified, &name, &callers, &kind, &fpath); err != nil {
+		if err := rows.Scan(&qualified, &name, &callers, &kind); err != nil {
 			return "", err
 		}
 		if utilitySymbols[name] {
 			continue
 		}
 		fmt.Fprintf(&b, "- `%s` (%s) — %d incoming edges\n", qualified, kind, callers)
-		fmt.Fprintf(&b, "  Next: `sense_graph symbol=\"%s\"` or `sense_blast symbol=\"%s\"`\n", qualified, qualified)
 		n++
+		if n >= 8 {
+			break
+		}
 	}
-	if b.Len() == 0 {
+	if n == 0 {
 		return "", nil
 	}
 	return b.String(), rows.Err()
@@ -283,73 +286,29 @@ func renderReadingPath(ctx context.Context, db *sql.DB) (string, error) {
 		  AND f.path NOT LIKE '%testdata%'
 		  AND f.path NOT LIKE '%fixture%'
 		  AND f.path NOT LIKE '%example%'
-		LIMIT 3`)
+		LIMIT 5`)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = rows.Close() }()
 
 	var entries []string
+	idx := 1
 	for rows.Next() {
 		var name, file string
 		if err := rows.Scan(&name, &file); err != nil {
 			return "", err
 		}
-		entries = append(entries, fmt.Sprintf("1. `%s` — %s entry", file, name))
+		entries = append(entries, fmt.Sprintf("%d. `%s` — %s entry", idx, file, name))
+		idx++
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-
-	nsRows, err := db.QueryContext(ctx, `SELECT f.path, COUNT(s.id) AS cnt
-		FROM sense_files f
-		JOIN sense_symbols s ON s.file_id = f.id
-		WHERE f.path NOT LIKE '%testdata%'
-		  AND f.path NOT LIKE '%fixture%'
-		  AND f.path NOT LIKE '%test%'
-		GROUP BY f.path`)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = nsRows.Close() }()
-
-	nsCounts := make(map[string]int)
-	for nsRows.Next() {
-		var fpath string
-		var n int
-		if err := nsRows.Scan(&fpath, &n); err != nil {
-			return "", err
-		}
-		ns := namespacePrefixFromPath(fpath)
-		nsCounts[ns] += n
-	}
-	if err := nsRows.Err(); err != nil {
-		return "", err
-	}
-
-	type nsEntry struct {
-		name string
-		syms int
-	}
-	var nsList []nsEntry
-	for name, syms := range nsCounts {
-		nsList = append(nsList, nsEntry{name, syms})
-	}
-	sort.Slice(nsList, func(i, j int) bool { return nsList[i].syms > nsList[j].syms })
-	if len(nsList) > 4 {
-		nsList = nsList[:4]
-	}
-
-	idx := len(entries) + 1
-	for _, ns := range nsList {
-		entries = append(entries, fmt.Sprintf("%d. `%s/` — %d symbols", idx, ns.name, ns.syms))
-		idx++
-	}
-
 	if len(entries) == 0 {
 		return "", nil
 	}
-	entries = append(entries, "\nNext: `sense_search query=\"entry point\"` or `sense_conventions` for project patterns")
+	entries = append(entries, "\n*Next: `sense_search query=\"entry point\"` or `sense_conventions` for project patterns*")
 	return strings.Join(entries, "\n") + "\n", nil
 }
 
@@ -387,10 +346,11 @@ func renderKnownNoise(ctx context.Context, db *sql.DB) (string, error) {
 }
 
 func longestNoisePrefix(ctx context.Context, db *sql.DB, like string) string {
+	fallback := strings.Trim(like, "%")
 	rows, err := db.QueryContext(ctx,
-		`SELECT f.path FROM sense_files f WHERE f.path LIKE ? LIMIT 20`, like)
+		`SELECT f.path FROM sense_files f WHERE f.path LIKE ? ORDER BY f.path LIMIT 20`, like)
 	if err != nil {
-		return strings.Trim(like, "%")
+		return fallback
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -402,8 +362,8 @@ func longestNoisePrefix(ctx context.Context, db *sql.DB, like string) string {
 		}
 		paths = append(paths, filepath.Dir(p))
 	}
-	if len(paths) == 0 {
-		return strings.Trim(like, "%")
+	if err := rows.Err(); err != nil || len(paths) == 0 {
+		return fallback
 	}
 
 	prefix := paths[0]
@@ -411,7 +371,7 @@ func longestNoisePrefix(ctx context.Context, db *sql.DB, like string) string {
 		prefix = commonPrefix(prefix, p)
 	}
 	if prefix == "" || prefix == "." {
-		return strings.Trim(like, "%")
+		return fallback
 	}
 	return prefix + "/"
 }
