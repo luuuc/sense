@@ -50,6 +50,14 @@ func seedTestDB(t *testing.T) (*sql.DB, func()) {
 		t.Fatal(err)
 	}
 
+	fid4, err := adapter.WriteFile(ctx, &model.File{
+		Path: "internal/extract/testdata/go/basic.go", Language: "go",
+		Hash: "ddd", Symbols: 1, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	mainID, err := adapter.WriteSymbol(ctx, &model.Symbol{
 		FileID: fid1, Name: "main", Qualified: "main",
 		Kind: model.KindFunction, LineStart: 1, LineEnd: 10,
@@ -77,6 +85,14 @@ func seedTestDB(t *testing.T) (*sql.DB, func()) {
 	_, err = adapter.WriteSymbol(ctx, &model.Symbol{
 		FileID: fid3, Name: "parse", Qualified: "utils.parse",
 		Kind: model.KindFunction, LineStart: 1, LineEnd: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid4, Name: "main", Qualified: "testdata.main",
+		Kind: model.KindFunction, LineStart: 1, LineEnd: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -125,10 +141,10 @@ func TestRenderFingerprint(t *testing.T) {
 	if !strings.Contains(got, "Go project") {
 		t.Errorf("expected primary language, got: %s", got)
 	}
-	if !strings.Contains(got, "3 files") {
+	if !strings.Contains(got, "4 files") {
 		t.Errorf("expected file count, got: %s", got)
 	}
-	if !strings.Contains(got, "4 symbols") {
+	if !strings.Contains(got, "5 symbols") {
 		t.Errorf("expected symbol count, got: %s", got)
 	}
 	if !strings.Contains(got, "3 edges") {
@@ -139,13 +155,13 @@ func TestRenderFingerprint(t *testing.T) {
 	}
 }
 
-func TestRenderTopNamespaces(t *testing.T) {
+func TestRenderMainAreas(t *testing.T) {
 	db, cleanup := seedTestDB(t)
 	defer cleanup()
 
-	got, err := renderTopNamespaces(context.Background(), db)
+	got, err := renderMainAreas(context.Background(), db)
 	if err != nil {
-		t.Fatalf("renderTopNamespaces: %v", err)
+		t.Fatalf("renderMainAreas: %v", err)
 	}
 
 	if !strings.Contains(got, "cmd/app") {
@@ -162,15 +178,18 @@ func TestRenderTopNamespaces(t *testing.T) {
 			t.Errorf("expected symbol count in line: %s", line)
 		}
 	}
+	if !strings.Contains(got, "functions") {
+		t.Errorf("expected dominant kind description, got: %s", got)
+	}
 }
 
-func TestRenderHubSymbols(t *testing.T) {
+func TestRenderKeyAbstractions(t *testing.T) {
 	db, cleanup := seedTestDB(t)
 	defer cleanup()
 
-	got, err := renderHubSymbols(context.Background(), db)
+	got, err := renderKeyAbstractions(context.Background(), db)
 	if err != nil {
-		t.Fatalf("renderHubSymbols: %v", err)
+		t.Fatalf("renderKeyAbstractions: %v", err)
 	}
 
 	if !strings.Contains(got, "server.Handle") {
@@ -181,44 +200,39 @@ func TestRenderHubSymbols(t *testing.T) {
 	}
 }
 
-func TestRenderEntryPoints(t *testing.T) {
+func TestRenderReadingPath(t *testing.T) {
 	db, cleanup := seedTestDB(t)
 	defer cleanup()
 
-	got, err := renderEntryPoints(context.Background(), db)
+	got, err := renderReadingPath(context.Background(), db)
 	if err != nil {
-		t.Fatalf("renderEntryPoints: %v", err)
+		t.Fatalf("renderReadingPath: %v", err)
 	}
 
-	if !strings.Contains(got, "main") {
-		t.Errorf("expected main entry point, got: %s", got)
-	}
 	if !strings.Contains(got, "cmd/app/main.go") {
-		t.Errorf("expected file path, got: %s", got)
+		t.Errorf("expected main entry in reading path, got: %s", got)
+	}
+	if strings.Contains(got, "testdata") {
+		t.Errorf("expected testdata filtered out, got: %s", got)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(got), "1.") {
+		t.Errorf("expected numbered list, got: %s", got)
 	}
 }
 
-func TestRenderConventions(t *testing.T) {
+func TestRenderKnownNoise(t *testing.T) {
 	db, cleanup := seedTestDB(t)
 	defer cleanup()
 
-	got, err := renderConventions(context.Background(), db)
+	got, err := renderKnownNoise(context.Background(), db)
 	if err != nil {
-		t.Fatalf("renderConventions: %v", err)
+		t.Fatalf("renderKnownNoise: %v", err)
 	}
 
-	// With a minimal fixture, conventions may return empty — that's valid
-	// current behavior. The test captures that the function runs without error
-	// and returns either empty or bullet-formatted lines.
-	if got == "" {
-		return
+	if !strings.Contains(got, "testdata") {
+		t.Errorf("expected testdata noise detected, got: %s", got)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
-		if !strings.HasPrefix(line, "- ") {
-			t.Errorf("expected bullet format, got line: %s", line)
-		}
-		if !strings.Contains(line, "strength") {
-			t.Errorf("expected strength in line: %s", line)
-		}
+	if !strings.Contains(got, "ignore for architecture") {
+		t.Errorf("expected noise description, got: %s", got)
 	}
 }

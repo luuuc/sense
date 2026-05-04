@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/luuuc/sense/internal/conventions"
 	"github.com/luuuc/sense/internal/version"
 )
 
@@ -53,11 +52,11 @@ func Generate(ctx context.Context, db *sql.DB, senseDir string) error {
 	budget := TokenBudget() * charsPerToken
 
 	sections := []section{
-		{"Project Fingerprint", renderFingerprint},
-		{"Top Namespaces", renderTopNamespaces},
-		{"Hub Symbols", renderHubSymbols},
-		{"Entry Points", renderEntryPoints},
-		{"Conventions", renderConventions},
+		{"Fingerprint", renderFingerprint},
+		{"Main Areas", renderMainAreas},
+		{"Key Abstractions", renderKeyAbstractions},
+		{"Reading Path", renderReadingPath},
+		{"Known Noise", renderKnownNoise},
 	}
 
 	var parts []string
@@ -143,25 +142,35 @@ func renderFingerprint(ctx context.Context, db *sql.DB) (string, error) {
 	return b.String(), nil
 }
 
-func renderTopNamespaces(ctx context.Context, db *sql.DB) (string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT f.path, COUNT(s.id)
+func renderMainAreas(ctx context.Context, db *sql.DB) (string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT f.path, s.kind, COUNT(s.id)
 		FROM sense_files f
 		JOIN sense_symbols s ON s.file_id = f.id
-		GROUP BY f.id`)
+		GROUP BY f.path, s.kind`)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = rows.Close() }()
 
-	counts := make(map[string]int)
+	type nsData struct {
+		total int
+		kinds map[string]int
+	}
+	areas := make(map[string]*nsData)
 	for rows.Next() {
-		var fpath string
+		var fpath, kind string
 		var n int
-		if err := rows.Scan(&fpath, &n); err != nil {
+		if err := rows.Scan(&fpath, &kind, &n); err != nil {
 			return "", err
 		}
 		ns := namespacePrefixFromPath(fpath)
-		counts[ns] += n
+		d, ok := areas[ns]
+		if !ok {
+			d = &nsData{kinds: make(map[string]int)}
+			areas[ns] = d
+		}
+		d.total += n
+		d.kinds[kind] += n
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
@@ -170,25 +179,58 @@ func renderTopNamespaces(ctx context.Context, db *sql.DB) (string, error) {
 	type nsEntry struct {
 		name    string
 		symbols int
+		desc    string
 	}
-	entries := make([]nsEntry, 0, len(counts))
-	for name, syms := range counts {
-		entries = append(entries, nsEntry{name, syms})
+	entries := make([]nsEntry, 0, len(areas))
+	for name, d := range areas {
+		entries = append(entries, nsEntry{name, d.total, dominantKindDesc(d.kinds)})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].symbols > entries[j].symbols })
 
-	if len(entries) > 10 {
-		entries = entries[:10]
+	if len(entries) > 8 {
+		entries = entries[:8]
 	}
 
 	var b strings.Builder
 	for _, e := range entries {
-		fmt.Fprintf(&b, "- `%s/` — %d symbols\n", e.name, e.symbols)
+		fmt.Fprintf(&b, "- `%s/` — %s (%d symbols)\n", e.name, e.desc, e.symbols)
 	}
 	return b.String(), nil
 }
 
-func renderHubSymbols(ctx context.Context, db *sql.DB) (string, error) {
+func dominantKindDesc(kinds map[string]int) string {
+	if len(kinds) == 0 {
+		return "code"
+	}
+	best := ""
+	bestN := 0
+	for k, n := range kinds {
+		if n > bestN {
+			best = k
+			bestN = n
+		}
+	}
+	switch best {
+	case "function":
+		return "functions"
+	case "method":
+		return "methods and types"
+	case "class":
+		return "classes"
+	case "module":
+		return "modules"
+	case "type":
+		return "types"
+	case "interface":
+		return "interfaces"
+	case "constant":
+		return "constants"
+	default:
+		return best + "s"
+	}
+}
+
+func renderKeyAbstractions(ctx context.Context, db *sql.DB) (string, error) {
 	rows, err := db.QueryContext(ctx, `SELECT s.qualified, COUNT(e.id) AS in_degree, s.kind
 		FROM sense_symbols s
 		JOIN sense_edges e ON e.target_id = s.id
@@ -216,50 +258,139 @@ func renderHubSymbols(ctx context.Context, db *sql.DB) (string, error) {
 	return b.String(), rows.Err()
 }
 
-func renderEntryPoints(ctx context.Context, db *sql.DB) (string, error) {
+func renderReadingPath(ctx context.Context, db *sql.DB) (string, error) {
 	rows, err := db.QueryContext(ctx, `SELECT s.name, f.path
 		FROM sense_symbols s
 		JOIN sense_files f ON f.id = s.file_id
 		WHERE s.name IN ('main', 'Main') AND s.kind = 'function'
-		LIMIT 5`)
+		  AND f.path NOT LIKE '%testdata%'
+		  AND f.path NOT LIKE '%fixture%'
+		  AND f.path NOT LIKE '%example%'
+		LIMIT 3`)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = rows.Close() }()
 
-	var b strings.Builder
+	var entries []string
 	for rows.Next() {
 		var name, file string
 		if err := rows.Scan(&name, &file); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "- `%s` in `%s`\n", name, file)
+		entries = append(entries, fmt.Sprintf("1. `%s` — %s entry", file, name))
 	}
-	if b.Len() == 0 {
-		return "", nil
-	}
-	return b.String(), rows.Err()
-}
-
-func renderConventions(ctx context.Context, db *sql.DB) (string, error) {
-	convs, _, err := conventions.Detect(ctx, db, conventions.Options{MinStrength: 0.3})
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return "", err
 	}
 
-	if len(convs) > 5 {
-		convs = convs[:5]
+	nsRows, err := db.QueryContext(ctx, `SELECT f.path, COUNT(s.id) AS cnt
+		FROM sense_files f
+		JOIN sense_symbols s ON s.file_id = f.id
+		WHERE f.path NOT LIKE '%testdata%'
+		  AND f.path NOT LIKE '%fixture%'
+		  AND f.path NOT LIKE '%test%'
+		GROUP BY f.path`)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = nsRows.Close() }()
+
+	nsCounts := make(map[string]int)
+	for nsRows.Next() {
+		var fpath string
+		var n int
+		if err := nsRows.Scan(&fpath, &n); err != nil {
+			return "", err
+		}
+		ns := namespacePrefixFromPath(fpath)
+		nsCounts[ns] += n
+	}
+	if err := nsRows.Err(); err != nil {
+		return "", err
+	}
+
+	type nsEntry struct {
+		name string
+		syms int
+	}
+	var nsList []nsEntry
+	for name, syms := range nsCounts {
+		nsList = append(nsList, nsEntry{name, syms})
+	}
+	sort.Slice(nsList, func(i, j int) bool { return nsList[i].syms > nsList[j].syms })
+	if len(nsList) > 4 {
+		nsList = nsList[:4]
+	}
+
+	idx := len(entries) + 1
+	for _, ns := range nsList {
+		entries = append(entries, fmt.Sprintf("%d. `%s/` — %d symbols", idx, ns.name, ns.syms))
+		idx++
+	}
+
+	if len(entries) == 0 {
+		return "", nil
+	}
+	return strings.Join(entries, "\n") + "\n", nil
+}
+
+func renderKnownNoise(ctx context.Context, db *sql.DB) (string, error) {
+	noisePatterns := []struct {
+		like string
+		desc string
+	}{
+		{"%testdata%", "contains test fixture code; ignore for architecture"},
+		{"%fixture%", "contains test fixtures; ignore for architecture"},
+		{"%vendor%", "vendored dependencies; ignore for architecture"},
+		{"%generated%", "generated code; ignore for architecture"},
+		{"%example%", "example code; not part of core architecture"},
 	}
 
 	var b strings.Builder
-	for _, c := range convs {
-		fmt.Fprintf(&b, "- %s (strength %.0f%%, %d instances)\n",
-			c.Description, c.Strength*100, c.Instances)
-	}
-	if b.Len() == 0 {
-		return "", nil
+	for _, p := range noisePatterns {
+		var count int
+		err := db.QueryRowContext(ctx,
+			`SELECT COUNT(DISTINCT f.path) FROM sense_files f WHERE f.path LIKE ?`, p.like).Scan(&count)
+		if err != nil {
+			return "", err
+		}
+		if count > 0 {
+			prefix := longestNoisePrefix(ctx, db, p.like)
+			fmt.Fprintf(&b, "- `%s` — %s (%d files)\n", prefix, p.desc, count)
+		}
 	}
 	return b.String(), nil
+}
+
+func longestNoisePrefix(ctx context.Context, db *sql.DB, like string) string {
+	rows, err := db.QueryContext(ctx,
+		`SELECT f.path FROM sense_files f WHERE f.path LIKE ? LIMIT 20`, like)
+	if err != nil {
+		return strings.Trim(like, "%")
+	}
+	defer func() { _ = rows.Close() }()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			continue
+		}
+		paths = append(paths, filepath.Dir(p))
+	}
+	if len(paths) == 0 {
+		return strings.Trim(like, "%")
+	}
+
+	prefix := paths[0]
+	for _, p := range paths[1:] {
+		prefix = commonPrefix(prefix, p)
+	}
+	if prefix == "" || prefix == "." {
+		return strings.Trim(like, "%")
+	}
+	return prefix + "/"
 }
 
 type langEntry struct {
@@ -313,6 +444,18 @@ func namespacePrefixFromPath(p string) string {
 		return first + "/" + second
 	}
 	return first
+}
+
+func commonPrefix(a, b string) string {
+	i := 0
+	for i < len(a) && i < len(b) && a[i] == b[i] {
+		i++
+	}
+	s := a[:i]
+	if last := strings.LastIndex(s, "/"); last >= 0 {
+		return s[:last]
+	}
+	return s
 }
 
 func capitalize(s string) string {
