@@ -67,31 +67,6 @@ func MarshalDeadCode(r DeadCodeResponse) ([]byte, error) {
 	return marshalPretty(r)
 }
 
-// MarshalOrient renders an OrientResponse with slice normalization.
-func MarshalOrient(r OrientResponse) ([]byte, error) {
-	if r.Conventions == nil {
-		r.Conventions = []ConventionEntry{}
-	}
-	if r.SearchHits == nil {
-		r.SearchHits = []SearchResultEntry{}
-	}
-	if r.Structure != nil {
-		if r.Structure.TopNamespaces == nil {
-			r.Structure.TopNamespaces = []StatusNamespace{}
-		}
-		if r.Structure.HubSymbols == nil {
-			r.Structure.HubSymbols = []StatusHub{}
-		}
-		if r.Structure.EntryPoints == nil {
-			r.Structure.EntryPoints = []StatusEntryPoint{}
-		}
-	}
-	if r.NextSteps == nil {
-		r.NextSteps = []NextStep{}
-	}
-	return marshalPretty(r)
-}
-
 // marshalPretty is the shared encoder: SetEscapeHTML(false) keeps
 // identifier characters like `<`, `>`, `&` literal so goldens in
 // card 3 pin the documented examples byte-for-byte. Two-space indent

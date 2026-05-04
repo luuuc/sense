@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/luuuc/sense/internal/mcpio"
 )
 
 func claudeCodeOnly() *Options {
@@ -467,6 +469,18 @@ func TestResolveToolsDefaultsToClaudeCode(t *testing.T) {
 	// return at least one tool (falls back to Claude Code if none detected).
 	if len(tools) == 0 {
 		t.Fatal("resolveTools(nil) returned empty")
+	}
+}
+
+func TestSenseSectionHasSummaryAsStep1(t *testing.T) {
+	if !strings.Contains(senseSection, "1. Read `.sense/summary.md`") {
+		t.Error("senseSection must include 'Read .sense/summary.md' as step 1 in the numbered cold-start instructions")
+	}
+	if strings.Contains(senseSection, "sense_orient") || strings.Contains(senseSection, "sense.orient") {
+		t.Error("senseSection must not reference the removed orient tool")
+	}
+	if strings.Contains(mcpio.ServerInstructions, "sense.orient") {
+		t.Error("ServerInstructions must not reference the removed orient tool")
 	}
 }
 

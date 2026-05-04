@@ -16,6 +16,8 @@ import (
 	"github.com/luuuc/sense/internal/version"
 )
 
+const stubSummary = "# Codebase Summary\n\nNo scan data yet. Run `sense scan` to index this codebase.\n"
+
 const DefaultTokenBudget = 8000
 
 const charsPerToken = 4
@@ -35,12 +37,17 @@ type section struct {
 }
 
 func Generate(ctx context.Context, db *sql.DB, senseDir string) error {
+	path := filepath.Join(senseDir, "summary.md")
+
 	var fileCount int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sense_files").Scan(&fileCount); err != nil {
 		return err
 	}
 	if fileCount == 0 {
-		return nil
+		if err := os.MkdirAll(senseDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(stubSummary), 0o644)
 	}
 
 	budget := TokenBudget() * charsPerToken
@@ -89,7 +96,6 @@ func Generate(ctx context.Context, db *sql.DB, senseDir string) error {
 	}
 
 	content := strings.Join(parts, "")
-	path := filepath.Join(senseDir, "summary.md")
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 

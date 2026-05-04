@@ -36,10 +36,9 @@ const ServerInstructions = "When Sense is available and indexed, prefer Sense to
 	"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
 	"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
 	"- Project patterns and conventions → sense.conventions\n" +
-	"- Codebase orientation, architecture overview → sense.orient\n" +
 	"- Index health, what's indexed → sense.status\n\n" +
 	"WORKFLOWS:\n" +
-	"- Orientation (new to the codebase?) → sense.orient, or sense.search with broad concepts + sense.conventions\n" +
+	"- Orientation (new to the codebase?) → sense.search with broad concepts + sense.conventions\n" +
 	"- Impact analysis (changing something?) → sense.blast\n" +
 	"- Dependency tracing (who calls what?) → sense.graph\n" +
 	"- Debugging (where does X happen?) → sense.search\n" +
@@ -509,39 +508,6 @@ type DeadSymbolEntry struct {
 
 // DeadCodeMetrics is the observability footer for dead code analysis.
 type DeadCodeMetrics struct {
-	SymbolsAnalyzed           int `json:"symbols_analyzed"`
-	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
-}
-
-// ---------------------------------------------------------------
-// Orient response (sense.orient)
-// ---------------------------------------------------------------
-
-// OrientResponse is the shape of the sense.orient tool's reply.
-// It combines structural overview, conventions, and search results
-// into a single orientation response.
-type OrientResponse struct {
-	Fingerprint  string               `json:"fingerprint"`
-	Structure    *StatusStructure     `json:"structure"`
-	KeyTypes     []KeyTypeEntry       `json:"key_types,omitempty"`
-	Conventions  []ConventionEntry    `json:"conventions"`
-	SearchHits   []SearchResultEntry  `json:"search_hits"`
-	Truncated    bool                 `json:"truncated,omitempty"`
-	TokenBudget  int                  `json:"token_budget,omitempty"`
-	SenseMetrics OrientMetrics        `json:"sense_metrics"`
-	NextSteps    []NextStep           `json:"next_steps"`
-}
-
-type KeyTypeEntry struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	File      string `json:"file"`
-	Refs      int    `json:"refs"`
-}
-
-// OrientMetrics is the observability footer for orient responses.
-type OrientMetrics struct {
 	SymbolsAnalyzed           int `json:"symbols_analyzed"`
 	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
 	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`

@@ -117,6 +117,42 @@ func d() {}
 	}
 }
 
+func TestGenerateWritesStubWhenEmpty(t *testing.T) {
+	ctx := context.Background()
+	senseDir := t.TempDir()
+	dbPath := filepath.Join(senseDir, "index.db")
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	_ = adapter.Close()
+
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	outDir := t.TempDir()
+	if err := summary.Generate(ctx, db, outDir); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "summary.md"))
+	if err != nil {
+		t.Fatalf("stub summary.md not created: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "No scan data yet") {
+		t.Errorf("expected stub message, got: %s", content)
+	}
+	if !strings.Contains(content, "sense scan") {
+		t.Errorf("expected scan instruction, got: %s", content)
+	}
+}
+
 func TestTokenBudgetEnvVar(t *testing.T) {
 	t.Setenv("SENSE_SUMMARY_TOKENS", "4000")
 	if got := summary.TokenBudget(); got != 4000 {
