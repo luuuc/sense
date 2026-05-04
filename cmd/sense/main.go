@@ -99,7 +99,7 @@ func main() {
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, "sense scan --watch:", err)
-				os.Exit(1)
+				os.Exit(1) //nolint:gocritic // exitAfterDefer: pprof defer only matters on success path
 			}
 		} else {
 			if _, err := scan.Run(ctx, scan.Options{

@@ -11,7 +11,7 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-func seedSearchIndex(t *testing.T, ctx context.Context, a *sqlite.Adapter) {
+func seedSearchIndex(ctx context.Context, t *testing.T, a *sqlite.Adapter) {
 	t.Helper()
 
 	fid, err := a.WriteFile(ctx, &model.File{
@@ -50,7 +50,7 @@ func TestKeywordSearch(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedSearchIndex(t, ctx, a)
+	seedSearchIndex(ctx, t, a)
 
 	tests := []struct {
 		name     string
@@ -198,7 +198,7 @@ func TestKeywordSearchSanitization(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedSearchIndex(t, ctx, a)
+	seedSearchIndex(ctx, t, a)
 
 	// These queries contain FTS5 syntax that would cause errors without sanitization.
 	badQueries := []string{
@@ -227,7 +227,7 @@ func TestKeywordSearchSQLInjectionPayloads(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedSearchIndex(t, ctx, a)
+	seedSearchIndex(ctx, t, a)
 
 	payloads := []string{
 		"'; DROP TABLE sense_symbols; --",
@@ -343,7 +343,7 @@ func TestSymbolCount(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedSearchIndex(t, ctx, a)
+	seedSearchIndex(ctx, t, a)
 
 	count, err := a.SymbolCount(ctx)
 	if err != nil {
@@ -490,7 +490,7 @@ func TestMultiWordQueryUsesOR(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedSearchIndex(t, ctx, a)
+	seedSearchIndex(ctx, t, a)
 
 	// "credit" appears only in ProcessPayment's docstring, "user" only in
 	// the User symbol. No single document contains both. With OR, both

@@ -12,7 +12,7 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-func seedContextFixture(t *testing.T, ctx context.Context, a *sqlite.Adapter) (fileID int64) {
+func seedContextFixture(ctx context.Context, t *testing.T, a *sqlite.Adapter) (fileID int64) {
 	t.Helper()
 
 	fid, err := a.WriteFile(ctx, &model.File{
@@ -99,7 +99,7 @@ func TestContextForFile(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	fileID := seedContextFixture(t, ctx, a)
+	fileID := seedContextFixture(ctx, t, a)
 
 	result, err := a.ContextForFile(ctx, fileID)
 	if err != nil {
@@ -309,7 +309,7 @@ func TestContextForFileEmpty(t *testing.T) {
 //	sym[n-1] → sym[n-2] → … → sym[1] → sym[0]
 //
 // Returns the symbol IDs in order sym[0]…sym[n-1].
-func seedChain(t *testing.T, ctx context.Context, a *sqlite.Adapter, n int) []int64 {
+func seedChain(ctx context.Context, t *testing.T, a *sqlite.Adapter, n int) []int64 {
 	t.Helper()
 	ids := make([]int64, n)
 	for i := range n {
@@ -350,7 +350,7 @@ func TestReadSymbolGraphDepth(t *testing.T) {
 	defer func() { _ = a.Close() }()
 
 	// Chain: S3 → S2 → S1 → S0
-	ids := seedChain(t, ctx, a, 4)
+	ids := seedChain(ctx, t, a, 4)
 
 	t.Run("depth=1 returns root only", func(t *testing.T) {
 		gr, err := a.ReadSymbolGraph(ctx, ids[0], 1, "both", 200)

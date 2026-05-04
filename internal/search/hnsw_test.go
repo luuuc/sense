@@ -232,10 +232,8 @@ func TestUpdateHNSWIndexUpsert(t *testing.T) {
 		if len(results) == 0 {
 			t.Error("expected non-empty results after incremental update")
 		}
-	} else {
-		if loaded.Len() != n {
-			t.Fatalf("expected original %d vectors after fallback, got %d", n, loaded.Len())
-		}
+	} else if loaded.Len() != n {
+		t.Fatalf("expected original %d vectors after fallback, got %d", n, loaded.Len())
 	}
 }
 
@@ -292,11 +290,9 @@ func TestUpdateHNSWIndexWithRemoval(t *testing.T) {
 		if len(results) == 0 {
 			t.Error("expected non-empty results after incremental update")
 		}
-	} else {
+	} else if loaded.Len() != n {
 		// Verification caught corruption — original index is untouched
-		if loaded.Len() != n {
-			t.Fatalf("expected original %d vectors after fallback, got %d", n, loaded.Len())
-		}
+		t.Fatalf("expected original %d vectors after fallback, got %d", n, loaded.Len())
 	}
 }
 

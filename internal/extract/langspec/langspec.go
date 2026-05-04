@@ -129,11 +129,12 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 
 	symKind := model.KindClass
 	nk := n.Kind()
-	if strings.Contains(nk, "interface") {
+	switch {
+	case strings.Contains(nk, "interface"):
 		symKind = model.KindInterface
-	} else if strings.Contains(nk, "namespace") || strings.Contains(nk, "module") {
+	case strings.Contains(nk, "namespace") || strings.Contains(nk, "module"):
 		symKind = model.KindModule
-	} else if strings.Contains(nk, "enum") {
+	case strings.Contains(nk, "enum"):
 		symKind = model.KindType
 	}
 

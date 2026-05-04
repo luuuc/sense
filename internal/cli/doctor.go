@@ -212,19 +212,20 @@ func runDoctorChecks(ctx context.Context, cio IO) doctorResponse {
 	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sense_embeddings").Scan(&embeddings)
 
 	enabled := EmbeddingsEnabled(cio.Dir)
-	if !enabled {
+	switch {
+	case !enabled:
 		checks = append(checks, checkResult{
 			Name:    "embedding_completeness",
 			Status:  "pass",
 			Message: "Embeddings disabled (skipped)",
 		})
-	} else if symbols == 0 {
+	case symbols == 0:
 		checks = append(checks, checkResult{
 			Name:    "embedding_completeness",
 			Status:  "pass",
 			Message: "No symbols to embed",
 		})
-	} else {
+	default:
 		pct := embeddings * 100 / symbols
 		switch {
 		case pct == 100:

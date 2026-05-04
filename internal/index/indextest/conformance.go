@@ -64,7 +64,7 @@ func open(t *testing.T, newIdx Factory) index.Index {
 	return idx
 }
 
-func mustWriteFile(t *testing.T, ctx context.Context, idx index.Index, f *model.File) int64 {
+func mustWriteFile(ctx context.Context, t *testing.T, idx index.Index, f *model.File) int64 {
 	t.Helper()
 	id, err := idx.WriteFile(ctx, f)
 	if err != nil {
@@ -73,7 +73,7 @@ func mustWriteFile(t *testing.T, ctx context.Context, idx index.Index, f *model.
 	return id
 }
 
-func mustWriteSymbol(t *testing.T, ctx context.Context, idx index.Index, s *model.Symbol) int64 {
+func mustWriteSymbol(ctx context.Context, t *testing.T, idx index.Index, s *model.Symbol) int64 {
 	t.Helper()
 	id, err := idx.WriteSymbol(ctx, s)
 	if err != nil {
@@ -82,7 +82,7 @@ func mustWriteSymbol(t *testing.T, ctx context.Context, idx index.Index, s *mode
 	return id
 }
 
-func mustWriteEdge(t *testing.T, ctx context.Context, idx index.Index, e *model.Edge) int64 {
+func mustWriteEdge(ctx context.Context, t *testing.T, idx index.Index, e *model.Edge) int64 {
 	t.Helper()
 	id, err := idx.WriteEdge(ctx, e)
 	if err != nil {
@@ -133,13 +133,13 @@ func testFileRoundTrip(t *testing.T, newIdx Factory) {
 	idx := open(t, newIdx)
 
 	f := sampleFile("app/services/checkout_service.rb")
-	fileID := mustWriteFile(t, ctx, idx, f)
+	fileID := mustWriteFile(ctx, t, idx, f)
 	if fileID == 0 {
 		t.Fatal("WriteFile returned zero id")
 	}
 
 	s := sampleSymbol(fileID, "CheckoutService", "App::Services::CheckoutService", model.KindClass)
-	symID := mustWriteSymbol(t, ctx, idx, s)
+	symID := mustWriteSymbol(ctx, t, idx, s)
 
 	got, err := idx.ReadSymbol(ctx, symID)
 	if err != nil {
@@ -164,11 +164,11 @@ func testFileUpsertIdempotent(t *testing.T, newIdx Factory) {
 	idx := open(t, newIdx)
 
 	f := sampleFile("app/models/user.rb")
-	id1 := mustWriteFile(t, ctx, idx, f)
+	id1 := mustWriteFile(ctx, t, idx, f)
 
 	f2 := sampleFile("app/models/user.rb")
 	f2.Hash = "cafef00d" // non-key field change
-	id2 := mustWriteFile(t, ctx, idx, f2)
+	id2 := mustWriteFile(ctx, t, idx, f2)
 
 	if id1 != id2 {
 		t.Errorf("upsert returned new id: first=%d second=%d", id1, id2)
@@ -179,13 +179,13 @@ func testSymbolRoundTrip(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/models/user.rb"))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/models/user.rb"))
 	s := sampleSymbol(fileID, "email_verified?", "User#email_verified?", model.KindMethod)
 	s.LineStart = 12
 	s.LineEnd = 18
 	s.Docstring = "Whether the user's email has been confirmed."
 
-	symID := mustWriteSymbol(t, ctx, idx, s)
+	symID := mustWriteSymbol(ctx, t, idx, s)
 
 	got, err := idx.ReadSymbol(ctx, symID)
 	if err != nil {
@@ -213,13 +213,13 @@ func testSymbolUpsertIdempotent(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/services/billing.rb"))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/services/billing.rb"))
 	s := sampleSymbol(fileID, "charge", "BillingService#charge", model.KindMethod)
-	id1 := mustWriteSymbol(t, ctx, idx, s)
+	id1 := mustWriteSymbol(ctx, t, idx, s)
 
 	s2 := sampleSymbol(fileID, "charge", "BillingService#charge", model.KindMethod)
 	s2.LineStart = 42
-	id2 := mustWriteSymbol(t, ctx, idx, s2)
+	id2 := mustWriteSymbol(ctx, t, idx, s2)
 
 	if id1 != id2 {
 		t.Errorf("upsert returned new id: first=%d second=%d", id1, id2)
@@ -230,11 +230,11 @@ func testSymbolSameQualifiedDifferentFile(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileA := mustWriteFile(t, ctx, idx, sampleFile("app/legacy/user.rb"))
-	fileB := mustWriteFile(t, ctx, idx, sampleFile("app/models/user.rb"))
+	fileA := mustWriteFile(ctx, t, idx, sampleFile("app/legacy/user.rb"))
+	fileB := mustWriteFile(ctx, t, idx, sampleFile("app/models/user.rb"))
 
-	idA := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileA, "User", "User", model.KindClass))
-	idB := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileB, "User", "User", model.KindClass))
+	idA := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileA, "User", "User", model.KindClass))
+	idB := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileB, "User", "User", model.KindClass))
 
 	if idA == idB {
 		t.Fatalf("two files with the same qualified name collapsed: id=%d", idA)
@@ -245,20 +245,20 @@ func testSymbolNullablesRoundTrip(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/models/nullable.rb"))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/models/nullable.rb"))
 
 	// Write a parent symbol to hold a valid ParentID reference.
-	parentID := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "Nullable", "Nullable", model.KindClass))
+	parentID := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "Nullable", "Nullable", model.KindClass))
 
 	complexity := 7
 	withValues := sampleSymbol(fileID, "withVals", "Nullable#withVals", model.KindMethod)
 	withValues.ParentID = &parentID
 	withValues.Complexity = &complexity
-	id1 := mustWriteSymbol(t, ctx, idx, withValues)
+	id1 := mustWriteSymbol(ctx, t, idx, withValues)
 
 	nilDefaults := sampleSymbol(fileID, "nilDefaults", "Nullable#nilDefaults", model.KindMethod)
 	// ParentID and Complexity remain nil.
-	id2 := mustWriteSymbol(t, ctx, idx, nilDefaults)
+	id2 := mustWriteSymbol(ctx, t, idx, nilDefaults)
 
 	g1, err := idx.ReadSymbol(ctx, id1)
 	if err != nil {
@@ -291,15 +291,15 @@ func testEdgeRoundTrip(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/controllers/orders_controller.rb"))
-	srcID := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "create", "OrdersController#create", model.KindMethod))
-	tgtID := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "call", "CheckoutService.call", model.KindMethod))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/controllers/orders_controller.rb"))
+	srcID := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "create", "OrdersController#create", model.KindMethod))
+	tgtID := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "call", "CheckoutService.call", model.KindMethod))
 
 	// Use a non-default Confidence so an adapter that silently hardcodes 1.0
 	// or zeroes Confidence on read is detected.
 	e := sampleEdge(srcID, tgtID, fileID, model.EdgeCalls)
 	e.Confidence = 0.7
-	mustWriteEdge(t, ctx, idx, e)
+	mustWriteEdge(ctx, t, idx, e)
 
 	src, err := idx.ReadSymbol(ctx, srcID)
 	if err != nil {
@@ -338,15 +338,15 @@ func testEdgeUpsertIdempotent(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/jobs/checkout_job.rb"))
-	srcID := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "perform", "CheckoutJob#perform", model.KindMethod))
-	tgtID := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "call", "CheckoutService.call", model.KindMethod))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/jobs/checkout_job.rb"))
+	srcID := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "perform", "CheckoutJob#perform", model.KindMethod))
+	tgtID := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "call", "CheckoutService.call", model.KindMethod))
 
-	id1 := mustWriteEdge(t, ctx, idx, sampleEdge(srcID, tgtID, fileID, model.EdgeCalls))
+	id1 := mustWriteEdge(ctx, t, idx, sampleEdge(srcID, tgtID, fileID, model.EdgeCalls))
 
 	e2 := sampleEdge(srcID, tgtID, fileID, model.EdgeCalls)
 	e2.Confidence = 0.7
-	id2 := mustWriteEdge(t, ctx, idx, e2)
+	id2 := mustWriteEdge(ctx, t, idx, e2)
 
 	if id1 != id2 {
 		t.Errorf("upsert returned new id: first=%d second=%d", id1, id2)
@@ -387,10 +387,10 @@ func testQueryByKind(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/models/order.rb"))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "Order", "Order", model.KindClass))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "total", "Order#total", model.KindMethod))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "finalize", "Order#finalize", model.KindMethod))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/models/order.rb"))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "Order", "Order", model.KindClass))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "total", "Order#total", model.KindMethod))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "finalize", "Order#finalize", model.KindMethod))
 
 	got, err := idx.Query(ctx, index.Filter{Kind: model.KindMethod})
 	if err != nil {
@@ -410,11 +410,11 @@ func testQueryByFileID(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileA := mustWriteFile(t, ctx, idx, sampleFile("app/models/a.rb"))
-	fileB := mustWriteFile(t, ctx, idx, sampleFile("app/models/b.rb"))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileA, "A", "A", model.KindClass))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileA, "x", "A#x", model.KindMethod))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileB, "B", "B", model.KindClass))
+	fileA := mustWriteFile(ctx, t, idx, sampleFile("app/models/a.rb"))
+	fileB := mustWriteFile(ctx, t, idx, sampleFile("app/models/b.rb"))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileA, "A", "A", model.KindClass))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileA, "x", "A#x", model.KindMethod))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileB, "B", "B", model.KindClass))
 
 	got, err := idx.Query(ctx, index.Filter{FileID: fileA})
 	if err != nil {
@@ -434,9 +434,9 @@ func testQueryByName(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/services/payments.rb"))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "charge", "Payments#charge", model.KindMethod))
-	mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "refund", "Payments#refund", model.KindMethod))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/services/payments.rb"))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "charge", "Payments#charge", model.KindMethod))
+	mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "refund", "Payments#refund", model.KindMethod))
 
 	got, err := idx.Query(ctx, index.Filter{Name: "charge"})
 	if err != nil {
@@ -451,10 +451,10 @@ func testQueryLimit(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/models/many.rb"))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/models/many.rb"))
 	for i := 0; i < 5; i++ {
 		name := string(rune('a' + i))
-		mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, name, "Many#"+name, model.KindMethod))
+		mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, name, "Many#"+name, model.KindMethod))
 	}
 
 	got, err := idx.Query(ctx, index.Filter{Limit: 3})
@@ -470,8 +470,8 @@ func testClear(t *testing.T, newIdx Factory) {
 	ctx := context.Background()
 	idx := open(t, newIdx)
 
-	fileID := mustWriteFile(t, ctx, idx, sampleFile("app/models/temp.rb"))
-	symID := mustWriteSymbol(t, ctx, idx, sampleSymbol(fileID, "Temp", "Temp", model.KindClass))
+	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/models/temp.rb"))
+	symID := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "Temp", "Temp", model.KindClass))
 
 	if err := idx.Clear(ctx); err != nil {
 		t.Fatalf("Clear: %v", err)

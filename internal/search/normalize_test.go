@@ -42,6 +42,6 @@ func TestNormalizeScoresNormalSpread(t *testing.T) {
 	}
 }
 
-func TestNormalizeScoresEmpty(t *testing.T) {
+func TestNormalizeScoresEmpty(_ *testing.T) {
 	normalizeScores(nil)
 }

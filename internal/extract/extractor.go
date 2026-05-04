@@ -111,7 +111,7 @@ func StimulusControllerQualified(name string) string {
 		parts[i] = kebabToPascal(part)
 	}
 	last := len(parts) - 1
-	parts[last] = parts[last] + "Controller"
+	parts[last] += "Controller"
 	return strings.Join(parts, "::")
 }
 

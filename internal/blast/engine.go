@@ -85,8 +85,9 @@ func isTypeKind(kind model.SymbolKind) bool {
 	switch kind {
 	case model.KindClass, model.KindModule, model.KindInterface, model.KindType:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 const (

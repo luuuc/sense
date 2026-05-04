@@ -198,6 +198,7 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 					Symbol: qualifiedOrName(e.Target),
 					File:   fileRefOrNil(e.Target.FileID, files),
 				})
+			default:
 			}
 		}
 	}
@@ -233,6 +234,7 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 						Confidence: Confidence(e.Edge.Confidence),
 					})
 				}
+			default:
 			}
 		}
 	}

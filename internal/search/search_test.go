@@ -19,7 +19,7 @@ import (
 
 // seedFusionIndex creates a small index with symbols, edges, and
 // embeddings suitable for testing RRF fusion behavior.
-func seedFusionIndex(t *testing.T, ctx context.Context, a *sqlite.Adapter) {
+func seedFusionIndex(ctx context.Context, t *testing.T, a *sqlite.Adapter) {
 	t.Helper()
 
 	fid, err := a.WriteFile(ctx, &model.File{
@@ -149,7 +149,7 @@ func TestFusionBothBackendsRankHigher(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	embeddings, err := a.LoadEmbeddings(ctx)
 	if err != nil {
@@ -196,7 +196,7 @@ func TestFusionKeywordOnly(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	// No vector index, no embedder → keyword-only
 	engine := search.NewEngine(a, nil, nil)
@@ -314,7 +314,7 @@ func TestFusionMinScore(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	engine := search.NewEngine(a, nil, nil)
 
@@ -340,7 +340,7 @@ func TestNormalizeScoresSpread(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	embeddings, err := a.LoadEmbeddings(ctx)
 	if err != nil {
@@ -455,7 +455,7 @@ func TestSearchModeKeyword(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	engine := search.NewEngine(a, nil, nil)
 	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
@@ -476,7 +476,7 @@ func TestSearchModeHybrid(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	embeddings, err := a.LoadEmbeddings(ctx)
 	if err != nil {
@@ -503,7 +503,7 @@ func TestSearchModeUpgradeViaSetVectors(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	engine := search.NewEngine(a, nil, &paymentQueryEmbedder{})
 
@@ -622,7 +622,7 @@ func TestFusionWeightsKeywordOnly(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	engine := search.NewEngine(a, nil, nil)
 	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
@@ -646,7 +646,7 @@ func TestFusionWeightsHybrid(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 	embeddings, err := a.LoadEmbeddings(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -694,7 +694,7 @@ func TestLowConfidenceVectorFloor(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	embeddings, err := a.LoadEmbeddings(ctx)
 	if err != nil {
@@ -834,7 +834,7 @@ func TestRerankerChangesOrdering(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	engine := search.NewEngine(a, nil, nil)
 
@@ -879,7 +879,7 @@ func TestRerankerMetaFlag(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	engine := search.NewEngine(a, nil, nil)
 
@@ -910,7 +910,7 @@ func TestRerankerGracefulDegradation(t *testing.T) {
 	}
 	defer func() { _ = a.Close() }()
 
-	seedFusionIndex(t, ctx, a)
+	seedFusionIndex(ctx, t, a)
 
 	engine := search.NewEngine(a, nil, nil)
 

@@ -125,7 +125,7 @@ func TestSmoke(t *testing.T) {
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	if *update {
-		generateGroundTruth(t, ctx, adapter, res)
+		generateGroundTruth(ctx, t, adapter, res)
 		return
 	}
 
@@ -332,7 +332,7 @@ func buildFileLangMap(ctx context.Context, t *testing.T, adapter *sqlite.Adapter
 	return m
 }
 
-func generateGroundTruth(t *testing.T, ctx context.Context, adapter *sqlite.Adapter, res *scan.Result) {
+func generateGroundTruth(ctx context.Context, t *testing.T, adapter *sqlite.Adapter, res *scan.Result) {
 	t.Helper()
 
 	allSymbols, err := adapter.Query(ctx, index.Filter{})
