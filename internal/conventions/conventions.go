@@ -969,6 +969,89 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 		})
 	}
 
+	// Go type aliases: named types wrapping another type (kind="type" in Go means alias/newtype)
+	var goAliases []Example
+	for _, s := range symbols {
+		if s.kind != "type" {
+			continue
+		}
+		fp := filePathByID[s.fileID]
+		if !strings.HasSuffix(fp, ".go") {
+			continue
+		}
+		goAliases = append(goAliases, Example{Name: s.name, Path: fp, Kind: s.kind})
+	}
+	if len(goAliases) >= minInstances {
+		sortExamples(goAliases)
+		totalTypes := countByKind(symbols, "type")
+		out = append(out, Convention{
+			Category:    CategoryStructure,
+			Description: fmt.Sprintf("Type aliases: %s — named domain types (%d aliases)", topNames(goAliases), len(goAliases)),
+			Instances:   len(goAliases),
+			Total:       totalTypes,
+			Strength:    safeStrength(len(goAliases), totalTypes),
+			Examples:    goAliases,
+		})
+	}
+
+	// Go middleware factory pattern: functions called by router methods (Use, GET, POST, etc.)
+	routerMethods := map[string]bool{
+		"Use": true, "GET": true, "POST": true, "PUT": true, "DELETE": true,
+		"PATCH": true, "Handle": true, "HandleFunc": true, "Group": true,
+		"Any": true, "HEAD": true, "OPTIONS": true,
+	}
+	routerSymbolIDs := map[int64]bool{}
+	for _, s := range symbols {
+		if routerMethods[s.name] && (s.kind == "method" || s.kind == "function") {
+			fp := filePathByID[s.fileID]
+			if strings.HasSuffix(fp, ".go") {
+				routerSymbolIDs[s.id] = true
+			}
+		}
+	}
+	if len(routerSymbolIDs) > 0 {
+		handlerCounts := map[int64]int{}
+		for _, e := range edges {
+			if e.kind != "calls" {
+				continue
+			}
+			if !routerSymbolIDs[e.sourceID] {
+				continue
+			}
+			handlerCounts[e.targetID]++
+		}
+		var factories []Example
+		seen := map[string]bool{}
+		for id, count := range handlerCounts {
+			s, ok := symbolByID[id]
+			if !ok || s.kind != "function" {
+				continue
+			}
+			if strings.HasPrefix(s.name, "Test") || strings.HasPrefix(s.name, "Benchmark") {
+				continue
+			}
+			if seen[s.name] {
+				continue
+			}
+			seen[s.name] = true
+			factories = append(factories, Example{Name: s.name, Path: filePathByID[s.fileID], EdgeCount: count})
+		}
+		if len(factories) >= minInstances {
+			sort.Slice(factories, func(i, j int) bool {
+				return factories[i].EdgeCount > factories[j].EdgeCount
+			})
+			totalFuncs := countByKind(symbols, "function")
+			out = append(out, Convention{
+				Category:    CategoryFramework,
+				Description: fmt.Sprintf("Middleware factories: %s return handler functions — composable request pipeline (%d factories)", topNames(factories), len(factories)),
+				Instances:   len(factories),
+				Total:       totalFuncs,
+				Strength:    safeStrength(len(factories), totalFuncs),
+				Examples:    factories,
+			})
+		}
+	}
+
 	return out
 }
 
@@ -1185,6 +1268,9 @@ func enrichEdgeCounts(conventions []Convention, symbols []symbolRow, edges []edg
 	for ci := range conventions {
 		for ei := range conventions[ci].Examples {
 			ex := &conventions[ci].Examples[ei]
+			if ex.EdgeCount != 0 {
+				continue
+			}
 			ex.EdgeCount = lookup[namePathKey{ex.Name, ex.Path}]
 		}
 	}
