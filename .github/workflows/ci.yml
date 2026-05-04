@@ -40,7 +40,14 @@ jobs:
         run: make build
 
       - name: Test
-        run: go test -v ./...
+        run: go test -v -coverprofile=coverage.txt ./...
+
+      - name: Upload coverage
+        if: matrix.os == 'linux'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.txt
 
       - name: Smoke
         run: make smoke
