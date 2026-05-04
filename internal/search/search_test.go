@@ -305,6 +305,110 @@ func TestFusionCentralityBreaksTie(t *testing.T) {
 	}
 }
 
+func TestSearchRanksHubSymbolHigher(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "handler.go", Language: "go",
+		Hash: "h1", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sidHub, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "HandleRequest", Qualified: "pkg.HandleRequest",
+		Kind: "function", LineStart: 1, LineEnd: 20,
+		Docstring: "handles incoming request",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidHelper, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "HandleRequestHelper", Qualified: "pkg.HandleRequestHelper",
+		Kind: "function", LineStart: 25, LineEnd: 40,
+		Docstring: "helper for handling request setup",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	callerFile, err := a.WriteFile(ctx, &model.File{
+		Path: "callers.go", Language: "go",
+		Hash: "c1", Symbols: 32, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hub: 30 inbound edges.
+	for i := range 30 {
+		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: callerFile, Name: fmt.Sprintf("Caller%d", i),
+			Qualified: fmt.Sprintf("pkg.Caller%d", i),
+			Kind: "function", LineStart: i * 10, LineEnd: i*10 + 5,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: &callerID, TargetID: sidHub,
+			Kind: model.EdgeCalls, FileID: callerFile, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Helper: 2 inbound edges.
+	for i := range 2 {
+		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: callerFile, Name: fmt.Sprintf("HelperCaller%d", i),
+			Qualified: fmt.Sprintf("pkg.HelperCaller%d", i),
+			Kind: "function", LineStart: 300 + i*10, LineEnd: 305 + i*10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: &callerID, TargetID: sidHelper,
+			Kind: model.EdgeCalls, FileID: callerFile, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	engine := search.NewEngine(a, nil, nil)
+	results, _, err := engine.Search(ctx, search.Options{
+		Query: "handle request",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	if results[0].Qualified != "pkg.HandleRequest" {
+		t.Errorf("hub symbol (30 callers) should rank above helper (2 callers); got %q first", results[0].Qualified)
+	}
+
+	if results[0].References != 30 {
+		t.Errorf("hub symbol references = %d, want 30", results[0].References)
+	}
+
+	t.Logf("hub vs helper ranking:")
+	for i, r := range results[:min(5, len(results))] {
+		t.Logf("  %d. %s (score=%.4f, refs=%d)", i+1, r.Qualified, r.Score, r.References)
+	}
+}
+
 func TestFusionMinScore(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -443,6 +547,86 @@ func TestKindWeightsDemotesModules(t *testing.T) {
 	}
 	if !hasModule {
 		t.Error("module symbol missing from results entirely — test setup issue")
+	}
+}
+
+func TestSearchDemotesTestSymbols(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "handler.go", Language: "go",
+		Hash: "h1", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sidReal, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "HandleRequest", Qualified: "pkg.HandleRequest",
+		Kind: "function", LineStart: 1, LineEnd: 20,
+		Docstring: "handles incoming request",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "TestHandleRequest", Qualified: "pkg.TestHandleRequest",
+		Kind: "function", LineStart: 25, LineEnd: 40,
+		Docstring: "test for handle request",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	callerFile, err := a.WriteFile(ctx, &model.File{
+		Path: "callers.go", Language: "go",
+		Hash: "c1", Symbols: 10, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 10 {
+		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: callerFile, Name: fmt.Sprintf("Caller%d", i),
+			Qualified: fmt.Sprintf("pkg.Caller%d", i),
+			Kind: "function", LineStart: i * 10, LineEnd: i*10 + 5,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: &callerID, TargetID: sidReal,
+			Kind: model.EdgeCalls, FileID: callerFile, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	engine := search.NewEngine(a, nil, nil)
+	results, _, err := engine.Search(ctx, search.Options{
+		Query: "handle request",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	if results[0].Qualified != "pkg.HandleRequest" {
+		t.Errorf("HandleRequest should rank above TestHandleRequest; got %q first", results[0].Qualified)
+	}
+
+	t.Logf("test demotion ranking:")
+	for i, r := range results[:min(5, len(results))] {
+		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)
 	}
 }
 

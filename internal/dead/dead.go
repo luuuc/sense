@@ -3,7 +3,9 @@ package dead
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/luuuc/sense/internal/sqlite"
@@ -25,6 +27,7 @@ type Symbol struct {
 	Kind       string
 	File       string
 	FileID     int64
+	Language   string
 	LineStart  int
 	LineEnd    int
 	ParentID   *int64
@@ -67,7 +70,8 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: query interface IDs: %w", err)
 	}
 
-	candidates = excludeEntryPoints(candidates, testsTargets, interfaceIDs)
+	frameworks := readFrameworks(ctx, db)
+	candidates = excludeEntryPoints(candidates, testsTargets, interfaceIDs, frameworks)
 
 	liveContainers, err := findLiveContainers(ctx, db, candidates)
 	if err != nil {
@@ -134,7 +138,7 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 			)`
 	}
 
-	q := `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.file_id, s.line_start, s.line_end, s.parent_id
+	q := `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.file_id, f.language, s.line_start, s.line_end, s.parent_id
 		FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
 		WHERE NOT EXISTS (` + edgeFilter + `)
@@ -163,7 +167,7 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 		var sym Symbol
 		var parentID sql.NullInt64
 		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Qualified, &sym.Kind,
-			&sym.File, &sym.FileID, &sym.LineStart, &sym.LineEnd, &parentID); err != nil {
+			&sym.File, &sym.FileID, &sym.Language, &sym.LineStart, &sym.LineEnd, &parentID); err != nil {
 			return nil, err
 		}
 		if parentID.Valid {
@@ -234,10 +238,10 @@ func queryInterfaceImplementors(ctx context.Context, db *sql.DB) (map[int64]stru
 	return out, rows.Err()
 }
 
-func excludeEntryPoints(candidates []Symbol, testsTargets, interfaceIDs map[int64]struct{}) []Symbol {
+func excludeEntryPoints(candidates []Symbol, testsTargets, interfaceIDs map[int64]struct{}, frameworks map[string]struct{}) []Symbol {
 	var out []Symbol
 	for _, s := range candidates {
-		if isEntryPoint(s, testsTargets, interfaceIDs) {
+		if isEntryPoint(s, testsTargets, interfaceIDs, frameworks) {
 			continue
 		}
 		out = append(out, s)
@@ -333,7 +337,7 @@ func excludeIDs(candidates []Symbol, exclude map[int64]struct{}) []Symbol {
 	return out
 }
 
-func isEntryPoint(s Symbol, testsTargets map[int64]struct{}, interfaceIDs map[int64]struct{}) bool {
+func isEntryPoint(s Symbol, testsTargets, interfaceIDs map[int64]struct{}, frameworks map[string]struct{}) bool {
 	if isMainFunction(s) {
 		return true
 	}
@@ -346,7 +350,7 @@ func isEntryPoint(s Symbol, testsTargets map[int64]struct{}, interfaceIDs map[in
 	if isConstructor(s) {
 		return true
 	}
-	if isFrameworkHook(s) {
+	if isFrameworkHook(s, frameworks) {
 		return true
 	}
 	if isInterfaceMethod(s, interfaceIDs) {
@@ -393,20 +397,77 @@ func isConstructor(s Symbol) bool {
 }
 
 var frameworkHooks = map[string]struct{}{
+	// Test lifecycle
 	"setUp": {}, "tearDown": {}, "setUpClass": {}, "tearDownClass": {},
+	"setup": {}, "teardown": {},
+	"BeforeEach": {}, "AfterEach": {}, "BeforeAll": {}, "AfterAll": {},
+	// Rails callbacks
 	"before_action": {}, "after_action": {}, "around_action": {},
 	"before_create": {}, "after_create": {}, "before_save": {}, "after_save": {},
 	"before_destroy": {}, "after_destroy": {}, "before_update": {}, "after_update": {},
 	"before_validation": {}, "after_validation": {},
-	"setup": {}, "teardown": {},
-	"BeforeEach": {}, "AfterEach": {}, "BeforeAll": {}, "AfterAll": {},
+	// React lifecycle
 	"componentDidMount": {}, "componentWillUnmount": {}, "componentDidUpdate": {},
+	// Go HTTP
 	"ServeHTTP": {},
+	// Android lifecycle (unique prefixes, safe globally)
+	"onCreate": {}, "onResume": {}, "onDestroy": {}, "onBind": {}, "onStartCommand": {},
 }
 
-func isFrameworkHook(s Symbol) bool {
-	_, ok := frameworkHooks[s.Name]
-	return ok
+// jvmFrameworkHooks are entry points too generic for all languages
+// but valid in Java/Kotlin/Scala. Includes functional interface
+// method names and common SAM type names (SAM detection was cut
+// because the graph lacks abstract method tagging).
+var jvmFrameworkHooks = map[string]struct{}{
+	"handle": {}, "create": {}, "configure": {}, "routes": {}, "addEndpoints": {}, "register": {},
+	"accept": {}, "apply": {}, "run": {}, "get": {}, "test": {}, "compare": {},
+	"Runnable": {}, "Callable": {}, "Supplier": {}, "Consumer": {}, "Function": {}, "Predicate": {},
+	"EndpointGroup": {}, "ExceptionHandler": {}, "ThrowingConsumer": {}, "ThrowingRunnable": {},
+	"RequestLogger": {},
+}
+
+var railsHooks = map[string]struct{}{
+	"after_commit": {}, "included": {}, "class_methods": {},
+	"before_commit": {}, "after_rollback": {},
+}
+
+func isJVMLanguage(lang string) bool {
+	return lang == "java" || lang == "kotlin" || lang == "scala"
+}
+
+func isFrameworkHook(s Symbol, frameworks map[string]struct{}) bool {
+	if _, ok := frameworkHooks[s.Name]; ok {
+		return true
+	}
+	if isJVMLanguage(s.Language) {
+		if _, ok := jvmFrameworkHooks[s.Name]; ok {
+			return true
+		}
+	}
+	if _, ok := frameworks["Rails"]; ok {
+		if _, ok := railsHooks[s.Name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func readFrameworks(ctx context.Context, db *sql.DB) map[string]struct{} {
+	out := map[string]struct{}{}
+	var raw string
+	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = 'frameworks'`).Scan(&raw)
+	if err != nil {
+		return out
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(raw), &names); err != nil {
+		log.Printf("dead: corrupt frameworks meta: %v", err)
+		return out
+	}
+	for _, n := range names {
+		out[n] = struct{}{}
+	}
+	return out
 }
 
 func isInterfaceMethod(s Symbol, interfaceIDs map[int64]struct{}) bool {
@@ -438,6 +499,10 @@ const (
 	ConfidencePossibly = "possibly_dead"
 )
 
+func isGoConstructor(s Symbol) bool {
+	return s.Language == "go" && strings.HasPrefix(s.Name, "New") && s.Kind == "function"
+}
+
 func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[int64]struct{}) []Symbol {
 	for i := range candidates {
 		s := &candidates[i]
@@ -450,6 +515,10 @@ func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[in
 				s.Confidence = ConfidencePossibly
 				continue
 			}
+		}
+		if isGoConstructor(*s) {
+			s.Confidence = ConfidencePossibly
+			continue
 		}
 		s.Confidence = ConfidenceDead
 	}
