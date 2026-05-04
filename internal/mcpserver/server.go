@@ -420,7 +420,7 @@ func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.Nex
 		})
 	}
 
-	if direction == model.DirectionCallers && len(hints) < 2 {
+	if direction == model.DirectionCallers && len(hints) < mcpio.MaxNextSteps {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.graph",
 			Args:   map[string]any{"symbol": resp.Symbol.Qualified, "direction": "callees"},
@@ -428,8 +428,8 @@ func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.Nex
 		})
 	}
 
-	if len(hints) > 2 {
-		hints = hints[:2]
+	if len(hints) > mcpio.MaxNextSteps {
+		hints = hints[:mcpio.MaxNextSteps]
 	}
 	return hints
 }
@@ -572,7 +572,7 @@ func searchHints(resp mcpio.SearchResponse) []mcpio.NextStep {
 		})
 	}
 
-	if len(hints) < 2 {
+	if len(hints) < mcpio.MaxNextSteps {
 		fileCounts := map[string]int{}
 		for _, r := range resp.Results {
 			if r.File != "" {
@@ -591,8 +591,8 @@ func searchHints(resp mcpio.SearchResponse) []mcpio.NextStep {
 		}
 	}
 
-	if len(hints) > 2 {
-		hints = hints[:2]
+	if len(hints) > mcpio.MaxNextSteps {
+		hints = hints[:mcpio.MaxNextSteps]
 	}
 	return hints
 }
@@ -673,7 +673,7 @@ func blastHints(resp mcpio.BlastResponse) []mcpio.NextStep {
 		})
 	}
 
-	if resp.TestsAffectedCount == 0 && len(resp.AffectedTests) == 0 && resp.TotalAffected > 0 && len(hints) < 2 {
+	if resp.TestsAffectedCount == 0 && len(resp.AffectedTests) == 0 && resp.TotalAffected > 0 && len(hints) < mcpio.MaxNextSteps {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.search",
 			Args:   map[string]any{"query": resp.Symbol + " test"},
@@ -681,8 +681,8 @@ func blastHints(resp mcpio.BlastResponse) []mcpio.NextStep {
 		})
 	}
 
-	if len(hints) > 2 {
-		hints = hints[:2]
+	if len(hints) > mcpio.MaxNextSteps {
+		hints = hints[:mcpio.MaxNextSteps]
 	}
 	return hints
 }
@@ -1005,15 +1005,15 @@ func conventionsHints(resp mcpio.ConventionsResponse, domain string) []mcpio.Nex
 		}
 	}
 
-	if domain != "" && len(hints) < 2 {
+	if domain != "" && len(hints) < mcpio.MaxNextSteps {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.conventions",
 			Reason: "scoped results — run without domain filter for project-wide patterns",
 		})
 	}
 
-	if len(hints) > 2 {
-		hints = hints[:2]
+	if len(hints) > mcpio.MaxNextSteps {
+		hints = hints[:mcpio.MaxNextSteps]
 	}
 	return hints
 }
@@ -1067,15 +1067,15 @@ func statusHints(resp mcpio.StatusResponse, sessionQueries int) []mcpio.NextStep
 		})
 	}
 
-	if sessionQueries == 0 && len(hints) < 2 {
+	if sessionQueries == 0 && len(hints) < mcpio.MaxNextSteps {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense.conventions",
 			Reason: "start of session — check project conventions",
 		})
 	}
 
-	if len(hints) > 2 {
-		hints = hints[:2]
+	if len(hints) > mcpio.MaxNextSteps {
+		hints = hints[:mcpio.MaxNextSteps]
 	}
 	return hints
 }

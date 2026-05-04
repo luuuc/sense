@@ -26,6 +26,9 @@ import (
 // source file. Used across all estimation formulas.
 const AvgTokensPerFile = 800
 
+// MaxNextSteps caps follow-up hints per response — transcript evidence shows agents follow at most 1-2.
+const MaxNextSteps = 2
+
 // ServerInstructions is the canonical MCP server instruction text.
 // Used by both the MCP server (serverInstructions) and setup (.mcp.json).
 const ServerInstructions = "When Sense is available and indexed, prefer Sense tools over grep, glob, " +
@@ -98,7 +101,7 @@ type GraphResponse struct {
 	Layers             []GraphLayer       `json:"layers,omitempty"`
 	Truncated          bool               `json:"truncated,omitempty"`
 	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
-	SenseMetrics       GraphMetrics       `json:"sense_metrics"`
+	SenseMetrics       GraphMetrics       `json:"-"`
 	Freshness          *Freshness         `json:"freshness,omitempty"`
 	NextSteps          []NextStep         `json:"next_steps"`
 }
@@ -246,10 +249,11 @@ type BlastResponse struct {
 	// Tier 3 — affected test count (detail omitted to keep response focused).
 	TestsAffectedCount int `json:"tests_affected_count"`
 
-	ProductionAffected int `json:"production_affected"`
-	TestAffected       int `json:"test_affected"`
+	ProductionAffected int  `json:"production_affected"`
+	TestAffected       int  `json:"test_affected"`
+	Truncated          bool `json:"truncated,omitempty"`
 
-	SenseMetrics BlastMetrics `json:"sense_metrics"`
+	SenseMetrics BlastMetrics `json:"-"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`
 	NextSteps    []NextStep   `json:"next_steps"`
 }
@@ -439,7 +443,7 @@ type SearchResponse struct {
 	Results       []SearchResultEntry `json:"results"`
 	SearchMode    string              `json:"search_mode"`
 	FusionWeights FusionWeights       `json:"fusion_weights"`
-	SenseMetrics  SearchMetrics       `json:"sense_metrics"`
+	SenseMetrics  SearchMetrics       `json:"-"`
 	NextSteps     []NextStep          `json:"next_steps"`
 }
 
@@ -491,7 +495,7 @@ type DeadCodeResponse struct {
 	TotalSymbols int               `json:"total_symbols"`
 	DeadCount    int               `json:"dead_count"`
 	Note         string            `json:"note,omitempty"`
-	SenseMetrics DeadCodeMetrics   `json:"sense_metrics"`
+	SenseMetrics DeadCodeMetrics   `json:"-"`
 	NextSteps    []NextStep        `json:"next_steps"`
 }
 

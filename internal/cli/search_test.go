@@ -95,15 +95,8 @@ func TestRunSearchKeywordFallbackJSON(t *testing.T) {
 	if len(resp.Results) == 0 {
 		t.Fatal("expected results, got none")
 	}
-	if resp.SenseMetrics.SymbolsSearched < 2 {
-		t.Errorf("expected at least 2 symbols searched, got %d", resp.SenseMetrics.SymbolsSearched)
-	}
-	if resp.SenseMetrics.EstimatedFileReadsAvoided == 0 {
-		t.Error("expected non-zero estimated_file_reads_avoided")
-	}
-	if resp.SenseMetrics.EstimatedTokensSaved != resp.SenseMetrics.EstimatedFileReadsAvoided*mcpio.AvgTokensPerFile {
-		t.Errorf("expected estimated_tokens_saved = files * %d, got %d",
-			mcpio.AvgTokensPerFile, resp.SenseMetrics.EstimatedTokensSaved)
+	if strings.Contains(stdout.String(), "sense_metrics") {
+		t.Error("JSON output should not contain sense_metrics")
 	}
 }
 

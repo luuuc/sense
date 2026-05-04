@@ -94,12 +94,8 @@ func TestRunConventionsJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, stdout.String())
 	}
-	if resp.SenseMetrics.SymbolsAnalyzed == 0 {
-		t.Error("expected non-zero symbols_analyzed")
-	}
-	if resp.SenseMetrics.EstimatedFileReadsAvoided != 0 {
-		t.Errorf("estimated_file_reads_avoided = %d, want 0 (4 symbols / 5 rounds down)",
-			resp.SenseMetrics.EstimatedFileReadsAvoided)
+	if strings.Contains(stdout.String(), "sense_metrics") {
+		t.Error("JSON output should not contain sense_metrics")
 	}
 }
 
