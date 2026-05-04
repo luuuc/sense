@@ -582,6 +582,171 @@ func TestFindDeadNullSourceID(t *testing.T) {
 	}
 }
 
+func TestDeadCodeNewFuncIsPossiblyDead(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "router.go"), `package router
+
+type Router struct{}
+
+func NewRouter() *Router { return &Router{} }
+
+func unusedFunc() {}
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+
+	for _, s := range result.Dead {
+		if s.Name == "NewRouter" {
+			if s.Confidence != dead.ConfidencePossibly {
+				t.Errorf("NewRouter confidence = %q, want %q", s.Confidence, dead.ConfidencePossibly)
+			}
+			return
+		}
+	}
+	t.Error("NewRouter not found in dead results")
+}
+
+func TestDeadCodeExcludesFrameworkHooks(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "Gemfile"), `source "https://rubygems.org"
+gem "rails", "~> 7.0"
+`)
+	writeFile(t, filepath.Join(root, "concern.rb"), `module Auditable
+  extend ActiveSupport::Concern
+
+  included do
+    before_save :audit_trail
+  end
+
+  class_methods do
+    def auditable?
+      true
+    end
+  end
+
+  def after_commit
+    log_change
+  end
+
+  def dead_method
+    nil
+  end
+end
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+
+	excluded := map[string]bool{"included": true, "class_methods": true, "after_commit": true}
+	for _, s := range result.Dead {
+		if excluded[s.Name] {
+			t.Errorf("%q should be excluded as Rails framework hook", s.Name)
+		}
+	}
+}
+
+func TestDeadCodeExcludesJVMLifecycle(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "Handler.java"), `public class Handler {
+    public void handle() {
+        System.out.println("handling");
+    }
+    public void onCreate() {
+        System.out.println("created");
+    }
+    public void configure() {
+        System.out.println("configured");
+    }
+    public void deadMethod() {
+        System.out.println("dead");
+    }
+}
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+
+	excluded := map[string]bool{"handle": true, "onCreate": true, "configure": true}
+	for _, s := range result.Dead {
+		if excluded[s.Name] {
+			t.Errorf("%q should be excluded as JVM lifecycle/framework hook", s.Name)
+		}
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

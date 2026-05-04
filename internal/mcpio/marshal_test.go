@@ -128,6 +128,38 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	}
 }
 
+func TestSearchResponseIncludesReferences(t *testing.T) {
+	resp := SearchResponse{
+		Results: []SearchResultEntry{
+			{Symbol: "pkg.HandleRequest", File: "handler.go", Kind: "function", Score: 0.95, References: 50},
+			{Symbol: "pkg.Helper", File: "helper.go", Kind: "function", Score: 0.8, References: 0},
+		},
+		SearchMode: "hybrid",
+	}
+	raw, err := MarshalSearch(resp)
+	if err != nil {
+		t.Fatalf("MarshalSearch: %v", err)
+	}
+	s := string(raw)
+
+	if !strings.Contains(s, `"references": 50`) {
+		t.Errorf("expected references: 50 in output:\n%s", s)
+	}
+	// omitempty: references should not appear for 0-value entries
+	var parsed struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.Results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(parsed.Results))
+	}
+	if strings.Contains(string(parsed.Results[1]), `"references"`) {
+		t.Errorf("references with value 0 should be omitted (omitempty):\n%s", parsed.Results[1])
+	}
+}
+
 func TestResponseOmitsMetrics(t *testing.T) {
 	graph := GraphResponse{
 		Symbol:       GraphSymbol{Name: "X", Qualified: "X", File: "x.go", Kind: "function"},

@@ -225,7 +225,6 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	if err != nil {
 		return nil, SearchMeta{}, fmt.Errorf("search centrality: %w", err)
 	}
-	applyGraphCentrality(fused, centrality)
 	applyKindWeights(fused)
 
 	// Path-based re-ranking: demote infrastructure code.
@@ -244,6 +243,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	applyPathWeights(fused, pathByID)
 
 	normalizeScores(fused)
+	applyGraphCentrality(fused, centrality)
 
 	// Sort by final score descending.
 	sort.Slice(fused, func(i, j int) bool {
@@ -430,13 +430,23 @@ func normalizeScores(results []Result) {
 	}
 }
 
-// applyKindWeights demotes namespace-level symbols (modules) which
-// tend to appear in many files and dominate search results over the
-// specific classes/methods users actually want.
+const (
+	TestPathDemotion = 0.5 // symbols in test file paths
+	TestNameDemotion = 0.3 // symbols whose name signals test/mock
+)
+
+var testNamePrefixes = []string{"Test", "Mock", "Fake", "Stub"}
+
 func applyKindWeights(results []Result) {
 	for i := range results {
 		if results[i].Kind == "module" {
 			results[i].Score *= 0.5
+		}
+		for _, prefix := range testNamePrefixes {
+			if strings.HasPrefix(results[i].Name, prefix) {
+				results[i].Score *= TestNameDemotion
+				break
+			}
 		}
 	}
 }
@@ -452,37 +462,34 @@ var demotedPathSegments = []struct {
 	{"db/post_migrate/", 0.3},
 	{"script/", 0.3},
 	{"scripts/", 0.3},
-	{"/test/", 0.5},
-	{"/tests/", 0.5},
-	{"/spec/", 0.5},
-	{"/mock/", 0.5},
-	{"/mocks/", 0.5},
-	{"/fixture/", 0.5},
-	{"/fixtures/", 0.5},
+	{"/test/", TestPathDemotion},
+	{"/tests/", TestPathDemotion},
+	{"/spec/", TestPathDemotion},
+	{"/mock/", TestPathDemotion},
+	{"/mocks/", TestPathDemotion},
+	{"/fixture/", TestPathDemotion},
+	{"/fixtures/", TestPathDemotion},
 	{"/generated/", 0.4},
-	{"/testdata/", 0.5},
-	{"_test.rb", 0.5},
-	{"_spec.rb", 0.5},
-	{"_test.go", 0.5},
-	{".test.ts", 0.5},
-	{".test.js", 0.5},
-	{".spec.ts", 0.5},
-	{".spec.js", 0.5},
-	{"Test.java", 0.5},
-	{"Test.kt", 0.5},
-	{"_test.py", 0.5},
-	{"/__tests__/", 0.5},
+	{"/testdata/", TestPathDemotion},
+	{"_test.rb", TestPathDemotion},
+	{"_spec.rb", TestPathDemotion},
+	{"_test.go", TestPathDemotion},
+	{".test.ts", TestPathDemotion},
+	{".test.js", TestPathDemotion},
+	{".spec.ts", TestPathDemotion},
+	{".spec.js", TestPathDemotion},
+	{"Test.java", TestPathDemotion},
+	{"Test.kt", TestPathDemotion},
+	{"_test.py", TestPathDemotion},
+	{"/__tests__/", TestPathDemotion},
 }
 
-// demotedPathPrefixes lists root-level test/spec directories that should
-// be demoted. Separate from demotedPathSegments because these must use
-// HasPrefix to avoid false positives (e.g. "spec/" inside "specification/").
 var demotedPathPrefixes = []struct {
 	prefix  string
 	penalty float64
 }{
-	{"spec/", 0.5},
-	{"test/", 0.5},
+	{"spec/", TestPathDemotion},
+	{"test/", TestPathDemotion},
 }
 
 // boostedPathPrefixes lists path prefixes for primary source directories
@@ -550,17 +557,18 @@ func vectorConfidence(results []VectorResult) float64 {
 	return sum / float64(n)
 }
 
-// applyGraphCentrality boosts scores by graph importance. Symbols with
-// more inbound edges (callers, inheritors, testers) are hub nodes and
-// rank higher. The boost is additive and log-scaled:
-// boost = log2(1 + inbound_count) * 0.01.
+// CentralityCoefficient controls the multiplicative centrality boost.
+// 50 callers → 1.28x; 200 callers → 1.39x; 1 caller → 1.05x.
+const CentralityCoefficient = 0.05
+
 func applyGraphCentrality(results []Result, centrality map[int64]int) {
 	if len(centrality) == 0 {
 		return
 	}
 	for i := range results {
 		if count, ok := centrality[results[i].SymbolID]; ok && count > 0 {
-			results[i].Score += math.Log2(1+float64(count)) * 0.01
+			boost := 1.0 + math.Log2(1+float64(count))*CentralityCoefficient
+			results[i].Score *= boost
 			results[i].References = count
 		}
 	}
