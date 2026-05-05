@@ -564,4 +564,46 @@ func TestResponseCapsNextSteps(t *testing.T) {
 	}
 }
 
+func TestDeadCodeHintsWithDead(t *testing.T) {
+	resp := mcpio.DeadCodeResponse{
+		DeadCount: 3,
+		DeadSymbols: []mcpio.DeadSymbolEntry{
+			{Symbol: "Order", Qualified: "model.Order", File: "internal/model/order.go"},
+			{Symbol: "Unused", Qualified: "pkg.Unused", File: "internal/pkg/unused.go"},
+		},
+	}
+	hints := deadCodeHints(resp)
+	if len(hints) != 1 {
+		t.Fatalf("want 1 hint, got %d", len(hints))
+	}
+	if hints[0].Tool != "sense.graph" {
+		t.Errorf("tool = %q, want sense.graph", hints[0].Tool)
+	}
+	if hints[0].Args["symbol"] != "model.Order" {
+		t.Errorf("args.symbol = %q, want model.Order", hints[0].Args["symbol"])
+	}
+}
+
+func TestDeadCodeHintsEmpty(t *testing.T) {
+	resp := mcpio.DeadCodeResponse{
+		DeadCount:   0,
+		DeadSymbols: []mcpio.DeadSymbolEntry{},
+	}
+	hints := deadCodeHints(resp)
+	if hints != nil {
+		t.Fatalf("want nil hints for no dead symbols, got %d", len(hints))
+	}
+}
+
+func TestDeadCodeHintsCountMismatch(t *testing.T) {
+	resp := mcpio.DeadCodeResponse{
+		DeadCount:   5,
+		DeadSymbols: []mcpio.DeadSymbolEntry{},
+	}
+	hints := deadCodeHints(resp)
+	if hints != nil {
+		t.Fatalf("want nil hints when DeadSymbols is empty despite DeadCount>0, got %d", len(hints))
+	}
+}
+
 func intPtr(v int) *int { return &v }
