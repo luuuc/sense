@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
 )
 
@@ -35,7 +36,8 @@ type section struct {
 	render func(ctx context.Context, db *sql.DB) (string, error)
 }
 
-func Generate(ctx context.Context, db *sql.DB, senseDir string) error {
+func Generate(ctx context.Context, adapter *sqlite.Adapter, senseDir string) error {
+	db := adapter.DB()
 	path := filepath.Join(senseDir, "summary.md")
 
 	var fileCount int
@@ -54,7 +56,9 @@ func Generate(ctx context.Context, db *sql.DB, senseDir string) error {
 	sections := []section{
 		{"Fingerprint", renderFingerprint},
 		{"Main Areas", renderMainAreas},
-		{"Key Abstractions", renderKeyAbstractions},
+		{"Key Abstractions", func(ctx context.Context, _ *sql.DB) (string, error) {
+			return renderKeyAbstractions(ctx, adapter)
+		}},
 		{"Reading Path", renderReadingPath},
 		{"Known Noise", renderKnownNoise},
 	}
@@ -231,51 +235,25 @@ func dominantKindDesc(kinds map[string]int) string {
 	}
 }
 
-var utilitySymbols = map[string]bool{
-	"Close": true, "Error": true, "String": true, "make": true,
-	"len": true, "append": true, "New": true, "init": true,
-	"Format": true, "Write": true, "Read": true, "Reset": true,
-	"MarshalJSON": true, "UnmarshalJSON": true,
-}
-
-func renderKeyAbstractions(ctx context.Context, db *sql.DB) (string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT s.qualified, s.name, COUNT(e.id) AS in_degree, s.kind
-		FROM sense_symbols s
-		JOIN sense_edges e ON e.target_id = s.id
-		JOIN sense_files f ON f.id = s.file_id
-		WHERE f.path NOT LIKE '%testdata%'
-		  AND f.path NOT LIKE '%fixture%'
-		  AND f.path NOT LIKE '%vendor%'
-		GROUP BY s.id
-		ORDER BY in_degree DESC
-		LIMIT 30`)
+func renderKeyAbstractions(ctx context.Context, adapter *sqlite.Adapter) (string, error) {
+	results, err := adapter.TopSymbolsByReach(ctx, "", 8)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = rows.Close() }()
+	if len(results) == 0 {
+		return "", nil
+	}
 
 	var b strings.Builder
 	b.WriteString("*Drill into any symbol: `sense_graph symbol=\"...\"` or `sense_blast symbol=\"...\"`*\n")
-	n := 0
-	for rows.Next() {
-		var qualified, name, kind string
-		var callers int
-		if err := rows.Scan(&qualified, &name, &callers, &kind); err != nil {
-			return "", err
-		}
-		if utilitySymbols[name] {
-			continue
-		}
-		fmt.Fprintf(&b, "- `%s` (%s) — %d incoming edges\n", qualified, kind, callers)
-		n++
-		if n >= 8 {
-			break
+	for _, ks := range results {
+		if ks.Snippet != "" {
+			fmt.Fprintf(&b, "- `%s` (%s) — %d file refs — `%s`\n", ks.Qualified, ks.Kind, ks.RefFiles, ks.Snippet)
+		} else {
+			fmt.Fprintf(&b, "- `%s` (%s) — %d file refs\n", ks.Qualified, ks.Kind, ks.RefFiles)
 		}
 	}
-	if n == 0 {
-		return "", nil
-	}
-	return b.String(), rows.Err()
+	return b.String(), nil
 }
 
 func renderReadingPath(ctx context.Context, db *sql.DB) (string, error) {

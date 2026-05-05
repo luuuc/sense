@@ -127,7 +127,7 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 
 	if h.changed > 0 || h.removed > 0 {
 		senseDir := filepath.Join(opts.Root, ".sense")
-		if serr := summary.Generate(ctx, opts.Idx.DB(), senseDir); serr != nil {
+		if serr := summary.Generate(ctx, opts.Idx, senseDir); serr != nil {
 			_, _ = fmt.Fprintf(warn, "warn: generate summary: %v\n", serr)
 		}
 	}
