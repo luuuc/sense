@@ -2,6 +2,8 @@ package sqlite_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -301,6 +303,70 @@ func TestContextForFileEmpty(t *testing.T) {
 	}
 	if result != nil {
 		t.Errorf("expected nil for file with no symbols, got %d entries", len(result))
+	}
+}
+
+func TestContextForFileNonexistentID(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	_, err = a.ContextForFile(ctx, 99999)
+	if err == nil {
+		t.Fatal("expected error for nonexistent file ID, got nil")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("error should wrap sql.ErrNoRows, got: %v", err)
+	}
+}
+
+func TestContextForFileSymbolsNoEdges(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "standalone.go", Language: "go",
+		Hash: "sa1", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Alpha", Qualified: "pkg.Alpha",
+		Kind: model.KindClass, LineStart: 1, LineEnd: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Beta", Qualified: "pkg.Beta",
+		Kind: "function", LineStart: 25, LineEnd: 35,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.ContextForFile(ctx, fid)
+	if err != nil {
+		t.Fatalf("ContextForFile: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(result))
+	}
+
+	for _, ctx := range result {
+		if !strings.Contains(ctx, "File: standalone.go") {
+			t.Errorf("missing file path in context: %q", ctx)
+		}
+		if strings.Contains(ctx, "calls:") || strings.Contains(ctx, "composes:") {
+			t.Errorf("symbols with no edges should have no relationship lines: %q", ctx)
+		}
 	}
 }
 
