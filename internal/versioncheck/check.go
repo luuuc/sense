@@ -15,6 +15,12 @@ const (
 	httpTimeout = 10 * time.Second
 )
 
+// Overridden by tests. Tests that mutate these must not use t.Parallel().
+var (
+	baseURL    = "https://github.com"
+	apiBaseURL = "https://api.github.com"
+)
+
 func fetchLatestTag() (string, error) {
 	// Use the redirect from /releases/latest — not subject to API rate limits.
 	if tag, err := fetchLatestTagRedirect(); err == nil && tag != "" {
@@ -25,7 +31,7 @@ func fetchLatestTag() (string, error) {
 }
 
 func fetchLatestTagRedirect() (string, error) {
-	u := fmt.Sprintf("https://github.com/%s/releases/latest", repo)
+	u := fmt.Sprintf("%s/%s/releases/latest", baseURL, repo)
 	client := &http.Client{
 		Timeout: httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -58,7 +64,7 @@ func fetchLatestTagRedirect() (string, error) {
 }
 
 func fetchLatestTagAPI() (string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	url := fmt.Sprintf("%s/repos/%s/releases/latest", apiBaseURL, repo)
 	client := &http.Client{Timeout: httpTimeout}
 
 	req, err := http.NewRequest("GET", url, nil)
