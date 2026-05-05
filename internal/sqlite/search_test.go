@@ -563,3 +563,51 @@ func TestNamePartsMatchesDecomposed(t *testing.T) {
 		t.Fatal("expected HTTPS to match handleHTTPSError via name_parts, got 0 results")
 	}
 }
+
+func TestLoadEmbeddingsEmpty(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	got, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatalf("LoadEmbeddings on empty table: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(got))
+	}
+}
+
+func TestEmbeddingsForFilesNoMatch(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "no_embeddings.go", Language: "go",
+		Hash: "ne1", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Bare", Qualified: "pkg.Bare",
+		Kind: "function", LineStart: 1, LineEnd: 5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := a.EmbeddingsForFiles(ctx, []int64{fid})
+	if err != nil {
+		t.Fatalf("EmbeddingsForFiles: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for file with no embeddings, got %d", len(got))
+	}
+}

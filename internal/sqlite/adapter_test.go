@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +44,66 @@ func TestOpenFailures(t *testing.T) {
 			t.Fatal("Open with path pointing at a directory should error, got nil")
 		}
 	})
+
+	t.Run("CorruptDatabaseFile", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "corrupt.db")
+		if err := os.WriteFile(path, []byte("not a sqlite database"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := sqlite.Open(ctx, path)
+		if err == nil {
+			t.Fatal("Open with corrupt database file should error, got nil")
+		}
+	})
+}
+
+func TestRepeatedOpenClosePreservesData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "concurrent.db")
+
+	// Open sequentially multiple times — concurrent schema writes get
+	// SQLITE_BUSY since there's no busy_timeout. The guarantee is that
+	// repeated open/close cycles on the same path never corrupt the DB.
+	for i := range 5 {
+		a, err := sqlite.Open(ctx, path)
+		if err != nil {
+			t.Fatalf("Open #%d: %v", i, err)
+		}
+		if i == 0 {
+			// Seed a symbol on first open to verify persistence.
+			fid, err := a.WriteFile(ctx, &model.File{
+				Path: "concurrent.go", Language: "go",
+				Hash: "c1", Symbols: 1, IndexedAt: time.Now(),
+			})
+			if err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+			if _, err := a.WriteSymbol(ctx, &model.Symbol{
+				FileID: fid, Name: "Persist", Qualified: "pkg.Persist",
+				Kind: "function", LineStart: 1, LineEnd: 5,
+			}); err != nil {
+				t.Fatalf("WriteSymbol: %v", err)
+			}
+		}
+		if err := a.Close(); err != nil {
+			t.Fatalf("Close #%d: %v", i, err)
+		}
+	}
+
+	// Verify the DB is intact after many open/close cycles.
+	a, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("final Open: %v", err)
+	}
+	defer func() { _ = a.Close() }()
+
+	count, err := a.SymbolCount(ctx)
+	if err != nil {
+		t.Fatalf("SymbolCount: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 symbol after repeated opens, got %d", count)
+	}
 }
 
 func TestSchemaVersionMismatchRebuilds(t *testing.T) {
