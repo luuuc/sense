@@ -1038,25 +1038,33 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		return nil, fmt.Errorf("sense.conventions: %w", err)
 	}
 
+	keyEntries, err := buildKeyEntries(ctx, h.adapter, domain, 15)
+	if err != nil {
+		return nil, fmt.Errorf("sense.conventions: key symbols: %w", err)
+	}
+
 	instanceCap := h.defaults.ConventionsInstanceCap
 	filesAvoided := min(symbolCount/5, 30)
 	resp := mcpio.ConventionsResponse{
-		Conventions: make([]mcpio.ConventionEntry, len(results)),
+		KeySymbols: keyEntries,
 		SenseMetrics: mcpio.ConventionsMetrics{
 			SymbolsAnalyzed:           symbolCount,
 			EstimatedFileReadsAvoided: filesAvoided,
 			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 		},
 	}
-	for i, c := range results {
-		resp.Conventions[i] = mcpio.ConventionEntry{
+	for _, c := range results {
+		if c.Category == conventions.CategoryStructure || c.Category == conventions.CategoryNaming {
+			continue
+		}
+		resp.Conventions = append(resp.Conventions, mcpio.ConventionEntry{
 			Category:       string(c.Category),
 			Description:    c.Description,
 			Strength:       mcpio.Confidence(c.Strength),
 			Instances:      conventions.PickRepresentatives(c.Examples, instanceCap),
 			TotalInstances: c.Instances,
 			KeySymbol:      c.KeySymbol,
-		}
+		})
 	}
 
 	mcpio.ApplyTokenBudget(&resp, h.defaults.ConventionsTokenBudget)
@@ -1101,6 +1109,29 @@ func conventionsHints(resp mcpio.ConventionsResponse, domain string) []mcpio.Nex
 	return hints
 }
 
+func buildKeyEntries(ctx context.Context, adapter *sqlite.Adapter, domain string, limit int) ([]mcpio.KeySymbolEntry, error) {
+	keySymbols, err := adapter.TopSymbolsByReach(ctx, domain, limit)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]mcpio.KeySymbolEntry, 0, len(keySymbols))
+	for _, ks := range keySymbols {
+		callers, _ := adapter.TopCallers(ctx, ks.ID, 3)
+		callerNames := make([]string, len(callers))
+		for i, c := range callers {
+			callerNames[i] = c.Qualified
+		}
+		entries = append(entries, mcpio.KeySymbolEntry{
+			Name:       ks.Qualified,
+			Kind:       ks.Kind,
+			Snippet:    ks.Snippet,
+			References: ks.RefFiles,
+			Callers:    callerNames,
+		})
+	}
+	return entries, nil
+}
+
 // ---------------------------------------------------------------
 // sense.status handler
 // ---------------------------------------------------------------
@@ -1109,6 +1140,13 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 	resp, err := buildStatusResponse(ctx, h.db, h.dir, h.watchState)
 	if err != nil {
 		return nil, fmt.Errorf("sense.status: %w", err)
+	}
+
+	if resp.Structure != nil {
+		// Key symbols are optional in status; degrade silently on error.
+		if entries, err := buildKeyEntries(ctx, h.adapter, "", 8); err == nil {
+			resp.Structure.KeySymbols = entries
+		}
 	}
 
 	sess := h.tracker.Session()
