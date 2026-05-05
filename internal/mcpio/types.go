@@ -354,6 +354,7 @@ type StatusProfile struct {
 type StatusStructure struct {
 	TopNamespaces []StatusNamespace  `json:"top_namespaces"`
 	HubSymbols    []StatusHub        `json:"hub_symbols"`
+	KeySymbols    []KeySymbolEntry   `json:"key_symbols,omitempty"`
 	EntryPoints   []StatusEntryPoint `json:"entry_points"`
 	Frameworks    []string           `json:"frameworks,omitempty"`
 	Fingerprint   string             `json:"fingerprint"`

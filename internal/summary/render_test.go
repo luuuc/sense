@@ -190,25 +190,69 @@ func TestRenderMainAreas(t *testing.T) {
 }
 
 func TestRenderKeyAbstractions(t *testing.T) {
-	db, cleanup := seedTestDB(t)
-	defer cleanup()
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.db")
 
-	got, err := renderKeyAbstractions(context.Background(), db)
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+
+	now := time.Now()
+	fid1, err := adapter.WriteFile(ctx, &model.File{
+		Path: "internal/server/server.go", Language: "go",
+		Hash: "aaa", Symbols: 2, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fid2, err := adapter.WriteFile(ctx, &model.File{
+		Path: "internal/handler/handler.go", Language: "go",
+		Hash: "bbb", Symbols: 1, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	serverID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid1, Name: "Server", Qualified: "server.Server",
+		Kind: "class", LineStart: 1, LineEnd: 30,
+		Snippet: "type Server struct { router *Router }",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid2, Name: "Handler", Qualified: "handler.Handler",
+		Kind: "class", LineStart: 1, LineEnd: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = adapter.WriteEdge(ctx, &model.Edge{
+		SourceID: model.Int64Ptr(callerID), TargetID: serverID,
+		Kind: model.EdgeCalls, FileID: fid2, Confidence: 1.0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	got, err := renderKeyAbstractions(ctx, adapter)
 	if err != nil {
 		t.Fatalf("renderKeyAbstractions: %v", err)
 	}
 
-	if !strings.Contains(got, "server.Handle") {
-		t.Errorf("expected top hub symbol server.Handle, got: %s", got)
+	if !strings.Contains(got, "server.Server") {
+		t.Errorf("expected server.Server in key abstractions, got: %s", got)
 	}
-	if !strings.Contains(got, "incoming edges") {
-		t.Errorf("expected 'incoming edges' label, got: %s", got)
+	if !strings.Contains(got, "file refs") {
+		t.Errorf("expected 'file refs' label, got: %s", got)
 	}
 	if !strings.Contains(got, "sense_graph") {
 		t.Errorf("expected sense_graph section-level hint, got: %s", got)
-	}
-	if strings.Count(got, "sense_graph") != 1 {
-		t.Errorf("expected exactly one sense_graph hint (section-level), got %d", strings.Count(got, "sense_graph"))
 	}
 }
 
@@ -230,56 +274,59 @@ func TestRenderKeyAbstractionsFiltersUtility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	closeID, err := adapter.WriteSymbol(ctx, &model.Symbol{
-		FileID: fid, Name: "Close", Qualified: "core.Close",
-		Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+	fid2, err := adapter.WriteFile(ctx, &model.File{
+		Path: "internal/app/app.go", Language: "go",
+		Hash: "bbb", Symbols: 1, IndexedAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runID, err := adapter.WriteSymbol(ctx, &model.Symbol{
-		FileID: fid, Name: "Run", Qualified: "core.Run",
-		Kind: model.KindFunction, LineStart: 10, LineEnd: 50,
+
+	// "Close" is a utility name that should be filtered
+	closeID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Close", Qualified: "core.Close",
+		Kind: "type", LineStart: 1, LineEnd: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "Runner" is a real type that should appear
+	runnerID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Runner", Qualified: "core.Runner",
+		Kind: "class", LineStart: 10, LineEnd: 50,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	callerID, err := adapter.WriteSymbol(ctx, &model.Symbol{
-		FileID: fid, Name: "caller", Qualified: "core.caller",
-		Kind: model.KindFunction, LineStart: 60, LineEnd: 70,
+		FileID: fid2, Name: "App", Qualified: "app.App",
+		Kind: "class", LineStart: 1, LineEnd: 20,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, targetID := range []int64{closeID, runID} {
+	for _, targetID := range []int64{closeID, runnerID} {
 		_, err = adapter.WriteEdge(ctx, &model.Edge{
 			SourceID: model.Int64Ptr(callerID), TargetID: targetID,
-			Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
+			Kind: model.EdgeCalls, FileID: fid2, Confidence: 1.0,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	_ = adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
-	db, err := sql.Open("sqlite", "file:"+dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	got, err := renderKeyAbstractions(ctx, db)
+	got, err := renderKeyAbstractions(ctx, adapter)
 	if err != nil {
 		t.Fatalf("renderKeyAbstractions: %v", err)
 	}
 
 	if strings.Contains(got, "core.Close") {
-		t.Errorf("expected Close filtered as utility hub, got: %s", got)
+		t.Errorf("expected Close filtered as utility name, got: %s", got)
 	}
-	if !strings.Contains(got, "core.Run") {
-		t.Errorf("expected core.Run to be present, got: %s", got)
+	if !strings.Contains(got, "core.Runner") {
+		t.Errorf("expected core.Runner to be present, got: %s", got)
 	}
 }
 

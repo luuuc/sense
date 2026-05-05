@@ -181,13 +181,7 @@ func RunWithOptions(opts RunOptions) error {
 		server.WithInstructions(serverInstructions),
 	)
 
-	prof := profile.Load(ctx, adapter.DB())
-	var defaults profile.Defaults
-	if prof != nil {
-		defaults = profile.DefaultsForTier(prof.Tier)
-	} else {
-		defaults = profile.DefaultsForTier(profile.TierMedium)
-	}
+	defaults := profile.DefaultParams()
 
 	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker, defaults: defaults}
 
@@ -1044,25 +1038,33 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		return nil, fmt.Errorf("sense.conventions: %w", err)
 	}
 
+	keyEntries, err := buildKeyEntries(ctx, h.adapter, domain, 15)
+	if err != nil {
+		return nil, fmt.Errorf("sense.conventions: key symbols: %w", err)
+	}
+
 	instanceCap := h.defaults.ConventionsInstanceCap
 	filesAvoided := min(symbolCount/5, 30)
 	resp := mcpio.ConventionsResponse{
-		Conventions: make([]mcpio.ConventionEntry, len(results)),
+		KeySymbols: keyEntries,
 		SenseMetrics: mcpio.ConventionsMetrics{
 			SymbolsAnalyzed:           symbolCount,
 			EstimatedFileReadsAvoided: filesAvoided,
 			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
 		},
 	}
-	for i, c := range results {
-		resp.Conventions[i] = mcpio.ConventionEntry{
+	for _, c := range results {
+		if c.Category == conventions.CategoryStructure || c.Category == conventions.CategoryNaming {
+			continue
+		}
+		resp.Conventions = append(resp.Conventions, mcpio.ConventionEntry{
 			Category:       string(c.Category),
 			Description:    c.Description,
 			Strength:       mcpio.Confidence(c.Strength),
 			Instances:      conventions.PickRepresentatives(c.Examples, instanceCap),
 			TotalInstances: c.Instances,
 			KeySymbol:      c.KeySymbol,
-		}
+		})
 	}
 
 	mcpio.ApplyTokenBudget(&resp, h.defaults.ConventionsTokenBudget)
@@ -1107,6 +1109,29 @@ func conventionsHints(resp mcpio.ConventionsResponse, domain string) []mcpio.Nex
 	return hints
 }
 
+func buildKeyEntries(ctx context.Context, adapter *sqlite.Adapter, domain string, limit int) ([]mcpio.KeySymbolEntry, error) {
+	keySymbols, err := adapter.TopSymbolsByReach(ctx, domain, limit)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]mcpio.KeySymbolEntry, 0, len(keySymbols))
+	for _, ks := range keySymbols {
+		callers, _ := adapter.TopCallers(ctx, ks.ID, 3)
+		callerNames := make([]string, len(callers))
+		for i, c := range callers {
+			callerNames[i] = c.Qualified
+		}
+		entries = append(entries, mcpio.KeySymbolEntry{
+			Name:       ks.Qualified,
+			Kind:       ks.Kind,
+			Snippet:    ks.Snippet,
+			References: ks.RefFiles,
+			Callers:    callerNames,
+		})
+	}
+	return entries, nil
+}
+
 // ---------------------------------------------------------------
 // sense.status handler
 // ---------------------------------------------------------------
@@ -1115,6 +1140,13 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 	resp, err := buildStatusResponse(ctx, h.db, h.dir, h.watchState)
 	if err != nil {
 		return nil, fmt.Errorf("sense.status: %w", err)
+	}
+
+	if resp.Structure != nil {
+		// Key symbols are optional in status; degrade silently on error.
+		if entries, err := buildKeyEntries(ctx, h.adapter, "", 8); err == nil {
+			resp.Structure.KeySymbols = entries
+		}
 	}
 
 	sess := h.tracker.Session()
@@ -1353,14 +1385,16 @@ func namespacePrefixFromPath(p string) string {
 }
 
 func queryHubSymbols(ctx context.Context, db *sql.DB) ([]mcpio.StatusHub, error) {
-	const q = `SELECT s.name, COUNT(e.id) AS in_degree, s.kind,
+	const q = `SELECT s.name, COUNT(DISTINCT e.file_id) AS reach, s.kind,
 		(SELECT e2.kind FROM sense_edges e2
 		 WHERE e2.target_id = s.id
 		 GROUP BY e2.kind ORDER BY COUNT(*) DESC LIMIT 1) AS dominant_edge
 	FROM sense_symbols s
 	JOIN sense_edges e ON e.target_id = s.id
 	GROUP BY s.id
-	ORDER BY in_degree DESC
+	ORDER BY
+	  CASE WHEN s.kind IN ('class','interface','module','type','struct','trait') THEN 0 ELSE 1 END,
+	  reach DESC
 	LIMIT 5`
 
 	rows, err := db.QueryContext(ctx, q)

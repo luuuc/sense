@@ -3,7 +3,6 @@ package summary_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"io"
 	"os"
 	"path/filepath"
@@ -92,16 +91,10 @@ func d() {}
 	}
 	t.Cleanup(func() { _ = adapter.Close() })
 
-	db, err := sql.Open("sqlite", "file:"+dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
 	t.Setenv("SENSE_SUMMARY_TOKENS", "200")
 
 	outDir := t.TempDir()
-	if err := summary.Generate(ctx, db, outDir); err != nil {
+	if err := summary.Generate(ctx, adapter, outDir); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 
@@ -126,16 +119,10 @@ func TestGenerateWritesStubWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlite.Open: %v", err)
 	}
-	_ = adapter.Close()
-
-	db, err := sql.Open("sqlite", "file:"+dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() { _ = adapter.Close() })
 
 	outDir := t.TempDir()
-	if err := summary.Generate(ctx, db, outDir); err != nil {
+	if err := summary.Generate(ctx, adapter, outDir); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 

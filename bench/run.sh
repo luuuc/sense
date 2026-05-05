@@ -208,7 +208,11 @@ fi
 # --- Parse task files once and cache ---
 
 TASK_CACHE_DIR=$(mktemp -d)
-trap 'rm -rf "$TASK_CACHE_DIR"' EXIT
+cleanup() {
+  rm -rf "$TASK_CACHE_DIR"
+  restore_user_settings
+}
+trap cleanup EXIT
 
 for task in "${tasks[@]}"; do
   python3 "$LIB_DIR/parse_task.py" "$TASKS_DIR/$task.yaml" > "$TASK_CACHE_DIR/$task.json"
@@ -345,8 +349,67 @@ if $VERIFY_ISOLATION; then
   fi
 fi
 
-# --- Suppress Sense hook injection for all tools (each tool gets MCP via --mcp-config) ---
-export SENSE_BENCH=1
+# --- Neutralize user-level config for fair benchmarking ---
+# Claude Code merges MCP servers and hooks from ~/.claude/settings.json and
+# ~/.claude/.mcp.json into every session. codebase-memory-mcp installs both
+# hooks (PreToolUse blocker, SessionStart reminder) and a global MCP server.
+# These contaminate non-CBM benchmark runs. Back up, strip, restore on exit.
+# CBM tool gets its config restored per-iteration.
+USER_SETTINGS="$HOME/.claude/settings.json"
+USER_MCP_CONFIG="$HOME/.claude/.mcp.json"
+USER_SETTINGS_BACKUP=""
+USER_MCP_BACKUP=""
+
+restore_user_settings() {
+  if [[ -n "${USER_SETTINGS_BACKUP:-}" && -f "$USER_SETTINGS_BACKUP" ]]; then
+    cp "$USER_SETTINGS_BACKUP" "$USER_SETTINGS"
+    rm -f "$USER_SETTINGS_BACKUP"
+    log "Restored ~/.claude/settings.json"
+  fi
+  if [[ -n "${USER_MCP_BACKUP:-}" && -f "$USER_MCP_BACKUP" ]]; then
+    cp "$USER_MCP_BACKUP" "$USER_MCP_CONFIG"
+    rm -f "$USER_MCP_BACKUP"
+    log "Restored ~/.claude/.mcp.json"
+  fi
+}
+
+strip_user_hooks() {
+  python3 -c "
+import json
+with open('$USER_SETTINGS') as f:
+    d = json.load(f)
+d.pop('hooks', None)
+with open('$USER_SETTINGS', 'w') as f:
+    json.dump(d, f, indent=2)
+    f.write('\n')
+"
+}
+
+strip_user_mcp() {
+  python3 -c "
+import json
+with open('$USER_MCP_CONFIG') as f:
+    d = json.load(f)
+d['mcpServers'] = {}
+with open('$USER_MCP_CONFIG', 'w') as f:
+    json.dump(d, f, indent=2)
+    f.write('\n')
+"
+}
+
+if [[ -f "$USER_SETTINGS" ]] && grep -q 'cbm-' "$USER_SETTINGS" 2>/dev/null; then
+  USER_SETTINGS_BACKUP=$(mktemp)
+  cp "$USER_SETTINGS" "$USER_SETTINGS_BACKUP"
+  strip_user_hooks
+  log "Stripped hooks from ~/.claude/settings.json"
+fi
+
+if [[ -f "$USER_MCP_CONFIG" ]] && grep -q 'mcpServers' "$USER_MCP_CONFIG" 2>/dev/null; then
+  USER_MCP_BACKUP=$(mktemp)
+  cp "$USER_MCP_CONFIG" "$USER_MCP_BACKUP"
+  strip_user_mcp
+  log "Stripped MCP servers from ~/.claude/.mcp.json"
+fi
 
 # --- Main loop: tool → repo (setup once) → tasks ---
 
@@ -356,6 +419,16 @@ failed=0
 skipped=0
 
 for tool in "${tools[@]}"; do
+  # Restore user-level hooks + MCP for codebase-memory-mcp (they're part of its offering)
+  if [[ "$tool" == "codebase-memory-mcp" ]]; then
+    [[ -n "${USER_SETTINGS_BACKUP:-}" ]] && cp "$USER_SETTINGS_BACKUP" "$USER_SETTINGS"
+    [[ -n "${USER_MCP_BACKUP:-}" ]] && cp "$USER_MCP_BACKUP" "$USER_MCP_CONFIG"
+    log "Restored user-level hooks + MCP for codebase-memory-mcp"
+  else
+    [[ -n "${USER_SETTINGS_BACKUP:-}" ]] && strip_user_hooks
+    [[ -n "${USER_MCP_BACKUP:-}" ]] && strip_user_mcp
+  fi
+
   for repo in "${all_repos[@]}"; do
     # Ensure per-tool repo copy exists (clones from _reference/ if needed)
     if ! ensure_tool_repo "$tool" "$repo"; then

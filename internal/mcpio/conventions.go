@@ -10,12 +10,23 @@ const DefaultTokenBudget = 6000
 // ConventionsResponse is the shape of the sense.conventions tool's reply
 // and the `sense conventions --json` CLI output.
 type ConventionsResponse struct {
+	KeySymbols   []KeySymbolEntry     `json:"key_symbols,omitempty"`
 	Summary      string               `json:"summary,omitempty"`
 	Conventions  []ConventionEntry    `json:"conventions"`
 	Truncated    bool                 `json:"truncated,omitempty"`
 	TokenBudget  int                  `json:"token_budget,omitempty"`
 	SenseMetrics ConventionsMetrics   `json:"-"`
 	NextSteps    []NextStep           `json:"next_steps"`
+}
+
+// KeySymbolEntry is a high-reach type/interface with callers, emitted first
+// in the conventions response to surface concrete symbol names.
+type KeySymbolEntry struct {
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`
+	Snippet    string   `json:"snippet,omitempty"`
+	References int      `json:"references"`
+	Callers    []string `json:"callers,omitempty"`
 }
 
 // ConventionEntry is a single detected convention in the wire response.
@@ -89,6 +100,14 @@ func countTypeNames(instances []string) int {
 // MarshalConventions renders a ConventionsResponse with the same
 // normalization + pretty-print contract as MarshalGraph.
 func MarshalConventions(r ConventionsResponse) ([]byte, error) {
+	if r.KeySymbols == nil {
+		r.KeySymbols = []KeySymbolEntry{}
+	}
+	for i := range r.KeySymbols {
+		if r.KeySymbols[i].Callers == nil {
+			r.KeySymbols[i].Callers = []string{}
+		}
+	}
 	if r.Conventions == nil {
 		r.Conventions = []ConventionEntry{}
 	}
