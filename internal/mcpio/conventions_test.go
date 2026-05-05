@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -136,5 +137,75 @@ func TestBuildConventionsSummaryFewerThanThree(t *testing.T) {
 	BuildConventionsSummary(&resp)
 	if resp.Summary != "Single pattern." {
 		t.Errorf("expected 'Single pattern.', got %q", resp.Summary)
+	}
+}
+
+func TestMarshalConventionsNilSlices(t *testing.T) {
+	resp := ConventionsResponse{
+		KeySymbols:  nil,
+		Conventions: nil,
+		NextSteps:   nil,
+	}
+	out, err := MarshalConventions(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Conventions and NextSteps don't have omitempty, so nil → [] matters
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(out, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	// conventions field should be "[]" not "null"
+	if string(decoded["conventions"]) == "null" {
+		t.Error("expected conventions to be [] not null")
+	}
+	// next_steps field should be "[]" not "null"
+	if string(decoded["next_steps"]) == "null" {
+		t.Error("expected next_steps to be [] not null")
+	}
+}
+
+func TestMarshalConventionsNilInstances(t *testing.T) {
+	resp := ConventionsResponse{
+		KeySymbols: []KeySymbolEntry{
+			{Name: "Router", Kind: "type", References: 5, Callers: nil},
+			{Name: "Handler", Kind: "type", References: 3, Callers: []string{"main"}},
+		},
+		Conventions: []ConventionEntry{
+			{Category: "design", Description: "test", Instances: nil},
+		},
+	}
+	out, err := MarshalConventions(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Instances (no omitempty) should become [] not null
+	var decoded struct {
+		KeySymbols []struct {
+			Name    string   `json:"name"`
+			Callers []string `json:"callers"`
+		} `json:"key_symbols"`
+		Conventions []struct {
+			Instances []string `json:"instances"`
+		} `json:"conventions"`
+	}
+	if err := json.Unmarshal(out, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Conventions[0].Instances == nil {
+		t.Error("expected nil Instances to become [] in JSON")
+	}
+	// KeySymbols with callers populated should serialize correctly
+	if len(decoded.KeySymbols) != 2 {
+		t.Fatalf("expected 2 key symbols, got %d", len(decoded.KeySymbols))
+	}
+	if decoded.KeySymbols[0].Name != "Router" {
+		t.Errorf("expected first key symbol Router, got %q", decoded.KeySymbols[0].Name)
+	}
+	// Handler has callers — should be present
+	if len(decoded.KeySymbols[1].Callers) != 1 || decoded.KeySymbols[1].Callers[0] != "main" {
+		t.Errorf("expected Handler callers=[main], got %v", decoded.KeySymbols[1].Callers)
 	}
 }
