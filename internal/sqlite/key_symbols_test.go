@@ -1,0 +1,200 @@
+package sqlite_test
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/sqlite"
+)
+
+func seedKeySymbols(ctx context.Context, t *testing.T, a *sqlite.Adapter) {
+	t.Helper()
+
+	fid1, err := a.WriteFile(ctx, &model.File{
+		Path: "internal/router/router.go", Language: "go",
+		Hash: "aaa", Symbols: 3, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fid2, err := a.WriteFile(ctx, &model.File{
+		Path: "internal/router/group.go", Language: "go",
+		Hash: "bbb", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fid3, err := a.WriteFile(ctx, &model.File{
+		Path: "internal/handler/handler.go", Language: "go",
+		Hash: "ccc", Symbols: 2, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Key type: Engine (referenced from multiple files)
+	engineID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid1, Name: "Engine", Qualified: "router.Engine",
+		Kind: "type", LineStart: 10, LineEnd: 30,
+		Snippet: "type Engine struct { pool sync.Pool }",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Key type: RouterGroup
+	groupID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid2, Name: "RouterGroup", Qualified: "router.RouterGroup",
+		Kind: "type", LineStart: 1, LineEnd: 15,
+		Snippet: "type RouterGroup struct { basePath string }",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Function (should be excluded by kind filter)
+	handleID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid3, Name: "HandleRequest", Qualified: "handler.HandleRequest",
+		Kind: "function", LineStart: 5, LineEnd: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Builtin (should be excluded by name filter)
+	_, err = a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid1, Name: "Close", Qualified: "router.Close",
+		Kind: "type", LineStart: 32, LineEnd: 35,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Edges: Engine referenced from 3 files
+	intPtr := func(v int) *int { return &v }
+	edges := []model.Edge{
+		{SourceID: model.Int64Ptr(handleID), TargetID: engineID, Kind: model.EdgeCalls, FileID: fid3, Line: intPtr(10)},
+		{SourceID: model.Int64Ptr(groupID), TargetID: engineID, Kind: model.EdgeCalls, FileID: fid2, Line: intPtr(5)},
+		{SourceID: model.Int64Ptr(engineID), TargetID: groupID, Kind: model.EdgeCalls, FileID: fid1, Line: intPtr(15)},
+		// HandleRequest → RouterGroup (from fid3)
+		{SourceID: model.Int64Ptr(handleID), TargetID: groupID, Kind: model.EdgeCalls, FileID: fid3, Line: intPtr(12)},
+	}
+	for _, e := range edges {
+		if _, err := a.WriteEdge(ctx, &e); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestTopSymbolsByReach(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedKeySymbols(ctx, t, a)
+
+	results, err := a.TopSymbolsByReach(ctx, "internal/", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 key symbols, got %d", len(results))
+	}
+
+	found := map[string]sqlite.KeySymbol{}
+	for _, r := range results {
+		found[r.Qualified] = r
+	}
+
+	// Both Engine and RouterGroup referenced from 2 distinct files each
+	if ks, ok := found["router.Engine"]; !ok {
+		t.Error("expected router.Engine in results")
+	} else {
+		if ks.RefFiles < 2 {
+			t.Errorf("expected Engine ≥2 ref files, got %d", ks.RefFiles)
+		}
+		if ks.Snippet == "" {
+			t.Error("expected snippet to be populated")
+		}
+	}
+	if _, ok := found["router.RouterGroup"]; !ok {
+		t.Error("expected router.RouterGroup in results")
+	}
+
+	// Should not contain HandleRequest (function kind)
+	if _, ok := found["handler.HandleRequest"]; ok {
+		t.Error("functions should be excluded from key symbols")
+	}
+	// Should not contain Close (builtin name)
+	if _, ok := found["router.Close"]; ok {
+		t.Error("builtin names should be excluded from key symbols")
+	}
+}
+
+func TestTopSymbolsByReach_DomainFilter(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedKeySymbols(ctx, t, a)
+
+	// Filter to handler/ — no types live there
+	results, err := a.TopSymbolsByReach(ctx, "internal/handler/", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for handler domain, got %d", len(results))
+	}
+}
+
+func TestTopCallers(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedKeySymbols(ctx, t, a)
+
+	// Get Engine's ID
+	results, err := a.TopSymbolsByReach(ctx, "internal/", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+
+	callers, err := a.TopCallers(ctx, results[0].ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(callers) == 0 {
+		t.Fatal("expected at least one caller for Engine")
+	}
+
+	// Should have handler.HandleRequest and router.RouterGroup as callers
+	found := map[string]bool{}
+	for _, c := range callers {
+		found[c.Qualified] = true
+		if c.File == "" {
+			t.Error("caller file should be populated")
+		}
+	}
+	if !found["handler.HandleRequest"] && !found["router.RouterGroup"] {
+		t.Error("expected at least one of HandleRequest or RouterGroup as caller")
+	}
+}
