@@ -186,43 +186,16 @@ type Defaults struct {
 	GraphSegmentCallers    bool
 }
 
-func DefaultsForTier(tier string) Defaults {
-	switch tier {
-	case TierSmall:
-		return Defaults{
-			SearchKeywordWeight:    0.5,
-			SearchVectorWeight:     0.5,
-			ConventionsMinStrength: 0.15,
-			ConventionsInstanceCap: 5,
-			ConventionsTokenBudget: 8000,
-			BlastMaxHops:           5,
-			BlastMinConfidence:     0.3,
-			BlastResultCap:         200,
-			GraphSegmentCallers:    false,
-		}
-	case TierLarge:
-		return Defaults{
-			SearchKeywordWeight:    0.6,
-			SearchVectorWeight:     0.4,
-			ConventionsMinStrength: 0.35,
-			ConventionsInstanceCap: 5,
-			ConventionsTokenBudget: 5000,
-			BlastMaxHops:           2,
-			BlastMinConfidence:     0.6,
-			BlastResultCap:         75,
-			GraphSegmentCallers:    true,
-		}
-	default:
-		return Defaults{
-			SearchKeywordWeight:    0.5,
-			SearchVectorWeight:     0.5,
-			ConventionsMinStrength: 0.30,
-			ConventionsInstanceCap: 5,
-			ConventionsTokenBudget: 6000,
-			BlastMaxHops:           3,
-			BlastMinConfidence:     0.5,
-			BlastResultCap:         100,
-			GraphSegmentCallers:    true,
-		}
+func DefaultParams() Defaults {
+	return Defaults{
+		SearchKeywordWeight:    0.5,
+		SearchVectorWeight:     0.5,
+		ConventionsMinStrength: 0.15,
+		ConventionsInstanceCap: 5,
+		ConventionsTokenBudget: 8000,
+		BlastMaxHops:           5,
+		BlastMinConfidence:     0.3,
+		BlastResultCap:         200,
+		GraphSegmentCallers:    false,
 	}
 }

@@ -181,13 +181,7 @@ func RunWithOptions(opts RunOptions) error {
 		server.WithInstructions(serverInstructions),
 	)
 
-	prof := profile.Load(ctx, adapter.DB())
-	var defaults profile.Defaults
-	if prof != nil {
-		defaults = profile.DefaultsForTier(prof.Tier)
-	} else {
-		defaults = profile.DefaultsForTier(profile.TierMedium)
-	}
+	defaults := profile.DefaultParams()
 
 	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker, defaults: defaults}
 
@@ -1353,14 +1347,16 @@ func namespacePrefixFromPath(p string) string {
 }
 
 func queryHubSymbols(ctx context.Context, db *sql.DB) ([]mcpio.StatusHub, error) {
-	const q = `SELECT s.name, COUNT(e.id) AS in_degree, s.kind,
+	const q = `SELECT s.name, COUNT(DISTINCT e.file_id) AS reach, s.kind,
 		(SELECT e2.kind FROM sense_edges e2
 		 WHERE e2.target_id = s.id
 		 GROUP BY e2.kind ORDER BY COUNT(*) DESC LIMIT 1) AS dominant_edge
 	FROM sense_symbols s
 	JOIN sense_edges e ON e.target_id = s.id
 	GROUP BY s.id
-	ORDER BY in_degree DESC
+	ORDER BY
+	  CASE WHEN s.kind IN ('class','interface','module','type','struct','trait') THEN 0 ELSE 1 END,
+	  reach DESC
 	LIMIT 5`
 
 	rows, err := db.QueryContext(ctx, q)

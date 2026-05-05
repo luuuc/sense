@@ -41,56 +41,21 @@ func TestComputeTier(t *testing.T) {
 	}
 }
 
-func TestDefaultsForTier(t *testing.T) {
-	small := DefaultsForTier(TierSmall)
-	medium := DefaultsForTier(TierMedium)
-	large := DefaultsForTier(TierLarge)
-
-	if small.BlastMaxHops <= medium.BlastMaxHops {
-		t.Errorf("small BlastMaxHops (%d) should exceed medium (%d)", small.BlastMaxHops, medium.BlastMaxHops)
+func TestDefaultParams(t *testing.T) {
+	d := DefaultParams()
+	want := Defaults{
+		SearchKeywordWeight:    0.5,
+		SearchVectorWeight:     0.5,
+		ConventionsMinStrength: 0.15,
+		ConventionsInstanceCap: 5,
+		ConventionsTokenBudget: 8000,
+		BlastMaxHops:           5,
+		BlastMinConfidence:     0.3,
+		BlastResultCap:         200,
+		GraphSegmentCallers:    false,
 	}
-	if medium.BlastMaxHops <= large.BlastMaxHops {
-		t.Errorf("medium BlastMaxHops (%d) should exceed large (%d)", medium.BlastMaxHops, large.BlastMaxHops)
-	}
-	if small.BlastMinConfidence >= medium.BlastMinConfidence {
-		t.Errorf("small BlastMinConfidence (%.2f) should be less than medium (%.2f)", small.BlastMinConfidence, medium.BlastMinConfidence)
-	}
-	if small.BlastResultCap <= large.BlastResultCap {
-		t.Errorf("small BlastResultCap (%d) should exceed large (%d)", small.BlastResultCap, large.BlastResultCap)
-	}
-	if small.ConventionsMinStrength >= large.ConventionsMinStrength {
-		t.Errorf("small ConventionsMinStrength (%.2f) should be less than large (%.2f)", small.ConventionsMinStrength, large.ConventionsMinStrength)
-	}
-	if small.ConventionsTokenBudget <= large.ConventionsTokenBudget {
-		t.Errorf("small ConventionsTokenBudget (%d) should exceed large (%d)", small.ConventionsTokenBudget, large.ConventionsTokenBudget)
-	}
-	if large.SearchKeywordWeight <= medium.SearchKeywordWeight {
-		t.Errorf("large SearchKeywordWeight (%.2f) should exceed medium (%.2f)", large.SearchKeywordWeight, medium.SearchKeywordWeight)
-	}
-
-	// Unknown tier falls back to medium defaults.
-	unknown := DefaultsForTier("unknown")
-	if unknown != medium {
-		t.Errorf("unknown tier should return medium defaults")
-	}
-}
-
-func TestDefaultsForTierValues(t *testing.T) {
-	large := DefaultsForTier(TierLarge)
-	if large.BlastMaxHops != 2 {
-		t.Errorf("large BlastMaxHops = %d, want 2", large.BlastMaxHops)
-	}
-	if large.BlastMinConfidence != 0.6 {
-		t.Errorf("large BlastMinConfidence = %.2f, want 0.60", large.BlastMinConfidence)
-	}
-	if large.BlastResultCap != 75 {
-		t.Errorf("large BlastResultCap = %d, want 75", large.BlastResultCap)
-	}
-	if large.ConventionsMinStrength != 0.35 {
-		t.Errorf("large ConventionsMinStrength = %.2f, want 0.35", large.ConventionsMinStrength)
-	}
-	if large.ConventionsTokenBudget != 5000 {
-		t.Errorf("large ConventionsTokenBudget = %d, want 5000", large.ConventionsTokenBudget)
+	if d != want {
+		t.Errorf("DefaultParams() = %+v, want %+v", d, want)
 	}
 }
 
