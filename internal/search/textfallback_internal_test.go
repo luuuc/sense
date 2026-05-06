@@ -44,6 +44,23 @@ func TestParseRgOutputSkipsMalformed(t *testing.T) {
 	}
 }
 
+func TestParseRgOutputWithColonsInMatch(t *testing.T) {
+	output := "config.yaml:5:url: https://example.com:8080/path\n"
+	results := parseRgOutput(output, 10)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].File != "config.yaml" {
+		t.Errorf("File = %q, want %q", results[0].File, "config.yaml")
+	}
+	if results[0].Line != 5 {
+		t.Errorf("Line = %d, want 5", results[0].Line)
+	}
+	if results[0].Match != "url: https://example.com:8080/path" {
+		t.Errorf("Match = %q, want %q", results[0].Match, "url: https://example.com:8080/path")
+	}
+}
+
 func TestTextFallbackNotAvailable(t *testing.T) {
 	tf := &TextFallback{}
 	if tf.Available() {

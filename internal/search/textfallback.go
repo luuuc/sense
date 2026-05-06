@@ -44,8 +44,14 @@ func (tf *TextFallback) Available() bool {
 }
 
 // Search runs a scoped ripgrep against the given paths relative to
-// rootDir. For multi-word queries, files are ranked by how many query
-// terms they contain so that files matching more terms appear first.
+// rootDir. For multi-word queries, files are ranked by total match
+// count so that files matching more terms appear first.
+//
+// NOTE: paths are passed as positional args to rg. On very large repos
+// the argument list may approach ARG_MAX (typically 256 KB on Linux).
+// If this becomes an issue, switch to passing paths via a temporary
+// file with rg's --file flag or pipe them via stdin.
+//
 // Returns nil on any error — the fallback never surfaces errors.
 func (tf *TextFallback) Search(ctx context.Context, query, rootDir string, paths []string, limit int) []TextResult {
 	if !tf.Available() || len(paths) == 0 {
@@ -69,12 +75,12 @@ func (tf *TextFallback) Search(ctx context.Context, query, rootDir string, paths
 	return tf.searchMulti(ctx, words, rootDir, paths, limit)
 }
 
-// searchSingle handles single-word queries with a direct rg invocation.
 func (tf *TextFallback) searchSingle(ctx context.Context, word, rootDir string, paths []string, limit int) []TextResult {
 	args := []string{
 		"--no-heading", "--with-filename", "--line-number",
 		"--color", "never",
 		"--max-count", strconv.Itoa(textFallbackMaxPerFile),
+		"--max-filesize", "100K",
 		"--fixed-strings", "--ignore-case",
 		"-e", word,
 	}
@@ -82,38 +88,46 @@ func (tf *TextFallback) searchSingle(ctx context.Context, word, rootDir string, 
 	return tf.run(ctx, rootDir, args, limit)
 }
 
-// searchMulti ranks files by the number of distinct query terms they
-// contain, then retrieves match lines from the top files.
+// searchMulti ranks files by total match count across all query terms
+// (2 rg invocations instead of N+1), then retrieves match lines from
+// the top files.
 func (tf *TextFallback) searchMulti(ctx context.Context, words []string, rootDir string, paths []string, limit int) []TextResult {
-	fileCounts := map[string]int{}
+	args := []string{
+		"--count",
+		"--color", "never",
+		"--max-filesize", "100K",
+		"--fixed-strings", "--ignore-case",
+	}
 	for _, w := range words {
-		args := []string{
-			"--files-with-matches",
-			"--color", "never",
-			"--fixed-strings", "--ignore-case",
-			"-e", w,
-		}
-		args = append(args, paths...)
-		out := tf.runRaw(ctx, rootDir, args)
-		for _, f := range strings.Split(out, "\n") {
-			if f != "" {
-				fileCounts[f]++
-			}
-		}
+		args = append(args, "-e", w)
 	}
-
-	if len(fileCounts) == 0 {
-		return nil
-	}
+	args = append(args, paths...)
+	out := tf.runRaw(ctx, rootDir, args)
 
 	type scored struct {
 		file  string
 		count int
 	}
-	ranked := make([]scored, 0, len(fileCounts))
-	for f, c := range fileCounts {
-		ranked = append(ranked, scored{f, c})
+	var ranked []scored
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		idx := strings.LastIndexByte(line, ':')
+		if idx < 0 {
+			continue
+		}
+		count, err := strconv.Atoi(line[idx+1:])
+		if err != nil || count == 0 {
+			continue
+		}
+		ranked = append(ranked, scored{file: line[:idx], count: count})
 	}
+
+	if len(ranked) == 0 {
+		return nil
+	}
+
 	sort.Slice(ranked, func(i, j int) bool {
 		if ranked[i].count != ranked[j].count {
 			return ranked[i].count > ranked[j].count
@@ -126,21 +140,34 @@ func (tf *TextFallback) searchMulti(ctx context.Context, words []string, rootDir
 		topN = len(ranked)
 	}
 	topFiles := make([]string, topN)
+	fileRank := make(map[string]int, topN)
 	for i := range topN {
 		topFiles[i] = ranked[i].file
+		fileRank[ranked[i].file] = i
 	}
 
-	args := []string{
+	args = []string{
 		"--no-heading", "--with-filename", "--line-number",
 		"--color", "never",
 		"--max-count", strconv.Itoa(textFallbackMaxPerFile),
+		"--max-filesize", "100K",
 		"--fixed-strings", "--ignore-case",
+		"--sort", "none",
 	}
 	for _, w := range words {
 		args = append(args, "-e", w)
 	}
 	args = append(args, topFiles...)
-	return tf.run(ctx, rootDir, args, limit)
+	results := tf.run(ctx, rootDir, args, limit)
+
+	sort.Slice(results, func(i, j int) bool {
+		ri, rj := fileRank[results[i].File], fileRank[results[j].File]
+		if ri != rj {
+			return ri < rj
+		}
+		return results[i].Line < results[j].Line
+	})
+	return results
 }
 
 func (tf *TextFallback) run(ctx context.Context, rootDir string, args []string, limit int) []TextResult {

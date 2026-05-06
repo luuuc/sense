@@ -48,6 +48,36 @@ func TestTextFallbackMultiWordOR(t *testing.T) {
 	}
 }
 
+func TestTextFallbackMultiWordRanking(t *testing.T) {
+	tf := search.NewTextFallback()
+	if !tf.Available() {
+		t.Skip("rg not installed")
+	}
+
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "both.sql"), []byte("CASCADE\nREFERENCES\n"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "one.sql"), []byte("CASCADE\n"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "none.sql"), []byte("nothing here\n"), 0644)
+
+	results := tf.Search(context.Background(), "CASCADE REFERENCES", dir, []string{"both.sql", "one.sql", "none.sql"}, 10)
+	if len(results) == 0 {
+		t.Fatal("expected results, got none")
+	}
+	if results[0].File != "both.sql" {
+		t.Errorf("first result file = %q, want %q (file matching more terms should rank first)", results[0].File, "both.sql")
+	}
+
+	hasNone := false
+	for _, r := range results {
+		if r.File == "none.sql" {
+			hasNone = true
+		}
+	}
+	if hasNone {
+		t.Error("none.sql should not appear in results")
+	}
+}
+
 func TestTextFallbackScopesToProvidedFiles(t *testing.T) {
 	tf := search.NewTextFallback()
 	if !tf.Available() {
