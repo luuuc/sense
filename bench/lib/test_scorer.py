@@ -314,12 +314,12 @@ class TestScoreSetMatchPartialCredit(unittest.TestCase):
         self.assertEqual(len(result["partial_matches"]), 0)
         self.assertEqual(result["f1"], 0.0)
 
-    def test_one_to_one_pairing(self):
+    def test_n_to_one_pairing(self):
         response = {"symbols": ["PostCreator.create", "PostCreator#new_topic?"]}
         gt = {"symbols": ["PostCreator"]}
         result = score_set_match(response, gt, "symbols")
-        self.assertEqual(len(result["partial_matches"]), 1)
-        self.assertEqual(len(result["false_positives"]), 1)
+        self.assertEqual(len(result["partial_matches"]), 2)
+        self.assertEqual(len(result["false_positives"]), 0)
 
     def test_exact_match_preferred_over_partial(self):
         response = {"symbols": ["PostCreator", "PostCreator.create"]}
@@ -493,6 +493,43 @@ class TestScoreSetMatch(unittest.TestCase):
         self.assertEqual(result["true_positives"], ["a.go:Foo"])
         self.assertEqual(result["false_positives"], ["x.go:Extra"])
         self.assertEqual(result["false_negatives"], ["b.go:Missing"])
+
+
+class TestStrippedVsStrippedPartialMatch(unittest.TestCase):
+    def test_same_method_different_dot_class_same_file(self):
+        """Config.determineUri vs MicrometerPlugin.determineUri — same file, same method."""
+        response = {"affected": ["src/Plugin.kt:MicrometerPlugin.determineUri"]}
+        gt = {"affected": ["src/Plugin.kt:Config.determineUri"]}
+        result = score_set_match(response, gt, "affected")
+        self.assertEqual(len(result["partial_matches"]), 1)
+
+    def test_same_method_different_dot_class_different_file(self):
+        """Different files — no partial match for stripped-vs-stripped."""
+        response = {"affected": ["a.kt:Foo.run"]}
+        gt = {"affected": ["b.kt:Bar.run"]}
+        result = score_set_match(response, gt, "affected")
+        self.assertEqual(len(result["partial_matches"]), 0)
+
+    def test_ruby_hash_qualifier_no_stripped_match(self):
+        """Ruby # qualifier — class name is semantic, don't match stripped-vs-stripped."""
+        response = {"callers": ["svc.rb:ChannelArchiveService#create_post"]}
+        gt = {"callers": ["svc.rb:ArchiveValidationError#create_post"]}
+        result = score_set_match(response, gt, "callers")
+        self.assertEqual(len(result["partial_matches"]), 0)
+
+    def test_dotted_module_prefix_match(self):
+        """server.response-cache.web.WebResponseCache matches bare WebResponseCache."""
+        response = {"dead_symbols": ["server.response-cache.web.WebResponseCache"]}
+        gt = {"dead_symbols": ["WebResponseCache"]}
+        result = score_set_match(response, gt, "dead_symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
+
+    def test_dotted_prefix_both_sides(self):
+        """Both sides have dotted prefixes stripping to same bare name."""
+        response = {"dead_symbols": ["server.response-cache.WebResponseCache"]}
+        gt = {"dead_symbols": ["next.server.WebResponseCache"]}
+        result = score_set_match(response, gt, "dead_symbols")
+        self.assertEqual(len(result["partial_matches"]), 1)
 
 
 class TestScoreKeywordPresence(unittest.TestCase):

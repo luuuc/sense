@@ -253,6 +253,32 @@ def _strip_python_module_prefix(symbol):
     return symbol
 
 
+def _strip_rust_module_path(symbol):
+    """Strip Rust module path from a symbol.
+
+    Handles patterns like:
+    - axum::handler::Handler -> Handler
+    - crate::routing::Router -> Router
+    - self::service::Service -> Service
+    """
+    if "::" in symbol:
+        return symbol.rsplit("::", 1)[-1]
+    return symbol
+
+
+def _strip_dotted_prefix(symbol):
+    """Strip dotted module/namespace prefix to get bare symbol name.
+
+    Handles patterns like:
+    - server.response-cache.web.WebResponseCache -> WebResponseCache
+    - io.javalin.Javalin -> Javalin
+    - flask.app.Flask -> Flask
+    """
+    if "." in symbol:
+        return symbol.rsplit(".", 1)[-1]
+    return symbol
+
+
 _FILE_EXT_RE = re.compile(
     r"\.(ts|tsx|js|jsx|rb|py|go|rs|java|kt|scala|php|c|cpp|cs|h|hpp|swift|vue|svelte|ex|exs)$",
     re.IGNORECASE,
@@ -284,6 +310,10 @@ def normalize_caller(entry):
     """
     entry = entry.strip()
 
+    # Rust module paths (axum::handler::Handler) — treat as bare symbol
+    if "::" in entry and "/" not in entry and not _FILE_EXT_RE.search(entry.split("::")[0]):
+        return _strip_rust_module_path(entry)
+
     parts = entry.split()
     if len(parts) >= 2:
         file_part = parts[0].split(":")[0]
@@ -295,11 +325,11 @@ def normalize_caller(entry):
         if len(segments) >= 2 and segments[1].isdigit():
             symbol_part = segments[-1] if len(segments) > 2 else ""
         elif not _looks_like_path(segments[0]) and _looks_like_path(":".join(segments[1:])):
-            return _strip_python_module_prefix(_strip_bare_go_package(segments[0]))
+            return _strip_rust_module_path(_strip_python_module_prefix(_strip_bare_go_package(segments[0])))
     else:
-        return _strip_python_module_prefix(_strip_bare_go_package(entry))
+        return _strip_rust_module_path(_strip_python_module_prefix(_strip_bare_go_package(entry)))
 
-    symbol_part = symbol_part.rstrip(")]}")
+    symbol_part = symbol_part.rstrip(")]}").lstrip("([")
 
     if not symbol_part:
         return entry
@@ -336,42 +366,68 @@ def score_set_match(response_json, ground_truth, match_key):
     remaining_fp = set(fp)
     remaining_fn = set(fn)
 
-    for fp_entry in sorted(fp):
-        cls = _extract_class_prefix(fp_entry)
+    # N:1 partial matching: multiple tool entries can match the same GT entry.
+    # Each partial match gives 0.5 credit, capped at 1.0 per GT entry.
+    gt_partial_credit = {}  # fn_entry -> accumulated credit (capped at 1.0)
+
+    def _try_partial(fp_entry, fn_entry):
+        fp_file = fp_entry.rsplit(":", 1)[0] if ":" in fp_entry else None
+        fn_file = fn_entry.rsplit(":", 1)[0] if ":" in fn_entry else None
         fp_bare = fp_entry.rsplit(":", 1)[-1] if ":" in fp_entry else fp_entry
-        fp_stripped = _strip_class_qualifier(fp_bare)
-        for fn_entry in sorted(remaining_fn):
-            fn_symbol = fn_entry.rsplit(":", 1)[-1] if ":" in fn_entry else fn_entry
-            matched = False
-            if cls and (cls == fn_entry or cls == fn_symbol):
-                matched = True
-            elif fp_stripped != fp_bare and (fp_stripped == fn_entry or fp_stripped == fn_symbol):
-                matched = True
-            if matched:
-                partial_matches.append({"found": fp_entry, "expected": fn_entry})
-                remaining_fp.discard(fp_entry)
-                remaining_fn.discard(fn_entry)
-                break
-
-    for fn_entry in sorted(set(remaining_fn)):
-        cls = _extract_class_prefix(fn_entry)
         fn_bare = fn_entry.rsplit(":", 1)[-1] if ":" in fn_entry else fn_entry
+
+        cls = _extract_class_prefix(fp_entry)
+        fp_stripped = _strip_class_qualifier(fp_bare)
+        fn_symbol = fn_bare
+        if cls and (cls == fn_entry or cls == fn_symbol):
+            return True
+        if fp_stripped != fp_bare and (fp_stripped == fn_entry or fp_stripped == fn_symbol):
+            return True
+
+        fn_cls = _extract_class_prefix(fn_entry)
         fn_stripped = _strip_class_qualifier(fn_bare)
-        for fp_entry in sorted(remaining_fp):
-            fp_symbol = fp_entry.rsplit(":", 1)[-1] if ":" in fp_entry else fp_entry
-            matched = False
-            if cls and (cls == fp_entry or cls == fp_symbol):
-                matched = True
-            elif fn_stripped != fn_bare and (fn_stripped == fp_entry or fn_stripped == fp_symbol):
-                matched = True
-            if matched:
+        fp_symbol = fp_bare
+        if fn_cls and (fn_cls == fp_entry or fn_cls == fp_symbol):
+            return True
+        if fn_stripped != fn_bare and (fn_stripped == fp_entry or fn_stripped == fp_symbol):
+            return True
+
+        if (fp_stripped != fp_bare and fn_stripped != fn_bare
+                and fp_stripped == fn_stripped
+                and "#" not in fp_bare and "#" not in fn_bare):
+            if fp_file and fn_file:
+                return fp_file == fn_file
+            return True
+
+        fp_last = _strip_dotted_prefix(fp_bare)
+        fn_last = _strip_dotted_prefix(fn_bare)
+        if fp_last != fp_bare and fp_last == fn_bare:
+            return True
+        if fn_last != fn_bare and fn_last == fp_bare:
+            return True
+        if (fp_last != fp_bare and fn_last != fn_bare
+                and fp_last == fn_last):
+            return True
+
+        return False
+
+    for fp_entry in sorted(fp):
+        for fn_entry in sorted(remaining_fn):
+            if _try_partial(fp_entry, fn_entry):
                 partial_matches.append({"found": fp_entry, "expected": fn_entry})
                 remaining_fp.discard(fp_entry)
-                remaining_fn.discard(fn_entry)
+                gt_partial_credit[fn_entry] = min(
+                    1.0, gt_partial_credit.get(fn_entry, 0.0) + 0.5
+                )
+                if gt_partial_credit[fn_entry] >= 1.0:
+                    remaining_fn.discard(fn_entry)
                 break
 
-    partial_count = len(partial_matches)
-    weighted_tp = len(tp) + 0.5 * partial_count
+    # Entries with any partial credit are not false negatives
+    remaining_fn -= set(gt_partial_credit.keys())
+
+    total_partial_credit = sum(gt_partial_credit.values())
+    weighted_tp = len(tp) + total_partial_credit
 
     precision = weighted_tp / len(found) if found else 0.0
     recall = weighted_tp / len(expected) if expected else 0.0
