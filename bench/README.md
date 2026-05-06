@@ -190,6 +190,34 @@ Usage: report.sh [--format terminal|markdown|json] [--json] [--md]
 
 Generates comparison tables. The markdown report includes: metric legend, per-task tables ranked by score, token savings section, efficiency section, per-task best-tool rankings, aggregate, and global ranking.
 
+### `quick.sh` — Fast single run or smoke profile
+
+```
+Usage: quick.sh [single|smoke] [options]
+
+Modes:
+  single REPO TASK TOOL   Run one combination (default: gin conventions sense)
+  smoke [--tool t1,t2]    Run smoke profile: 3 repos × 3 tasks × all tools
+```
+
+Two modes:
+
+- **`single`** (default) — Run, score, and print one tool × repo × task combination. Good for iterating on a single task.
+- **`smoke`** — Run the smoke profile: **gin** (Go/small), **flask** (Python/medium), **nextjs** (TS/large) across the 3 `set_match` tasks (callers, blast-radius, dead-code). Covers 3 languages, 3 repo sizes, and the 3 most discriminating tasks. Prints a summary table at the end.
+
+The smoke profile reduces the full matrix from 490 runs to 63 (~87% less cost and time) while preserving the axes that differentiate tools: language diversity, repo scale, and GT difficulty. Use `--tool` to narrow further (e.g. `quick.sh smoke --tool sense,baseline` = 6 runs).
+
+```bash
+# One-off: test sense on gin/callers
+bash bench/quick.sh single gin callers sense
+
+# Smoke: all tools, 63 runs, summary table
+bash bench/quick.sh smoke
+
+# Smoke: two tools only, 6 runs
+bash bench/quick.sh smoke --tool sense,baseline
+```
+
 ### `gen-ground-truth.sh` — Generate ground truth
 
 ```
