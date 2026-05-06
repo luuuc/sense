@@ -621,8 +621,7 @@ func detectTesting(_ []symbolRow, edges []edgeRow, filePathByID map[int64]string
 	// If no tests edges, infer from file naming patterns
 	if len(testFileIDs) == 0 {
 		for fid, fp := range filePathByID {
-			base := path.Base(fp)
-			if strings.Contains(base, "_test") || strings.Contains(base, ".test.") || strings.HasPrefix(base, "test_") {
+			if mcpio.IsTestPath(fp) {
 				testFileIDs[fid] = struct{}{}
 			}
 		}
@@ -632,28 +631,66 @@ func detectTesting(_ []symbolRow, edges []edgeRow, filePathByID map[int64]string
 		return nil
 	}
 
-	// Detect naming pattern among test files
-	suffixes := map[string]int{}
+	type testPattern struct {
+		label   string // display label, e.g. "_test.go", "*Test.java"
+		matches func(base string) bool
+	}
+
+	// Classify each test file into a naming pattern.
+	// Keep in sync with IsTestPath — both must agree on what is a test file.
+	patterns := map[*testPattern]int{}
+	registry := []*testPattern{}
+
+	findOrCreate := func(label string, matches func(string) bool) *testPattern {
+		for _, p := range registry {
+			if p.label == label {
+				return p
+			}
+		}
+		p := &testPattern{label: label, matches: matches}
+		registry = append(registry, p)
+		return p
+	}
+
 	for fid := range testFileIDs {
 		fp, ok := filePathByID[fid]
 		if !ok {
 			continue
 		}
 		base := path.Base(fp)
+		var p *testPattern
 		if idx := strings.LastIndex(base, "_test"); idx >= 0 {
 			ext := base[idx:]
-			suffixes[ext]++
+			p = findOrCreate(ext, func(b string) bool { return strings.Contains(b, ext) })
 		} else if idx := strings.LastIndex(base, ".test."); idx >= 0 {
 			ext := base[idx:]
-			suffixes[ext]++
+			p = findOrCreate(ext, func(b string) bool { return strings.Contains(b, ext) })
 		} else if strings.HasPrefix(base, "test_") {
-			suffixes["test_*"]++
+			p = findOrCreate("test_*", func(b string) bool { return strings.HasPrefix(b, "test_") })
+		} else if dot := strings.LastIndex(base, "."); dot > 0 {
+			name := base[:dot]
+			fileExt := base[dot:]
+			switch {
+			case strings.HasSuffix(name, "Tests"):
+				p = findOrCreate("*Tests"+fileExt, func(b string) bool {
+					d := strings.LastIndex(b, ".")
+					return d > 0 && strings.HasSuffix(b[:d], "Tests") && b[d:] == fileExt
+				})
+			case strings.HasSuffix(name, "Test"):
+				p = findOrCreate("*Test"+fileExt, func(b string) bool {
+					d := strings.LastIndex(b, ".")
+					return d > 0 && strings.HasSuffix(b[:d], "Test") && b[d:] == fileExt
+				})
+			}
+		}
+		if p != nil {
+			patterns[p]++
 		}
 	}
 
 	total := len(testFileIDs)
 	var out []Convention
-	for suffix, count := range suffixes {
+	for p, count := range patterns {
 		if count < minInstances {
 			continue
 		}
@@ -663,15 +700,14 @@ func detectTesting(_ []symbolRow, edges []edgeRow, filePathByID map[int64]string
 			if !ok {
 				continue
 			}
-			base := path.Base(fp)
-			if strings.Contains(base, suffix) || (suffix == "test_*" && strings.HasPrefix(base, "test_")) {
-				ex = append(ex, Example{Name: base, Path: fp})
+			if p.matches(path.Base(fp)) {
+				ex = append(ex, Example{Name: path.Base(fp), Path: fp})
 			}
 		}
 		sortExamples(ex)
 		out = append(out, Convention{
 			Category:    CategoryTesting,
-			Description: fmt.Sprintf("Test files use *%s naming convention (%s — %d of %d test files)", suffix, topNames(ex), count, total),
+			Description: fmt.Sprintf("Test files use *%s naming convention (%s — %d of %d test files)", p.label, topNames(ex), count, total),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -1062,10 +1098,7 @@ func detectArchitectureLayers(symbols []symbolRow, edges []edgeRow, symbolByID m
 		if !ok {
 			continue
 		}
-		parts := strings.Split(fp, "/")
-		if len(parts) >= 2 {
-			symbolDir[s.id] = parts[len(parts)-2]
-		}
+		symbolDir[s.id] = layerName(fp)
 	}
 
 	type dirPair struct{ from, to string }
@@ -1132,6 +1165,20 @@ func detectArchitectureLayers(symbols []symbolRow, edges []edgeRow, symbolByID m
 		})
 	}
 	return out
+}
+
+// layerName returns the module-level directory for architecture layer detection.
+// For deep trees (4+ components, e.g. Maven multi-module), uses the first two
+// path components to avoid 75+ leaf-package boundaries. Provisional heuristic.
+func layerName(fp string) string {
+	parts := strings.Split(fp, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	if len(parts) >= 4 {
+		return parts[0] + "/" + parts[1]
+	}
+	return parts[len(parts)-2]
 }
 
 func countParents(symbols []symbolRow) int {

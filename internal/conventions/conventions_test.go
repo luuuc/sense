@@ -770,6 +770,131 @@ func TestDetectArchitectureLayers(t *testing.T) {
 	}
 }
 
+func TestDetectArchitectureLayersDeepTree(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	files := []model.File{
+		{Path: "javalin-ssl/src/main/kotlin/io/javalin/community/ssl/SslConfig.kt", Language: "kotlin", Hash: "s1", Symbols: 1, IndexedAt: now},
+		{Path: "javalin-ssl/src/main/kotlin/io/javalin/community/ssl/SslPlugin.kt", Language: "kotlin", Hash: "s2", Symbols: 1, IndexedAt: now},
+		{Path: "javalin-ssl/src/main/kotlin/io/javalin/community/ssl/CertLoader.kt", Language: "kotlin", Hash: "s3", Symbols: 1, IndexedAt: now},
+		{Path: "javalin-core/src/main/kotlin/io/javalin/http/Handler.kt", Language: "kotlin", Hash: "c1", Symbols: 1, IndexedAt: now},
+		{Path: "javalin-core/src/main/kotlin/io/javalin/http/Context.kt", Language: "kotlin", Hash: "c2", Symbols: 1, IndexedAt: now},
+		{Path: "javalin-core/src/main/kotlin/io/javalin/http/Router.kt", Language: "kotlin", Hash: "c3", Symbols: 1, IndexedAt: now},
+	}
+	fileIDs := make(map[string]int64)
+	for i := range files {
+		id, err := adapter.WriteFile(ctx, &files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileIDs[files[i].Path] = id
+	}
+
+	type symDef struct {
+		file, name, qualified, kind string
+	}
+	symDefs := []symDef{
+		{"javalin-ssl/src/main/kotlin/io/javalin/community/ssl/SslConfig.kt", "SslConfig", "SslConfig", "class"},
+		{"javalin-ssl/src/main/kotlin/io/javalin/community/ssl/SslPlugin.kt", "SslPlugin", "SslPlugin", "class"},
+		{"javalin-ssl/src/main/kotlin/io/javalin/community/ssl/CertLoader.kt", "CertLoader", "CertLoader", "class"},
+		{"javalin-core/src/main/kotlin/io/javalin/http/Handler.kt", "Handler", "Handler", "class"},
+		{"javalin-core/src/main/kotlin/io/javalin/http/Context.kt", "Context", "Context", "class"},
+		{"javalin-core/src/main/kotlin/io/javalin/http/Router.kt", "Router", "Router", "class"},
+	}
+	symIDs := make(map[string]int64)
+	for _, sd := range symDefs {
+		s := &model.Symbol{
+			FileID:    fileIDs[sd.file],
+			Name:      sd.name,
+			Qualified: sd.qualified,
+			Kind:      model.SymbolKind(sd.kind),
+			LineStart: 1,
+			LineEnd:   10,
+		}
+		id, err := adapter.WriteSymbol(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		symIDs[sd.qualified] = id
+	}
+
+	edgeDefs := []struct{ source, target, file string }{
+		{"SslConfig", "Handler", "javalin-ssl/src/main/kotlin/io/javalin/community/ssl/SslConfig.kt"},
+		{"SslPlugin", "Context", "javalin-ssl/src/main/kotlin/io/javalin/community/ssl/SslPlugin.kt"},
+		{"CertLoader", "Router", "javalin-ssl/src/main/kotlin/io/javalin/community/ssl/CertLoader.kt"},
+	}
+	for _, ed := range edgeDefs {
+		srcID := symIDs[ed.source]
+		tgtID := symIDs[ed.target]
+		fid := fileIDs[ed.file]
+		e := &model.Edge{
+			SourceID:   &srcID,
+			TargetID:   tgtID,
+			Kind:       model.EdgeKind("calls"),
+			FileID:     fid,
+			Confidence: 1.0,
+		}
+		if _, err := adapter.WriteEdge(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	arch := findByCategory(conventions, CategoryArchitecture)
+	for _, c := range arch {
+		if strings.Contains(c.Description, " ssl/") || strings.Contains(c.Description, " http/") {
+			t.Errorf("deep-tree layer should use module prefix, not leaf package: %s", c.Description)
+		}
+	}
+	foundModule := false
+	for _, c := range arch {
+		if strings.Contains(c.Description, "javalin-ssl/src") && strings.Contains(c.Description, "javalin-core/src") {
+			foundModule = true
+		}
+	}
+	if !foundModule {
+		t.Errorf("expected javalin-ssl/src → javalin-core/src boundary, got: %v", arch)
+	}
+}
+
+func TestLayerName(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"app/controllers/orders_controller.rb", "controllers"},
+		{"app/models/user.rb", "models"},
+		{"javalin-ssl/src/main/kotlin/io/javalin/community/ssl/SslConfig.kt", "javalin-ssl/src"},
+		{"javalin-core/src/main/kotlin/io/javalin/http/Handler.kt", "javalin-core/src"},
+		{"packages/auth/src/index.ts", "packages/auth"},
+		{"src/ProjectName/Models/User.cs", "src/ProjectName"},
+		{"internal/extract/ruby/extractor.go", "internal/extract"},
+		{"src/main/App.java", "main"},
+		{"main.go", ""},
+		{"cmd/app/main.go", "app"},
+	}
+	for _, tt := range tests {
+		if got := layerName(tt.path); got != tt.want {
+			t.Errorf("layerName(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestDetectDesignPatternsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	senseDir := filepath.Join(dir, ".sense")
@@ -951,6 +1076,83 @@ func TestDetectGoMiddlewareFactories(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected Middleware factories convention to be detected")
+	}
+}
+
+func TestDetectTestingJavaKotlinFallback(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	files := []model.File{
+		{Path: "src/main/java/com/example/User.java", Language: "java", Hash: "j1", Symbols: 1, IndexedAt: now},
+		{Path: "src/main/java/com/example/Order.java", Language: "java", Hash: "j2", Symbols: 1, IndexedAt: now},
+		{Path: "src/main/java/com/example/Service.java", Language: "java", Hash: "j3", Symbols: 1, IndexedAt: now},
+		{Path: "src/test/java/com/example/UserTest.java", Language: "java", Hash: "jt1", Symbols: 1, IndexedAt: now},
+		{Path: "src/test/java/com/example/OrderTest.java", Language: "java", Hash: "jt2", Symbols: 1, IndexedAt: now},
+		{Path: "src/test/java/com/example/ServiceTest.java", Language: "java", Hash: "jt3", Symbols: 1, IndexedAt: now},
+		{Path: "src/test/kotlin/com/example/ConfigTests.kt", Language: "kotlin", Hash: "kt1", Symbols: 1, IndexedAt: now},
+	}
+	fileIDs := make(map[string]int64)
+	for i := range files {
+		id, err := adapter.WriteFile(ctx, &files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileIDs[files[i].Path] = id
+	}
+
+	syms := []struct {
+		file, name, qualified, kind string
+	}{
+		{"src/main/java/com/example/User.java", "User", "com.example.User", "class"},
+		{"src/main/java/com/example/Order.java", "Order", "com.example.Order", "class"},
+		{"src/main/java/com/example/Service.java", "Service", "com.example.Service", "class"},
+		{"src/test/java/com/example/UserTest.java", "UserTest", "com.example.UserTest", "class"},
+		{"src/test/java/com/example/OrderTest.java", "OrderTest", "com.example.OrderTest", "class"},
+		{"src/test/java/com/example/ServiceTest.java", "ServiceTest", "com.example.ServiceTest", "class"},
+		{"src/test/kotlin/com/example/ConfigTests.kt", "ConfigTests", "com.example.ConfigTests", "class"},
+	}
+	for _, sd := range syms {
+		s := &model.Symbol{
+			FileID:    fileIDs[sd.file],
+			Name:      sd.name,
+			Qualified: sd.qualified,
+			Kind:      model.SymbolKind(sd.kind),
+			LineStart: 1,
+			LineEnd:   10,
+		}
+		if _, err := adapter.WriteSymbol(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	testingConvs := findByCategory(conventions, CategoryTesting)
+	if len(testingConvs) == 0 {
+		t.Fatal("expected testing conventions for Java/Kotlin files, got none")
+	}
+	found := false
+	for _, c := range testingConvs {
+		if strings.Contains(c.Description, "Test") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected *Test naming convention, got: %v", testingConvs)
 	}
 }
 
