@@ -352,3 +352,31 @@ func TestBuildGraphResponseTemporalCountsInMetrics(t *testing.T) {
 		t.Errorf("EstimatedFileReadsAvoided = %d, want 1", resp.SenseMetrics.EstimatedFileReadsAvoided)
 	}
 }
+
+func TestIsTestPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"internal/foo/foo_test.go", true},
+		{"src/app.test.ts", true},
+		{"test/helpers.rb", true},
+		{"tests/unit/auth.py", true},
+		{"spec/models/user_spec.rb", true},
+		{"internal/testdata/fixture.json", true},
+		{"src/main/java/com/example/UserTest.java", true},
+		{"src/test/kotlin/TestUser.kt", true},
+		{"src/test/java/UserTests.java", true},
+		{"lib/test_auth.py", true},
+		{"src/main/java/com/example/User.java", false},
+		{"src/main/java/com/example/TestUtils.java", false},
+		{"src/main/java/com/example/Contest.java", false},
+		{"internal/foo/foo.go", false},
+		{"lib/auth.rb", false},
+	}
+	for _, tt := range tests {
+		if got := IsTestPath(tt.path); got != tt.want {
+			t.Errorf("IsTestPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}

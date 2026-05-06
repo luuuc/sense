@@ -354,12 +354,29 @@ func buildTestCallerSummary(callers []CallEdgeRef) *TestCallerSummary {
 // IsTestPath returns true if the file path matches common test
 // directory or filename conventions.
 func IsTestPath(path string) bool {
-	return strings.Contains(path, "_test.") ||
+	if strings.Contains(path, "_test.") ||
+		strings.Contains(path, ".test.") ||
 		strings.Contains(path, "/test/") ||
 		strings.Contains(path, "/tests/") ||
 		strings.Contains(path, "/testdata/") ||
 		strings.Contains(path, "/spec/") ||
 		strings.HasPrefix(path, "test/") ||
 		strings.HasPrefix(path, "tests/") ||
-		strings.HasPrefix(path, "spec/")
+		strings.HasPrefix(path, "spec/") {
+		return true
+	}
+	base := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		base = path[i+1:]
+	}
+	if strings.HasPrefix(base, "test_") {
+		return true
+	}
+	if dot := strings.LastIndex(base, "."); dot > 0 {
+		name := base[:dot]
+		if strings.HasSuffix(name, "Test") || strings.HasSuffix(name, "Tests") {
+			return true
+		}
+	}
+	return false
 }
