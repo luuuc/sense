@@ -1081,9 +1081,6 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		},
 	}
 	for _, c := range results {
-		if c.Category == conventions.CategoryStructure || c.Category == conventions.CategoryNaming {
-			continue
-		}
 		resp.Conventions = append(resp.Conventions, mcpio.ConventionEntry{
 			Category:       string(c.Category),
 			Description:    c.Description,

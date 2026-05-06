@@ -127,11 +127,16 @@ func TestHandleConventions(t *testing.T) {
 		t.Error("expected key_symbols in response")
 	}
 
-	// Structure and naming conventions should be filtered out
+	// Structure and naming conventions should be included
+	var hasStructOrNaming bool
 	for _, c := range resp.Conventions {
 		if c.Category == "structure" || c.Category == "naming" {
-			t.Errorf("structure/naming convention should be filtered: %s", c.Description)
+			hasStructOrNaming = true
+			break
 		}
+	}
+	if !hasStructOrNaming {
+		t.Error("expected structure or naming conventions in response")
 	}
 }
 
