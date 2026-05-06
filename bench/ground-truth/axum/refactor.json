@@ -1,5 +1,20 @@
 {
-  "keywords": [],
-  "status": "stub",
-  "_note": "Stub — populate with verified keywords before scoring"
+  "symbol": "Router.route",
+  "keywords": [
+    "PathRouter",
+    "MethodRouter",
+    "validate_path",
+    "panic_on_err",
+    "tap_inner",
+    "merge_for_path",
+    "nest",
+    "Endpoint",
+    "routing/tests/mod.rs",
+    "routing/tests/nest.rs",
+    "routing/tests/merge.rs",
+    "#[track_caller]",
+    "matchit"
+  ],
+  "_note": "Router.route delegates to PathRouter.route which validates the path, checks for duplicate routes (merging MethodRouters via merge_for_path), then inserts into the matchit-based Node. Callers: Router.route itself (public API, uses tap_inner macro + panic_on_err), PathRouter.merge (re-routes during merge), PathRouter.nest (re-routes nested paths). Test coverage is extensive in routing/tests/mod.rs (87 .route calls), routing/tests/nest.rs (41 calls), and routing/tests/merge.rs (40 calls). Risks: panics on invalid paths (validate_path enforces leading slash and v07 checks), changing the signature affects all examples and every builder chain. The #[track_caller] annotation is used for better panic locations.",
+  "status": "verified"
 }
