@@ -46,8 +46,6 @@ matches_filter() {
 
 log() { echo "[gen-gt] $*" >&2; }
 
-export GT_EXCLUDE_DIRS="--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor --exclude-dir=site-packages --exclude-dir=__pycache__ --exclude-dir=tmp --exclude-dir=log --exclude-dir=.bench-crg-venv --exclude-dir=.bench-sense-venv --exclude-dir=.bench-grepai-venv"
-
 repo_language() {
   local repo="$1"
   python3 -c "
@@ -63,485 +61,56 @@ repo_commit() {
   (cd "$rp" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 }
 
-# --- Callers: grep for symbol usage across the codebase ---
+# --- Per-repo generator dispatch ---
 
-gen_callers() {
-  local repo="$1" rp="$2" symbol="$3" lang="$4" commit="$5"
-  log "  callers: grepping for '$symbol' in $repo ($lang)..."
+gen_scored_task() {
+  local task="$1" repo="$2" rp="$3" var_value="$4" lang="$5" commit="$6"
 
-  local outfile="$GT_DIR/$repo/callers.json"
+  # Map task name to Python module name (blast-radius -> blast_radius)
+  local module_name="${task//-/_}"
+  local generator="$LIB_DIR/gt/$repo/${module_name}.py"
+
+  if [[ ! -f "$generator" ]]; then
+    log "  ERROR: no generator at $generator"
+    return 1
+  fi
+
+  local outfile="$GT_DIR/$repo/$task.json"
   mkdir -p "$(dirname "$outfile")"
 
-  python3 - "$rp" "$symbol" "$lang" "$commit" "$repo" > "$outfile" << 'PYEOF'
-import json, os, re, subprocess, sys
+  log "  $task: running $generator..."
+  python3 "$generator" "$rp" "$var_value" "$lang" "$commit" "$repo" > "$outfile"
 
-repo_path, symbol, lang, commit, repo_name = sys.argv[1:6]
+  # Extract and log count
+  local match_key=""
+  case "$task" in
+    callers) match_key="callers" ;;
+    blast-radius) match_key="affected" ;;
+    dead-code) match_key="dead_symbols" ;;
+  esac
 
-# Build grep pattern based on language and symbol format
-parts = re.split(r'[#.]', symbol)
-base_name = parts[-1]  # method/function name
-class_name = parts[0] if len(parts) > 1 else None
-
-exclude_dirs = os.environ.get("GT_EXCLUDE_DIRS", "").split()
-
-# Grep for the symbol name
-cmd = ["grep", "-rnw", "--include=*.rb", "--include=*.py", "--include=*.go",
-       "--include=*.ts", "--include=*.tsx", "--include=*.js", "--include=*.jsx",
-       "--include=*.java", "--include=*.kt", "--include=*.rs"] + exclude_dirs + [base_name, repo_path]
-result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_path)
-
-callers = []
-seen = set()
-_file_cache = {}
-for line in result.stdout.splitlines():
-    # Parse grep output: file:line:content
-    m = re.match(r'^(.+?):(\d+):(.+)$', line)
-    if not m:
-        continue
-    filepath = m.group(1)
-    lineno = m.group(2)
-    content = m.group(3).strip()
-
-    # Make path relative to repo
-    if filepath.startswith(repo_path):
-        filepath = filepath[len(repo_path):].lstrip("/")
-
-    # Skip the definition itself (heuristic)
-    esc_name = re.escape(base_name)
-    if re.search(r'\b(def|func|class|type|interface)\s+' + esc_name + r'\b', content):
-        continue
-    # Go receiver methods: func (recv) Name(
-    if re.search(r'\bfunc\s*\([^)]*\)\s+' + esc_name + r'\b', content):
-        continue
-    # Ruby class methods: def self.name
-    if re.search(r'\bdef\s+self\.' + esc_name + r'\b', content):
-        continue
-    # Python async def
-    if re.search(r'\basync\s+def\s+' + esc_name + r'\b', content):
-        continue
-
-    # When symbol is compound (e.g., TopicCreator#create), require class_name in the file
-    if class_name:
-        if filepath not in _file_cache:
-            try:
-                with open(os.path.join(repo_path, filepath)) as f:
-                    _file_cache[filepath] = f.read()
-            except IOError:
-                _file_cache[filepath] = ""
-        if not re.search(r'\b' + re.escape(class_name) + r'\b', _file_cache[filepath]):
-            continue
-
-    # Skip comments and string-only matches
-    stripped = content.lstrip()
-    if stripped.startswith("//") or stripped.startswith("#") or stripped.startswith("*") or stripped.startswith("/*"):
-        continue
-    # Skip if symbol only appears inside string literals on this line
-    no_strings = re.sub(r'''(["'`]).*?\1''', '', content)
-    if not re.search(r'\b' + esc_name + r'\b', no_strings):
-        continue
-
-    # Try to extract the enclosing function/method name
-    caller_name = None
-
-    if lang == "python":
-        # Look for def/class above this line
-        try:
-            with open(os.path.join(repo_path, filepath)) as f:
-                lines = f.readlines()
-            for i in range(int(lineno)-1, -1, -1):
-                dm = re.match(r'\s*(def|class)\s+(\w+)', lines[i])
-                if dm:
-                    caller_name = dm.group(2)
-                    break
-        except (IOError, IndexError):
-            pass
-
-    elif lang == "go":
-        try:
-            with open(os.path.join(repo_path, filepath)) as f:
-                lines = f.readlines()
-            for i in range(int(lineno)-1, -1, -1):
-                fm = re.match(r'^func\s+(?:\((\w+)\s+\*?(\w+)\)\s+)?(\w+)', lines[i])
-                if fm:
-                    receiver_type = fm.group(2)
-                    func_name = fm.group(3)
-                    caller_name = f"{receiver_type}.{func_name}" if receiver_type else func_name
-                    break
-        except (IOError, IndexError):
-            pass
-
-    elif lang == "ruby":
-        try:
-            with open(os.path.join(repo_path, filepath)) as f:
-                lines = f.readlines()
-            cls_stack = []
-            method_name = None
-            for i in range(int(lineno)):
-                cm = re.match(r'\s*(class|module)\s+(\S+)', lines[i])
-                if cm:
-                    cls_stack.append(cm.group(2).split('<')[0].strip())
-                mm = re.match(r'\s*def\s+(\w+[?!]?)', lines[i])
-                if mm:
-                    method_name = mm.group(1)
-            if method_name:
-                caller_name = method_name
-                if cls_stack:
-                    caller_name = f"{cls_stack[-1]}#{method_name}"
-            elif cls_stack:
-                caller_name = cls_stack[-1]
-        except (IOError, IndexError):
-            pass
-
-    elif lang == "typescript":
-        try:
-            with open(os.path.join(repo_path, filepath)) as f:
-                lines = f.readlines()
-            for i in range(int(lineno)-1, -1, -1):
-                fm = re.match(r'\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-                fm = re.match(r'\s*(?:export\s+)?(?:class|interface)\s+(\w+)', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-        except (IOError, IndexError):
-            pass
-
-    elif lang == "java":
-        try:
-            with open(os.path.join(repo_path, filepath)) as f:
-                lines = f.readlines()
-            for i in range(int(lineno)-1, -1, -1):
-                fm = re.match(r'\s*(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)?(\w+)\s*\(', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-                fm = re.match(r'\s*(?:public\s+)?(?:abstract\s+)?class\s+(\w+)', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-        except (IOError, IndexError):
-            pass
-
-    elif lang == "kotlin":
-        try:
-            with open(os.path.join(repo_path, filepath)) as f:
-                lines = f.readlines()
-            for i in range(int(lineno)-1, -1, -1):
-                fm = re.match(r'\s*(?:(?:public|private|internal|protected)\s+)?(?:suspend\s+)?fun\s+(\w+)', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-                fm = re.match(r'\s*(?:(?:public|private|internal|protected)\s+)?(?:data\s+)?(?:class|interface|object)\s+(\w+)', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-        except (IOError, IndexError):
-            pass
-
-    elif lang == "rust":
-        try:
-            with open(os.path.join(repo_path, filepath)) as f:
-                lines = f.readlines()
-            for i in range(int(lineno)-1, -1, -1):
-                fm = re.match(r'\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-                fm = re.match(r'\s*(?:pub\s+)?(?:struct|enum|trait|impl)\s+(\w+)', lines[i])
-                if fm:
-                    caller_name = fm.group(1)
-                    break
-        except (IOError, IndexError):
-            pass
-
-    if caller_name:
-        entry = f"{filepath}:{caller_name}"
-    else:
-        entry = f"{filepath}:{lineno}"
-
-    if entry not in seen:
-        seen.add(entry)
-        callers.append(entry)
-
-output = {
-    "symbol": symbol,
-    "callers": sorted(callers),
-    "_note": f"Generated by grep across {repo_name} at {commit}. Verified independently of any indexing tool.",
-    "_generated_by": "gen-ground-truth.sh",
-    "status": "verified"
-}
-print(json.dumps(output, indent=2))
-PYEOF
-
-  local count
-  count=$(python3 -c "import json; print(len(json.load(open('$outfile')).get('callers',[])))")
-  log "  callers: found $count callers → $outfile"
-  if [[ "$count" -gt 500 ]]; then
-    log "  ERROR: callers count ($count) exceeds threshold (500) — GT is likely contaminated"
-    rm -f "$outfile"
-    return 1
+  if [[ -n "$match_key" ]]; then
+    local count
+    count=$(python3 -c "import json; print(len(json.load(open('$outfile')).get('$match_key',[])))")
+    log "  $task: found $count entries → $outfile"
   fi
 }
 
-# --- Blast radius: grep for symbol references ---
-
-gen_blast_radius() {
-  local repo="$1" rp="$2" symbol="$3" lang="$4" commit="$5"
-  log "  blast-radius: grepping for '$symbol' references in $repo..."
-
-  local outfile="$GT_DIR/$repo/blast-radius.json"
-  mkdir -p "$(dirname "$outfile")"
-
-  python3 - "$rp" "$symbol" "$lang" "$commit" "$repo" > "$outfile" << 'PYEOF'
-import json, os, re, subprocess, sys
-
-repo_path, symbol, lang, commit, repo_name = sys.argv[1:6]
-
-exclude_dirs = os.environ.get("GT_EXCLUDE_DIRS", "").split()
-
-# Grep for the symbol
-cmd = ["grep", "-rln", "--include=*.rb", "--include=*.py", "--include=*.go",
-       "--include=*.ts", "--include=*.tsx", "--include=*.js", "--include=*.jsx",
-       "--include=*.java", "--include=*.kt", "--include=*.rs"] + exclude_dirs + [symbol, repo_path]
-result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_path)
-
-affected = []
-seen_files = set()
-for line in result.stdout.splitlines():
-    filepath = line.strip()
-    if filepath.startswith(repo_path):
-        filepath = filepath[len(repo_path):].lstrip("/")
-    if filepath in seen_files:
-        continue
-    seen_files.add(filepath)
-
-    # Extract the primary symbol defined in this file
-    file_symbol = None
-    try:
-        full_path = os.path.join(repo_path, filepath)
-        size = os.path.getsize(full_path)
-        with open(full_path) as f:
-            content = f.read() if size <= 102400 else f.read(102400)
-
-        if lang == "python":
-            m = re.search(r'^class\s+(\w+)', content, re.MULTILINE)
-            if m: file_symbol = m.group(1)
-            else:
-                m = re.search(r'^def\s+(\w+)', content, re.MULTILINE)
-                if m: file_symbol = m.group(1)
-        elif lang == "go":
-            m = re.search(r'^type\s+(\w+)\s+struct', content, re.MULTILINE)
-            if m: file_symbol = m.group(1)
-            else:
-                m = re.search(r'^func\s+(\w+)', content, re.MULTILINE)
-                if m: file_symbol = m.group(1)
-        elif lang == "ruby":
-            m = re.search(r'^\s*class\s+(\S+)', content, re.MULTILINE)
-            if m: file_symbol = m.group(1).split('<')[0].strip()
-            else:
-                m = re.search(r'^\s*module\s+(\S+)', content, re.MULTILINE)
-                if m: file_symbol = m.group(1)
-        elif lang == "typescript":
-            m = re.search(r'(?:export\s+)?(?:class|interface|type)\s+(\w+)', content)
-            if m: file_symbol = m.group(1)
-            else:
-                m = re.search(r'(?:export\s+)?function\s+(\w+)', content)
-                if m: file_symbol = m.group(1)
-        elif lang == "java":
-            m = re.search(r'(?:public\s+)?(?:abstract\s+)?class\s+(\w+)', content)
-            if m: file_symbol = m.group(1)
-            else:
-                m = re.search(r'(?:public\s+)?interface\s+(\w+)', content)
-                if m: file_symbol = m.group(1)
-        elif lang == "rust":
-            m = re.search(r'(?:pub\s+)?(?:struct|enum|trait)\s+(\w+)', content)
-            if m: file_symbol = m.group(1)
-            else:
-                m = re.search(r'(?:pub\s+)?(?:async\s+)?fn\s+(\w+)', content)
-                if m: file_symbol = m.group(1)
-    except IOError:
-        pass
-
-    entry = f"{filepath}:{file_symbol}" if file_symbol else filepath
-    affected.append(entry)
-
-output = {
-    "symbol": symbol,
-    "affected": sorted(affected),
-    "_note": f"Files referencing '{symbol}' found by grep -rln across {repo_name} at {commit}. Verified independently of any indexing tool.",
-    "_generated_by": "gen-ground-truth.sh",
-    "status": "verified"
-}
-print(json.dumps(output, indent=2))
-PYEOF
-
-  local count
-  count=$(python3 -c "import json; print(len(json.load(open('$outfile')).get('affected',[])))")
-  log "  blast-radius: found $count affected files → $outfile"
-  if [[ "$count" -gt 2500 ]]; then
-    log "  ERROR: blast-radius count ($count) exceeds threshold (2500) — GT is likely contaminated"
-    rm -f "$outfile"
-    return 1
-  fi
-}
-
-# --- Dead code: find symbols defined but never referenced elsewhere ---
-
-gen_dead_code() {
-  local repo="$1" rp="$2" domain="$3" lang="$4" commit="$5"
-  log "  dead-code: scanning '$domain' in $repo for unreferenced symbols..."
-
-  local outfile="$GT_DIR/$repo/dead-code.json"
-  mkdir -p "$(dirname "$outfile")"
-
-  python3 - "$rp" "$domain" "$lang" "$commit" "$repo" > "$outfile" << 'PYEOF'
-import json, os, re, subprocess, sys
-
-repo_path, domain, lang, commit, repo_name = sys.argv[1:6]
-
-domain_path = os.path.join(repo_path, domain)
-if not os.path.isdir(domain_path):
-    print(json.dumps({"domain": domain, "dead_symbols": [], "status": "stub",
-                       "_note": f"Domain {domain} not found"}))
-    sys.exit(0)
-
-# Collect defined symbols in the domain
-symbols = []
-
-for root, dirs, files in os.walk(domain_path):
-    for fname in files:
-        filepath = os.path.join(root, fname)
-        relpath = os.path.relpath(filepath, repo_path)
-
-        ext = os.path.splitext(fname)[1]
-        if ext not in {'.py', '.go', '.rb', '.ts', '.tsx', '.js', '.jsx', '.java', '.kt', '.rs'}:
-            continue
-        if '_test.' in fname or 'test_' in fname or '_spec.' in fname or 'spec_' in fname or fname.endswith('Test.java') or fname.endswith('Tests.java'):
-            continue
-
-        try:
-            with open(filepath) as f:
-                content = f.read()
-        except IOError:
-            continue
-
-        if lang == "python":
-            for m in re.finditer(r'^(?:class|def)\s+(\w+)', content, re.MULTILINE):
-                symbols.append((m.group(1), relpath))
-        elif lang == "go":
-            for m in re.finditer(r'^(?:func|type)\s+(\w+)', content, re.MULTILINE):
-                name = m.group(1)
-                if name[0].isupper():
-                    symbols.append((name, relpath))
-        elif lang == "ruby":
-            for m in re.finditer(r'^\s*(?:def|class|module)\s+(\w+[?!]?)', content, re.MULTILINE):
-                symbols.append((m.group(1), relpath))
-        elif lang in ("typescript", "javascript"):
-            for m in re.finditer(r'(?:export\s+)?(?:function|class|interface|type|const|let|var)\s+(\w+)', content):
-                symbols.append((m.group(1), relpath))
-        elif lang == "java":
-            for m in re.finditer(r'(?:public|private|protected)?\s*(?:static\s+)?(?:class|interface|enum)\s+(\w+)', content):
-                symbols.append((m.group(1), relpath))
-            for m in re.finditer(r'(?:public|private|protected)\s+(?:static\s+)?(?:\w+\s+)(\w+)\s*\(', content):
-                symbols.append((m.group(1), relpath))
-        elif lang == "kotlin":
-            for m in re.finditer(r'(?:public|private|internal|protected)?\s*(?:data\s+)?(?:class|interface|object|enum)\s+(\w+)', content):
-                symbols.append((m.group(1), relpath))
-            for m in re.finditer(r'(?:public|private|internal|protected)?\s*(?:suspend\s+)?fun\s+(\w+)', content):
-                symbols.append((m.group(1), relpath))
-        elif lang == "rust":
-            for m in re.finditer(r'(?:pub\s+)?(?:struct|enum|trait)\s+(\w+)', content):
-                symbols.append((m.group(1), relpath))
-            for m in re.finditer(r'(?:pub\s+)?(?:async\s+)?fn\s+(\w+)', content):
-                name = m.group(1)
-                if name[0].islower() and name.startswith('_'):
-                    continue
-                symbols.append((name, relpath))
-
-# Check each symbol for references outside its defining file.
-# Single-pass: grep once for all symbols, then count per-symbol file hits.
-import tempfile
-
-unique_names = sorted({s[0] for s in symbols if len(s[0]) >= 3})
-sym_ref_files = {name: set() for name in unique_names}
-
-if unique_names:
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as pf:
-        for name in unique_names:
-            pf.write(name + '\n')
-        patterns_path = pf.name
-
-    exclude_dirs = os.environ.get("GT_EXCLUDE_DIRS", "").split()
-
-    # Single grep pass: find all files containing any of the symbols
-    cmd = ["grep", "-rlw", "--include=*.rb", "--include=*.py", "--include=*.go",
-           "--include=*.ts", "--include=*.tsx", "--include=*.js", "--include=*.jsx",
-           "--include=*.java", "--include=*.kt", "--include=*.rs"] + exclude_dirs + ["-f", patterns_path, repo_path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    candidate_files = []
-    for line in result.stdout.splitlines():
-        fp = line.strip()
-        if fp.startswith(repo_path):
-            fp = fp[len(repo_path):].lstrip("/")
-        if '_test.' in fp or 'test_' in fp or '_spec.' in fp or 'spec_' in fp or fp.endswith('Test.java') or fp.endswith('Tests.java'):
-            continue
-        candidate_files.append(fp)
-
-    # For each file, tokenize into words and set-intersect with symbol names
-    name_set = set(unique_names)
-    for fp in candidate_files:
-        try:
-            with open(os.path.join(repo_path, fp)) as f:
-                content = f.read()
-        except IOError:
-            continue
-        file_words = set(re.findall(r'\w+', content))
-        for name in file_words & name_set:
-            sym_ref_files[name].add(fp)
-
-    os.unlink(patterns_path)
-
-dead = []
-for sym_name, sym_file in symbols:
-    if len(sym_name) < 3:
-        continue
-    if len(sym_ref_files.get(sym_name, set())) <= 1:
-        dead.append(sym_name)
-
-output = {
-    "domain": domain,
-    "dead_symbols": sorted(set(dead)),
-    "_note": f"Symbols in {domain} referenced only in their defining file. Found by grep -w across {repo_name} at {commit}. Excludes test files. Verified independently of any indexing tool.",
-    "_generated_by": "gen-ground-truth.sh",
-    "status": "verified"
-}
-print(json.dumps(output, indent=2))
-PYEOF
-
-  local count
-  count=$(python3 -c "import json; print(len(json.load(open('$outfile')).get('dead_symbols',[])))")
-  log "  dead-code: found $count dead symbols → $outfile"
-}
-
-# --- Semantic search: human-curated stubs (cannot be grep-generated) ---
+# --- Semantic search: human-curated (cannot be grep-generated) ---
 
 gen_semantic_search() {
-  local repo="$1" rp="$2" concept="$3" lang="$4" commit="$5"
+  local repo="$1" rp="$2"
   local outfile="$GT_DIR/$repo/semantic-search.json"
 
   if [[ -f "$outfile" ]]; then
     local existing_gen
     existing_gen=$(python3 -c "import json; print(json.load(open('$outfile')).get('_generated_by',''))" 2>/dev/null || echo "")
     if [[ "$existing_gen" != "gen-ground-truth.sh" ]]; then
-      log "  semantic-search: keeping existing hand-curated ground truth (review manually for Sense bias)"
+      log "  semantic-search: keeping existing hand-curated ground truth"
       return
     fi
   fi
   log "  semantic-search: SKIPPED — requires human curation, not generatable by grep"
-  log "  semantic-search: review $outfile manually for Sense-sourced bias"
 }
 
 # --- Qualitative tasks: keep existing keywords (not generatable) ---
@@ -564,7 +133,6 @@ for taskfile in "$TASKS_DIR"/*.yaml; do
   matches_filter "$task" "$FILTER_TASKS" || continue
 
   task_json=$(python3 "$LIB_DIR/parse_task.py" "$taskfile")
-  scoring_type=$(echo "$task_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('scoring',{}).get('type',''))")
 
   for repo in $(echo "$task_json" | python3 -c "import sys,json; print(' '.join(json.load(sys.stdin).get('repos',{}).keys()))"); do
     matches_filter "$repo" "$FILTER_REPOS" || continue
@@ -592,20 +160,24 @@ else:
 ")
 
     case "$task" in
-      callers)         gen_callers "$repo" "$rp" "$var_value" "$lang" "$commit" || FAILURES=$((FAILURES+1)) ;;
-      blast-radius)    gen_blast_radius "$repo" "$rp" "$var_value" "$lang" "$commit" || FAILURES=$((FAILURES+1)) ;;
-      dead-code)       gen_dead_code "$repo" "$rp" "$var_value" "$lang" "$commit" ;;
-      semantic-search) gen_semantic_search "$repo" "$rp" "$var_value" "$lang" "$commit" ;;
-      *)               gen_qualitative "$task" "$repo" ;;
+      callers|blast-radius|dead-code)
+        gen_scored_task "$task" "$repo" "$rp" "$var_value" "$lang" "$commit" || FAILURES=$((FAILURES+1))
+        ;;
+      semantic-search)
+        gen_semantic_search "$repo" "$rp"
+        ;;
+      *)
+        gen_qualitative "$task" "$repo"
+        ;;
     esac
   done
 done
 
 log ""
 if [[ "$FAILURES" -gt 0 ]]; then
-  log "FAILED: $FAILURES ground truth(s) exceeded entry count thresholds and were removed."
-  log "Review the errors above and fix the generator or adjust the symbol."
+  log "FAILED: $FAILURES ground truth generation(s) failed."
+  log "Review the errors above."
   exit 1
 fi
 log "Done. Review generated files in $GT_DIR/"
-log "Semantic-search ground truth must be curated manually — grep cannot determine relevance rankings."
+log "Semantic-search ground truth must be curated manually."
