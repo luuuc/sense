@@ -564,6 +564,59 @@ func TestNamePartsMatchesDecomposed(t *testing.T) {
 	}
 }
 
+func TestExactIdentifierRanking(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "internal/server/handler.go", Language: "go",
+		Hash: "ident1", Symbols: 4, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	symbols := []model.Symbol{
+		{FileID: fid, Name: "HandleRequest", Qualified: "server.HandleRequest", Kind: "function", LineStart: 10, LineEnd: 30},
+		{FileID: fid, Name: "max_retries", Qualified: "server.max_retries", Kind: "constant", LineStart: 5, LineEnd: 5},
+		{FileID: fid, Name: "HTTPSHandler", Qualified: "server.HTTPSHandler", Kind: "type", LineStart: 35, LineEnd: 50},
+		{FileID: fid, Name: "parseJSON", Qualified: "server.parseJSON", Kind: "function", LineStart: 55, LineEnd: 70},
+	}
+	for _, s := range symbols {
+		if _, err := a.WriteSymbol(ctx, &s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{"HandleRequest", "HandleRequest"},
+		{"max_retries", "max_retries"},
+		{"HTTPSHandler", "HTTPSHandler"},
+		{"parseJSON", "parseJSON"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			results, err := a.KeywordSearch(ctx, tt.query, "", 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) == 0 {
+				t.Fatalf("no results for %q", tt.query)
+			}
+			if results[0].Name != tt.want {
+				t.Errorf("top result = %q, want %q", results[0].Name, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadEmbeddingsEmpty(t *testing.T) {
 	ctx := context.Background()
 	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
