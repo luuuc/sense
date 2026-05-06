@@ -70,7 +70,7 @@ const (
 // classifyTier maps an edge kind to its relevance tier.
 func classifyTier(edgeKind string) Tier {
 	switch edgeKind {
-	case "calls", "temporal":
+	case "calls", "temporal", "member":
 		return TierBreaks
 	case "tests":
 		return TierTests
@@ -79,11 +79,13 @@ func classifyTier(edgeKind string) Tier {
 	}
 }
 
-// isTypeKind returns true if the symbol kind represents a type/class
-// container whose own methods should be excluded from blast results.
-func isTypeKind(kind model.SymbolKind) bool {
+// shouldExpandChildren returns true for concrete type kinds (class, type)
+// whose methods should be added to the BFS seed set. Modules and interfaces
+// are excluded: interface children are method signatures (not implementations),
+// and module children are part of the definition (not consumers).
+func shouldExpandChildren(kind model.SymbolKind) bool {
 	switch kind {
-	case model.KindClass, model.KindModule, model.KindInterface, model.KindType:
+	case model.KindClass, model.KindType:
 		return true
 	default:
 		return false
@@ -209,6 +211,23 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		frontier = append(frontier, id)
 	}
 
+	childSet := map[int64]struct{}{}
+	if shouldExpandChildren(subject.Kind) {
+		childIDs, err := loadChildIDs(ctx, db, symbolIDs)
+		if err != nil {
+			return Result{}, fmt.Errorf("blast: load children: %w", err)
+		}
+		for _, id := range childIDs {
+			if _, seen := visited[id]; !seen {
+				visited[id] = 0
+				pathConf[id] = 1.0
+				visitedKind[id] = "member"
+				frontier = append(frontier, id)
+				childSet[id] = struct{}{}
+			}
+		}
+	}
+
 	truncated := false
 	for hop := 1; hop <= opts.MaxHops; hop++ {
 		if err := ctx.Err(); err != nil {
@@ -264,28 +283,39 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		frontier = next
 	}
 
-	// Split visited into direct (hop=1) and indirect (hop>1) callers.
-	var directIDs, indirectIDs []int64
+	// Split visited into children (hop 0, from parent_id), caller-direct
+	// (hop ≤1, from edges), and indirect (hop >1). Seeds are skipped.
+	// Children bypass MaxResults — they're deterministic (parent_id).
+	seedSet := make(map[int64]struct{}, len(symbolIDs))
+	for _, id := range symbolIDs {
+		seedSet[id] = struct{}{}
+	}
+	var childDirectIDs, callerDirectIDs, indirectIDs []int64
 	for id, hops := range visited {
-		switch hops {
-		case 0:
-			continue // the subject itself
-		case 1:
-			directIDs = append(directIDs, id)
-		default:
+		if _, isSeed := seedSet[id]; isSeed {
+			continue
+		}
+		if hops <= 1 {
+			if _, isChild := childSet[id]; isChild {
+				childDirectIDs = append(childDirectIDs, id)
+			} else {
+				callerDirectIDs = append(callerDirectIDs, id)
+			}
+		} else {
 			indirectIDs = append(indirectIDs, id)
 		}
 	}
 
-	totalAffectedCount := len(directIDs) + len(indirectIDs)
+	totalAffectedCount := len(childDirectIDs) + len(callerDirectIDs) + len(indirectIDs)
 
-	if totalAffectedCount > opts.MaxResults {
+	callerCount := len(callerDirectIDs) + len(indirectIDs)
+	if callerCount > opts.MaxResults {
 		type ranked struct {
 			id   int64
 			conf float64
 		}
-		all := make([]ranked, 0, totalAffectedCount)
-		for _, id := range directIDs {
+		all := make([]ranked, 0, callerCount)
+		for _, id := range callerDirectIDs {
 			all = append(all, ranked{id, pathConf[id]})
 		}
 		for _, id := range indirectIDs {
@@ -299,9 +329,12 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			kept[r.id] = struct{}{}
 		}
 
-		directIDs = filterIDs(directIDs, kept)
+		callerDirectIDs = filterIDs(callerDirectIDs, kept)
 		indirectIDs = filterIDs(indirectIDs, kept)
 	}
+
+	directIDs := childDirectIDs
+	directIDs = append(directIDs, callerDirectIDs...)
 
 	// Hydrate both sets to model.Symbol in a single bulk read.
 
@@ -331,14 +364,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 	symbolsByID[subject.ID] = subject
 
-	// Self-method exclusion: when the subject is a type/class, exclude
-	// symbols whose parent IS the subject (they are part of the type,
-	// not consumers of it).
-	seedSet := make(map[int64]struct{}, len(symbolIDs))
-	for _, id := range symbolIDs {
-		seedSet[id] = struct{}{}
-	}
-	excludeSelf := isTypeKind(subject.Kind)
+	excludeSelf := subject.Kind == model.KindModule || subject.Kind == model.KindInterface
 	isSelfMethod := func(sym model.Symbol) bool {
 		if !excludeSelf {
 			return false
@@ -580,6 +606,33 @@ func directCallersReason(n int) string {
 		return "1 direct caller"
 	}
 	return fmt.Sprintf("%d direct callers", n)
+}
+
+func loadChildIDs(ctx context.Context, db *sql.DB, parentIDs []int64) ([]int64, error) {
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(parentIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := `SELECT id FROM sense_symbols WHERE parent_id IN (` + placeholders + `)`
+	args := make([]any, 0, len(parentIDs))
+	for _, id := range parentIDs {
+		args = append(args, id)
+	}
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // loadTestsTargeting returns the file paths of test files whose

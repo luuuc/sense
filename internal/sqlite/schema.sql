@@ -38,6 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_sense_symbols_name      ON sense_symbols (name);
 CREATE INDEX IF NOT EXISTS idx_sense_symbols_qualified ON sense_symbols (qualified);
 CREATE INDEX IF NOT EXISTS idx_sense_symbols_kind      ON sense_symbols (kind);
 CREATE INDEX IF NOT EXISTS idx_sense_symbols_file_id   ON sense_symbols (file_id);
+CREATE INDEX IF NOT EXISTS idx_sense_symbols_parent_id ON sense_symbols (parent_id);
 
 CREATE TABLE IF NOT EXISTS sense_edges (
     id          INTEGER PRIMARY KEY,

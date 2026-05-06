@@ -7,14 +7,14 @@ import (
 )
 
 const (
-	tier1Cap         = 30
+	tier1Cap         = 200
 	tier2ExamplesCap = 5
 )
 
 // BuildBlastResponse assembles a wire BlastResponse from the blast
 // engine's Result plus a file-path lookup for caller symbols. Results
 // are partitioned by relevance tier:
-//   - Tier 1 (breaks): full detail, capped at 30 items
+//   - Tier 1 (breaks): full detail, capped at 200 items
 //   - Tier 2 (references): count + top 5 examples
 //   - Tier 3 (tests): count only
 func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
