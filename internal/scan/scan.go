@@ -306,7 +306,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 	}
 
-	if serr := summary.Generate(ctx, idx, senseDir); serr != nil {
+	if serr := summary.Generate(ctx, idx, senseDir, root); serr != nil {
 		_, _ = fmt.Fprintf(warn, "warn: generate summary: %v\n", serr)
 	}
 

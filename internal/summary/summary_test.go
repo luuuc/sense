@@ -94,7 +94,7 @@ func d() {}
 	t.Setenv("SENSE_SUMMARY_TOKENS", "200")
 
 	outDir := t.TempDir()
-	if err := summary.Generate(ctx, adapter, outDir); err != nil {
+	if err := summary.Generate(ctx, adapter, outDir, root); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestGenerateWritesStubWhenEmpty(t *testing.T) {
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	outDir := t.TempDir()
-	if err := summary.Generate(ctx, adapter, outDir); err != nil {
+	if err := summary.Generate(ctx, adapter, outDir, ""); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 
@@ -137,6 +137,90 @@ func TestGenerateWritesStubWhenEmpty(t *testing.T) {
 	}
 	if !strings.Contains(content, "sense scan") {
 		t.Errorf("expected scan instruction, got: %s", content)
+	}
+}
+
+func TestGenerateTruncatesAndOmitsSections(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func main() {}
+func a() {}
+func b() {}
+func c() {}
+func d() {}
+`)
+	writeFile(t, filepath.Join(root, "README.md"), "# Test\n\nA project description for testing.\n")
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	senseDir := filepath.Join(root, ".sense")
+	dbPath := filepath.Join(senseDir, "index.db")
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	t.Setenv("SENSE_SUMMARY_TOKENS", "30")
+
+	outDir := t.TempDir()
+	if err := summary.Generate(ctx, adapter, outDir, root); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(outDir, "summary.md"))
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "truncated") && !strings.Contains(content, "Omitted") {
+		t.Error("expected truncation or omitted marker with tiny token budget")
+	}
+}
+
+func TestGenerateIncludesProjectSection(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func main() {}
+`)
+	writeFile(t, filepath.Join(root, "README.md"), "# TestProj\n\nA project for testing summary generation.\n")
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	senseDir := filepath.Join(root, ".sense")
+	path := filepath.Join(senseDir, "summary.md")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("summary.md not created: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "## Project") {
+		t.Error("missing Project section")
+	}
+	if !strings.Contains(content, "A project for testing summary generation.") {
+		t.Errorf("expected README description in summary, got: %s", content)
 	}
 }
 

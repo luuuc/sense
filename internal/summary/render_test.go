@@ -3,6 +3,7 @@ package summary
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -388,6 +389,96 @@ func TestCommonPrefix(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("commonPrefix(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
 		}
+	}
+}
+
+func TestRenderProject(t *testing.T) {
+	tests := []struct {
+		name    string
+		readme  string
+		want    string
+		wantNil bool
+	}{
+		{
+			name:   "skips badges and headings",
+			readme: "[![CI](https://example.com)]\n\n# MyProject\n\nA fast HTTP framework for Go.\n",
+			want:   "A fast HTTP framework for Go.",
+		},
+		{
+			name:   "takes first paragraph only",
+			readme: "# Foo\n\nFirst paragraph.\n\nSecond paragraph.\n",
+			want:   "First paragraph.",
+		},
+		{
+			name:   "joins multi-line paragraph",
+			readme: "# X\n\nLine one of the\ndescription continues.\n\nAnother para.\n",
+			want:   "Line one of the description continues.",
+		},
+		{
+			name:    "empty readme",
+			readme:  "",
+			wantNil: true,
+		},
+		{
+			name:    "only badges and headings",
+			readme:  "[![badge](url)]\n# Title\n",
+			wantNil: true,
+		},
+		{
+			name:   "skips HTML tags",
+			readme: "<p align=\"center\">\n<img src=\"logo.png\">\n</p>\n\nThe real description.\n",
+			want:   "The real description.",
+		},
+		{
+			name:   "truncates long description",
+			readme: "# X\n\n" + strings.Repeat("abcdefghij", 35) + "\n",
+			want:   strings.Repeat("abcdefghij", 29) + "abcdefg...",
+		},
+		{
+			name:   "truncation is rune-safe",
+			readme: "# X\n\n" + strings.Repeat("a", 295) + "ééé\n",
+			want:   strings.Repeat("a", 295) + "é...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tt.readme != "" {
+				if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(tt.readme), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := renderProject(root)
+			if tt.wantNil && got != "" {
+				t.Errorf("expected empty, got %q", got)
+			}
+			if !tt.wantNil && got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTruncateUTF8(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxBytes int
+		want     string
+	}{
+		{"short string unchanged", "hello", 10, "hello"},
+		{"exact length unchanged", "hello", 5, "hello"},
+		{"truncates ASCII", "hello world", 5, "hello"},
+		{"preserves multibyte rune", "aaaa\xc3\xa9\xc3\xa9", 5, "aaaa"},
+		{"empty string", "", 5, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateUTF8(tt.input, tt.maxBytes)
+			if got != tt.want {
+				t.Errorf("truncateUTF8(%q, %d) = %q, want %q", tt.input, tt.maxBytes, got, tt.want)
+			}
+		})
 	}
 }
 

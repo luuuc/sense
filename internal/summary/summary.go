@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
@@ -36,7 +38,7 @@ type section struct {
 	render func(ctx context.Context, db *sql.DB) (string, error)
 }
 
-func Generate(ctx context.Context, adapter *sqlite.Adapter, senseDir string) error {
+func Generate(ctx context.Context, adapter *sqlite.Adapter, senseDir, repoRoot string) error {
 	db := adapter.DB()
 	path := filepath.Join(senseDir, "summary.md")
 
@@ -55,6 +57,9 @@ func Generate(ctx context.Context, adapter *sqlite.Adapter, senseDir string) err
 
 	sections := []section{
 		{"Fingerprint", renderFingerprint},
+		{"Project", func(_ context.Context, _ *sql.DB) (string, error) {
+			return renderProject(repoRoot), nil
+		}},
 		{"Main Areas", renderMainAreas},
 		{"Key Abstractions", func(ctx context.Context, _ *sql.DB) (string, error) {
 			return renderKeyAbstractions(ctx, adapter)
@@ -144,6 +149,68 @@ func renderFingerprint(ctx context.Context, db *sql.DB) (string, error) {
 	}
 
 	return b.String(), nil
+}
+
+const (
+	maxReadmeBytes = 64 * 1024
+	maxReadmeLines = 200
+	maxDescBytes   = 300
+)
+
+func renderProject(repoRoot string) string {
+	if repoRoot == "" {
+		return ""
+	}
+	f, err := os.Open(filepath.Join(repoRoot, "README.md"))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxReadmeBytes))
+	if err != nil {
+		return ""
+	}
+	lines := strings.SplitN(string(data), "\n", maxReadmeLines+1)
+	if len(lines) > maxReadmeLines {
+		lines = lines[:maxReadmeLines]
+	}
+
+	var para []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if len(para) > 0 {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[![") || strings.HasPrefix(trimmed, "![") ||
+			strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "<") {
+			if len(para) > 0 {
+				break
+			}
+			continue
+		}
+		para = append(para, trimmed)
+	}
+	if len(para) == 0 {
+		return ""
+	}
+	desc := strings.Join(para, " ")
+	if len(desc) > maxDescBytes {
+		desc = truncateUTF8(desc, maxDescBytes-3) + "..."
+	}
+	return desc
+}
+
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
 }
 
 func renderMainAreas(ctx context.Context, db *sql.DB) (string, error) {
