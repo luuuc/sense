@@ -183,7 +183,9 @@ func RunWithOptions(opts RunOptions) error {
 
 	defaults := profile.DefaultParams()
 
-	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, watchState: opts.WatchState, tracker: tracker, defaults: defaults}
+	textFallback := search.NewTextFallback()
+
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: opts.WatchState, tracker: tracker, defaults: defaults}
 
 	s.AddTool(searchTool(), h.handleSearch)
 	s.AddTool(graphTool(), h.handleGraph)
@@ -198,13 +200,14 @@ func RunWithOptions(opts RunOptions) error {
 // kept for methods like ReadSymbol that live on *sqlite.Adapter; db
 // is a convenience alias for plain-SQL callers (Lookup, LoadFilePaths).
 type handlers struct {
-	adapter    *sqlite.Adapter
-	db         *sql.DB
-	dir        string
-	search     *search.Engine
-	watchState *mcpio.WatchState
-	tracker    *metrics.Tracker
-	defaults   profile.Defaults
+	adapter      *sqlite.Adapter
+	db           *sql.DB
+	dir          string
+	search       *search.Engine
+	textFallback *search.TextFallback
+	watchState   *mcpio.WatchState
+	tracker      *metrics.Tracker
+	defaults     profile.Defaults
 }
 
 // ---------------------------------------------------------------
@@ -618,10 +621,33 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 		}
 	}
 
+	textFallbackFired := false
+	if len(results) < search.TextFallbackThreshold && h.textFallback != nil && h.textFallback.Available() {
+		paths, pathErr := h.adapter.FilePaths(ctx)
+		if pathErr == nil {
+			textResults := h.textFallback.Search(ctx, query, h.dir, paths, limit)
+			for _, tr := range textResults {
+				entries = append(entries, mcpio.SearchResultEntry{
+					File:    tr.File,
+					Line:    tr.Line,
+					Kind:    "text_match",
+					Snippet: tr.Match,
+				})
+				uniqueFiles[tr.File] = struct{}{}
+			}
+			textFallbackFired = len(textResults) > 0
+		}
+	}
+
+	searchMode := meta.Mode
+	if textFallbackFired {
+		searchMode += "+text"
+	}
+
 	filesAvoided := len(uniqueFiles)
 	resp := mcpio.SearchResponse{
 		Results:    entries,
-		SearchMode: meta.Mode,
+		SearchMode: searchMode,
 		FusionWeights: mcpio.FusionWeights{
 			Keyword: meta.KeywordWeight,
 			Vector:  meta.VectorWeight,
