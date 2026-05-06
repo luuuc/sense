@@ -393,6 +393,7 @@ type StatusSession struct {
 	Queries                   int             `json:"queries"`
 	EstimatedFileReadsAvoided int             `json:"estimated_file_reads_avoided"`
 	EstimatedTokensSaved      int             `json:"estimated_tokens_saved"`
+	TextFallbackFired         int             `json:"text_fallback_fired"`
 	TopQuery                  *StatusTopQuery `json:"top_query,omitempty"`
 }
 
@@ -408,6 +409,7 @@ type StatusLifetime struct {
 	Queries                   int `json:"queries"`
 	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
 	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
+	TextFallbackFired         int `json:"text_fallback_fired"`
 }
 
 // StatusVersion reports schema and embedding-model version state.
@@ -476,6 +478,7 @@ type SearchResultEntry struct {
 	Score      SearchScore `json:"score"`
 	Snippet    string      `json:"snippet"`
 	References int         `json:"references,omitempty"`
+	Source     string      `json:"source"`
 }
 
 // SearchScore is a relative relevance score. Scores are normalized
@@ -490,9 +493,10 @@ func (s SearchScore) MarshalJSON() ([]byte, error) {
 
 // SearchMetrics is the observability footer on a search response.
 type SearchMetrics struct {
-	SymbolsSearched           int `json:"symbols_searched"`
-	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
-	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
+	SymbolsSearched           int  `json:"symbols_searched"`
+	EstimatedFileReadsAvoided int  `json:"estimated_file_reads_avoided"`
+	EstimatedTokensSaved      int  `json:"estimated_tokens_saved"`
+	TextFallbackFired         bool `json:"text_fallback_fired"`
 }
 
 // ---------------------------------------------------------------

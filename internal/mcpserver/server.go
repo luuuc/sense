@@ -615,6 +615,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 			Score:      mcpio.SearchScore(r.Score),
 			Snippet:    r.Snippet,
 			References: r.References,
+			Source:     "structural",
 		}
 		if path != "" {
 			uniqueFiles[path] = struct{}{}
@@ -632,6 +633,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 					Line:    tr.Line,
 					Kind:    "text_match",
 					Snippet: tr.Match,
+					Source:  "text",
 				})
 				uniqueFiles[tr.File] = struct{}{}
 			}
@@ -656,10 +658,11 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 			SymbolsSearched:           meta.SymbolCount,
 			EstimatedFileReadsAvoided: filesAvoided,
 			EstimatedTokensSaved:      filesAvoided * mcpio.AvgTokensPerFile,
+			TextFallbackFired:         textFallbackFired,
 		},
 	}
-	h.tracker.Record("sense.search", query,
-		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
+	h.tracker.RecordWithFallback("sense.search", query,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, textFallbackFired)
 
 	resp.NextSteps = searchHints(resp)
 
@@ -1180,6 +1183,7 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 		Queries:                   sess.Queries,
 		EstimatedFileReadsAvoided: sess.FileReadsAvoided,
 		EstimatedTokensSaved:      sess.TokensSaved,
+		TextFallbackFired:         sess.TextFallbackFired,
 	}
 	if top := h.tracker.TopQuery(); top != nil {
 		resp.Session.TopQuery = &mcpio.StatusTopQuery{
@@ -1194,6 +1198,7 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 		Queries:                   lt.Queries,
 		EstimatedFileReadsAvoided: lt.FileReadsAvoided,
 		EstimatedTokensSaved:      lt.TokensSaved,
+		TextFallbackFired:         lt.TextFallbackFired,
 	}
 
 	resp.NextSteps = statusHints(resp, sess.Queries)

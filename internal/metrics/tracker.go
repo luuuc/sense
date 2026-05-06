@@ -18,9 +18,10 @@ type Tracker struct {
 	flushInterval time.Duration
 
 	session struct {
-		queries          atomic.Int64
-		fileReadsAvoided atomic.Int64
-		tokensSaved      atomic.Int64
+		queries            atomic.Int64
+		fileReadsAvoided   atomic.Int64
+		tokensSaved        atomic.Int64
+		textFallbackFired  atomic.Int64
 	}
 
 	topQuery struct {
@@ -31,10 +32,11 @@ type Tracker struct {
 	}
 
 	lifetime struct {
-		mu               sync.Mutex
-		queries          int64
-		fileReadsAvoided int64
-		tokensSaved      int64
+		mu                sync.Mutex
+		queries           int64
+		fileReadsAvoided  int64
+		tokensSaved       int64
+		textFallbackFired int64
 	}
 
 	stop chan struct{}
@@ -61,14 +63,29 @@ func NewTrackerWithInterval(db *sql.DB, interval time.Duration) *Tracker {
 
 // Record adds a query's estimates to both session and lifetime counters.
 func (t *Tracker) Record(tool, args string, fileReadsAvoided, tokensSaved int) {
+	t.record(tool, args, fileReadsAvoided, tokensSaved, false)
+}
+
+// RecordWithFallback is like Record but also tracks a text fallback firing.
+func (t *Tracker) RecordWithFallback(tool, args string, fileReadsAvoided, tokensSaved int, textFallback bool) {
+	t.record(tool, args, fileReadsAvoided, tokensSaved, textFallback)
+}
+
+func (t *Tracker) record(tool, args string, fileReadsAvoided, tokensSaved int, textFallback bool) {
 	t.session.queries.Add(1)
 	t.session.fileReadsAvoided.Add(int64(fileReadsAvoided))
 	t.session.tokensSaved.Add(int64(tokensSaved))
+	if textFallback {
+		t.session.textFallbackFired.Add(1)
+	}
 
 	t.lifetime.mu.Lock()
 	t.lifetime.queries++
 	t.lifetime.fileReadsAvoided += int64(fileReadsAvoided)
 	t.lifetime.tokensSaved += int64(tokensSaved)
+	if textFallback {
+		t.lifetime.textFallbackFired++
+	}
 	t.lifetime.mu.Unlock()
 
 	t.topQuery.mu.Lock()
@@ -83,9 +100,10 @@ func (t *Tracker) Record(tool, args string, fileReadsAvoided, tokensSaved int) {
 // Session returns current session counters.
 func (t *Tracker) Session() SessionCounters {
 	return SessionCounters{
-		Queries:          int(t.session.queries.Load()),
-		FileReadsAvoided: int(t.session.fileReadsAvoided.Load()),
-		TokensSaved:      int(t.session.tokensSaved.Load()),
+		Queries:           int(t.session.queries.Load()),
+		FileReadsAvoided:  int(t.session.fileReadsAvoided.Load()),
+		TokensSaved:       int(t.session.tokensSaved.Load()),
+		TextFallbackFired: int(t.session.textFallbackFired.Load()),
 	}
 }
 
@@ -109,9 +127,10 @@ func (t *Tracker) Lifetime(ctx context.Context) LifetimeCounters {
 
 	t.lifetime.mu.Lock()
 	pending := LifetimeCounters{
-		Queries:          persisted.Queries + int(t.lifetime.queries),
-		FileReadsAvoided: persisted.FileReadsAvoided + int(t.lifetime.fileReadsAvoided),
-		TokensSaved:      persisted.TokensSaved + int(t.lifetime.tokensSaved),
+		Queries:           persisted.Queries + int(t.lifetime.queries),
+		FileReadsAvoided:  persisted.FileReadsAvoided + int(t.lifetime.fileReadsAvoided),
+		TokensSaved:       persisted.TokensSaved + int(t.lifetime.tokensSaved),
+		TextFallbackFired: persisted.TextFallbackFired + int(t.lifetime.textFallbackFired),
 	}
 	t.lifetime.mu.Unlock()
 	return pending
@@ -143,12 +162,14 @@ func (t *Tracker) flush() {
 	q := t.lifetime.queries
 	f := t.lifetime.fileReadsAvoided
 	ts := t.lifetime.tokensSaved
+	tf := t.lifetime.textFallbackFired
 	t.lifetime.queries = 0
 	t.lifetime.fileReadsAvoided = 0
 	t.lifetime.tokensSaved = 0
+	t.lifetime.textFallbackFired = 0
 	t.lifetime.mu.Unlock()
 
-	if q == 0 && f == 0 && ts == 0 {
+	if q == 0 && f == 0 && ts == 0 && tf == 0 {
 		return
 	}
 
@@ -168,6 +189,11 @@ func (t *Tracker) flush() {
 	}
 	if _, err := tx.ExecContext(ctx, upsert, "lifetime_tokens_saved", ts); err != nil {
 		log.Printf("sense metrics: flush tokens_saved: %v", err)
+	}
+	if tf > 0 {
+		if _, err := tx.ExecContext(ctx, upsert, "lifetime_text_fallback_fired", tf); err != nil {
+			log.Printf("sense metrics: flush text_fallback_fired: %v", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("sense metrics: flush commit: %v", err)
@@ -194,6 +220,8 @@ func (t *Tracker) loadPersisted(ctx context.Context) LifetimeCounters {
 			lc.FileReadsAvoided = value
 		case "lifetime_tokens_saved":
 			lc.TokensSaved = value
+		case "lifetime_text_fallback_fired":
+			lc.TextFallbackFired = value
 		}
 	}
 	return lc
@@ -201,16 +229,18 @@ func (t *Tracker) loadPersisted(ctx context.Context) LifetimeCounters {
 
 // SessionCounters holds in-memory session-scoped counters.
 type SessionCounters struct {
-	Queries          int
-	FileReadsAvoided int
-	TokensSaved      int
+	Queries           int
+	FileReadsAvoided  int
+	TokensSaved       int
+	TextFallbackFired int
 }
 
 // LifetimeCounters holds all-time counters (persisted + pending).
 type LifetimeCounters struct {
-	Queries          int
-	FileReadsAvoided int
-	TokensSaved      int
+	Queries           int
+	FileReadsAvoided  int
+	TokensSaved       int
+	TextFallbackFired int
 }
 
 // TopQueryInfo holds the single highest-saving query this session.

@@ -135,10 +135,12 @@ func RunSearch(args []string, cio IO) int {
 						Line:    tr.Line,
 						Kind:    "text_match",
 						Snippet: tr.Match,
+						Source:  "text",
 					})
 				}
 				if len(textResults) > 0 {
 					resp.SearchMode += "+text"
+					resp.SenseMetrics.TextFallbackFired = true
 				}
 			}
 		}
@@ -182,6 +184,7 @@ func buildSearchResponse(results []search.Result, pathByID map[int64]string, met
 			Score:      mcpio.SearchScore(r.Score),
 			Snippet:    r.Snippet,
 			References: r.References,
+			Source:     "structural",
 		}
 		if path != "" {
 			uniqueFiles[path] = struct{}{}
