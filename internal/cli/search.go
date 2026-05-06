@@ -123,25 +123,22 @@ func RunSearch(args []string, cio IO) int {
 
 	resp := buildSearchResponse(results, pathByID, meta)
 
-	if len(results) < search.TextFallbackThreshold {
+	{
 		tf := search.NewTextFallback()
 		if tf.Available() {
-			paths, pathErr := adapter.FilePaths(ctx)
-			if pathErr == nil {
-				textResults := tf.Search(ctx, opts.Query, cio.Dir, paths, opts.Limit)
-				for _, tr := range textResults {
-					resp.Results = append(resp.Results, mcpio.SearchResultEntry{
-						File:    tr.File,
-						Line:    tr.Line,
-						Kind:    "text_match",
-						Snippet: tr.Match,
-						Source:  "text",
-					})
-				}
-				if len(textResults) > 0 {
-					resp.SearchMode += "+text"
-					resp.SenseMetrics.TextFallbackFired = true
-				}
+			textResults := tf.Search(ctx, opts.Query, cio.Dir, []string{"."}, opts.Limit)
+			for _, tr := range textResults {
+				resp.Results = append(resp.Results, mcpio.SearchResultEntry{
+					File:    tr.File,
+					Line:    tr.Line,
+					Kind:    "text_match",
+					Snippet: tr.Match,
+					Source:  "text",
+				})
+			}
+			if len(textResults) > 0 {
+				resp.SearchMode += "+text"
+				resp.SenseMetrics.TextFallbackFired = true
 			}
 		}
 	}

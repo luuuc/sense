@@ -623,22 +623,19 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	}
 
 	textFallbackFired := false
-	if len(results) < search.TextFallbackThreshold && h.textFallback != nil && h.textFallback.Available() {
-		paths, pathErr := h.adapter.FilePaths(ctx)
-		if pathErr == nil {
-			textResults := h.textFallback.Search(ctx, query, h.dir, paths, limit)
-			for _, tr := range textResults {
-				entries = append(entries, mcpio.SearchResultEntry{
-					File:    tr.File,
-					Line:    tr.Line,
-					Kind:    "text_match",
-					Snippet: tr.Match,
-					Source:  "text",
-				})
-				uniqueFiles[tr.File] = struct{}{}
-			}
-			textFallbackFired = len(textResults) > 0
+	if h.textFallback != nil && h.textFallback.Available() {
+		textResults := h.textFallback.Search(ctx, query, h.dir, []string{"."}, limit)
+		for _, tr := range textResults {
+			entries = append(entries, mcpio.SearchResultEntry{
+				File:    tr.File,
+				Line:    tr.Line,
+				Kind:    "text_match",
+				Snippet: tr.Match,
+				Source:  "text",
+			})
+			uniqueFiles[tr.File] = struct{}{}
 		}
+		textFallbackFired = len(textResults) > 0
 	}
 
 	searchMode := meta.Mode
