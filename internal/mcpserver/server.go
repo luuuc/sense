@@ -403,7 +403,7 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 
 	h.tracker.Record("sense.graph", symbol,
-		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
@@ -536,7 +536,7 @@ func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) 
 	resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols)
 
 	h.tracker.Record("sense.graph", "dead_code",
-		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
 	resp.NextSteps = deadCodeHints(resp)
 
@@ -623,19 +623,20 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	}
 
 	textFallbackFired := false
-	if h.textFallback != nil && h.textFallback.Available() {
+	if h.textFallback != nil && h.textFallback.Available() && len(entries) < limit {
 		textResults := h.textFallback.Search(ctx, query, h.dir, []string{"."}, limit)
-		for _, tr := range textResults {
-			entries = append(entries, mcpio.SearchResultEntry{
-				File:    tr.File,
-				Line:    tr.Line,
-				Kind:    "text_match",
-				Snippet: tr.Match,
-				Source:  "text",
-			})
-			uniqueFiles[tr.File] = struct{}{}
+		matches := make([]mcpio.TextMatch, len(textResults))
+		for i, tr := range textResults {
+			matches[i] = mcpio.TextMatch{File: tr.File, Line: tr.Line, Match: tr.Match}
 		}
-		textFallbackFired = len(textResults) > 0
+		textEntries, fired := mcpio.ConvertTextResults(matches, entries)
+		if fired {
+			entries = append(entries, textEntries...)
+			for _, e := range textEntries {
+				uniqueFiles[e.File] = struct{}{}
+			}
+			textFallbackFired = true
+		}
 	}
 
 	searchMode := meta.Mode
@@ -658,7 +659,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 			TextFallbackFired:         textFallbackFired,
 		},
 	}
-	h.tracker.RecordWithFallback("sense.search", query,
+	h.tracker.Record("sense.search", query,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, textFallbackFired)
 
 	resp.NextSteps = searchHints(resp)
@@ -759,7 +760,7 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		blastArgs = diff
 	}
 	h.tracker.Record("sense.blast", blastArgs,
-		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
@@ -1097,7 +1098,7 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 	mcpio.BuildConventionsSummary(&resp)
 
 	h.tracker.Record("sense.conventions", domain,
-		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved)
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
 	resp.NextSteps = conventionsHints(resp, domain)
 

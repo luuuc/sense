@@ -10,6 +10,7 @@ import (
 
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/metrics"
 	"github.com/luuuc/sense/internal/search"
 )
 
@@ -123,25 +124,27 @@ func RunSearch(args []string, cio IO) int {
 
 	resp := buildSearchResponse(results, pathByID, meta)
 
-	{
-		tf := search.NewTextFallback()
-		if tf.Available() {
-			textResults := tf.Search(ctx, opts.Query, cio.Dir, []string{"."}, opts.Limit)
-			for _, tr := range textResults {
-				resp.Results = append(resp.Results, mcpio.SearchResultEntry{
-					File:    tr.File,
-					Line:    tr.Line,
-					Kind:    "text_match",
-					Snippet: tr.Match,
-					Source:  "text",
-				})
-			}
-			if len(textResults) > 0 {
-				resp.SearchMode += "+text"
-				resp.SenseMetrics.TextFallbackFired = true
-			}
+	tracker := metrics.NewTracker(adapter.DB())
+	defer tracker.Close()
+
+	tf := search.NewTextFallback()
+	if tf.Available() && len(resp.Results) < opts.Limit {
+		textResults := tf.Search(ctx, opts.Query, cio.Dir, []string{"."}, opts.Limit)
+		matches := make([]mcpio.TextMatch, len(textResults))
+		for i, tr := range textResults {
+			matches[i] = mcpio.TextMatch{File: tr.File, Line: tr.Line, Match: tr.Match}
+		}
+		textEntries, fired := mcpio.ConvertTextResults(matches, resp.Results)
+		if fired {
+			resp.Results = append(resp.Results, textEntries...)
+			resp.SearchMode += "+text"
+			resp.SenseMetrics.TextFallbackFired = true
 		}
 	}
+
+	tracker.Record("sense.search", opts.Query,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved,
+		resp.SenseMetrics.TextFallbackFired)
 
 	if opts.JSON {
 		out, merr := mcpio.MarshalSearch(resp)
