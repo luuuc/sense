@@ -319,3 +319,341 @@ func TestSyntheticSpec_NilTree(t *testing.T) {
 		t.Errorf("got %d symbols from nil tree", len(em.symbols))
 	}
 }
+
+func TestGrammarAndTier(t *testing.T) {
+	spec := langSpec{
+		Name:    "test-accessors",
+		Exts:    []string{".py"},
+		Grammar: grammars.Python(),
+		Tier:    extract.TierStandard,
+	}
+	ex := New(spec)
+	if ex.Grammar() == nil {
+		t.Error("Grammar() returned nil")
+	}
+	if ex.Tier() != extract.TierStandard {
+		t.Errorf("Tier() = %v, want TierStandard", ex.Tier())
+	}
+	if ex.Language() != "test-accessors" {
+		t.Errorf("Language() = %q, want test-accessors", ex.Language())
+	}
+	exts := ex.Extensions()
+	if len(exts) != 1 || exts[0] != ".py" {
+		t.Errorf("Extensions() = %v, want [.py]", exts)
+	}
+}
+
+func TestSyntheticSpec_CallTarget_MethodField(t *testing.T) {
+	// Java's method_invocation uses "name" as the method field, but
+	// also has an "object" field for the receiver. Exercises the
+	// callTarget path for "name" + "object" fields.
+	spec := langSpec{
+		Name:      "test-java-call",
+		Exts:      []string{".java"},
+		Grammar:   grammars.Java(),
+		Tier:      extract.TierStandard,
+		Separator: ".",
+
+		FuncTypes:  []string{"method_declaration"},
+		ClassTypes: []string{"class_declaration"},
+		CallTypes:  []string{"method_invocation", "object_creation_expression"},
+		NameField:  "name",
+	}
+
+	src := `class App {
+    void run() {
+        service.process();
+        new Widget();
+    }
+}
+`
+
+	tree := parse(t, spec.Grammar, src)
+	em := &testEmitter{}
+	ex := New(spec)
+	if err := ex.Extract(tree, []byte(src), "test.java", em); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	var callTargets []string
+	for _, e := range em.edges {
+		if e.Kind == model.EdgeCalls {
+			callTargets = append(callTargets, e.TargetQualified)
+		}
+	}
+	if len(callTargets) == 0 {
+		t.Fatal("expected call edges from method invocations")
+	}
+	// service.process() should have receiver "service" joined with method "process"
+	foundServiceProcess := false
+	for _, t2 := range callTargets {
+		if t2 == "service.process" {
+			foundServiceProcess = true
+		}
+	}
+	if !foundServiceProcess {
+		t.Errorf("expected call to service.process, got %v", callTargets)
+	}
+}
+
+func TestSyntheticSpec_ClassWithNoName(t *testing.T) {
+	// C++ anonymous struct should not crash; walker should descend into it.
+	spec := langSpec{
+		Name:      "test-cpp",
+		Exts:      []string{".cpp"},
+		Grammar:   grammars.Cpp(),
+		Tier:      extract.TierStandard,
+		Separator: "::",
+
+		FuncTypes:  []string{"function_definition"},
+		ClassTypes: []string{"class_specifier", "struct_specifier"},
+		NameField:  "name",
+	}
+
+	src := `struct {
+    int x;
+} anon;
+
+void helper() {}
+`
+
+	tree := parse(t, spec.Grammar, src)
+	em := &testEmitter{}
+	ex := New(spec)
+	if err := ex.Extract(tree, []byte(src), "test.cpp", em); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	// Should at least find the helper function
+	found := false
+	for _, s := range em.symbols {
+		if s.Name == "helper" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected helper function to be extracted through anonymous struct")
+	}
+}
+
+func TestC_FunctionDeclarator(t *testing.T) {
+	// C function returning a pointer uses pointer_declarator wrapping
+	// function_declarator. Exercises extractDeclaratorName recursion.
+	spec := langSpec{
+		Name:      "test-c-ptr",
+		Exts:      []string{".c"},
+		Grammar:   grammars.C(),
+		Tier:      extract.TierStandard,
+		Separator: ".",
+
+		FuncTypes:  []string{"function_definition"},
+		ClassTypes: []string{"struct_specifier"},
+		NameField:  "name",
+	}
+
+	src := `char *strdup(const char *s) { return 0; }
+int **matrix_alloc(int n) { return 0; }
+`
+
+	tree := parse(t, spec.Grammar, src)
+	em := &testEmitter{}
+	ex := New(spec)
+	if err := ex.Extract(tree, []byte(src), "test.c", em); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	names := map[string]bool{}
+	for _, s := range em.symbols {
+		names[s.Name] = true
+	}
+	if !names["strdup"] {
+		t.Error("missing symbol strdup (pointer declarator)")
+	}
+	if !names["matrix_alloc"] {
+		t.Error("missing symbol matrix_alloc (double pointer declarator)")
+	}
+}
+
+func TestSyntheticSpec_ImportWithModuleNameField(t *testing.T) {
+	// Python's import_statement and import_from_statement have a
+	// "module_name" field. This test exercises that importTarget path.
+	spec := langSpec{
+		Name:      "test-py-import",
+		Exts:      []string{".py"},
+		Grammar:   grammars.Python(),
+		Tier:      extract.TierStandard,
+		Separator: ".",
+
+		FuncTypes:   []string{"function_definition"},
+		ClassTypes:  []string{"class_definition"},
+		ImportTypes: []string{"import_from_statement", "import_statement"},
+		NameField:   "name",
+	}
+
+	src := `from os.path import join
+import sys
+`
+
+	tree := parse(t, spec.Grammar, src)
+	em := &testEmitter{}
+	ex := New(spec)
+	if err := ex.Extract(tree, []byte(src), "test.py", em); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	var importTargets []string
+	for _, e := range em.edges {
+		if e.Kind == model.EdgeImports {
+			importTargets = append(importTargets, e.TargetQualified)
+		}
+	}
+	if len(importTargets) == 0 {
+		t.Error("expected import edges")
+	}
+}
+
+func TestSyntheticSpec_CleanTypeName(t *testing.T) {
+	// Java class with generics: `class Foo<T> extends Bar<T>` should clean
+	// the type name to "Bar" (stripping the generic parameter).
+	spec := langSpec{
+		Name:      "test-java-inherit-generic",
+		Exts:      []string{".java"},
+		Grammar:   grammars.Java(),
+		Tier:      extract.TierStandard,
+		Separator: ".",
+
+		FuncTypes:     []string{"method_declaration"},
+		ClassTypes:    []string{"class_declaration", "interface_declaration"},
+		InheritFields: []string{"superclass", "interfaces"},
+		NameField:     "name",
+	}
+
+	src := `class MyList extends ArrayList<String> implements Iterable<String> {
+}
+`
+
+	tree := parse(t, spec.Grammar, src)
+	em := &testEmitter{}
+	ex := New(spec)
+	if err := ex.Extract(tree, []byte(src), "test.java", em); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	var inheritTargets []string
+	for _, e := range em.edges {
+		if e.Kind == model.EdgeInherits {
+			inheritTargets = append(inheritTargets, e.TargetQualified)
+		}
+	}
+	if len(inheritTargets) == 0 {
+		t.Fatal("expected inherit edges for extends/implements")
+	}
+}
+
+// --- error propagation tests ---
+
+var errForced = &testErr{"forced"}
+
+type testErr struct{ msg string }
+
+func (e *testErr) Error() string { return e.msg }
+
+type failAfterN struct {
+	symbolsLeft int
+	edgesLeft   int
+}
+
+func (f *failAfterN) Symbol(_ extract.EmittedSymbol) error {
+	if f.symbolsLeft <= 0 {
+		return errForced
+	}
+	f.symbolsLeft--
+	return nil
+}
+
+func (f *failAfterN) Edge(_ extract.EmittedEdge) error {
+	if f.edgesLeft <= 0 {
+		return errForced
+	}
+	f.edgesLeft--
+	return nil
+}
+
+func TestJavaClassSymbolError(t *testing.T) {
+	spec := javaSpec()
+	tree := parse(t, spec.Grammar, `public class Foo { }`)
+	ex := New(spec)
+	err := ex.Extract(tree, []byte(`public class Foo { }`), "Foo.java", &failAfterN{symbolsLeft: 0, edgesLeft: 100})
+	if err == nil {
+		t.Error("expected error on class symbol emit")
+	}
+}
+
+func TestJavaMethodSymbolError(t *testing.T) {
+	spec := javaSpec()
+	src := `public class Foo {
+    public void bar() {}
+}`
+	tree := parse(t, spec.Grammar, src)
+	ex := New(spec)
+	// Class symbol succeeds, method fails
+	err := ex.Extract(tree, []byte(src), "Foo.java", &failAfterN{symbolsLeft: 1, edgesLeft: 100})
+	if err == nil {
+		t.Error("expected error on method symbol emit")
+	}
+}
+
+func TestJavaInheritanceEdgeError(t *testing.T) {
+	spec := javaSpec()
+	src := `public class Child extends Parent { }`
+	tree := parse(t, spec.Grammar, src)
+	ex := New(spec)
+	err := ex.Extract(tree, []byte(src), "Child.java", &failAfterN{symbolsLeft: 100, edgesLeft: 0})
+	if err == nil {
+		t.Error("expected error on inheritance edge emit")
+	}
+}
+
+func TestJavaCallEdgeError(t *testing.T) {
+	spec := javaSpec()
+	src := `public class Foo {
+    public void bar() {
+        helper();
+    }
+}`
+	tree := parse(t, spec.Grammar, src)
+	ex := New(spec)
+	err := ex.Extract(tree, []byte(src), "Foo.java", &failAfterN{symbolsLeft: 100, edgesLeft: 0})
+	if err == nil {
+		t.Error("expected error on call edge emit")
+	}
+}
+
+func TestJavaImportEdgeError(t *testing.T) {
+	spec := javaSpec()
+	src := `import java.util.List;
+public class Foo { }`
+	tree := parse(t, spec.Grammar, src)
+	ex := New(spec)
+	err := ex.Extract(tree, []byte(src), "Foo.java", &failAfterN{symbolsLeft: 100, edgesLeft: 0})
+	if err == nil {
+		t.Error("expected error on import edge emit")
+	}
+}
+
+func javaSpec() langSpec {
+	return langSpec{
+		Name:    "java",
+		Exts:    []string{".java"},
+		Grammar: grammars.Java(),
+		Tier:    extract.TierStandard,
+
+		Separator: ".",
+
+		FuncTypes:     []string{"method_declaration", "constructor_declaration"},
+		ClassTypes:    []string{"class_declaration", "interface_declaration", "enum_declaration"},
+		CallTypes:     []string{"method_invocation"},
+		ImportTypes:   []string{"import_declaration"},
+		InheritFields: []string{"superclass", "interfaces"},
+	}
+}
