@@ -85,3 +85,113 @@ func TestLoadInvalidYAML(t *testing.T) {
 		t.Fatal("expected error on invalid YAML")
 	}
 }
+
+func TestEmbeddingsEnabledDefault(t *testing.T) {
+	c := &Config{}
+	if !c.EmbeddingsEnabled() {
+		t.Error("EmbeddingsEnabled() should default to true")
+	}
+}
+
+func TestEmbeddingsEnabledExplicitTrue(t *testing.T) {
+	v := true
+	c := &Config{Embeddings: EmbeddingsConfig{Enabled: &v}}
+	if !c.EmbeddingsEnabled() {
+		t.Error("EmbeddingsEnabled() should be true when explicitly set")
+	}
+}
+
+func TestEmbeddingsEnabledExplicitFalse(t *testing.T) {
+	v := false
+	c := &Config{Embeddings: EmbeddingsConfig{Enabled: &v}}
+	if c.EmbeddingsEnabled() {
+		t.Error("EmbeddingsEnabled() should be false when explicitly disabled")
+	}
+}
+
+func TestIsEmbeddingsEnabled_EnvFalse(t *testing.T) {
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	root := t.TempDir()
+	if IsEmbeddingsEnabled(root) {
+		t.Error("IsEmbeddingsEnabled should return false when SENSE_EMBEDDINGS=false")
+	}
+}
+
+func TestIsEmbeddingsEnabled_EnvZero(t *testing.T) {
+	t.Setenv("SENSE_EMBEDDINGS", "0")
+	root := t.TempDir()
+	if IsEmbeddingsEnabled(root) {
+		t.Error("IsEmbeddingsEnabled should return false when SENSE_EMBEDDINGS=0")
+	}
+}
+
+func TestIsEmbeddingsEnabled_EnvTrue(t *testing.T) {
+	t.Setenv("SENSE_EMBEDDINGS", "true")
+	root := t.TempDir()
+	if !IsEmbeddingsEnabled(root) {
+		t.Error("IsEmbeddingsEnabled should return true when SENSE_EMBEDDINGS=true")
+	}
+}
+
+func TestIsEmbeddingsEnabled_NoEnv(t *testing.T) {
+	t.Setenv("SENSE_EMBEDDINGS", "")
+	root := t.TempDir()
+	// No config file, default is true
+	if !IsEmbeddingsEnabled(root) {
+		t.Error("IsEmbeddingsEnabled should default to true with no env and no config")
+	}
+}
+
+func TestIsEmbeddingsEnabled_ConfigFalse(t *testing.T) {
+	t.Setenv("SENSE_EMBEDDINGS", "")
+	root := t.TempDir()
+	dir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yml := "embeddings:\n  enabled: false\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if IsEmbeddingsEnabled(root) {
+		t.Error("IsEmbeddingsEnabled should return false from config")
+	}
+}
+
+func TestLoadEmbeddingsFromFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yml := "embeddings:\n  enabled: false\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.EmbeddingsEnabled() {
+		t.Error("EmbeddingsEnabled should be false from file")
+	}
+}
+
+func TestLoadWatchDebounceMs(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yml := "scan:\n  watch_debounce_ms: 500\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Scan.WatchDebounceMs != 500 {
+		t.Errorf("WatchDebounceMs = %d, want 500", c.Scan.WatchDebounceMs)
+	}
+}

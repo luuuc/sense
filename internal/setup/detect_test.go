@@ -1,6 +1,10 @@
 package setup
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
 
 func TestDetectAllReturnsAllTools(t *testing.T) {
 	results := DetectAll()
@@ -83,6 +87,85 @@ func TestParseTools(t *testing.T) {
 				t.Errorf("ParseTools(%q)[%d] = %s, want %s", tc.input, i, tools[i], tc.want[i])
 			}
 		}
+	}
+}
+
+func TestPrintDetection(t *testing.T) {
+	var buf bytes.Buffer
+	PrintDetection(&buf)
+	output := buf.String()
+	if !strings.Contains(output, "Detected AI tools:") {
+		t.Error("expected header in PrintDetection output")
+	}
+	// Should list all three tools
+	for _, name := range []string{"Claude Code", "Cursor", "Codex CLI"} {
+		if !strings.Contains(output, name) {
+			t.Errorf("expected %q in PrintDetection output", name)
+		}
+	}
+}
+
+func TestDetectClaudeCode(t *testing.T) {
+	// Test that Detect(ToolClaudeCode) returns a DetectResult with the right tool
+	r := Detect(ToolClaudeCode)
+	if r.Tool != ToolClaudeCode {
+		t.Errorf("Detect(ToolClaudeCode).Tool = %s", r.Tool)
+	}
+	// Found may be true or false depending on env; just ensure no panic
+}
+
+func TestDetectCursor(t *testing.T) {
+	r := Detect(ToolCursor)
+	if r.Tool != ToolCursor {
+		t.Errorf("Detect(ToolCursor).Tool = %s", r.Tool)
+	}
+}
+
+func TestDetectCodexCLI(t *testing.T) {
+	r := Detect(ToolCodexCLI)
+	if r.Tool != ToolCodexCLI {
+		t.Errorf("Detect(ToolCodexCLI).Tool = %s", r.Tool)
+	}
+}
+
+func TestDetectCurrentWithCursorEnv(t *testing.T) {
+	t.Setenv("CURSOR_TRACE_ID", "test-trace")
+	got := DetectCurrent()
+	if got != ToolCursor {
+		t.Errorf("DetectCurrent() = %s with CURSOR_TRACE_ID set, want cursor", got)
+	}
+}
+
+func TestDetectCurrentWithClaudeCodeEnv(t *testing.T) {
+	t.Setenv("CLAUDE_CODE", "1")
+	got := DetectCurrent()
+	if got != ToolClaudeCode {
+		t.Errorf("DetectCurrent() = %s with CLAUDE_CODE set, want claude-code", got)
+	}
+}
+
+func TestHasCursorEnvSessionID(t *testing.T) {
+	t.Setenv("CURSOR_SESSION_ID", "test-session")
+	if !hasCursorEnv() {
+		t.Error("hasCursorEnv should return true with CURSOR_SESSION_ID set")
+	}
+}
+
+func TestHasCursorEnvNone(t *testing.T) {
+	t.Setenv("CURSOR_TRACE_ID", "")
+	t.Setenv("CURSOR_SESSION_ID", "")
+	if hasCursorEnv() {
+		t.Error("hasCursorEnv should return false with no cursor env vars")
+	}
+}
+
+func TestAllToolsOrder(t *testing.T) {
+	tools := AllTools()
+	if len(tools) != 3 {
+		t.Fatalf("AllTools() len = %d, want 3", len(tools))
+	}
+	if tools[0] != ToolClaudeCode || tools[1] != ToolCursor || tools[2] != ToolCodexCLI {
+		t.Errorf("AllTools() = %v, want [claude-code cursor codex-cli]", tools)
 	}
 }
 
