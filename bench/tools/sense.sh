@@ -73,7 +73,7 @@ write_config() {
 EOF
 
   cat > "$workspace/CLAUDE.md" << 'EOF'
-Use the available MCP tools for codebase understanding when they would help answer the question.
+Use Sense MCP tools for structural code analysis. Read README.md for project overview. Read key source files when Sense results reference them.
 Do not spawn Explore agents or sub-agents.
 
 Sense provides four MCP tools:
