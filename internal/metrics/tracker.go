@@ -62,16 +62,7 @@ func NewTrackerWithInterval(db *sql.DB, interval time.Duration) *Tracker {
 }
 
 // Record adds a query's estimates to both session and lifetime counters.
-func (t *Tracker) Record(tool, args string, fileReadsAvoided, tokensSaved int) {
-	t.record(tool, args, fileReadsAvoided, tokensSaved, false)
-}
-
-// RecordWithFallback is like Record but also tracks a text fallback firing.
-func (t *Tracker) RecordWithFallback(tool, args string, fileReadsAvoided, tokensSaved int, textFallback bool) {
-	t.record(tool, args, fileReadsAvoided, tokensSaved, textFallback)
-}
-
-func (t *Tracker) record(tool, args string, fileReadsAvoided, tokensSaved int, textFallback bool) {
+func (t *Tracker) Record(tool, args string, fileReadsAvoided, tokensSaved int, textFallback bool) {
 	t.session.queries.Add(1)
 	t.session.fileReadsAvoided.Add(int64(fileReadsAvoided))
 	t.session.tokensSaved.Add(int64(tokensSaved))

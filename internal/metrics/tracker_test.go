@@ -27,8 +27,8 @@ func TestTrackerSessionCounters(t *testing.T) {
 	tr := NewTracker(db)
 	defer tr.Close()
 
-	tr.Record("sense.search", "auth", 5, 4000)
-	tr.Record("sense.graph", "User", 3, 2400)
+	tr.Record("sense.search", "auth", 5, 4000, false)
+	tr.Record("sense.graph", "User", 3, 2400, false)
 
 	s := tr.Session()
 	if s.Queries != 2 {
@@ -51,9 +51,9 @@ func TestTrackerTopQuery(t *testing.T) {
 		t.Error("expected nil top query before any records")
 	}
 
-	tr.Record("sense.search", "auth", 5, 4000)
-	tr.Record("sense.blast", "User", 10, 8000)
-	tr.Record("sense.graph", "Order", 3, 2400)
+	tr.Record("sense.search", "auth", 5, 4000, false)
+	tr.Record("sense.blast", "User", 10, 8000, false)
+	tr.Record("sense.graph", "Order", 3, 2400, false)
 
 	top := tr.TopQuery()
 	if top == nil {
@@ -72,8 +72,8 @@ func TestTrackerLifetimeFlush(t *testing.T) {
 	db := openTestDB(t)
 	tr := NewTracker(db)
 
-	tr.Record("sense.search", "auth", 5, 4000)
-	tr.Record("sense.graph", "User", 3, 2400)
+	tr.Record("sense.search", "auth", 5, 4000, false)
+	tr.Record("sense.graph", "User", 3, 2400, false)
 	tr.Close()
 
 	// Verify data was flushed to SQLite
@@ -95,17 +95,60 @@ func TestTrackerLifetimeFlush(t *testing.T) {
 	}
 }
 
+func TestTrackerTextFallbackFired(t *testing.T) {
+	db := openTestDB(t)
+	tr := NewTracker(db)
+	defer tr.Close()
+
+	tr.Record("sense.search", "CASCADE REFERENCES", 2, 1600, true)
+	tr.Record("sense.search", "handleSearch", 5, 4000, false)
+	tr.Record("sense.search", "indexed_at", 1, 800, true)
+
+	s := tr.Session()
+	if s.TextFallbackFired != 2 {
+		t.Errorf("session text_fallback_fired = %d, want 2", s.TextFallbackFired)
+	}
+	if s.Queries != 3 {
+		t.Errorf("session queries = %d, want 3", s.Queries)
+	}
+}
+
+func TestTrackerTextFallbackPersisted(t *testing.T) {
+	db := openTestDB(t)
+
+	tr1 := NewTracker(db)
+	tr1.Record("sense.search", "query", 1, 800, true)
+	tr1.Close()
+
+	var val int
+	err := db.QueryRow(`SELECT value FROM sense_metrics WHERE key = 'lifetime_text_fallback_fired'`).Scan(&val)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != 1 {
+		t.Errorf("persisted text_fallback_fired = %d, want 1", val)
+	}
+
+	tr2 := NewTracker(db)
+	tr2.Record("sense.search", "query2", 2, 1600, true)
+	lt := tr2.Lifetime(context.Background())
+	if lt.TextFallbackFired != 2 {
+		t.Errorf("lifetime text_fallback_fired = %d, want 2", lt.TextFallbackFired)
+	}
+	tr2.Close()
+}
+
 func TestTrackerLifetimeAccumulates(t *testing.T) {
 	db := openTestDB(t)
 
 	// First session
 	tr1 := NewTracker(db)
-	tr1.Record("sense.search", "auth", 5, 4000)
+	tr1.Record("sense.search", "auth", 5, 4000, false)
 	tr1.Close()
 
 	// Second session
 	tr2 := NewTracker(db)
-	tr2.Record("sense.graph", "User", 3, 2400)
+	tr2.Record("sense.graph", "User", 3, 2400, false)
 
 	ctx := context.Background()
 	lt := tr2.Lifetime(ctx)
