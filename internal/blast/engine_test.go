@@ -768,11 +768,16 @@ func newFixtureDB(t *testing.T) *fixtureDB {
 
 func (f *fixtureDB) addSymbol(t *testing.T, name string) int64 {
 	t.Helper()
+	return f.addSymbolWith(t, name, model.KindClass, nil)
+}
+
+func (f *fixtureDB) addSymbolWith(t *testing.T, name string, kind model.SymbolKind, parentID *int64) int64 {
+	t.Helper()
 	line := f.nextLine
 	f.nextLine += 10
 	id, err := f.adapter.WriteSymbol(context.Background(), &model.Symbol{
 		FileID: f.fileID, Name: name, Qualified: name,
-		Kind: model.KindClass, LineStart: line, LineEnd: line + 5,
+		Kind: kind, ParentID: parentID, LineStart: line, LineEnd: line + 5,
 	})
 	if err != nil {
 		t.Fatalf("WriteSymbol %s: %v", name, err)
@@ -1030,114 +1035,69 @@ func TestTierClassification(t *testing.T) {
 	}
 }
 
-func TestSelfMethodExclusion(t *testing.T) {
-	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "self.db")
-	adapter, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = adapter.Close() })
+func TestTypeMemberSeedInclusion(t *testing.T) {
+	fix := newFixtureDB(t)
 
-	err = adapter.InTx(ctx, func() error {
-		fid, err := adapter.WriteFile(ctx, &model.File{
-			Path: "context.go", Language: "go", Hash: "ctx",
-			Symbols: 3, IndexedAt: time.Now().UTC(),
-		})
-		if err != nil {
-			return err
-		}
+	contextID := fix.addSymbolWith(t, "gin.Context", model.KindClass, nil)
+	paramID := fix.addSymbolWith(t, "gin.Context.Param", model.KindMethod, &contextID)
+	externalID := fix.addSymbolWith(t, "app.ExternalHandler", model.KindFunction, nil)
 
-		// Context is a class/type — the blast subject.
-		contextID, err := adapter.WriteSymbol(ctx, &model.Symbol{
-			FileID: fid, Name: "Context", Qualified: "gin.Context",
-			Kind: model.KindClass, LineStart: 1, LineEnd: 100,
-		})
-		if err != nil {
-			return err
-		}
+	fix.addEdge(t, paramID, contextID, model.EdgeCalls, 1.0)
+	fix.addEdge(t, externalID, contextID, model.EdgeCalls, 1.0)
 
-		// Context.Param is a method ON Context — should be excluded.
-		paramID, err := adapter.WriteSymbol(ctx, &model.Symbol{
-			FileID: fid, Name: "Param", Qualified: "gin.Context.Param",
-			Kind: model.KindMethod, ParentID: &contextID,
-			LineStart: 10, LineEnd: 15,
-		})
-		if err != nil {
-			return err
-		}
-
-		// ExternalHandler calls Context — external consumer, should appear.
-		externalID, err := adapter.WriteSymbol(ctx, &model.Symbol{
-			FileID: fid, Name: "ExternalHandler", Qualified: "app.ExternalHandler",
-			Kind: model.KindFunction, LineStart: 200, LineEnd: 220,
-		})
-		if err != nil {
-			return err
-		}
-
-		// Both Param and ExternalHandler call Context.
-		if _, err := adapter.WriteEdge(ctx, &model.Edge{
-			SourceID: &paramID, TargetID: contextID,
-			Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
-		}); err != nil {
-			return err
-		}
-		if _, err := adapter.WriteEdge(ctx, &model.Edge{
-			SourceID: &externalID, TargetID: contextID,
-			Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
-		}); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("build graph: %v", err)
-	}
-
-	db, err := sql.Open("sqlite", "file:"+dbPath)
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	all, err := adapter.Query(ctx, index.Filter{})
-	if err != nil {
-		t.Fatalf("Query: %v", err)
-	}
-	var contextID int64
-	for _, s := range all {
-		if s.Qualified == "gin.Context" {
-			contextID = s.ID
-			break
-		}
-	}
-
-	res, err := blast.Compute(ctx, db, []int64{contextID}, blast.Options{MaxHops: 1})
+	res, err := blast.Compute(context.Background(), fix.db, []int64{contextID}, blast.Options{MaxHops: 1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
 
-	// Context.Param should be excluded (it's a self-method).
+	// Param is a child of Context — appears in DirectCallers (type change breaks methods).
+	names := map[string]bool{}
 	for _, c := range res.DirectCallers {
-		if c.Qualified == "gin.Context.Param" {
-			t.Errorf("self-method gin.Context.Param should be excluded from results")
-		}
+		names[c.Qualified] = true
 	}
-
-	// ExternalHandler should appear.
-	found := false
-	for _, c := range res.DirectCallers {
-		if c.Qualified == "app.ExternalHandler" {
-			found = true
-		}
+	if !names["gin.Context.Param"] {
+		t.Errorf("child method gin.Context.Param should appear in DirectCallers: %+v", res.DirectCallers)
 	}
-	if !found {
+	if !names["app.ExternalHandler"] {
 		t.Errorf("external caller app.ExternalHandler missing from DirectCallers: %+v", res.DirectCallers)
 	}
 
-	if res.TotalAffected != 1 {
-		t.Errorf("TotalAffected = %d, want 1 (only external caller)", res.TotalAffected)
+	if res.TotalAffected != 2 {
+		t.Errorf("TotalAffected = %d, want 2 (child + external caller)", res.TotalAffected)
+	}
+}
+
+func TestTypeMemberBFSPropagation(t *testing.T) {
+	fix := newFixtureDB(t)
+
+	contextID := fix.addSymbolWith(t, "gin.Context", model.KindClass, nil)
+	paramID := fix.addSymbolWith(t, "gin.Context.Param", model.KindMethod, &contextID)
+	handlerID := fix.addSymbolWith(t, "app.HandlerFunc", model.KindFunction, nil)
+
+	// HandlerFunc calls Param (not Context directly).
+	fix.addEdge(t, handlerID, paramID, model.EdgeCalls, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{contextID}, blast.Options{MaxHops: 3})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	names := map[string]bool{}
+	for _, c := range res.DirectCallers {
+		names[c.Qualified] = true
+	}
+	// Param appears as a direct caller (child of Context).
+	if !names["gin.Context.Param"] {
+		t.Errorf("child method gin.Context.Param should appear in DirectCallers: %+v", res.DirectCallers)
+	}
+	// HandlerFunc calls Param → appears as direct caller (Param is a seed, so
+	// HandlerFunc is discovered at hop 1).
+	if !names["app.HandlerFunc"] {
+		t.Errorf("HandlerFunc should appear via Param seed, got: %+v", res.DirectCallers)
+	}
+
+	if res.TotalAffected != 2 {
+		t.Errorf("TotalAffected = %d, want 2 (child + caller of child)", res.TotalAffected)
 	}
 }
 
@@ -1249,5 +1209,99 @@ func TestBlastPrunesCompositionThreeHops(t *testing.T) {
 
 	if res.TotalAffected != 2 {
 		t.Errorf("TotalAffected = %d, want 2 (B + C survive, D pruned)", res.TotalAffected)
+	}
+}
+
+func TestModuleDoesNotExpandChildren(t *testing.T) {
+	fix := newFixtureDB(t)
+
+	modID := fix.addSymbolWith(t, "Helpers", model.KindModule, nil)
+	methodID := fix.addSymbolWith(t, "Helpers.format", model.KindMethod, &modID)
+	callerID := fix.addSymbolWith(t, "Controller", model.KindClass, nil)
+
+	fix.addEdge(t, callerID, modID, model.EdgeCalls, 1.0)
+	fix.addEdge(t, methodID, modID, model.EdgeCalls, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{modID}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	for _, c := range res.DirectCallers {
+		if c.ID == methodID {
+			t.Error("module's own method should be excluded via isSelfMethod, not expanded as child")
+		}
+	}
+	if res.TotalAffected != 1 {
+		t.Errorf("TotalAffected = %d, want 1 (only Controller; method excluded)", res.TotalAffected)
+	}
+}
+
+func TestInterfaceDoesNotExpandChildren(t *testing.T) {
+	fix := newFixtureDB(t)
+
+	ifaceID := fix.addSymbolWith(t, "Reader", model.KindInterface, nil)
+	sigID := fix.addSymbolWith(t, "Reader.Read", model.KindMethod, &ifaceID)
+	implID := fix.addSymbolWith(t, "FileReader", model.KindClass, nil)
+
+	fix.addEdge(t, implID, ifaceID, model.EdgeInherits, 1.0)
+	fix.addEdge(t, sigID, ifaceID, model.EdgeCalls, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{ifaceID}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	for _, c := range res.DirectCallers {
+		if c.ID == sigID {
+			t.Error("interface method signature should be excluded via isSelfMethod")
+		}
+	}
+	if res.TotalAffected != 1 {
+		t.Errorf("TotalAffected = %d, want 1 (only FileReader; signature excluded)", res.TotalAffected)
+	}
+}
+
+func TestTypeMemberTierClassification(t *testing.T) {
+	fix := newFixtureDB(t)
+
+	typeID := fix.addSymbolWith(t, "Widget", model.KindType, nil)
+	childID := fix.addSymbolWith(t, "Widget.Run", model.KindMethod, &typeID)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{typeID}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if len(res.DirectCallers) != 1 || res.DirectCallers[0].ID != childID {
+		t.Fatalf("DirectCallers = %+v, want [Widget.Run]", res.DirectCallers)
+	}
+	if res.SymbolTiers[childID] != blast.TierBreaks {
+		t.Errorf("child tier = %d, want TierBreaks (%d); member edge should classify as tier 1",
+			res.SymbolTiers[childID], blast.TierBreaks)
+	}
+}
+
+func TestTypeKindExpandsChildren(t *testing.T) {
+	fix := newFixtureDB(t)
+
+	typeID := fix.addSymbolWith(t, "Config", model.KindType, nil)
+	m1 := fix.addSymbolWith(t, "Config.Get", model.KindMethod, &typeID)
+	m2 := fix.addSymbolWith(t, "Config.Set", model.KindMethod, &typeID)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{typeID}, blast.Options{MaxHops: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	ids := map[int64]bool{}
+	for _, c := range res.DirectCallers {
+		ids[c.ID] = true
+	}
+	if !ids[m1] || !ids[m2] {
+		t.Errorf("KindType should expand children: got %+v, want Config.Get + Config.Set", res.DirectCallers)
+	}
+	if res.TotalAffected != 2 {
+		t.Errorf("TotalAffected = %d, want 2", res.TotalAffected)
 	}
 }

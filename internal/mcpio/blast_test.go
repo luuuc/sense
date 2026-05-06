@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/luuuc/sense/internal/blast"
@@ -145,13 +146,13 @@ func TestBuildBlastResponseViaTemporal(t *testing.T) {
 }
 
 func TestBuildBlastResponseTier1Cap(t *testing.T) {
-	// Build a Result with 50 Tier-1 (calls-edge) direct callers.
-	// The response should cap at 30.
+	// Build a Result with 250 Tier-1 (calls-edge) direct callers.
+	// The response should cap at 200.
 	var directCallers []model.Symbol
 	tiers := make(map[int64]blast.Tier)
-	for i := int64(1); i <= 50; i++ {
+	for i := int64(1); i <= 250; i++ {
 		directCallers = append(directCallers, model.Symbol{
-			ID: i, Qualified: "Caller" + string(rune('A'+i)),
+			ID: i, Qualified: fmt.Sprintf("Caller%d", i),
 			FileID: 100,
 		})
 		tiers[i] = blast.TierBreaks
@@ -160,20 +161,20 @@ func TestBuildBlastResponseTier1Cap(t *testing.T) {
 	r := blast.Result{
 		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
 		Risk:          blast.RiskHigh,
-		RiskReasons:   []string{"50 direct callers"},
+		RiskReasons:   []string{"250 direct callers"},
 		DirectCallers: directCallers,
 		AffectedTests: []string{},
-		TotalAffected: 50,
+		TotalAffected: 250,
 		SymbolTiers:   tiers,
 	}
 
 	resp := BuildBlastResponse(r, noFiles)
 
-	if len(resp.DirectCallers) != 30 {
-		t.Errorf("DirectCallers = %d, want 30 (tier1 cap)", len(resp.DirectCallers))
+	if len(resp.DirectCallers) != 200 {
+		t.Errorf("DirectCallers = %d, want 200 (tier1 cap)", len(resp.DirectCallers))
 	}
-	if resp.TotalAffected != 50 {
-		t.Errorf("TotalAffected = %d, want 50 (pre-cap count preserved)", resp.TotalAffected)
+	if resp.TotalAffected != 250 {
+		t.Errorf("TotalAffected = %d, want 250 (pre-cap count preserved)", resp.TotalAffected)
 	}
 }
 
@@ -214,5 +215,186 @@ func TestBuildBlastResponseTierPartitioning(t *testing.T) {
 	}
 	if len(resp.References.Examples) != 2 {
 		t.Errorf("References.Examples = %d, want 2 (both shown, under cap)", len(resp.References.Examples))
+	}
+}
+
+func TestBuildBlastResponseEdgeKindGroups(t *testing.T) {
+	r := blast.Result{
+		Symbol:      model.Symbol{ID: 0, Qualified: "Base"},
+		Risk:        blast.RiskLow,
+		RiskReasons: []string{"5 direct callers"},
+		DirectCallers: []model.Symbol{
+			{ID: 1, Qualified: "Caller", FileID: 10},
+		},
+		AffectedSubclasses: []model.Symbol{
+			{ID: 2, Qualified: "SubA", FileID: 11},
+		},
+		AffectedViaComposition: []model.Symbol{
+			{ID: 3, Qualified: "CompX", FileID: 12},
+		},
+		AffectedViaIncludes: []model.Symbol{
+			{ID: 4, Qualified: "InclY", FileID: 13},
+		},
+		AffectedTests: []string{},
+		TotalAffected: 4,
+		SymbolTiers: map[int64]blast.Tier{
+			1: blast.TierBreaks,
+			2: blast.TierReferences,
+			3: blast.TierReferences,
+			4: blast.TierReferences,
+		},
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{10: "caller.rb", 11: "sub.rb", 12: "comp.rb", 13: "incl.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(r, files)
+
+	if len(resp.AffectedSubclasses) != 1 || resp.AffectedSubclasses[0].Symbol != "SubA" {
+		t.Errorf("AffectedSubclasses = %+v, want [SubA]", resp.AffectedSubclasses)
+	}
+	if len(resp.AffectedViaComposition) != 1 || resp.AffectedViaComposition[0].Symbol != "CompX" {
+		t.Errorf("AffectedViaComposition = %+v, want [CompX]", resp.AffectedViaComposition)
+	}
+	if len(resp.AffectedViaIncludes) != 1 || resp.AffectedViaIncludes[0].Symbol != "InclY" {
+		t.Errorf("AffectedViaIncludes = %+v, want [InclY]", resp.AffectedViaIncludes)
+	}
+	if resp.References.Count != 3 {
+		t.Errorf("References.Count = %d, want 3 (subclass + comp + incl)", resp.References.Count)
+	}
+	if resp.ProductionAffected != 4 {
+		t.Errorf("ProductionAffected = %d, want 4", resp.ProductionAffected)
+	}
+}
+
+func TestBuildBlastResponseIndirectTier2(t *testing.T) {
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:          blast.RiskLow,
+		RiskReasons:   []string{"1 direct caller"},
+		DirectCallers: []model.Symbol{},
+		IndirectCallers: []blast.CallerHop{
+			{
+				Symbol: model.Symbol{ID: 10, Qualified: "Tier1Indirect", FileID: 1},
+				Via:    model.Symbol{ID: 0, Qualified: "Subject"},
+				Hops:   2,
+			},
+			{
+				Symbol: model.Symbol{ID: 11, Qualified: "Tier2Indirect", FileID: 2},
+				Via:    model.Symbol{ID: 10, Qualified: "Tier1Indirect"},
+				Hops:   3,
+			},
+		},
+		AffectedTests: []string{},
+		TotalAffected: 2,
+		SymbolTiers: map[int64]blast.Tier{
+			10: blast.TierBreaks,
+			11: blast.TierReferences,
+		},
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{1: "a.rb", 2: "b.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(r, files)
+
+	if len(resp.IndirectCallers) != 1 || resp.IndirectCallers[0].Symbol != "Tier1Indirect" {
+		t.Errorf("IndirectCallers = %+v, want [Tier1Indirect] (tier-1 only)", resp.IndirectCallers)
+	}
+	if resp.References.Count != 1 {
+		t.Errorf("References.Count = %d, want 1 (Tier2Indirect in references)", resp.References.Count)
+	}
+	if len(resp.References.Examples) != 1 || resp.References.Examples[0].Symbol != "Tier2Indirect" {
+		t.Errorf("References.Examples = %+v, want [Tier2Indirect]", resp.References.Examples)
+	}
+}
+
+func TestBuildBlastResponseTier2ExamplesCap(t *testing.T) {
+	var directCallers []model.Symbol
+	tiers := make(map[int64]blast.Tier)
+	for i := int64(1); i <= 8; i++ {
+		directCallers = append(directCallers, model.Symbol{
+			ID: i, Qualified: fmt.Sprintf("Ref%d", i), FileID: 100,
+		})
+		tiers[i] = blast.TierReferences
+	}
+
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:          blast.RiskLow,
+		RiskReasons:   []string{"8 references"},
+		DirectCallers: directCallers,
+		AffectedTests: []string{},
+		TotalAffected: 8,
+		SymbolTiers:   tiers,
+	}
+
+	resp := BuildBlastResponse(r, noFiles)
+
+	if len(resp.DirectCallers) != 0 {
+		t.Errorf("DirectCallers = %d, want 0 (all tier-2)", len(resp.DirectCallers))
+	}
+	if resp.References.Count != 8 {
+		t.Errorf("References.Count = %d, want 8", resp.References.Count)
+	}
+	if len(resp.References.Examples) != 5 {
+		t.Errorf("References.Examples = %d, want 5 (capped at tier2ExamplesCap)", len(resp.References.Examples))
+	}
+}
+
+func TestBuildBlastResponseSegmentTestFiles(t *testing.T) {
+	r := blast.Result{
+		Symbol:      model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:        blast.RiskLow,
+		RiskReasons: []string{"2 direct callers"},
+		DirectCallers: []model.Symbol{
+			{ID: 1, Qualified: "Prod", FileID: 10},
+			{ID: 2, Qualified: "TestHelper", FileID: 11},
+		},
+		AffectedSubclasses: []model.Symbol{
+			{ID: 3, Qualified: "TestSub", FileID: 12},
+		},
+		AffectedViaComposition: []model.Symbol{
+			{ID: 4, Qualified: "TestComp", FileID: 13},
+		},
+		AffectedViaIncludes: []model.Symbol{
+			{ID: 5, Qualified: "TestIncl", FileID: 14},
+		},
+		AffectedTests: []string{"spec/subject_spec.rb"},
+		TotalAffected: 5,
+		SymbolTiers: map[int64]blast.Tier{
+			1: blast.TierBreaks,
+			2: blast.TierBreaks,
+			3: blast.TierReferences,
+			4: blast.TierReferences,
+			5: blast.TierReferences,
+		},
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{
+			10: "lib/prod.rb",
+			11: "test/test_helper.rb",
+			12: "test/sub_test.rb",
+			13: "spec/comp_spec.rb",
+			14: "spec/incl_spec.rb",
+		}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(r, files)
+
+	if resp.ProductionAffected != 1 {
+		t.Errorf("ProductionAffected = %d, want 1 (only lib/prod.rb)", resp.ProductionAffected)
+	}
+	if resp.TestAffected != 5 {
+		t.Errorf("TestAffected = %d, want 5 (test_helper + sub_test + comp_spec + incl_spec + affected_test)", resp.TestAffected)
 	}
 }
