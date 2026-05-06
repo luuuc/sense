@@ -183,6 +183,152 @@ func TestBuildKeyEntriesLimit(t *testing.T) {
 	}
 }
 
+func TestBuildKeyEntriesExcludesTestFiles(t *testing.T) {
+	excludedPaths := []struct {
+		name string
+		path string
+	}{
+		{"go_test_suffix", "internal/router/router_test.go"},
+		{"nested_test_dir", "src/test/java/com/example/TestUtil.java"},
+		{"root_test_dir", "test/helpers/util.go"},
+		{"nested_spec_dir", "app/spec/validators/check.rb"},
+		{"root_spec_dir", "spec/models/user_spec.rb"},
+		{"nested_tests_dir", "lib/tests/integration.go"},
+		{"root_tests_dir", "tests/unit/handler.go"},
+		{"testdata_dir", "internal/testdata/fixture.go"},
+		{"fixture_dir", "internal/fixture/data.go"},
+		{"mock_dir", "internal/mock/client.go"},
+		{"mocks_dir", "internal/mocks/store.go"},
+		{"vendor_dir", "vendor/lib/dep.go"},
+	}
+
+	allowedPaths := []string{
+		"internal/contest/handler.go",
+		"app/models/specification.rb",
+	}
+
+	for _, tc := range excludedPaths {
+		t.Run("excludes_"+tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			senseDir := filepath.Join(dir, ".sense")
+			if err := os.MkdirAll(senseDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = adapter.Close() })
+
+			now := time.Now()
+			intPtr := func(v int) *int { return &v }
+
+			testFID, _ := adapter.WriteFile(ctx, &model.File{
+				Path: tc.path, Language: "go", Hash: "ttt", Symbols: 1, IndexedAt: now,
+			})
+			testSym, _ := adapter.WriteSymbol(ctx, &model.Symbol{
+				FileID: testFID, Name: "Bad", Qualified: "bad.Bad",
+				Kind: "class", LineStart: 1, LineEnd: 10,
+			})
+
+			prodFID, _ := adapter.WriteFile(ctx, &model.File{
+				Path: "internal/core/core.go", Language: "go", Hash: "ppp", Symbols: 1, IndexedAt: now,
+			})
+			prodSym, _ := adapter.WriteSymbol(ctx, &model.Symbol{
+				FileID: prodFID, Name: "Core", Qualified: "core.Core",
+				Kind: "type", LineStart: 1, LineEnd: 10,
+			})
+
+			callerFID, _ := adapter.WriteFile(ctx, &model.File{
+				Path: "internal/api/api.go", Language: "go", Hash: "ccc", Symbols: 1, IndexedAt: now,
+			})
+			callerSym, _ := adapter.WriteSymbol(ctx, &model.Symbol{
+				FileID: callerFID, Name: "Handle", Qualified: "api.Handle",
+				Kind: "function", LineStart: 1, LineEnd: 5,
+			})
+
+			for _, targetID := range []int64{testSym, prodSym} {
+				for j := 0; j < 3; j++ {
+					if _, err := adapter.WriteEdge(ctx, &model.Edge{
+						SourceID: model.Int64Ptr(callerSym), TargetID: targetID,
+						Kind: model.EdgeCalls, FileID: callerFID, Line: intPtr(j + 1),
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			entries, err := buildKeyEntries(ctx, adapter, "", 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, e := range entries {
+				if e.Name == "bad.Bad" {
+					t.Errorf("symbol from %q (%s) should be excluded", tc.path, tc.name)
+				}
+			}
+		})
+	}
+
+	for _, path := range allowedPaths {
+		t.Run("allows_"+filepath.Base(path), func(t *testing.T) {
+			dir := t.TempDir()
+			senseDir := filepath.Join(dir, ".sense")
+			if err := os.MkdirAll(senseDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = adapter.Close() })
+
+			now := time.Now()
+			intPtr := func(v int) *int { return &v }
+
+			fid, _ := adapter.WriteFile(ctx, &model.File{
+				Path: path, Language: "go", Hash: "aaa", Symbols: 1, IndexedAt: now,
+			})
+			sym, _ := adapter.WriteSymbol(ctx, &model.Symbol{
+				FileID: fid, Name: "Good", Qualified: "good.Good",
+				Kind: "type", LineStart: 1, LineEnd: 10,
+			})
+
+			callerFID, _ := adapter.WriteFile(ctx, &model.File{
+				Path: "internal/api/api.go", Language: "go", Hash: "bbb", Symbols: 1, IndexedAt: now,
+			})
+			callerSym, _ := adapter.WriteSymbol(ctx, &model.Symbol{
+				FileID: callerFID, Name: "Use", Qualified: "api.Use",
+				Kind: "function", LineStart: 1, LineEnd: 5,
+			})
+			if _, err := adapter.WriteEdge(ctx, &model.Edge{
+				SourceID: model.Int64Ptr(callerSym), TargetID: sym,
+				Kind: model.EdgeCalls, FileID: callerFID, Line: intPtr(1),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			entries, err := buildKeyEntries(ctx, adapter, "", 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			found := false
+			for _, e := range entries {
+				if e.Name == "good.Good" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("symbol from %q should NOT be excluded", path)
+			}
+		})
+	}
+}
+
 func TestBuildKeyEntriesEmptyDB(t *testing.T) {
 	dir := t.TempDir()
 	senseDir := filepath.Join(dir, ".sense")

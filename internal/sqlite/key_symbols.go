@@ -58,8 +58,16 @@ func (a *Adapter) TopSymbolsByReach(ctx context.Context, domain string, limit in
 	      WHERE sf.path LIKE ? || '%'
 	        AND s.kind IN ('class','interface','module','type','struct','trait')
 	        AND sf.path NOT LIKE '%\_test.%' ESCAPE '\'
+	        AND sf.path NOT LIKE '%/test/%'
+	        AND sf.path NOT LIKE 'test/%'
+	        AND sf.path NOT LIKE '%/spec/%'
+	        AND sf.path NOT LIKE 'spec/%'
+	        AND sf.path NOT LIKE '%/tests/%'
+	        AND sf.path NOT LIKE 'tests/%'
 	        AND sf.path NOT LIKE '%testdata%'
 	        AND sf.path NOT LIKE '%fixture%'
+	        AND sf.path NOT LIKE '%/mock/%'
+	        AND sf.path NOT LIKE '%/mocks/%'
 	        AND sf.path NOT LIKE '%vendor%'
 	      GROUP BY s.id
 	      ORDER BY ref_files DESC
