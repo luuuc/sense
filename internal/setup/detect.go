@@ -15,11 +15,12 @@ const (
 	ToolClaudeCode Tool = "claude-code"
 	ToolCursor     Tool = "cursor"
 	ToolCodexCLI   Tool = "codex-cli"
+	ToolOpencode   Tool = "opencode"
 )
 
 // AllTools returns every tool Sense knows how to configure, in display order.
 func AllTools() []Tool {
-	return []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI}
+	return []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI, ToolOpencode}
 }
 
 // DisplayName returns the human-readable name for a tool.
@@ -31,6 +32,8 @@ func (t Tool) DisplayName() string {
 		return "Cursor"
 	case ToolCodexCLI:
 		return "Codex CLI"
+	case ToolOpencode:
+		return "Opencode"
 	default:
 		return string(t)
 	}
@@ -61,6 +64,8 @@ func Detect(t Tool) DetectResult {
 		return detectCursor()
 	case ToolCodexCLI:
 		return detectCodexCLI()
+	case ToolOpencode:
+		return detectOpencode()
 	default:
 		return DetectResult{Tool: t}
 	}
@@ -75,6 +80,9 @@ func DetectCurrent() Tool {
 	}
 	if hasCursorEnv() {
 		return ToolCursor
+	}
+	if os.Getenv("OPENCODE") != "" {
+		return ToolOpencode
 	}
 	return ToolClaudeCode
 }
@@ -152,6 +160,28 @@ func PrintDetection(out io.Writer) {
 		}
 	}
 	_, _ = fmt.Fprintln(out, "")
+}
+
+func detectOpencode() DetectResult {
+	r := DetectResult{Tool: ToolOpencode}
+	if os.Getenv("OPENCODE") != "" {
+		r.Found = true
+		r.Evidence = "OPENCODE env var set"
+		return r
+	}
+	if _, err := exec.LookPath("opencode"); err == nil {
+		r.Found = true
+		r.Evidence = "opencode on PATH"
+		return r
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".config", "opencode")); err == nil {
+			r.Found = true
+			r.Evidence = "~/.config/opencode/ directory"
+			return r
+		}
+	}
+	return r
 }
 
 func hasCursorEnv() bool {

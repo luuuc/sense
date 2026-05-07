@@ -85,6 +85,8 @@ func configureTool(root string, t Tool) (*ToolResult, error) {
 		return configureCursor(root)
 	case ToolCodexCLI:
 		return configureCodexCLI(root)
+	case ToolOpencode:
+		return configureOpencode(root)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", t)
 	}
@@ -319,8 +321,10 @@ func ParseTools(s string) ([]Tool, error) {
 			tools = append(tools, ToolCursor)
 		case "codex-cli":
 			tools = append(tools, ToolCodexCLI)
+		case "opencode":
+			tools = append(tools, ToolOpencode)
 		default:
-			return nil, fmt.Errorf("unknown tool %q (valid: claude-code, cursor, codex-cli)", name)
+			return nil, fmt.Errorf("unknown tool %q (valid: claude-code, cursor, codex-cli, opencode)", name)
 		}
 	}
 	return tools, nil
