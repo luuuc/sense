@@ -82,7 +82,7 @@ All notable changes to Sense.
 
 ### Features
 
-- add structural orientation to sense.status response
+- add structural orientation to sense_status response
 - prepend one-sentence summary to conventions response
 ## [0.34.0] - 2026-04-28
 
@@ -137,7 +137,7 @@ All notable changes to Sense.
 - add next-step hint logic to all MCP handlers
 - add dead code detection query engine
 - add dead code response types and builder
-- add dead_code parameter to sense.graph
+- add dead_code parameter to sense_graph
 - add temporal edge kind and response types
 - add temporal coupling extraction from git history
 - expand BFS frontier through temporal edges
@@ -407,7 +407,7 @@ All notable changes to Sense.
 - add convention detection engine
 - add ConventionsResponse types and MarshalConventions
 - add `sense conventions` command
-- add sense.conventions tool to MCP server
+- add sense_conventions tool to MCP server
 ## [0.9.0] - 2026-04-20
 
 ### Features
@@ -416,7 +416,7 @@ All notable changes to Sense.
 - add HNSW vector index, query embedding, and RRF fusion engine
 - add SearchResponse types and MarshalSearch
 - add `sense search` command with hybrid search
-- add sense.search tool to MCP server
+- add sense_search tool to MCP server
 ## [0.8.0] - 2026-04-20
 
 ### Features

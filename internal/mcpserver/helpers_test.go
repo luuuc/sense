@@ -257,7 +257,7 @@ func TestStatusHintsExistingSession(t *testing.T) {
 	resp := mcpio.StatusResponse{}
 	hints := statusHints(resp, 5)
 	for _, h := range hints {
-		if h.Tool == "sense.conventions" && strings.Contains(h.Reason, "start of session") {
+		if h.Tool == "sense_conventions" && strings.Contains(h.Reason, "start of session") {
 			t.Error("should not suggest conventions for active session")
 		}
 	}

@@ -19,7 +19,7 @@ Flags:
   --language LANG    Filter by language (e.g. "go", "ruby")
   --domain PATH      Filter by path substring (e.g. "services", "models")
   --limit N          Maximum symbols to report (default 100)
-  --json             Emit JSON matching the sense.graph dead_code MCP schema
+  --json             Emit JSON matching the sense_graph dead_code MCP schema
   -h, --help         Show this help
 
 Examples:

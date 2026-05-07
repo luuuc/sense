@@ -33,7 +33,7 @@ var builtinSymbols = map[string]bool{
 // TopSymbolsByReach returns the top N types/interfaces/classes ordered by
 // the number of distinct files that reference them (including references to
 // their methods). Domain filters by file path prefix. This query powers the
-// key_symbols section of sense.conventions.
+// key_symbols section of sense_conventions.
 func (a *Adapter) TopSymbolsByReach(ctx context.Context, domain string, limit int) ([]KeySymbol, error) {
 	if limit <= 0 {
 		limit = 15

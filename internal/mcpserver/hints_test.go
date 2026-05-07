@@ -21,8 +21,8 @@ func TestGraphHintsManyCallers(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.blast" {
-		t.Errorf("tool = %q, want sense.blast", hints[0].Tool)
+	if hints[0].Tool != "sense_blast" {
+		t.Errorf("tool = %q, want sense_blast", hints[0].Tool)
 	}
 	if hints[0].Args["symbol"] != "server.HandleRequest" {
 		t.Errorf("args.symbol = %q, want server.HandleRequest", hints[0].Args["symbol"])
@@ -44,8 +44,8 @@ func TestGraphHintsNoCallers(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.search" {
-		t.Errorf("tool = %q, want sense.search", hints[0].Tool)
+	if hints[0].Tool != "sense_search" {
+		t.Errorf("tool = %q, want sense_search", hints[0].Tool)
 	}
 	if hints[0].Args["query"] != "Orphan" {
 		t.Errorf("args.query = %q, want Orphan", hints[0].Args["query"])
@@ -84,8 +84,8 @@ func TestGraphHintsCallersOnlyDirection(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.graph" {
-		t.Errorf("tool = %q, want sense.graph", hints[0].Tool)
+	if hints[0].Tool != "sense_graph" {
+		t.Errorf("tool = %q, want sense_graph", hints[0].Tool)
 	}
 	if hints[0].Args["direction"] != "callees" {
 		t.Errorf("args.direction = %q, want callees", hints[0].Args["direction"])
@@ -107,11 +107,11 @@ func TestGraphHintsManyCallersAndCallersDirection(t *testing.T) {
 	if len(hints) != 2 {
 		t.Fatalf("want 2 hints (blast + callees), got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.blast" {
-		t.Errorf("hints[0].tool = %q, want sense.blast", hints[0].Tool)
+	if hints[0].Tool != "sense_blast" {
+		t.Errorf("hints[0].tool = %q, want sense_blast", hints[0].Tool)
 	}
-	if hints[1].Tool != "sense.graph" {
-		t.Errorf("hints[1].tool = %q, want sense.graph", hints[1].Tool)
+	if hints[1].Tool != "sense_graph" {
+		t.Errorf("hints[1].tool = %q, want sense_graph", hints[1].Tool)
 	}
 }
 
@@ -143,8 +143,8 @@ func TestSearchHintsStrongMatch(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.graph" {
-		t.Errorf("tool = %q, want sense.graph", hints[0].Tool)
+	if hints[0].Tool != "sense_graph" {
+		t.Errorf("tool = %q, want sense_graph", hints[0].Tool)
 	}
 	if hints[0].Args["symbol"] != "auth.Verify" {
 		t.Errorf("args.symbol = %q, want auth.Verify", hints[0].Args["symbol"])
@@ -163,8 +163,8 @@ func TestSearchHintsFileCluster(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.conventions" {
-		t.Errorf("tool = %q, want sense.conventions", hints[0].Tool)
+	if hints[0].Tool != "sense_conventions" {
+		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
 	}
 	if hints[0].Args["domain"] != "internal/models" {
 		t.Errorf("args.domain = %q, want internal/models", hints[0].Args["domain"])
@@ -183,11 +183,11 @@ func TestSearchHintsStrongMatchAndCluster(t *testing.T) {
 	if len(hints) != 2 {
 		t.Fatalf("want 2 hints (graph + conventions), got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.graph" {
-		t.Errorf("hints[0].tool = %q, want sense.graph", hints[0].Tool)
+	if hints[0].Tool != "sense_graph" {
+		t.Errorf("hints[0].tool = %q, want sense_graph", hints[0].Tool)
 	}
-	if hints[1].Tool != "sense.conventions" {
-		t.Errorf("hints[1].tool = %q, want sense.conventions", hints[1].Tool)
+	if hints[1].Tool != "sense_conventions" {
+		t.Errorf("hints[1].tool = %q, want sense_conventions", hints[1].Tool)
 	}
 }
 
@@ -254,8 +254,8 @@ func TestBlastHintsHighRisk(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.conventions" {
-		t.Errorf("tool = %q, want sense.conventions", hints[0].Tool)
+	if hints[0].Tool != "sense_conventions" {
+		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
 	}
 }
 
@@ -270,8 +270,8 @@ func TestBlastHintsNoTests(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.search" {
-		t.Errorf("tool = %q, want sense.search", hints[0].Tool)
+	if hints[0].Tool != "sense_search" {
+		t.Errorf("tool = %q, want sense_search", hints[0].Tool)
 	}
 }
 
@@ -286,11 +286,11 @@ func TestBlastHintsHighRiskNoTests(t *testing.T) {
 	if len(hints) != 2 {
 		t.Fatalf("want 2 hints, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.conventions" {
-		t.Errorf("hints[0].tool = %q, want sense.conventions", hints[0].Tool)
+	if hints[0].Tool != "sense_conventions" {
+		t.Errorf("hints[0].tool = %q, want sense_conventions", hints[0].Tool)
 	}
-	if hints[1].Tool != "sense.search" {
-		t.Errorf("hints[1].tool = %q, want sense.search", hints[1].Tool)
+	if hints[1].Tool != "sense_search" {
+		t.Errorf("hints[1].tool = %q, want sense_search", hints[1].Tool)
 	}
 }
 
@@ -331,8 +331,8 @@ func TestConventionsHintsStrongConvention(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.search" {
-		t.Errorf("tool = %q, want sense.search", hints[0].Tool)
+	if hints[0].Tool != "sense_search" {
+		t.Errorf("tool = %q, want sense_search", hints[0].Tool)
 	}
 	if hints[0].Args["query"] != "controllers follow REST" {
 		t.Errorf("args.query = %q, want description of strong convention", hints[0].Args["query"])
@@ -349,8 +349,8 @@ func TestConventionsHintsDomainScoped(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.conventions" {
-		t.Errorf("tool = %q, want sense.conventions", hints[0].Tool)
+	if hints[0].Tool != "sense_conventions" {
+		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
 	}
 }
 
@@ -364,11 +364,11 @@ func TestConventionsHintsStrongAndDomain(t *testing.T) {
 	if len(hints) != 2 {
 		t.Fatalf("want 2 hints, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.search" {
-		t.Errorf("hints[0].tool = %q, want sense.search", hints[0].Tool)
+	if hints[0].Tool != "sense_search" {
+		t.Errorf("hints[0].tool = %q, want sense_search", hints[0].Tool)
 	}
-	if hints[1].Tool != "sense.conventions" {
-		t.Errorf("hints[1].tool = %q, want sense.conventions", hints[1].Tool)
+	if hints[1].Tool != "sense_conventions" {
+		t.Errorf("hints[1].tool = %q, want sense_conventions", hints[1].Tool)
 	}
 }
 
@@ -414,8 +414,8 @@ func TestStatusHintsFirstQuery(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.conventions" {
-		t.Errorf("tool = %q, want sense.conventions", hints[0].Tool)
+	if hints[0].Tool != "sense_conventions" {
+		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
 	}
 }
 
@@ -433,8 +433,8 @@ func TestStatusHintsStaleAndFirstQuery(t *testing.T) {
 	if hints[0].Tool != "" {
 		t.Errorf("hints[0].tool = %q, want empty (advisory)", hints[0].Tool)
 	}
-	if hints[1].Tool != "sense.conventions" {
-		t.Errorf("hints[1].tool = %q, want sense.conventions", hints[1].Tool)
+	if hints[1].Tool != "sense_conventions" {
+		t.Errorf("hints[1].tool = %q, want sense_conventions", hints[1].Tool)
 	}
 }
 
@@ -576,8 +576,8 @@ func TestDeadCodeHintsWithDead(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
-	if hints[0].Tool != "sense.graph" {
-		t.Errorf("tool = %q, want sense.graph", hints[0].Tool)
+	if hints[0].Tool != "sense_graph" {
+		t.Errorf("tool = %q, want sense_graph", hints[0].Tool)
 	}
 	if hints[0].Args["symbol"] != "model.Order" {
 		t.Errorf("args.symbol = %q, want model.Order", hints[0].Args["symbol"])

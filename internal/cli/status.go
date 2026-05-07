@@ -28,7 +28,7 @@ Show index health: file/symbol/edge counts, per-language breakdown,
 coverage, freshness, and version info.
 
 Flags:
-  --json       Emit JSON matching the sense.status MCP schema
+  --json       Emit JSON matching the sense_status MCP schema
   -h, --help   Show this help
 
 Exit codes:

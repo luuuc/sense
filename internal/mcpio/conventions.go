@@ -7,7 +7,7 @@ import (
 
 const DefaultTokenBudget = 6000
 
-// ConventionsResponse is the shape of the sense.conventions tool's reply
+// ConventionsResponse is the shape of the sense_conventions tool's reply
 // and the `sense conventions --json` CLI output.
 type ConventionsResponse struct {
 	KeySymbols   []KeySymbolEntry     `json:"key_symbols,omitempty"`

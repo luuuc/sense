@@ -57,11 +57,11 @@ Four capabilities. No sprawl.
 
 | Tool | Capability |
 |---|---|
-| `sense.graph` | Symbol relationships, callers, callees, inheritance, tests |
-| `sense.search` | Hybrid semantic + keyword search |
-| `sense.blast` | Blast radius, affected code, affected tests, risk score |
-| `sense.conventions` | Detected project conventions |
-| `sense.status` | Index health, coverage, staleness, last scan |
+| `sense_graph` | Symbol relationships, callers, callees, inheritance, tests |
+| `sense_search` | Hybrid semantic + keyword search |
+| `sense_blast` | Blast radius, affected code, affected tests, risk score |
+| `sense_conventions` | Detected project conventions |
+| `sense_status` | Index health, coverage, staleness, last scan |
 
 Your AI stops reading 30 files to answer "who calls this?" It stops hallucinating dependencies. It stops writing code that's correct but doesn't match how your team writes code.
 

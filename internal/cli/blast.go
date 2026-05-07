@@ -28,7 +28,7 @@ Flags:
   --diff REF                Compute blast for symbols modified in git diff REF
   --file PATH               Disambiguate by file path substring
   --language LANG           Disambiguate by language (e.g. "ruby", "go")
-  --json                    Emit JSON matching the sense.blast MCP schema
+  --json                    Emit JSON matching the sense_blast MCP schema
   --no-color                Disable ANSI color (NO_COLOR env var is also respected)
   -h, --help                Show this help
 
@@ -286,7 +286,7 @@ func parseBlastArgs(args []string, stderr io.Writer) (blastOptions, error) {
 	fs.StringVar(&opts.Diff, "diff", "", "compute blast for symbols modified in git diff REF")
 	fs.StringVar(&opts.File, "file", "", "disambiguate by file path substring")
 	fs.StringVar(&opts.Language, "language", "", "disambiguate by language")
-	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense.blast MCP schema")
+	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense_blast MCP schema")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "disable ANSI color")
 
 	positional, err := parseInterleaved(fs, args)

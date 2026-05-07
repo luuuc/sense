@@ -22,7 +22,7 @@ Flags:
   --limit N                 Maximum results (default 10)
   --language LANG           Filter by language (e.g. "ruby", "go")
   --min-score F             Minimum score threshold 0.0–1.0 (default 0.0)
-  --json                    Emit JSON matching the sense.search MCP schema
+  --json                    Emit JSON matching the sense_search MCP schema
   --no-color                Disable ANSI color (NO_COLOR env var is also respected)
   -h, --help                Show this help
 
@@ -142,7 +142,7 @@ func RunSearch(args []string, cio IO) int {
 		}
 	}
 
-	tracker.Record("sense.search", opts.Query,
+	tracker.Record("sense_search", opts.Query,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved,
 		resp.SenseMetrics.TextFallbackFired)
 
@@ -215,7 +215,7 @@ func parseSearchArgs(args []string, stderr io.Writer) (searchOptions, error) {
 	fs.IntVar(&opts.Limit, "limit", 10, "maximum results")
 	fs.StringVar(&opts.Language, "language", "", "filter by language")
 	fs.Float64Var(&opts.MinScore, "min-score", 0.0, "minimum score threshold")
-	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense.search MCP schema")
+	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense_search MCP schema")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "disable ANSI color")
 
 	positional, err := parseInterleaved(fs, args)

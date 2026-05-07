@@ -18,7 +18,7 @@ Detect and display project conventions from the indexed graph.
 Flags:
   --domain DOMAIN           Scope to files matching DOMAIN (e.g. "models", "controllers")
   --min-strength F          Minimum strength threshold 0.0–1.0 (default 0.5)
-  --json                    Emit JSON matching the sense.conventions MCP schema
+  --json                    Emit JSON matching the sense_conventions MCP schema
   --no-color                Disable ANSI color (NO_COLOR env var is also respected)
   -h, --help                Show this help
 

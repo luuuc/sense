@@ -124,13 +124,13 @@ func TestMCPIntegration(t *testing.T) {
 	})
 	_, _ = fmt.Fprintf(stdin, "%s\n", notif)
 
-	// 2. tools/call: sense.graph
-	t.Run("sense.graph", func(t *testing.T) {
+	// 2. tools/call: sense_graph
+	t.Run("sense_graph", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{
-			"name":      "sense.graph",
+			"name":      "sense_graph",
 			"arguments": map[string]any{"symbol": "extract.Register"},
 		})
-		assertToolResult(t, resp, "sense.graph")
+		assertToolResult(t, resp, "sense_graph")
 		text := extractToolText(t, resp)
 
 		var graph struct {
@@ -180,13 +180,13 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// 2b. sense.graph direction=callers defaults to depth=2
-	t.Run("sense.graph_callers_depth_default", func(t *testing.T) {
+	// 2b. sense_graph direction=callers defaults to depth=2
+	t.Run("sense_graph_callers_depth_default", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{
-			"name":      "sense.graph",
+			"name":      "sense_graph",
 			"arguments": map[string]any{"symbol": "extract.Register", "direction": "callers"},
 		})
-		assertToolResult(t, resp, "sense.graph")
+		assertToolResult(t, resp, "sense_graph")
 		text := extractToolText(t, resp)
 
 		var graph struct {
@@ -211,13 +211,13 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// 2c. sense.graph direction=callees defaults to depth=1 (no layers)
-	t.Run("sense.graph_callees_depth_default", func(t *testing.T) {
+	// 2c. sense_graph direction=callees defaults to depth=1 (no layers)
+	t.Run("sense_graph_callees_depth_default", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{
-			"name":      "sense.graph",
+			"name":      "sense_graph",
 			"arguments": map[string]any{"symbol": "extract.Register", "direction": "callees"},
 		})
-		assertToolResult(t, resp, "sense.graph")
+		assertToolResult(t, resp, "sense_graph")
 		text := extractToolText(t, resp)
 
 		var graph struct {
@@ -233,13 +233,13 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// 3. tools/call: sense.blast
-	t.Run("sense.blast", func(t *testing.T) {
+	// 3. tools/call: sense_blast
+	t.Run("sense_blast", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{
-			"name":      "sense.blast",
+			"name":      "sense_blast",
 			"arguments": map[string]any{"symbol": "extract.Register"},
 		})
-		assertToolResult(t, resp, "sense.blast")
+		assertToolResult(t, resp, "sense_blast")
 		text := extractToolText(t, resp)
 
 		var blastResp struct {
@@ -264,13 +264,13 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// 4. tools/call: sense.search (no min_score — regression for B2 blocker)
-	t.Run("sense.search_default_min_score", func(t *testing.T) {
+	// 4. tools/call: sense_search (no min_score — regression for B2 blocker)
+	t.Run("sense_search_default_min_score", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{
-			"name":      "sense.search",
+			"name":      "sense_search",
 			"arguments": map[string]any{"query": "extract register"},
 		})
-		assertToolResult(t, resp, "sense.search")
+		assertToolResult(t, resp, "sense_search")
 		text := extractToolText(t, resp)
 
 		var searchResp struct {
@@ -287,13 +287,13 @@ func TestMCPIntegration(t *testing.T) {
 		}
 	})
 
-	// 5. tools/call: sense.status
-	t.Run("sense.status", func(t *testing.T) {
+	// 5. tools/call: sense_status
+	t.Run("sense_status", func(t *testing.T) {
 		resp := send("tools/call", map[string]any{
-			"name":      "sense.status",
+			"name":      "sense_status",
 			"arguments": map[string]any{},
 		})
-		assertToolResult(t, resp, "sense.status")
+		assertToolResult(t, resp, "sense_status")
 		text := extractToolText(t, resp)
 
 		var status struct {

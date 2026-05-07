@@ -24,7 +24,7 @@ Flags:
   --direction DIR           One of: both, callers, callees (default both)
   --file PATH               Disambiguate by file path substring
   --language LANG           Disambiguate by language (e.g. "ruby", "go")
-  --json                    Emit JSON matching the sense.graph MCP schema
+  --json                    Emit JSON matching the sense_graph MCP schema
   --no-color                Disable ANSI color (NO_COLOR env var is also respected)
   -h, --help                Show this help
 
@@ -182,7 +182,7 @@ func parseGraphArgs(args []string, stderr io.Writer) (graphOptions, error) {
 	fs.StringVar(&direction, "direction", string(DirectionBoth), "both|callers|callees")
 	fs.StringVar(&opts.File, "file", "", "disambiguate by file path substring")
 	fs.StringVar(&opts.Language, "language", "", "disambiguate by language")
-	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense.graph MCP schema")
+	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense_graph MCP schema")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "disable ANSI color")
 
 	positional, err := parseInterleaved(fs, args)

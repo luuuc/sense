@@ -15,7 +15,7 @@ import (
 var update = flag.Bool("update", false, "update testdata golden files")
 
 // TestContractGraphCheckoutService pins MarshalGraph's output shape
-// against the documented `sense.graph` example in
+// against the documented `sense_graph` example in
 // .doc/definition/06-mcp-and-cli.md. The fixture mirrors the doc's
 // example field-for-field; a drift in either the types or the
 // encoder settings breaks this test.
@@ -28,7 +28,7 @@ func TestContractGraphCheckoutService(t *testing.T) {
 }
 
 // TestContractBlastUserEmailVerified pins MarshalBlast against the
-// documented `sense.blast` example (symbol form). Sibling to the
+// documented `sense_blast` example (symbol form). Sibling to the
 // graph test: the wire shape, not the values, is what matters.
 func TestContractBlastUserEmailVerified(t *testing.T) {
 	got, err := MarshalBlast(fixtureBlastUserEmailVerified())
@@ -67,7 +67,7 @@ func TestContractBlastDiff(t *testing.T) {
 	assertGolden(t, "testdata/blast_diff.json", got)
 }
 
-// TestContractStatus pins the sense.status response shape the MCP
+// TestContractStatus pins the sense_status response shape the MCP
 // server in 01-05 emits — index counts, per-language tier breakdown,
 // and the freshness block that tells an agent whether the index is
 // current. Session/lifetime counters are not on the wire until pitch
@@ -80,7 +80,7 @@ func TestContractStatus(t *testing.T) {
 	assertGolden(t, "testdata/status.json", got)
 }
 
-// TestContractGraphFreshness pins the MCP-only "sense.graph with
+// TestContractGraphFreshness pins the MCP-only "sense_graph with
 // freshness" shape: the same GraphResponse as TestContractGraph,
 // plus the freshness block the stdio server injects. The CLI's
 // --json output does not include freshness (the CLI leaves
@@ -278,7 +278,7 @@ func fixtureGraphWithFreshness() GraphResponse {
 	return r
 }
 
-// fixtureStatus pins the sense.status wire shape. Numbers are
+// fixtureStatus pins the sense_status wire shape. Numbers are
 // illustrative, not tied to any real repo — the golden asserts
 // shape, not any specific project state.
 func fixtureStatus() StatusResponse {

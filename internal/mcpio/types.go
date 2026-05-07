@@ -35,17 +35,17 @@ const ServerInstructions = "When Sense is available and indexed, prefer Sense to
 	"and file-walking agents for structural and semantic code questions. " +
 	"Sense provides pre-indexed results that are faster and more complete.\n\n" +
 	"WHEN TO USE SENSE TOOLS:\n" +
-	"- Symbol relationships, callers, dependencies → sense.graph\n" +
-	"- \"What would break if I changed X?\", impact analysis → sense.blast\n" +
-	"- Conceptual/semantic code search (not exact string match) → sense.search\n" +
-	"- Project patterns and conventions → sense.conventions\n" +
-	"- Index health, what's indexed → sense.status\n\n" +
+	"- Symbol relationships, callers, dependencies → sense_graph\n" +
+	"- \"What would break if I changed X?\", impact analysis → sense_blast\n" +
+	"- Conceptual/semantic code search (not exact string match) → sense_search\n" +
+	"- Project patterns and conventions → sense_conventions\n" +
+	"- Index health, what's indexed → sense_status\n\n" +
 	"WORKFLOWS:\n" +
-	"- Orientation (new to the codebase?) → sense.search with broad concepts + sense.conventions\n" +
-	"- Impact analysis (changing something?) → sense.blast\n" +
-	"- Dependency tracing (who calls what?) → sense.graph\n" +
-	"- Debugging (where does X happen?) → sense.search\n" +
-	"- Refactoring (what patterns exist?) → sense.conventions + sense.graph\n\n" +
+	"- Orientation (new to the codebase?) → sense_search with broad concepts + sense_conventions\n" +
+	"- Impact analysis (changing something?) → sense_blast\n" +
+	"- Dependency tracing (who calls what?) → sense_graph\n" +
+	"- Debugging (where does X happen?) → sense_search\n" +
+	"- Refactoring (what patterns exist?) → sense_conventions + sense_graph\n\n" +
 	"WHEN NOT TO USE SENSE TOOLS:\n" +
 	"- Exact text/string search → use grep\n" +
 	"- Reading file contents → use your file reading tool\n" +
@@ -88,10 +88,10 @@ type NextStep struct {
 }
 
 // ---------------------------------------------------------------
-// sense.graph response
+// sense_graph response
 // ---------------------------------------------------------------
 
-// GraphResponse is the shape of the sense.graph tool's reply and the
+// GraphResponse is the shape of the sense_graph tool's reply and the
 // `sense graph --json` CLI output. Freshness is a pointer so emitters
 // that do not compute it (the CLI in 01-04) omit the block entirely;
 // the MCP server in 01-05 always populates it.
@@ -233,10 +233,10 @@ type GraphMetrics struct {
 }
 
 // ---------------------------------------------------------------
-// sense.blast response
+// sense_blast response
 // ---------------------------------------------------------------
 
-// BlastResponse is the shape of the sense.blast tool's reply and the
+// BlastResponse is the shape of the sense_blast tool's reply and the
 // `sense blast --json` CLI output. Symbol is the qualified-name
 // string (not a struct like GraphSymbol), mirroring the documented
 // example — blast callers index into affected symbols by name, not
@@ -304,14 +304,14 @@ type BlastMetrics struct {
 }
 
 // ---------------------------------------------------------------
-// Freshness (shared) + sense.status response
+// Freshness (shared) + sense_status response
 // ---------------------------------------------------------------
 
 // Freshness tells an agent whether the index it is querying still
 // matches the working tree. All three fields are pointers so
-// emitters can omit cells they did not compute — sense.graph and
-// sense.blast populate only IndexAgeSeconds + StaleFilesSeen;
-// sense.status populates all three plus `last_scan`. The pitch
+// emitters can omit cells they did not compute — sense_graph and
+// sense_blast populate only IndexAgeSeconds + StaleFilesSeen;
+// sense_status populates all three plus `last_scan`. The pitch
 // (01-05 rabbit holes) calls out that IndexAgeSeconds alone is
 // misleading: "10 seconds since scan" looks fresh until a single
 // edit bumps StaleFilesSeen to 1. Both fields together tell the
@@ -325,9 +325,9 @@ type Freshness struct {
 	WatchSince            *string `json:"watch_since,omitempty"`
 }
 
-// StatusResponse is the shape of the sense.status tool's reply (and
+// StatusResponse is the shape of the sense_status tool's reply (and
 // the future `sense status --json` output). Unlike graph/blast the
-// sense.status schema has no `sense_metrics` footer — status is
+// sense_status schema has no `sense_metrics` footer — status is
 // metadata about the index itself, not the result of a query against
 type StatusResponse struct {
 	Index             StatusIndex              `json:"index"`
@@ -447,10 +447,10 @@ type StatusLanguage struct {
 }
 
 // ---------------------------------------------------------------
-// sense.search response
+// sense_search response
 // ---------------------------------------------------------------
 
-// SearchResponse is the shape of the sense.search tool's reply and the
+// SearchResponse is the shape of the sense_search tool's reply and the
 // `sense search --json` CLI output. Matches the documented example in
 // .doc/definition/06-mcp-and-cli.md exactly.
 type SearchResponse struct {
@@ -500,10 +500,10 @@ type SearchMetrics struct {
 }
 
 // ---------------------------------------------------------------
-// Dead code response (sense.graph dead_code mode)
+// Dead code response (sense_graph dead_code mode)
 // ---------------------------------------------------------------
 
-// DeadCodeResponse is the shape returned by sense.graph when dead_code
+// DeadCodeResponse is the shape returned by sense_graph when dead_code
 // is true. It replaces the normal GraphResponse with project-wide dead
 // symbol analysis.
 type DeadCodeResponse struct {

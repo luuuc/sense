@@ -9,7 +9,7 @@ type EdgeRef struct {
 
 // SymbolContext bundles a focal symbol with its enclosing file and adjacent
 // edges — the aggregate shape returned by Index.ReadSymbol and the MCP
-// sense.graph response in 06-mcp-and-cli.md. Named to avoid collision with
+// sense_graph response in 06-mcp-and-cli.md. Named to avoid collision with
 // the Index.Query search method.
 type SymbolContext struct {
 	Symbol   Symbol
