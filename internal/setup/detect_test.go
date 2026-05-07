@@ -2,16 +2,18 @@ package setup
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestDetectAllReturnsAllTools(t *testing.T) {
 	results := DetectAll()
-	if len(results) != 3 {
-		t.Fatalf("DetectAll returned %d results, want 3", len(results))
+	if len(results) != 4 {
+		t.Fatalf("DetectAll returned %d results, want 4", len(results))
 	}
-	want := []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI}
+	want := []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI, ToolOpencode}
 	for i, r := range results {
 		if r.Tool != want[i] {
 			t.Errorf("result[%d].Tool = %s, want %s", i, r.Tool, want[i])
@@ -34,6 +36,7 @@ func TestToolDisplayName(t *testing.T) {
 		{ToolClaudeCode, "Claude Code"},
 		{ToolCursor, "Cursor"},
 		{ToolCodexCLI, "Codex CLI"},
+		{ToolOpencode, "Opencode"},
 		{Tool("other"), "other"},
 	}
 	for _, tc := range cases {
@@ -45,11 +48,11 @@ func TestToolDisplayName(t *testing.T) {
 
 func TestDetectCurrentFallsBackToClaudeCode(t *testing.T) {
 	got := DetectCurrent()
-	// In test env, CLAUDE_CODE and CURSOR_* are unlikely to be set,
+	// In test env, CLAUDE_CODE, CURSOR_*, and OPENCODE are unlikely to be set,
 	// so we should get the Claude Code fallback. If they are set,
 	// that's fine too — the function is correct either way.
-	if got != ToolClaudeCode && got != ToolCursor {
-		t.Errorf("DetectCurrent() = %s, want claude-code or cursor", got)
+	if got != ToolClaudeCode && got != ToolCursor && got != ToolOpencode {
+		t.Errorf("DetectCurrent() = %s, want claude-code, cursor, or opencode", got)
 	}
 }
 
@@ -63,8 +66,10 @@ func TestParseTools(t *testing.T) {
 		{"claude-code", []Tool{ToolClaudeCode}, false},
 		{"cursor", []Tool{ToolCursor}, false},
 		{"codex-cli", []Tool{ToolCodexCLI}, false},
+		{"opencode", []Tool{ToolOpencode}, false},
 		{"claude-code,cursor", []Tool{ToolClaudeCode, ToolCursor}, false},
 		{"claude-code, cursor, codex-cli", []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI}, false},
+		{"claude-code, cursor, codex-cli, opencode", []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI, ToolOpencode}, false},
 		{"unknown", nil, true},
 		{"claude-code,bad", nil, true},
 	}
@@ -97,8 +102,8 @@ func TestPrintDetection(t *testing.T) {
 	if !strings.Contains(output, "Detected AI tools:") {
 		t.Error("expected header in PrintDetection output")
 	}
-	// Should list all three tools
-	for _, name := range []string{"Claude Code", "Cursor", "Codex CLI"} {
+	// Should list all four tools
+	for _, name := range []string{"Claude Code", "Cursor", "Codex CLI", "Opencode"} {
 		if !strings.Contains(output, name) {
 			t.Errorf("expected %q in PrintDetection output", name)
 		}
@@ -144,6 +149,60 @@ func TestDetectCurrentWithClaudeCodeEnv(t *testing.T) {
 	}
 }
 
+func TestDetectCurrentWithOpencodeEnv(t *testing.T) {
+	t.Setenv("CLAUDE_CODE", "")
+	t.Setenv("CURSOR_TRACE_ID", "")
+	t.Setenv("CURSOR_SESSION_ID", "")
+	t.Setenv("OPENCODE", "1")
+	got := DetectCurrent()
+	if got != ToolOpencode {
+		t.Errorf("DetectCurrent() = %s with OPENCODE set, want opencode", got)
+	}
+}
+
+func TestDetectOpencode(t *testing.T) {
+	r := Detect(ToolOpencode)
+	if r.Tool != ToolOpencode {
+		t.Errorf("Detect(ToolOpencode).Tool = %s", r.Tool)
+	}
+}
+
+func TestDetectOpencodeHomeDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODE", "")
+	// Remove opencode from PATH so we test the home-directory fallback.
+	t.Setenv("PATH", "/nonexistent")
+
+	// Create ~/.config/opencode to trigger home directory detection.
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := Detect(ToolOpencode)
+	if !r.Found {
+		t.Error("expected opencode to be found via home directory")
+	}
+	if r.Evidence != "~/.config/opencode/ directory" {
+		t.Errorf("Evidence = %q, want '~/.config/opencode/ directory'", r.Evidence)
+	}
+}
+
+func TestDetectOpencodeNotFound(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODE", "")
+	t.Setenv("PATH", "/nonexistent")
+
+	// Do NOT create ~/.config/opencode — all detection paths should miss.
+
+	r := Detect(ToolOpencode)
+	if r.Found {
+		t.Error("expected opencode to not be found")
+	}
+}
+
 func TestHasCursorEnvSessionID(t *testing.T) {
 	t.Setenv("CURSOR_SESSION_ID", "test-session")
 	if !hasCursorEnv() {
@@ -161,11 +220,11 @@ func TestHasCursorEnvNone(t *testing.T) {
 
 func TestAllToolsOrder(t *testing.T) {
 	tools := AllTools()
-	if len(tools) != 3 {
-		t.Fatalf("AllTools() len = %d, want 3", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("AllTools() len = %d, want 4", len(tools))
 	}
-	if tools[0] != ToolClaudeCode || tools[1] != ToolCursor || tools[2] != ToolCodexCLI {
-		t.Errorf("AllTools() = %v, want [claude-code cursor codex-cli]", tools)
+	if tools[0] != ToolClaudeCode || tools[1] != ToolCursor || tools[2] != ToolCodexCLI || tools[3] != ToolOpencode {
+		t.Errorf("AllTools() = %v, want [claude-code cursor codex-cli opencode]", tools)
 	}
 }
 

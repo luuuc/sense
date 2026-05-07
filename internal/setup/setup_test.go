@@ -429,11 +429,190 @@ func TestAgentsMDMergeOverUserContent(t *testing.T) {
 	}
 }
 
+// --- Opencode integration tests ---
+
+func TestOpencodeCreatesFiles(t *testing.T) {
+	root := t.TempDir()
+	opts := &Options{Tools: []Tool{ToolOpencode}}
+
+	_, err := Run(root, &bytes.Buffer{}, opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, path := range []string{
+		"opencode.json",
+		"AGENTS.md",
+		".opencode/skills/sense-explore/SKILL.md",
+		".opencode/skills/sense-impact/SKILL.md",
+		".opencode/skills/sense-conventions/SKILL.md",
+	} {
+		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			t.Errorf("expected %s to exist: %v", path, err)
+		}
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, "opencode.json"))
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse opencode.json: %v", err)
+	}
+	mcpServers, _ := m["mcp"].(map[string]any)
+	if mcpServers == nil || mcpServers["sense"] == nil {
+		t.Error("sense server not in opencode.json mcp")
+	}
+}
+
+func TestOpencodeIdempotent(t *testing.T) {
+	root := t.TempDir()
+	opts := &Options{Tools: []Tool{ToolOpencode}}
+
+	if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	mcp1, _ := os.ReadFile(filepath.Join(root, "opencode.json"))
+	agents1, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+
+	if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+
+	mcp2, _ := os.ReadFile(filepath.Join(root, "opencode.json"))
+	agents2, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+
+	if string(mcp1) != string(mcp2) {
+		t.Error("opencode.json changed between runs")
+	}
+	if string(agents1) != string(agents2) {
+		t.Error("AGENTS.md changed between runs")
+	}
+}
+
+func TestOpencodeJSONPreservesExisting(t *testing.T) {
+	root := t.TempDir()
+	existing := `{"mcp":{"other-server":{"type":"remote","url":"https://example.com"}}}`
+	if err := os.WriteFile(filepath.Join(root, "opencode.json"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := &Options{Tools: []Tool{ToolOpencode}}
+	if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, "opencode.json"))
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	mcpServers, _ := m["mcp"].(map[string]any)
+	if mcpServers["other-server"] == nil {
+		t.Error("existing server was overwritten")
+	}
+	if mcpServers["sense"] == nil {
+		t.Error("sense server not added")
+	}
+}
+
+func TestOpencodeAgentsMDMergeOverUserContent(t *testing.T) {
+	root := t.TempDir()
+	userContent := "# My Opencode Rules\n\nUse Go 1.23.\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(userContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := &Options{Tools: []Tool{ToolOpencode}}
+	if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	content := string(data)
+
+	if !strings.Contains(content, "My Opencode Rules") {
+		t.Error("user content was overwritten")
+	}
+	if !strings.Contains(content, "Use Go 1.23") {
+		t.Error("user content was overwritten")
+	}
+	if !strings.Contains(content, markerStart) {
+		t.Error("sense section not appended")
+	}
+	if strings.Count(content, markerStart) != 1 {
+		t.Error("duplicate sense section")
+	}
+}
+
+func TestOpencodeJSONReadError(t *testing.T) {
+	root := t.TempDir()
+	// Create opencode.json with invalid JSON so readJSONFile fails.
+	if err := os.WriteFile(filepath.Join(root, "opencode.json"), []byte("not json{{{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeOpencodeJSON(root)
+	if err == nil {
+		t.Fatal("expected error when opencode.json contains invalid JSON")
+	}
+}
+
+func TestOpencodeAgentsMDWriteError(t *testing.T) {
+	root := t.TempDir()
+	// Create AGENTS.md as a directory so writeMarkerFile fails.
+	if err := os.MkdirAll(filepath.Join(root, "AGENTS.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureOpencode(root)
+	if err == nil {
+		t.Fatal("expected error when AGENTS.md is a directory")
+	}
+}
+
+func TestOpencodeJSONWriteError(t *testing.T) {
+	root := t.TempDir()
+	// Create opencode.json as a directory so writeJSONFile fails.
+	if err := os.MkdirAll(filepath.Join(root, "opencode.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureOpencode(root)
+	if err == nil {
+		t.Fatal("expected error when opencode.json is a directory")
+	}
+}
+
+func TestOpencodeSkillsWriteError(t *testing.T) {
+	root := t.TempDir()
+	// Create .opencode as a file so MkdirAll(".opencode/skills") fails.
+	if err := os.WriteFile(filepath.Join(root, ".opencode"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeOpencodeSkills(root)
+	if err == nil {
+		t.Fatal("expected error when .opencode exists as a file")
+	}
+}
+
+func TestOpencodeSkillsSubdirWriteError(t *testing.T) {
+	root := t.TempDir()
+	skillsDir := filepath.Join(root, ".opencode", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Create a file with the same name as a skill directory so MkdirAll fails.
+	if err := os.WriteFile(filepath.Join(skillsDir, "sense-explore"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeOpencodeSkills(root)
+	if err == nil {
+		t.Fatal("expected error when skill subdir exists as a file")
+	}
+}
+
 // --- Multi-tool integration tests ---
 
 func TestMultiToolSetup(t *testing.T) {
 	root := t.TempDir()
-	opts := &Options{Tools: []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI}}
+	opts := &Options{Tools: []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI, ToolOpencode}}
 
 	var buf bytes.Buffer
 	res, err := Run(root, &buf, opts)
@@ -441,8 +620,8 @@ func TestMultiToolSetup(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if len(res.Tools) != 3 {
-		t.Fatalf("Tools = %d, want 3", len(res.Tools))
+	if len(res.Tools) != 4 {
+		t.Fatalf("Tools = %d, want 4", len(res.Tools))
 	}
 
 	for _, path := range []string{
@@ -452,14 +631,15 @@ func TestMultiToolSetup(t *testing.T) {
 		".cursor/mcp.json",
 		".cursorrules",
 		"AGENTS.md",
+		"opencode.json",
 	} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
 			t.Errorf("expected %s to exist: %v", path, err)
 		}
 	}
 
-	if !strings.Contains(buf.String(), "Claude Code, Cursor, and Codex CLI") {
-		t.Errorf("summary should list all three tools, got: %s", buf.String())
+	if !strings.Contains(buf.String(), "Claude Code, Cursor, Codex CLI, and Opencode") {
+		t.Errorf("summary should list all four tools, got: %s", buf.String())
 	}
 }
 
