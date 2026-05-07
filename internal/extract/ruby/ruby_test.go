@@ -290,12 +290,40 @@ func TestMethodCallEdges(t *testing.T) {
   end
 end
 `)
-	if findEdge(r, "Order#process", "validate", "calls") == nil {
-		t.Error("missing calls edge Order#process -> validate")
-	}
-	if findEdge(r, "Order#process", "customer.notify", "calls") == nil {
-		t.Error("missing calls edge Order#process -> customer.notify")
-	}
+	t.Run("bare_identifier", func(t *testing.T) {
+		// Bare identifier `validate` is emitted as `self.validate` so the
+		// resolver can rewrite it to the enclosing class. Confidence is
+		// dynamic because tree-sitter parses it as an identifier node.
+		e := findEdge(r, "Order#process", "self.validate", "calls")
+		if e == nil {
+			t.Fatal("missing calls edge Order#process -> self.validate")
+		}
+		if e.Confidence != extract.ConfidenceDynamic {
+			t.Errorf("self.validate confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+		}
+	})
+	t.Run("call_node_no_receiver", func(t *testing.T) {
+		// `save!` has no receiver — emitted as `self.save!` with static
+		// confidence because tree-sitter parses it as a call node.
+		e := findEdge(r, "Order#process", "self.save!", "calls")
+		if e == nil {
+			t.Fatal("missing calls edge Order#process -> self.save!")
+		}
+		if e.Confidence != 1.0 {
+			t.Errorf("self.save! confidence = %v, want 1.0", e.Confidence)
+		}
+	})
+	t.Run("unresolved_identifier_receiver", func(t *testing.T) {
+		// `customer.notify` has an identifier receiver with no local type,
+		// so we fall back to the bare method name at reduced confidence.
+		e := findEdge(r, "Order#process", "notify", "calls")
+		if e == nil {
+			t.Fatal("missing calls edge Order#process -> notify")
+		}
+		if e.Confidence != extract.ConfidenceUnresolved {
+			t.Errorf("notify confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+		}
+	})
 }
 
 func TestSendDynamicDispatch(t *testing.T) {
@@ -591,8 +619,12 @@ func TestBareIdentifierCalls(t *testing.T) {
   end
 end
 `)
-	if findEdge(r, "Order#process", "validate_order", "calls") == nil {
-		t.Error("missing calls edge from bare identifier call")
+	e := findEdge(r, "Order#process", "self.validate_order", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from bare identifier call")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("bare identifier confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
 	}
 }
 
@@ -725,9 +757,13 @@ class Service
   end
 end
 `)
-	// bare identifiers in statement position should produce calls edges
-	if findEdge(r, "Service#process", "validate", "calls") == nil {
-		t.Error("missing calls edge from bare identifier validate")
+	// bare identifiers in statement position are emitted as self.name
+	e := findEdge(r, "Service#process", "self.validate", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from bare identifier validate")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("bare identifier confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
 	}
 }
 
@@ -893,8 +929,185 @@ class Service
   end
 end
 `)
-	if findEdge(r, "Service#process", "connection.execute", "calls") == nil {
-		t.Error("missing calls edge from receiver.method call")
+	// `connection` is an unresolved identifier receiver → bare method name.
+	e := findEdge(r, "Service#process", "execute", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from receiver.method call")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("execute confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+	// `Rails.logger` is a call-chain receiver → bare method name.
+	e = findEdge(r, "Service#process", "info", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from chained receiver call")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("info confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestLocalTypeInference(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    order = Order.new
+    order.save
+  end
+end
+`)
+	// Local-variable assignment `order = Order.new` lets us resolve
+	// `order.save` to the instance method `Order#save`.
+	e := findEdge(r, "Service#process", "Order#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge Service#process -> Order#save from local type inference")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("inferred edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestNewChainResolution(t *testing.T) {
+	r := parseRuby(t, `
+class TopicCreator
+  def create; end
+  def self.build
+    TopicCreator.new.create
+  end
+end
+`)
+	// `TopicCreator.new.create` is a `.new` chain → we infer the instance method.
+	e := findEdge(r, "TopicCreator.build", "TopicCreator#create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from TopicCreator.new.create chain")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("chain edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestSelfNewChainResolution(t *testing.T) {
+	r := parseRuby(t, `
+class TopicCreator
+  def create; end
+  def self.build
+    self.new.create
+  end
+end
+`)
+	// `self.new.create` inside a singleton method → instance method of the class.
+	e := findEdge(r, "TopicCreator.build", "TopicCreator#create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from self.new.create chain")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("chain edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestOperatorAssignmentLocalType(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    order ||= Order.new
+    order.save
+  end
+end
+`)
+	// `operator_assignment` (`||=`) should be handled the same as regular assignment.
+	e := findEdge(r, "Service#process", "Order#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from operator-assignment local type")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("inferred edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestLocalTypeMapNegative(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    order = "not an order"
+    order.save
+  end
+end
+`)
+	// A non-`.new` assignment should NOT create a local-type entry, so
+	// `order.save` falls back to the bare method name.
+	e := findEdge(r, "Service#process", "save", "calls")
+	if e == nil {
+		t.Fatal("missing bare fallback edge for non-.new assignment")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("bare fallback confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestLocalTypeInferenceScopeResolution(t *testing.T) {
+	r := parseRuby(t, `
+module Admin
+  class Order
+    def save; end
+  end
+end
+
+class Service
+  def process
+    order = Admin::Order.new
+    order.save
+  end
+end
+`)
+	// Scope-resolution receiver `Admin::Order.new` should resolve via
+	// local type inference exactly like a simple constant.
+	e := findEdge(r, "Service#process", "Admin::Order#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge for scope-resolution local type")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("inferred edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestLocalTypeReassignmentShadow(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Invoice
+  def pay; end
+end
+
+class Service
+  def process
+    order = Order.new
+    order = Invoice.new
+    order.pay
+  end
+end
+`)
+	// Last-write-wins: `order` is reassigned to `Invoice`, so `order.pay`
+	// should resolve to `Invoice#pay`, not `Order#save`.
+	e := findEdge(r, "Service#process", "Invoice#pay", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge for reassignment shadow")
+	}
+	if findEdge(r, "Service#process", "Order#save", "calls") != nil {
+		t.Error("unexpected Order#save edge after reassignment shadow")
 	}
 }
 

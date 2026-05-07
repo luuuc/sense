@@ -282,8 +282,9 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	// and a dynamic include at runtime is rare enough that a bare calls
 	// edge is an accurate record of what was written.
 	body := n.ChildByFieldName("body")
+	localTypes := buildLocalTypeMap(body, w.source)
 	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified)
+		return w.emitCall(c, qualified, scope, localTypes)
 	}); err != nil {
 		return err
 	}
@@ -291,12 +292,16 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 }
 
 // emitCall produces a calls edge for one `call` node. The target is
-// the receiver text joined to the method name, or the bare method name
-// for receiverless calls. `send` / `public_send` / `__send__` with a
-// literal symbol or string first argument is emitted with confidence
-// 0.7 (dynamic dispatch we could statically resolve); anything else in
-// that family is skipped.
-func (w *walker) emitCall(n *sitter.Node, source string) error {
+// resolved from the receiver when possible: `self` and implicit calls
+// are emitted as `self.name` so the resolver rewrites them to the
+// enclosing class; constant receivers are emitted as `Const.name` for
+// exact matching; local-variable receivers are resolved via a lightweight
+// intra-method type map built from `X = Class.new` assignments; method
+// chains are stripped to the trailing method name. `send` /
+// `public_send` / `__send__` with a literal symbol or string first
+// argument is emitted with confidence 0.7; anything else in that family
+// is skipped.
+func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTypes map[string]string) error {
 	methodNode := n.ChildByFieldName("method")
 	if methodNode == nil {
 		return nil
@@ -322,19 +327,100 @@ func (w *walker) emitCall(n *sitter.Node, source string) error {
 		})
 	}
 
-	target := methodName
-	if recv := n.ChildByFieldName("receiver"); recv != nil {
-		if recvText := strings.TrimSpace(extract.Text(recv, w.source)); recvText != "" {
-			target = recvText + "." + methodName
-		}
+	recv := n.ChildByFieldName("receiver")
+	target, confidence := w.resolveCallTarget(recv, methodName, scope, localTypes)
+	if target == "" {
+		return nil
 	}
 	return w.emit.Edge(extract.EmittedEdge{
 		SourceQualified: source,
 		TargetQualified: target,
 		Kind:            model.EdgeCalls,
 		Line:            &line,
-		Confidence:      1.0,
+		Confidence:      confidence,
 	})
+}
+
+// resolveCallTarget decides what target string to emit for a call node.
+// It returns the target string and the confidence level.
+func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope []string, localTypes map[string]string) (string, float64) {
+	if recv == nil {
+		return "self." + methodName, 1.0
+	}
+
+	switch recv.Kind() {
+	case "self":
+		return "self." + methodName, 1.0
+	case "constant", "scope_resolution":
+		if recvText := strings.TrimSpace(extract.Text(recv, w.source)); recvText != "" {
+			return recvText + "." + methodName, 1.0
+		}
+	case "identifier":
+		name := extract.Text(recv, w.source)
+		if typ, ok := localTypes[name]; ok {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
+		return methodName, extract.ConfidenceUnresolved
+	case "call":
+		// Method chain — strip to the trailing method unless the inner
+		// call is `.new` on a constant or `self`, in which case we can
+		// infer the result type is an instance of that class.
+		if typ := typeFromNewCall(recv, w.source, scope); typ != "" {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
+		return methodName, extract.ConfidenceUnresolved
+	}
+
+	return methodName, extract.ConfidenceUnresolved
+}
+
+// buildLocalTypeMap scans a method body for local-variable assignments
+// whose RHS is `ClassName.new(...)` and returns a map from variable name
+// to class name. This enables lightweight receiver resolution for the
+// most common object-creation pattern in Ruby.
+func buildLocalTypeMap(body *sitter.Node, source []byte) map[string]string {
+	types := make(map[string]string)
+	if body == nil {
+		return types
+	}
+	for _, kind := range []string{"assignment", "operator_assignment"} {
+		_ = extract.WalkNamedDescendants(body, kind, func(n *sitter.Node) error {
+			lhs := n.ChildByFieldName("left")
+			rhs := n.ChildByFieldName("right")
+			if lhs == nil || rhs == nil || lhs.Kind() != "identifier" {
+				return nil
+			}
+			if typ := typeFromNewCall(rhs, source, nil); typ != "" {
+				types[extract.Text(lhs, source)] = typ
+			}
+			return nil
+		})
+	}
+	return types
+}
+
+// typeFromNewCall returns the receiver class name when the node is a
+// call to `.new`, e.g. `TopicCreator.new(...)` → `"TopicCreator"`.
+// When the receiver is `self`, the enclosing class scope is used.
+func typeFromNewCall(n *sitter.Node, source []byte, scope []string) string {
+	if n == nil || n.Kind() != "call" {
+		return ""
+	}
+	methodNode := n.ChildByFieldName("method")
+	if methodNode == nil || extract.Text(methodNode, source) != "new" {
+		return ""
+	}
+	recv := n.ChildByFieldName("receiver")
+	if recv == nil {
+		return ""
+	}
+	switch recv.Kind() {
+	case "constant", "scope_resolution":
+		return extract.Text(recv, source)
+	case "self":
+		return strings.Join(scope, "::")
+	}
+	return ""
 }
 
 // statementParents is the set of tree-sitter-ruby node kinds whose
@@ -352,8 +438,8 @@ var statementParents = map[string]bool{
 // statement position (direct children of body_statement, then, else,
 // begin, ensure). Tree-sitter-ruby parses bare receiverless method
 // calls without parentheses as identifier nodes rather than call
-// nodes; this picks them up so the resolver can match them to methods
-// defined in the same class.
+// nodes; we emit them as `self.name` so the resolver rewrites them to
+// the enclosing class (e.g. `self.validate` → `Order#validate`).
 func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string) error {
 	return extract.WalkNamedDescendants(body, "identifier", func(ident *sitter.Node) error {
 		parent := ident.Parent()
@@ -367,7 +453,7 @@ func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified stri
 		line := extract.Line(ident.StartPosition())
 		return w.emit.Edge(extract.EmittedEdge{
 			SourceQualified: sourceQualified,
-			TargetQualified: name,
+			TargetQualified: "self." + name,
 			Kind:            model.EdgeCalls,
 			Line:            &line,
 			Confidence:      extract.ConfidenceDynamic,
