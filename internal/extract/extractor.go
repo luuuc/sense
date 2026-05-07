@@ -84,6 +84,12 @@ const (
 	ConfidenceAmbiguous  = 0.8
 	ConfidenceTests      = 0.8
 	ConfidenceDynamic    = 0.7
+	// ConfidenceUnresolved is for edges where the extractor could not
+	// determine a receiver type and fell back to the bare method name.
+	// The resolver may still match it via unqualified-name fallback, but
+	// the edge is intentionally low-confidence to avoid surfacing noisy
+	// cross-class guesses in blast-radius and caller queries.
+	ConfidenceUnresolved = 0.5
 )
 
 // Synthetic qualified-name prefixes for cross-language resolution.
