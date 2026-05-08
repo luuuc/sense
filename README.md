@@ -12,7 +12,7 @@ One binary, one index, four tools for your AI. No SaaS account, no API key, no c
 
 ## What changes
 
-Measured across 7 real-world codebases (Discourse, Flask, Next.js, Axum, Gin, Javalin, Maket).
+Measured across 7 real-world codebases ([Discourse](https://github.com/discourse/discourse), [Flask](https://github.com/pallets/flask), [Next.js](https://github.com/vercel/next.js/), [Axum](https://github.com/tokio-rs/axum), [Gin](https://github.com/gin-gonic/gin), [Javalin](https://github.com/javalin/javalin), a private e-commerce repo).
 Full methodology and raw data: [`bench/`](bench/).
 
 ![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (5 tool calls, 109K tokens, 48s)](docs/comparison.svg)
