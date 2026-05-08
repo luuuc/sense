@@ -4,18 +4,18 @@
 
 **Codebase understanding for your AI.**
 
-Sense is not a tool you use. It's a tool your AI uses. You install a binary, add one line to your MCP config, and your AI gets the structural understanding of your codebase that a senior engineer carries in their head. You notice it in the absence of frustration — faster answers, fewer wrong turns, code that matches your conventions.
+![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (5 tool calls, 109K tokens, 48s)](docs/comparison.svg)
+
+Sense is not a tool you use. It's a tool your AI uses. You install a binary, add one line to your MCP config, and your AI gets the structural understanding of your codebase that a senior engineer carries in their head. You notice it in the absence of frustration. Faster answers, fewer wrong turns, code that matches your conventions.
 
 One binary, one index, four tools for your AI. No SaaS account, no API key, no cloud dependency.
 
-> Sense sits on your machine, has no learning curve, and isn't for you — it's for your AI.
+> Sense sits on your machine, has no learning curve, and isn't for you. It's for your AI.
 
 ## What changes
 
-Measured across 7 real-world codebases ([Discourse](https://github.com/discourse/discourse), [Flask](https://github.com/pallets/flask), [Next.js](https://github.com/vercel/next.js/), [Axum](https://github.com/tokio-rs/axum), [Gin](https://github.com/gin-gonic/gin), [Javalin](https://github.com/javalin/javalin), a private e-commerce repo).
+Measured across 7 real-world codebases ([Discourse](https://github.com/discourse/discourse), [Flask](https://github.com/pallets/flask), [Next.js](https://github.com/vercel/next.js/), [Axum](https://github.com/tokio-rs/axum), [Gin](https://github.com/gin-gonic/gin), [Javalin](https://github.com/javalin/javalin), and a private e-commerce repo).
 Full methodology and raw data: [`bench/`](bench/).
-
-![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (5 tool calls, 109K tokens, 48s)](docs/comparison.svg)
 
 | Metric | Claude Code (Opus 4.6) | Claude Code (Opus 4.6) + Sense | Change |
 |---|---|---|---|
@@ -26,11 +26,11 @@ Full methodology and raw data: [`bench/`](bench/).
 | Score per 100K tokens | 0.19 | 0.30 | +64% |
 | Score per minute | 0.28 | 0.38 | +37% |
 
-Same correctness, dramatically less work. Sense doesn't make the model smarter — it gives the model structural understanding so it stops wasting effort.
+Same correctness, dramatically less work. Sense doesn't make the model smarter. It gives the model structural understanding so it stops wasting effort.
 
 ### Structural tasks
 
-Tasks that require understanding code relationships — not just reading text — are where Sense pulls ahead.
+Tasks that require understanding code relationships, not just reading text, are where Sense pulls ahead.
 
 | Task type | Baseline | + Sense | Why |
 |---|---|---|---|
@@ -41,7 +41,7 @@ Tasks that require understanding code relationships — not just reading text �
 
 ### Where Sense doesn't help
 
-Sense is structural understanding, not a general search engine. For tasks that are fundamentally text-grep (find a log message, locate a string literal), plain grep is the right tool and Sense adds nothing. Search text fallback (ripgrep) bridges some of this gap, but it's a fallback — not a replacement.
+Sense is structural understanding, not a general search engine. For tasks that are fundamentally text-grep (find a log message, locate a string literal), plain grep is the right tool and Sense adds nothing. Search text fallback (ripgrep) bridges some of this gap, but it's a fallback, not a replacement.
 
 ## Install
 
@@ -73,14 +73,14 @@ cd /path/to/project && sense setup
 
 Auto-detects installed AI tools (Claude Code, Cursor, Codex CLI) and writes integration configs:
 
-- **`.mcp.json`** — MCP server config (Claude Code, Cursor, any MCP client)
-- **`.claude/settings.json`** — lifecycle hooks that nudge Claude toward Sense tools
-- **`CLAUDE.md`** — routing guidance with a substitution table
-- **`.claude/skills/`** — workflow skills for exploration, impact analysis, and conventions
+- **`.mcp.json`**, MCP server config (Claude Code, Cursor, any MCP client)
+- **`.claude/settings.json`**, lifecycle hooks that nudge Claude toward Sense tools
+- **`CLAUDE.md`**, routing guidance with a substitution table
+- **`.claude/skills/`**, workflow skills for exploration, impact analysis, and conventions
 
 No manual setup. Run `sense setup` and your AI has structural understanding.
 
-Sense also generates `.sense/summary.md` — a cold-start map of your codebase (top namespaces, hub symbols, entry points, conventions). Your AI reads it at session start and immediately knows the shape of the project. Zero tool calls to orient.
+Sense also generates `.sense/summary.md`, a cold-start map of your codebase (top namespaces, hub symbols, entry points, conventions). Your AI reads it at session start and immediately knows the shape of the project. Zero tool calls to orient.
 
 To re-configure after upgrading Sense:
 
@@ -90,7 +90,7 @@ sense setup
 
 ## Setup & forget
 
-After `sense setup`, there's nothing left to do. The index updates automatically as your code changes. The summary regenerates on every scan. Your AI gets faster answers and burns fewer tokens — you just stop noticing the friction that used to be there.
+After `sense setup`, there's nothing left to do. The index updates automatically as your code changes. The summary regenerates on every scan. Your AI gets faster answers and burns fewer tokens, and you just stop noticing the friction that used to be there.
 
 ## What Your AI Gets
 
@@ -107,9 +107,9 @@ Your AI stops reading 30 files to answer "who calls this?" It stops hallucinatin
 
 ### Convention detection
 
-Of the four tools, convention detection is the one nobody else does well. AI tools don't just struggle with structure — they struggle with style. They write correct code that doesn't follow how YOUR codebase writes code.
+Of the four tools, convention detection is the one nobody else does well. AI tools don't just struggle with structure. They struggle with style. They write correct code that doesn't follow how YOUR codebase writes code.
 
-Sense detects patterns from your actual source code: key types and their declarations, framework idioms (Rails associations, Go interfaces, Django models), architectural layers, and naming conventions. Your AI follows these patterns because it sees them, not because it was told about them. Convention detection isn't a feature — it's the thing that makes AI-written code feel like it belongs.
+Sense detects patterns from your actual source code: key types and their declarations, framework idioms (Rails associations, Go interfaces, Django models), architectural layers, and naming conventions. Your AI follows these patterns because it sees them, not because it was told about them. Convention detection isn't a feature. It's the thing that makes AI-written code feel like it belongs.
 
 ## How It Works
 
@@ -119,7 +119,7 @@ Sense parses your codebase with tree-sitter, extracts symbols (functions, classe
 cd /path/to/project && sense scan
 ```
 
-From that moment on, your AI can ask structural questions via MCP. These are what your AI calls. You can run them manually for verification — see [CLI.md](CLI.md) for the full reference.
+From that moment on, your AI can ask structural questions via MCP. These are what your AI calls. You can run them manually for verification. See [CLI.md](CLI.md) for the full reference.
 
 ### Performance
 
@@ -165,7 +165,7 @@ Windows native builds are not yet available. Use WSL2 with the Linux binary.
 
 Sense uses tree-sitter for parsing. It ships with extractors for 13 languages across two tiers:
 
-**Full tier** — symbols, calls, inheritance, imports, blast radius, semantic search, and framework-specific inference:
+**Full tier.** Symbols, calls, inheritance, imports, blast radius, semantic search, and framework-specific inference:
 
 | Language | Framework support |
 |---|---|
@@ -176,7 +176,7 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 | **Rust** | — |
 | **ERB** | Stimulus, Turbo (cross-language edges to JS controllers) |
 
-**Standard tier** — symbols, calls, inheritance, imports, blast radius, and semantic search (no framework inference):
+**Standard tier.** Symbols, calls, inheritance, imports, blast radius, and semantic search (no framework inference):
 
 | Language | Notes |
 |---|---|
@@ -188,7 +188,7 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 | **PHP** | Classes, interfaces, traits (`\` scoping) |
 | **Scala** | Classes, traits, objects |
 
-Standard-tier languages use a table-driven generic extractor — each is ~25 lines of config, not a handwritten walker. See [LANGUAGES.md](LANGUAGES.md) for how to add a new language or framework.
+Standard-tier languages use a table-driven generic extractor. Each is ~25 lines of config, not a handwritten walker. See [LANGUAGES.md](LANGUAGES.md) for how to add a new language or framework.
 
 ## Feedback
 
