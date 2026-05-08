@@ -34,21 +34,23 @@ Parses your code with tree-sitter, extracts symbols and relationships, embeds ev
 
 ## Connect Your AI
 
-The first `sense scan` automatically configures your AI tools:
+```bash
+cd /path/to/project && sense setup
+```
+
+Auto-detects installed AI tools (Claude Code, Cursor, Codex CLI) and writes integration configs:
 
 - **`.mcp.json`** — MCP server config (Claude Code, Cursor, any MCP client)
 - **`.claude/settings.json`** — lifecycle hooks that nudge Claude toward Sense tools
 - **`CLAUDE.md`** — routing guidance with a substitution table
 - **`.claude/skills/`** — workflow skills for exploration, impact analysis, and conventions
 
-No manual setup. Run `sense scan` and your AI has structural understanding.
+No manual setup. Run `sense setup` and your AI has structural understanding.
 
-Cursor users: copy the `sense` entry from `.mcp.json` into `~/.cursor/mcp.json`.
-
-To re-generate config files after upgrading Sense:
+To re-configure after upgrading Sense:
 
 ```bash
-sense scan --init
+sense setup
 ```
 
 ## What Your AI Gets
@@ -61,7 +63,6 @@ Four capabilities. No sprawl.
 | `sense_search` | Hybrid semantic + keyword search |
 | `sense_blast` | Blast radius, affected code, affected tests, risk score |
 | `sense_conventions` | Detected project conventions |
-| `sense_status` | Index health, coverage, staleness, last scan |
 
 Your AI stops reading 30 files to answer "who calls this?" It stops hallucinating dependencies. It stops writing code that's correct but doesn't match how your team writes code.
 
@@ -79,28 +80,7 @@ Sense parses your codebase with tree-sitter, extracts symbols (functions, classe
 cd /path/to/project && sense scan
 ```
 
-From that moment on, your AI can ask structural questions via MCP:
-
-```bash
-sense graph "CheckoutService"
-# => CheckoutService (app/services/checkout_service.rb:12)
-#    calls: PaymentGateway.charge, Order.finalize
-#    called by: OrdersController#create, CheckoutJob#perform
-
-sense blast "User#email_verified?"
-# => Direct callers (4), indirect (11), affected tests (6)
-#    Risk: MEDIUM (hub node, touches auth + admin)
-
-sense search "error handling for payment failures"
-# => app/services/payment_gateway.rb:45  (0.92)
-#    app/controllers/orders_controller.rb:78  (0.87)
-
-sense conventions
-# => Service objects: 12 found, all inherit ApplicationService
-#    Test pattern: Minitest, fixtures, no DB mocking
-```
-
-These are what your AI calls. You can run them manually for verification, but the primary interface is MCP.
+From that moment on, your AI can ask structural questions via MCP. These are what your AI calls. You can run them manually for verification — see [CLI.md](CLI.md) for the full reference.
 
 ### Performance
 
