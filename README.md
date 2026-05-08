@@ -15,6 +15,8 @@ One binary, one index, four tools for your AI. No SaaS account, no API key, no c
 Measured across 7 real-world codebases (Discourse, Flask, Next.js, Axum, Gin, Javalin, Maket).
 Full methodology and raw data: [`bench/`](bench/).
 
+![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (6 tool calls, 139K tokens, 59s)](docs/comparison.svg)
+
 | Metric | Claude Code (Opus 4.6) | Claude Code (Opus 4.6) + Sense | Change |
 |---|---|---|---|
 | Tool calls per task | 19 | 10 | -47% |
