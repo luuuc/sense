@@ -15,14 +15,9 @@ import (
 var (
 	osExecutable       = os.Executable
 	fetchLatestTagFn   = fetchLatestTag
-	isGoInstallFn      func() bool
-	runInstallScriptFn func(ver string, stdout, stderr io.Writer) error
-)
-
-func init() {
-	isGoInstallFn = isGoInstall
+	isGoInstallFn      = isGoInstall
 	runInstallScriptFn = runInstallScript
-}
+)
 
 const installScriptURL = "https://raw.githubusercontent.com/" + repo + "/main/install.sh"
 
