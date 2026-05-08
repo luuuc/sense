@@ -63,11 +63,22 @@ func Run(dir string) error {
 
 // RunWithOptions starts the MCP stdio server with explicit options.
 func RunWithOptions(opts RunOptions) error {
+	s, _, cleanup, err := buildMCPServer(opts)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	return server.ServeStdio(s)
+}
+
+// buildMCPServer creates the MCP server and handlers without starting stdio
+// transport. Returns the server, handlers, a cleanup function, and any error.
+func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), error) {
 	dir := opts.Dir
 	if dir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			return fmt.Errorf("sense mcp: getwd: %w", err)
+			return nil, nil, nil, fmt.Errorf("sense mcp: getwd: %w", err)
 		}
 		dir = wd
 	}
@@ -75,7 +86,7 @@ func RunWithOptions(opts RunOptions) error {
 	ctx := context.Background()
 	adapter, err := cli.OpenIndex(ctx, dir)
 	if err != nil {
-		return fmt.Errorf("sense mcp: %w", err)
+		return nil, nil, nil, fmt.Errorf("sense mcp: %w", err)
 	}
 
 	if adapter.Rebuilt {
@@ -88,15 +99,14 @@ func RunWithOptions(opts RunOptions) error {
 			EmbeddingsEnabled: cli.EmbeddingsEnabled(dir),
 			Embed:             true,
 		}); err != nil {
-			return fmt.Errorf("sense mcp: rebuild scan: %w", err)
+			return nil, nil, nil, fmt.Errorf("sense mcp: rebuild scan: %w", err)
 		}
 		adapter, err = cli.OpenIndex(ctx, dir)
 		if err != nil {
-			return fmt.Errorf("sense mcp: reopen after rebuild: %w", err)
+			return nil, nil, nil, fmt.Errorf("sense mcp: reopen after rebuild: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "sense mcp: rebuild complete\n")
 	}
-	defer func() { _ = adapter.Close() }()
 
 	if storedModel, _ := adapter.ReadMeta(ctx, "embedding_model"); storedModel != "" && storedModel != embed.ModelID {
 		fmt.Fprintf(os.Stderr, "sense mcp: embedding model changed (index: %s, binary: %s). Search results may be degraded. Run `sense scan --force` to re-embed.\n", storedModel, embed.ModelID)
@@ -115,7 +125,8 @@ func RunWithOptions(opts RunOptions) error {
 		} else {
 			embeddings, err := adapter.LoadEmbeddings(ctx)
 			if err != nil {
-				return fmt.Errorf("sense mcp: load embeddings: %w", err)
+				_ = adapter.Close()
+				return nil, nil, nil, fmt.Errorf("sense mcp: load embeddings: %w", err)
 			}
 			if len(embeddings) > 0 {
 				vectorIdx = search.BuildHNSWIndex(embeddings)
@@ -128,26 +139,26 @@ func RunWithOptions(opts RunOptions) error {
 		if (vectorIdx != nil && vectorIdx.Len() > 0) || hasDebt {
 			embedder, err = embed.NewBundledEmbedder(0)
 			if err != nil {
-				return fmt.Errorf("sense mcp: init embedder: %w", err)
+				_ = adapter.Close()
+				return nil, nil, nil, fmt.Errorf("sense mcp: init embedder: %w", err)
 			}
-			defer func() { _ = embedder.Close() }()
 		}
 	}
 
 	engine := search.NewEngine(adapter, vectorIdx, embedder)
 
+	var reranker *embed.ONNXReranker
 	if embedder != nil {
-		reranker, rerankErr := embed.NewBundledReranker(0)
-		if rerankErr != nil {
-			fmt.Fprintf(os.Stderr, "sense mcp: init reranker: %v\n", rerankErr)
+		r, err := embed.NewBundledReranker(0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "sense mcp: init reranker: %v\n", err)
 		} else {
+			reranker = r
 			engine.SetReranker(reranker)
-			defer func() { _ = reranker.Close() }()
 		}
 	}
 
 	embedCtx, cancelEmbed := context.WithCancel(ctx)
-	defer cancelEmbed()
 
 	if embeddingsEnabled && hasDebt && opts.WatchState == nil {
 		senseDir := filepath.Join(dir, ".sense")
@@ -172,7 +183,6 @@ func RunWithOptions(opts RunOptions) error {
 	}
 
 	tracker := metrics.NewTracker(adapter.DB())
-	defer tracker.Close()
 
 	s := server.NewMCPServer(
 		"sense",
@@ -193,7 +203,19 @@ func RunWithOptions(opts RunOptions) error {
 	s.AddTool(conventionsTool(), h.handleConventions)
 	s.AddTool(statusTool(), h.handleStatus)
 
-	return server.ServeStdio(s)
+	cleanup := func() {
+		cancelEmbed()
+		if embedder != nil {
+			_ = embedder.Close()
+		}
+		if reranker != nil {
+			_ = reranker.Close()
+		}
+		tracker.Close()
+		_ = adapter.Close()
+	}
+
+	return s, h, cleanup, nil
 }
 
 // handlers holds shared state for MCP tool handlers. The adapter is
