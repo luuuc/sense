@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 
@@ -28,6 +29,9 @@ func RunSetup(args []string, cio IO) int {
 	fs.Usage = func() { _, _ = fmt.Fprint(cio.Stderr, setupHelp) }
 	toolsFlag := fs.String("tools", "", "comma-separated list of tools to configure (claude-code,cursor,codex-cli)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return ExitSuccess
+		}
 		return ExitGeneralError
 	}
 
