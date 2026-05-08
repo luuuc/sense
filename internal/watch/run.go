@@ -117,14 +117,14 @@ func Run(ctx context.Context, opts RunOptions) error {
 	// Background embed management: the watch loop owns all embedding.
 	// The MCP server skips its own background embed when WatchState is set.
 	embedCtl := &embedController{
-		enabled:      opts.EmbeddingsEnabled,
-		ctx:          ctx,
-		writeAdapter: writeAdapter,
-		root:         root,
-		senseDir:     senseDir,
-		log:          log,
-		embedPending: func(ctx context.Context, idx debtChecker, root, senseDir string) (int, error) {
-			return scan.EmbedPending(ctx, idx.(*sqlite.Adapter), root, senseDir)
+		enabled: opts.EmbeddingsEnabled,
+		ctx:     ctx,
+		log:     log,
+		checkDebt: func(ctx context.Context) (int, error) {
+			return writeAdapter.EmbeddingDebtCount(ctx)
+		},
+		runEmbed: func(ctx context.Context) (int, error) {
+			return scan.EmbedPending(ctx, writeAdapter, root, senseDir)
 		},
 	}
 	defer embedCtl.Cancel()
@@ -205,23 +205,13 @@ func processBatch(ctx context.Context, batch Batch, opts processOptions) error {
 	return nil
 }
 
-// debtChecker is the subset of sqlite.Adapter that embedController needs.
-type debtChecker interface {
-	EmbeddingDebtCount(ctx context.Context) (int, error)
-}
-
-// embedPendingFunc is the signature of scan.EmbedPending, extracted for test injection.
-type embedPendingFunc func(ctx context.Context, idx debtChecker, root, senseDir string) (int, error)
-
 // embedController manages the lifecycle of a background embed goroutine.
 type embedController struct {
-	enabled      bool
-	ctx          context.Context
-	writeAdapter debtChecker
-	root         string
-	senseDir     string
-	log          func(format string, args ...any)
-	embedPending embedPendingFunc
+	enabled   bool
+	ctx       context.Context
+	log       func(format string, args ...any)
+	checkDebt func(ctx context.Context) (int, error)
+	runEmbed  func(ctx context.Context) (int, error)
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -234,7 +224,7 @@ func (ec *embedController) Start() {
 	if !ec.enabled || ec.ctx.Err() != nil {
 		return
 	}
-	debt, derr := ec.writeAdapter.EmbeddingDebtCount(ec.ctx)
+	debt, derr := ec.checkDebt(ec.ctx)
 	if derr != nil {
 		ec.log("sense: check embedding debt: %v", derr)
 		return
@@ -254,9 +244,10 @@ func (ec *embedController) Start() {
 	var embedCtx context.Context
 	embedCtx, ec.cancel = context.WithCancel(ec.ctx)
 	ec.done = make(chan struct{})
+	done := ec.done
 	go func() {
-		defer close(ec.done)
-		n, err := ec.embedPending(embedCtx, ec.writeAdapter, ec.root, ec.senseDir)
+		defer close(done)
+		n, err := ec.runEmbed(embedCtx)
 		if err != nil {
 			if embedCtx.Err() == nil {
 				ec.log("sense: background embed error: %v", err)

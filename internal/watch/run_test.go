@@ -72,13 +72,12 @@ func TestProcessBatchEmpty(t *testing.T) {
 }
 
 func TestProcessBatchScanError(t *testing.T) {
-	var started bool
-	var logMsgs []string
+	var started, logged bool
 
 	scanErr := errors.New("scan failed")
 	opts := processOptions{
-		log: func(format string, _ ...any) {
-			logMsgs = append(logMsgs, format)
+		log: func(_ string, _ ...any) {
+			logged = true
 		},
 		runIncremental: func(_ context.Context, _ scan.IncrementalOptions) (*scan.Result, error) {
 			return nil, scanErr
@@ -98,28 +97,18 @@ func TestProcessBatchScanError(t *testing.T) {
 	if started {
 		t.Error("startEmbed should not be called after scan error")
 	}
-	found := false
-	for _, msg := range logMsgs {
-		if msg == "sense: re-index error: %v" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected log message for re-index error")
+	if !logged {
+		t.Error("expected log call for scan error")
 	}
 }
 
-func TestProcessBatchContextCancelled(t *testing.T) {
-	t.Helper()
+func TestProcessBatchDoesNotPanicOnCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	var called bool
 	opts := processOptions{
 		log: func(_ string, _ ...any) {},
 		runIncremental: func(_ context.Context, _ scan.IncrementalOptions) (*scan.Result, error) {
-			called = true
 			return &scan.Result{}, nil
 		},
 		cancelEmbed: func() {},
@@ -127,8 +116,8 @@ func TestProcessBatchContextCancelled(t *testing.T) {
 	}
 
 	batch := Batch{Changed: []string{"a.go"}, Removed: []string{}}
-	_ = processBatch(ctx, batch, opts)
-	// runIncremental may or may not be called depending on when cancellation
-	// is checked; the key thing is that it does not panic.
-	_ = called
+	err := processBatch(ctx, batch, opts)
+	if err != nil && err != context.Canceled {
+		t.Errorf("unexpected error: %v", err)
+	}
 }

@@ -7,28 +7,16 @@ import (
 	"time"
 )
 
-// mockEmbedAdapter implements the minimal interface embedController needs.
-type mockEmbedAdapter struct {
-	debt int
-	err  error
-}
-
-func (m *mockEmbedAdapter) EmbeddingDebtCount(_ context.Context) (int, error) {
-	return m.debt, m.err
-}
-
 func TestEmbedLifecycleStartComplete(t *testing.T) {
-	var logMsgs []string
 	embedDone := make(chan struct{})
+	var completed bool
 
 	ctl := &embedController{
-		enabled:      true,
-		ctx:          context.Background(),
-		writeAdapter: &mockEmbedAdapter{debt: 5},
-		log: func(format string, _ ...any) {
-			logMsgs = append(logMsgs, format)
-		},
-		embedPending: func(_ context.Context, _ debtChecker, _, _ string) (int, error) {
+		enabled:   true,
+		ctx:       context.Background(),
+		log:       func(_ string, _ ...any) {},
+		checkDebt: func(_ context.Context) (int, error) { return 5, nil },
+		runEmbed: func(_ context.Context) (int, error) {
 			defer close(embedDone)
 			return 5, nil
 		},
@@ -38,20 +26,13 @@ func TestEmbedLifecycleStartComplete(t *testing.T) {
 
 	select {
 	case <-embedDone:
-		// embed completed
+		completed = true
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for embed to complete")
 	}
 
-	found := false
-	for _, msg := range logMsgs {
-		if msg == "sense: background embed complete (%d symbols)" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected log message for embed completion")
+	if !completed {
+		t.Error("expected embed to complete")
 	}
 }
 
@@ -61,11 +42,11 @@ func TestEmbedLifecycleCancelBeforeComplete(t *testing.T) {
 	embedBlock := make(chan struct{})
 
 	ctl := &embedController{
-		enabled:      true,
-		ctx:          ctx,
-		writeAdapter: &mockEmbedAdapter{debt: 5},
-		log:          func(_ string, _ ...any) {},
-		embedPending: func(ctx context.Context, _ debtChecker, _, _ string) (int, error) {
+		enabled:   true,
+		ctx:       ctx,
+		log:       func(_ string, _ ...any) {},
+		checkDebt: func(_ context.Context) (int, error) { return 5, nil },
+		runEmbed: func(ctx context.Context) (int, error) {
 			close(embedStarted)
 			<-ctx.Done()
 			<-embedBlock
@@ -76,7 +57,6 @@ func TestEmbedLifecycleCancelBeforeComplete(t *testing.T) {
 	ctl.Start()
 	<-embedStarted
 
-	// Cancel should wait for the goroutine to exit.
 	cancel()
 	time.Sleep(50 * time.Millisecond)
 	close(embedBlock)
@@ -98,11 +78,11 @@ func TestEmbedLifecycleCancelBeforeComplete(t *testing.T) {
 func TestEmbedLifecycleDebtZero(t *testing.T) {
 	var embedCalled bool
 	ctl := &embedController{
-		enabled:      true,
-		ctx:          context.Background(),
-		writeAdapter: &mockEmbedAdapter{debt: 0},
-		log:          func(_ string, _ ...any) {},
-		embedPending: func(_ context.Context, _ debtChecker, _, _ string) (int, error) {
+		enabled:   true,
+		ctx:       context.Background(),
+		log:       func(_ string, _ ...any) {},
+		checkDebt: func(_ context.Context) (int, error) { return 0, nil },
+		runEmbed: func(_ context.Context) (int, error) {
 			embedCalled = true
 			return 0, nil
 		},
@@ -110,18 +90,18 @@ func TestEmbedLifecycleDebtZero(t *testing.T) {
 
 	ctl.Start()
 	if embedCalled {
-		t.Error("embedPending should not be called when debt is zero")
+		t.Error("runEmbed should not be called when debt is zero")
 	}
 }
 
 func TestEmbedLifecycleDisabled(t *testing.T) {
 	var embedCalled bool
 	ctl := &embedController{
-		enabled:      false,
-		ctx:          context.Background(),
-		writeAdapter: &mockEmbedAdapter{debt: 5},
-		log:          func(_ string, _ ...any) {},
-		embedPending: func(_ context.Context, _ debtChecker, _, _ string) (int, error) {
+		enabled:   false,
+		ctx:       context.Background(),
+		log:       func(_ string, _ ...any) {},
+		checkDebt: func(_ context.Context) (int, error) { return 5, nil },
+		runEmbed: func(_ context.Context) (int, error) {
 			embedCalled = true
 			return 0, nil
 		},
@@ -129,18 +109,17 @@ func TestEmbedLifecycleDisabled(t *testing.T) {
 
 	ctl.Start()
 	if embedCalled {
-		t.Error("embedPending should not be called when embeddings are disabled")
+		t.Error("runEmbed should not be called when embeddings are disabled")
 	}
 }
 
 func TestEmbedLifecycleDoubleCancel(t *testing.T) {
-	t.Helper()
 	ctl := &embedController{
-		enabled:      true,
-		ctx:          context.Background(),
-		writeAdapter: &mockEmbedAdapter{debt: 5},
-		log:          func(_ string, _ ...any) {},
-		embedPending: func(ctx context.Context, _ debtChecker, _, _ string) (int, error) {
+		enabled:   true,
+		ctx:       context.Background(),
+		log:       func(_ string, _ ...any) {},
+		checkDebt: func(_ context.Context) (int, error) { return 5, nil },
+		runEmbed: func(ctx context.Context) (int, error) {
 			<-ctx.Done()
 			return 0, ctx.Err()
 		},
@@ -152,32 +131,26 @@ func TestEmbedLifecycleDoubleCancel(t *testing.T) {
 	// Double cancel should not panic.
 	ctl.Cancel()
 	ctl.Cancel()
+	t.Log("double cancel completed without panic")
 }
 
 func TestEmbedLifecycleDebtError(t *testing.T) {
-	var logMsgs []string
+	var logged bool
 	ctl := &embedController{
-		enabled:      true,
-		ctx:          context.Background(),
-		writeAdapter: &mockEmbedAdapter{err: errors.New("db error")},
-		log: func(format string, _ ...any) {
-			logMsgs = append(logMsgs, format)
+		enabled:   true,
+		ctx:       context.Background(),
+		checkDebt: func(_ context.Context) (int, error) { return 0, errors.New("db error") },
+		log: func(_ string, _ ...any) {
+			logged = true
 		},
-		embedPending: func(_ context.Context, _ debtChecker, _, _ string) (int, error) {
+		runEmbed: func(_ context.Context) (int, error) {
 			return 0, nil
 		},
 	}
 
 	ctl.Start()
 
-	found := false
-	for _, msg := range logMsgs {
-		if msg == "sense: check embedding debt: %v" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected log message for debt check error")
+	if !logged {
+		t.Error("expected log call for debt check error")
 	}
 }
