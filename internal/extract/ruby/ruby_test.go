@@ -1,6 +1,7 @@
 package ruby
 
 import (
+	"strings"
 	"testing"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -1365,6 +1366,34 @@ end
 	}
 }
 
+func TestIncludeNoArgs(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  include
+end
+`)
+	// No args -> no edge
+	for _, e := range r.edges {
+		if string(e.Kind) == "includes" {
+			t.Error("should not emit includes edge for include with no args")
+		}
+	}
+}
+
+func TestIncludeWithNonConstantArg(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  include some_method
+end
+`)
+	// Non-constant arg -> no edge
+	for _, e := range r.edges {
+		if string(e.Kind) == "includes" {
+			t.Error("should not emit includes edge for include with non-constant arg")
+		}
+	}
+}
+
 func TestNamespacedRouteResources(t *testing.T) {
 	r := parseRuby(t, `
 namespace :api do
@@ -1514,5 +1543,773 @@ end
 `, &failAfterN{symbolsLeft: 100, edgesLeft: 1})
 	if err == nil {
 		t.Error("expected error on association edge emit")
+	}
+}
+
+func TestRSpecTestBlockConfidence(t *testing.T) {
+	r := parseRuby(t, `describe TopicCreator do
+  it "creates a topic" do
+    TopicCreator.create(user)
+  end
+end
+`)
+	e := findEdge(r, "TopicCreator##it_creates_a_topic", "TopicCreator.create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from it block")
+	}
+	if e.Confidence != extract.ConfidenceTests {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceTests)
+	}
+}
+
+func TestRSpecTestBlockBareIdentifierConfidence(t *testing.T) {
+	r := parseRuby(t, `describe Service do
+  it "processes" do
+    process_data
+  end
+end
+`)
+	e := findEdge(r, "Service##it_processes", "self.process_data", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from bare identifier in it block")
+	}
+	if e.Confidence != extract.ConfidenceTests {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceTests)
+	}
+}
+
+func TestRSpecNestedDescribeScope(t *testing.T) {
+	r := parseRuby(t, `describe Order do
+  context "when pending" do
+    it "calculates" do
+      Order.new
+    end
+  end
+end
+`)
+	e := findEdge(r, "Order#context_when_pending##it_calculates", "Order.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from nested describe/context/it")
+	}
+}
+
+func TestRSpecFileLevelFallback(t *testing.T) {
+	r := parseRuby(t, `describe Product do
+  it "creates a #{thing}" do
+    Product.new
+  end
+end
+`)
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "Product.new" && string(e.Kind) == "calls" {
+			if strings.HasPrefix(e.SourceQualified, "test.rb#L") {
+				found = true
+				if e.Confidence != extract.ConfidenceTests {
+					t.Errorf("fallback confidence = %v, want %v", e.Confidence, extract.ConfidenceTests)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing file-level fallback edge for interpolated description")
+	}
+}
+
+func TestRSpecExpectWithCallInArgs(t *testing.T) {
+	// expect(TopicCreator.create(...)) has no block but the argument list
+	// contains a call that should still be extracted.
+	r := parseRuby(t, `describe TopicCreator do
+  it "works" do
+    expect(TopicCreator.create(user)).to be_valid
+  end
+end
+`)
+	e := findEdge(r, "TopicCreator##it_works", "TopicCreator.create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from expect() argument list")
+	}
+	if e.Confidence != extract.ConfidenceTests {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceTests)
+	}
+}
+
+func TestRSpecDescribeWithConstantSegment(t *testing.T) {
+	// describe(Order) should produce "Order" as the scope segment.
+	r := parseRuby(t, `describe Order do
+  it "creates" do
+    Order.new
+  end
+end
+`)
+	e := findEdge(r, "Order##it_creates", "Order.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from describe with constant arg")
+	}
+}
+
+func TestRSpecContextWithStringSegment(t *testing.T) {
+	// context "when pending" should produce "context_when_pending" segment.
+	r := parseRuby(t, `describe Order do
+  context "when pending" do
+    it "works" do
+      Order.new
+    end
+  end
+end
+`)
+	e := findEdge(r, "Order#context_when_pending##it_works", "Order.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from context with string arg")
+	}
+}
+
+func TestRSpecBeforeAfterFallback(t *testing.T) {
+	// before/after have no string description → file-level fallback.
+	r := parseRuby(t, `describe User do
+  before do
+    setup
+  end
+  after do
+    teardown
+  end
+end
+`)
+	foundSetup := false
+	foundTeardown := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "self.setup" && string(e.Kind) == "calls" {
+			foundSetup = true
+		}
+		if e.TargetQualified == "self.teardown" && string(e.Kind) == "calls" {
+			foundTeardown = true
+		}
+	}
+	if !foundSetup {
+		t.Error("missing file-level fallback edge from before block")
+	}
+	if !foundTeardown {
+		t.Error("missing file-level fallback edge from after block")
+	}
+}
+
+func TestRSpecMatcherSkipped(t *testing.T) {
+	// RSpec matchers like `eq`, `be_valid`, `raise_error` should NOT emit edges.
+	r := parseRuby(t, `describe Order do
+  it "validates" do
+    expect(order).to eq(1)
+    expect(order).to be_valid
+    expect { order.save }.to raise_error
+  end
+end
+`)
+	for _, e := range r.edges {
+		if e.TargetQualified == "eq" || e.TargetQualified == "be_valid" || e.TargetQualified == "raise_error" {
+			t.Errorf("should not emit edge for RSpec matcher %q", e.TargetQualified)
+		}
+	}
+}
+
+func TestRSpecSendInTestBlock(t *testing.T) {
+	// send(:method) inside a test block should emit with ConfidenceTests.
+	r := parseRuby(t, `describe Service do
+  it "invokes" do
+    send(:process)
+  end
+end
+`)
+	e := findEdge(r, "Service##it_invokes", "process", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from send() inside test block")
+	}
+	if e.Confidence != extract.ConfidenceTests {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceTests)
+	}
+}
+
+func TestRSpecLetWithSymbolArg(t *testing.T) {
+	// let(:name) has no string description → file-level fallback.
+	r := parseRuby(t, `describe User do
+  let(:name) do
+    generate_name
+  end
+end
+`)
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "self.generate_name" && string(e.Kind) == "calls" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("missing file-level fallback edge from let block")
+	}
+}
+
+func TestRSpecDescribeWithScopeResolution(t *testing.T) {
+	// RSpec.describe Admin::Dashboard should produce "Admin::Dashboard" segment.
+	r := parseRuby(t, `RSpec.describe Admin::Dashboard do
+  it "works" do
+    Admin::Dashboard.new
+  end
+end
+`)
+	e := findEdge(r, "Admin::Dashboard##it_works", "Admin::Dashboard.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from describe with scope resolution")
+	}
+}
+
+func TestRSpecTopLevelItBlock(t *testing.T) {
+	// it block without enclosing describe should still emit edges.
+	r := parseRuby(t, `it "works" do
+  TopicCreator.create(user)
+end
+`)
+	e := findEdge(r, "#it_works", "TopicCreator.create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from top-level it block")
+	}
+}
+
+func TestRSpecDeepNestingFallback(t *testing.T) {
+	// Depth > 3 triggers file-level fallback.
+	r := parseRuby(t, `describe A do
+  describe "#b" do
+    context "when c" do
+      describe "with d" do
+        it "works" do
+          TopicCreator.create(user)
+        end
+      end
+    end
+  end
+end
+`)
+	// Should fall back to file-level scope for the deepest it block.
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "TopicCreator.create" && strings.HasPrefix(e.SourceQualified, "test.rb#L") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing file-level fallback edge for depth > 3 nesting")
+	}
+}
+
+func TestRSpecDescribeWithScopeResolutionSegment(t *testing.T) {
+	// describe with scope_resolution arg (RSpec.describe Admin::Dashboard).
+	r := parseRuby(t, `RSpec.describe Admin::Dashboard do
+  it "works" do
+    Admin::Dashboard.new
+  end
+end
+`)
+	e := findEdge(r, "Admin::Dashboard##it_works", "Admin::Dashboard.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from describe with scope resolution arg")
+	}
+}
+
+func TestRSpecDescribeWithInterpolation(t *testing.T) {
+	// describe "#{name}" has interpolation → file-level fallback for describe.
+	// But the nested it block still gets a proper scope.
+	r := parseRuby(t, `describe "#{name}" do
+  it "works" do
+    Order.new
+  end
+end
+`)
+	e := findEdge(r, "#it_works", "Order.new", "calls")
+	if e == nil {
+		t.Fatal("missing edge from it block inside describe with interpolation")
+	}
+}
+
+func TestRSpecEmptyDescriptionFallback(t *testing.T) {
+	// it "" should fall back to file-level scope.
+	r := parseRuby(t, `describe Order do
+  it "" do
+    Order.new
+  end
+end
+`)
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "Order.new" && strings.HasPrefix(e.SourceQualified, "test.rb#L") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing file-level fallback edge for empty description")
+	}
+}
+
+func TestRSpecContextWithStringArg(t *testing.T) {
+	// context "when active" should produce "context_when_active" segment.
+	r := parseRuby(t, `describe User do
+  context "when active" do
+    it "works" do
+      User.new
+    end
+  end
+end
+`)
+	e := findEdge(r, "User#context_when_active##it_works", "User.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from context with string arg")
+	}
+}
+
+func TestRSpecDescribeWithMethodString(t *testing.T) {
+	// describe "#create" should preserve the # prefix in the segment.
+	r := parseRuby(t, `describe TopicCreator do
+  describe "#create" do
+    it "works" do
+      TopicCreator.create(user)
+    end
+  end
+end
+`)
+	e := findEdge(r, "TopicCreator##create##it_works", "TopicCreator.create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from describe with method string")
+	}
+}
+
+func TestRSpecSendDynamicDispatchInTest(t *testing.T) {
+	// send(:process) inside a test block should emit with ConfidenceTests.
+	r := parseRuby(t, `describe Service do
+  it "invokes" do
+    send(:process)
+  end
+end
+`)
+	e := findEdge(r, "Service##it_invokes", "process", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from send() inside test block")
+	}
+	if e.Confidence != extract.ConfidenceTests {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceTests)
+	}
+}
+
+func TestRSpecPublicSendInTest(t *testing.T) {
+	// public_send("process") inside a test block.
+	r := parseRuby(t, `describe Service do
+  it "invokes" do
+    public_send("process")
+  end
+end
+`)
+	e := findEdge(r, "Service##it_invokes", "process", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from public_send() inside test block")
+	}
+}
+
+func TestRSpecSendNonLiteralSkippedInTest(t *testing.T) {
+	// send(method_name) with non-literal arg should not emit inside test block.
+	r := parseRuby(t, `describe Service do
+  it "invokes" do
+    send(method_name)
+  end
+end
+`)
+	for _, e := range r.edges {
+		if e.SourceQualified == "Service##it_invokes" && string(e.Kind) == "calls" && e.TargetQualified == "method_name" {
+			t.Error("should not emit calls edge for non-literal send target in test block")
+		}
+	}
+}
+
+func TestRSpecAroundBlockFallback(t *testing.T) {
+	// around blocks have no string description → file-level fallback.
+	r := parseRuby(t, `describe User do
+  around do
+    wrap_test
+  end
+end
+`)
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "self.wrap_test" && strings.HasPrefix(e.SourceQualified, "test.rb#L") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing file-level fallback edge from around block")
+	}
+}
+
+func TestRSpecDescribeWithConstantNoNestedIt(t *testing.T) {
+	// describe(Order) with a call directly in the describe block (no it).
+	r := parseRuby(t, `describe Order do
+  Order.new
+end
+`)
+	e := findEdge(r, "Order", "Order.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from describe block without nested it")
+	}
+}
+
+func TestRSpecExpectNoBlockWithCall(t *testing.T) {
+	// expect(TopicCreator.create(...)) — no block, but call in arg list.
+	r := parseRuby(t, `describe TopicCreator do
+  it "works" do
+    expect(TopicCreator.create(user)).to be_valid
+  end
+end
+`)
+	e := findEdge(r, "TopicCreator##it_works", "TopicCreator.create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from expect() with call argument")
+	}
+}
+
+func TestRSpecExpectNoBlockNoCall(t *testing.T) {
+	// expect(topic).to be_valid — no block, no call in args.
+	r := parseRuby(t, `describe TopicCreator do
+  it "works" do
+    expect(topic).to be_valid
+  end
+end
+`)
+	// No calls edge should be emitted for expect() with no call args.
+	for _, e := range r.edges {
+		if e.TargetQualified == "topic" && string(e.Kind) == "calls" {
+			t.Error("should not emit edge for identifier in expect args")
+		}
+	}
+}
+
+func TestRSpecTopLevelExpectWithCall(t *testing.T) {
+	// Top-level expect(TopicCreator.create(...)) — no describe, no it.
+	r := parseRuby(t, `expect(TopicCreator.create(user)).to be_valid
+`)
+	// At top level, scope is empty and testScope is empty.
+	// buildSyntheticSource returns "" which is used as source.
+	for _, e := range r.edges {
+		if e.TargetQualified == "TopicCreator.create" && string(e.Kind) == "calls" {
+			if e.SourceQualified != "" {
+				t.Errorf("top-level expect source should be empty, got %q", e.SourceQualified)
+			}
+			return
+		}
+	}
+	t.Fatal("missing calls edge from top-level expect with call argument")
+}
+
+func TestRSpecDescribeWithNoBlockCall(t *testing.T) {
+	// describe(Order) containing expect(TopicCreator.create(...)) directly
+	// (no it block). The expect has no block, so handleTestBlock's no-block
+	// path is used with classScope="Order" and testScope empty.
+	r := parseRuby(t, `describe Order do
+  expect(TopicCreator.create(user)).to be_valid
+end
+`)
+	for _, e := range r.edges {
+		if e.TargetQualified == "TopicCreator.create" && string(e.Kind) == "calls" {
+			if e.SourceQualified != "Order" {
+				t.Errorf("source should be Order, got %q", e.SourceQualified)
+			}
+			return
+		}
+	}
+	t.Fatal("missing calls edge from expect inside describe block")
+}
+
+func TestRSpecBeforeInsideClass(t *testing.T) {
+	// before block inside a class falls back to file-level scope
+	// because before/after/around have no string description segment.
+	r := parseRuby(t, `class OrderTest < ActiveSupport::TestCase
+  before do
+    setup_test
+  end
+end
+`)
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "self.setup_test" && string(e.Kind) == "calls" {
+			if !strings.HasPrefix(e.SourceQualified, "test.rb#L") {
+				t.Errorf("source should be file-level fallback, got %q", e.SourceQualified)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing calls edge from before block inside class")
+	}
+}
+
+func TestRSpecExpectInsideClass(t *testing.T) {
+	// expect() directly inside a class body (unusual but valid AST).
+	// classScope="Foo", testScope empty → buildSyntheticSource returns "Foo".
+	r := parseRuby(t, `class Foo
+  expect(Bar.new).to eq(1)
+end
+`)
+	for _, e := range r.edges {
+		if e.TargetQualified == "Bar.new" && string(e.Kind) == "calls" {
+			if e.SourceQualified != "Foo" {
+				t.Errorf("source should be Foo, got %q", e.SourceQualified)
+			}
+			return
+		}
+	}
+	t.Fatal("missing calls edge from expect inside class body")
+}
+
+func TestRSpecBlockBodyNil(t *testing.T) {
+	// A do_block with no body_statement (empty block).
+	r := parseRuby(t, `describe Order do
+  it "works" do
+  end
+end
+`)
+	// Should not crash; no edges expected.
+	for _, e := range r.edges {
+		if string(e.Kind) == "calls" && e.SourceQualified == "Order##it_works" {
+			t.Error("unexpected edge from empty it block")
+		}
+	}
+}
+
+func TestRSpecFileLevelScopeWithPath(t *testing.T) {
+	// fileLevelScope strips directory prefix when filePath contains '/'.
+	r := parseRubyWithPath(t, `before do
+  setup
+end
+`, "spec/models/order_spec.rb")
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "self.setup" && strings.HasPrefix(e.SourceQualified, "order_spec.rb#L") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing file-level fallback edge with basename")
+	}
+}
+
+func TestRSpecDescribeWithIntegerArg(t *testing.T) {
+	// describe(123) has an unsupported arg kind → buildTestScopeSegment returns "".
+	// The describe falls back to file-level, but the nested it block has a valid scope.
+	r := parseRuby(t, `describe 123 do
+  it "works" do
+    Order.new
+  end
+end
+`)
+	e := findEdge(r, "#it_works", "Order.new", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from it block inside describe with integer arg")
+	}
+}
+
+func TestRSpecItWithNonStringArg(t *testing.T) {
+	// it(:symbol) has a non-string arg → buildTestScopeSegment returns "".
+	r := parseRuby(t, `describe Order do
+  it :works do
+    Order.new
+  end
+end
+`)
+	// Falls back to file-level scope.
+	found := false
+	for _, e := range r.edges {
+		if e.TargetQualified == "Order.new" && strings.HasPrefix(e.SourceQualified, "test.rb#L") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing file-level fallback edge for it with symbol arg")
+	}
+}
+
+func TestRSpecPublicSendDynamicDispatchInTest(t *testing.T) {
+	// public_send("process") inside a test block.
+	r := parseRuby(t, `describe Service do
+  it "invokes" do
+    public_send("process")
+  end
+end
+`)
+	e := findEdge(r, "Service##it_invokes", "process", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from public_send() inside test block")
+	}
+	if e.Confidence != extract.ConfidenceTests {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceTests)
+	}
+}
+
+func TestRSpecSendWithNonLiteralSkipped(t *testing.T) {
+	// send(method_name) with non-literal arg should not emit in test block.
+	r := parseRuby(t, `describe Service do
+  it "invokes" do
+    send(method_name)
+  end
+end
+`)
+	for _, e := range r.edges {
+		if e.SourceQualified == "Service##it_invokes" && string(e.Kind) == "calls" && e.TargetQualified == "method_name" {
+			t.Error("should not emit calls edge for non-literal send target in test block")
+		}
+	}
+}
+
+// --- coverage for existing functions below 90% ---
+
+func TestBroadcastsToNoArgs(t *testing.T) {
+	r := parseRuby(t, `
+class Message
+  broadcasts_to()
+end
+`)
+	// Empty args -> no edge
+	for _, e := range r.edges {
+		if string(e.Kind) == "calls" && e.SourceQualified == "Message" {
+			t.Error("should not emit calls edge for broadcasts_to with no args")
+		}
+	}
+}
+
+func TestBroadcastsToEmptyString(t *testing.T) {
+	r := parseRuby(t, `
+class Message
+  broadcasts_to ""
+end
+`)
+	// Empty string -> no edge
+	for _, e := range r.edges {
+		if string(e.Kind) == "calls" && e.SourceQualified == "Message" {
+			t.Error("should not emit calls edge for broadcasts_to with empty string")
+		}
+	}
+}
+
+func TestImportmapPinNoArgs(t *testing.T) {
+	r := parseRubyWithPath(t, `pin
+`, "config/importmap.rb")
+	for _, e := range r.edges {
+		if string(e.Kind) == "imports" {
+			t.Error("should not emit imports edge for pin with no args")
+		}
+	}
+}
+
+func TestImportmapPinNonStringArg(t *testing.T) {
+	r := parseRubyWithPath(t, `pin :symbol_arg
+`, "config/importmap.rb")
+	for _, e := range r.edges {
+		if string(e.Kind) == "imports" {
+			t.Error("should not emit imports edge for pin with non-string arg")
+		}
+	}
+}
+
+func TestImportmapPinEmptyString(t *testing.T) {
+	r := parseRubyWithPath(t, `pin ""
+`, "config/importmap.rb")
+	for _, e := range r.edges {
+		if string(e.Kind) == "imports" {
+			t.Error("should not emit imports edge for pin with empty string")
+		}
+	}
+}
+
+// --- coverage for existing functions below 90% ---
+
+func TestBroadcastsToNonLiteralArg(t *testing.T) {
+	r := parseRuby(t, `class Order
+  broadcasts_to some_method
+end
+`)
+	// Non-literal arg -> no edge
+	for _, e := range r.edges {
+		if string(e.Kind) == "calls" && e.SourceQualified == "Message" {
+			t.Error("should not emit calls edge for non-literal broadcasts arg")
+		}
+	}
+}
+
+func TestDescribeNoArgs(t *testing.T) {
+	r := parseRuby(t, `describe do
+end
+`)
+	for _, e := range r.edges {
+		if string(e.Kind) == "tests" {
+			t.Error("should not emit tests edge for describe with no args")
+		}
+	}
+}
+
+func TestDescribeWithStringArgNoEdge(t *testing.T) {
+	r := parseRuby(t, `describe "some behavior" do
+end
+`)
+	for _, e := range r.edges {
+		if string(e.Kind) == "tests" {
+			t.Error("should not emit tests edge for describe with string arg")
+		}
+	}
+}
+
+func TestImportmapPinAllFromNotImportmapFile(t *testing.T) {
+	r := parseRubyWithPath(t, `pin_all_from "app/javascript/controllers"
+`, "config/routes.rb")
+	for _, e := range r.edges {
+		if string(e.Kind) == "imports" {
+			t.Error("should not emit imports edge outside importmap.rb")
+		}
+	}
+}
+
+func TestDescribeWithNonRSpecReceiverAndStringArg(t *testing.T) {
+	r := parseRuby(t, `MyLib.describe "something" do
+end
+`)
+	for _, e := range r.edges {
+		if string(e.Kind) == "tests" {
+			t.Error("should not emit tests edge for non-RSpec describe with string arg")
+		}
+	}
+}
+
+func TestRouteNamespaceNoBlock(t *testing.T) {
+	r := parseRuby(t, `namespace :admin
+`)
+	// Should not crash; no edges expected from namespace without block.
+	for _, e := range r.edges {
+		if strings.Contains(e.TargetQualified, "Admin") {
+			t.Error("should not emit edge for namespace without block")
+		}
+	}
+}
+
+func TestRouteNamespaceNoArgs(t *testing.T) {
+	r := parseRuby(t, `namespace
+`)
+	// Should not crash; no edges expected from namespace without args.
+	for _, e := range r.edges {
+		if strings.Contains(e.TargetQualified, "Admin") {
+			t.Error("should not emit edge for namespace without args")
+		}
+	}
+}
+
+func TestRouteNamespaceStringArg(t *testing.T) {
+	r := parseRuby(t, `namespace "admin" do
+  resources :users
+end
+`)
+	// String arg should be skipped; no namespace prefix applied.
+	for _, e := range r.edges {
+		if strings.Contains(e.TargetQualified, "Admin") {
+			t.Error("should not emit edge with namespace prefix for string arg")
+		}
 	}
 }

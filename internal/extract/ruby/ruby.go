@@ -34,6 +34,7 @@
 package ruby
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -62,10 +63,11 @@ func init() { extract.Register(Extractor{}) }
 // ---- walker ----
 
 type walker struct {
-	source   []byte
-	emit     extract.Emitter
-	filePath string
-	routeNS  []string // namespace stack for route files (e.g. ["Admin"])
+	source    []byte
+	emit      extract.Emitter
+	filePath  string
+	routeNS   []string // namespace stack for route files (e.g. ["Admin"])
+	testScope []string // nested RSpec block descriptions for synthetic scope
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -137,8 +139,6 @@ func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 	// Top-level handlers (no enclosing class/module)
 	if !inScope {
 		switch methodName {
-		case "describe":
-			return false, w.emitDescribeEdge(n)
 		case "resources":
 			return true, w.handleResources(n, false)
 		case "resource":
@@ -155,7 +155,32 @@ func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 		}
 	}
 
+	// RSpec DSL blocks with a body — handled as test scopes.
+	if rspecDSLMethods[methodName] {
+		return w.handleTestBlock(n, scope, methodName)
+	}
+
 	return false, nil
+}
+
+// rspecDSLMethods is the set of RSpec DSL method names that create
+// test scopes when called with a block.
+var rspecDSLMethods = map[string]bool{
+	"it": true, "describe": true, "context": true,
+	"before": true, "after": true, "around": true,
+	"let": true, "expect": true,
+}
+
+// rspecMatcherMethods is the set of RSpec matcher chain methods that
+// should not be emitted as calls edges — they are DSL sugar, not
+// application method invocations.
+var rspecMatcherMethods = map[string]bool{
+	"to": true, "not_to": true, "to_not": true,
+	"eq": true, "be": true, "be_nil": true, "be_empty": true,
+	"be_valid": true, "be_present": true, "be_a": true,
+	"raise_error": true, "change": true, "receive": true,
+	"have_received": true, "match": true, "include": true,
+	"contain_exactly": true, "start_with": true, "end_with": true,
 }
 
 func (w *walker) walkChildren(n *sitter.Node, scope []string) error {
@@ -166,6 +191,246 @@ func (w *walker) walkChildren(n *sitter.Node, scope []string) error {
 		}
 	}
 	return nil
+}
+
+// handleTestBlock processes an RSpec DSL call that has a block body.
+// It builds a synthetic scope name, walks the block for calls/identifiers,
+// and recurses into nested test blocks.  Returns true to signal the node
+// was consumed.
+func (w *walker) handleTestBlock(n *sitter.Node, scope []string, methodName string) (bool, error) {
+	// Emit the conventional tests edge for top-level describe with a
+	// constant argument (e.g. `describe Order do … end`).
+	if methodName == "describe" && len(scope) == 0 {
+		if err := w.emitDescribeEdge(n); err != nil {
+			return true, err
+		}
+	}
+
+	block := getBlockChild(n)
+	if block == nil {
+		// No block — but the arguments may contain calls we still want to
+		// capture (e.g. `expect(TopicCreator.create(...))`).
+		synthetic := w.buildSyntheticSource(scope)
+		return true, extract.WalkNamedDescendants(n, "call", func(c *sitter.Node) error {
+			if w.isInsideNestedTestBlock(c, n) {
+				return nil
+			}
+			methodNode := c.ChildByFieldName("method")
+			if methodNode != nil && rspecDSLMethods[extract.Text(methodNode, w.source)] {
+				return nil
+			}
+			return w.emitTestCall(c, synthetic, scope)
+		})
+	}
+
+	segment := w.buildTestScopeSegment(n, methodName)
+	if segment == "" {
+		// Unnamed / unresolvable block — fall back to file-level scope.
+		return true, w.walkTestBlockWithFallback(block, scope)
+	}
+
+	// Push segment and cap depth at 3.
+	w.testScope = append(w.testScope, segment)
+	if len(w.testScope) > 3 {
+		w.testScope = w.testScope[:len(w.testScope)-1]
+		return true, w.walkTestBlockWithFallback(block, scope)
+	}
+	defer func() {
+		w.testScope = w.testScope[:len(w.testScope)-1]
+	}()
+
+	synthetic := w.buildSyntheticSource(scope)
+	body := getBlockBody(block)
+	if body == nil {
+		return true, nil
+	}
+	return true, w.walkTestBody(body, scope, synthetic)
+}
+
+// buildTestScopeSegment extracts a scope segment from a test DSL call.
+// Returns "" when the block should fall back to file-level scope.
+func (w *walker) buildTestScopeSegment(n *sitter.Node, methodName string) string {
+	args := n.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return ""
+	}
+	first := args.NamedChild(0)
+	if first == nil {
+		return ""
+	}
+
+	switch methodName {
+	case "describe", "context":
+		switch first.Kind() {
+		case "constant", "scope_resolution":
+			return extract.Text(first, w.source)
+		case "string":
+			if hasInterpolation(first) {
+				return ""
+			}
+			desc := extractStringValue(first, w.source)
+			if desc == "" {
+				return ""
+			}
+			if strings.HasPrefix(desc, "#") || strings.HasPrefix(desc, ".") {
+				return desc
+			}
+			return methodName + "_" + sanitizeDesc(desc)
+		default:
+			return ""
+		}
+	case "it":
+		if first.Kind() == "string" {
+			if hasInterpolation(first) {
+				return ""
+			}
+			desc := extractStringValue(first, w.source)
+			if desc == "" {
+				return ""
+			}
+			return "#it_" + sanitizeDesc(desc)
+		}
+		return ""
+	case "before", "after", "around", "let", "expect":
+		// These DSL nodes rarely carry a descriptive string arg;
+		// fall back to file-level scope.
+		return ""
+	default:
+		return ""
+	}
+}
+
+// buildSyntheticSource joins the class/module scope with the test-scope
+// stack into a single synthetic qualified name.
+func (w *walker) buildSyntheticSource(scope []string) string {
+	classScope := strings.Join(scope, "::")
+	testScope := strings.Join(w.testScope, "#")
+
+	if classScope == "" && testScope == "" {
+		return ""
+	}
+	if classScope == "" {
+		return testScope
+	}
+	if testScope == "" {
+		return classScope
+	}
+	return classScope + "#" + testScope
+}
+
+// walkTestBody walks a test block body emitting calls edges with the
+// given synthetic source.  It also recurses into nested test blocks.
+// A single tree walk handles both emission and recursion.
+func (w *walker) walkTestBody(body *sitter.Node, scope []string, source string) error {
+	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
+		if w.isInsideNestedTestBlock(c, body) {
+			return nil
+		}
+		methodNode := c.ChildByFieldName("method")
+		if methodNode == nil {
+			return nil
+		}
+		methodName := extract.Text(methodNode, w.source)
+		if rspecDSLMethods[methodName] {
+			// Recurse into nested test block.
+			_, err := w.handleTestBlock(c, scope, methodName)
+			return err
+		}
+		return w.emitTestCall(c, source, scope)
+	}); err != nil {
+		return err
+	}
+	// Emit edges for bare identifiers in statement position.
+	return w.emitBareIdentifierCalls(body, source, extract.ConfidenceTests)
+}
+
+// isInsideNestedTestBlock returns true if n sits inside a test DSL call
+// that is a descendant of body (i.e., a nested test block).
+func (w *walker) isInsideNestedTestBlock(n, body *sitter.Node) bool {
+	bodyID := body.Id()
+	for p := n.Parent(); p != nil && p.Id() != bodyID; p = p.Parent() {
+		if p.Kind() == "call" {
+			methodNode := p.ChildByFieldName("method")
+			if methodNode != nil && rspecDSLMethods[extract.Text(methodNode, w.source)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// walkTestBlockWithFallback walks a test block body using the file path
+// as the source scope (file-level fallback).
+func (w *walker) walkTestBlockWithFallback(block *sitter.Node, scope []string) error {
+	body := getBlockBody(block)
+	if body == nil {
+		return nil
+	}
+	source := w.fileLevelScope(block)
+	return w.walkTestBody(body, scope, source)
+}
+
+// fileLevelScope returns a file-level synthetic scope like "test.rb#L42".
+func (w *walker) fileLevelScope(n *sitter.Node) string {
+	base := w.filePath
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	line := extract.Line(n.StartPosition())
+	return fmt.Sprintf("%s#L%d", base, line)
+}
+
+// getBlockChild returns the block child (do_block or block) of a call node.
+func getBlockChild(n *sitter.Node) *sitter.Node {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		c := n.NamedChild(i)
+		if c != nil && (c.Kind() == "do_block" || c.Kind() == "block") {
+			return c
+		}
+	}
+	return nil
+}
+
+// getBlockBody returns the body child of a block node.
+func getBlockBody(block *sitter.Node) *sitter.Node {
+	for i := uint(0); i < block.NamedChildCount(); i++ {
+		c := block.NamedChild(i)
+		if c != nil && (c.Kind() == "body_statement" || c.Kind() == "block_body") {
+			return c
+		}
+	}
+	return nil
+}
+
+// hasInterpolation returns true if a string node contains interpolation.
+func hasInterpolation(n *sitter.Node) bool {
+	if n.Kind() != "string" {
+		return false
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		c := n.NamedChild(i)
+		if c != nil && c.Kind() == "interpolation" {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeDesc turns a human-readable block description into a safe
+// scope segment: spaces → underscores, strip non-alphanumerics.
+func sanitizeDesc(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteRune('_')
+		default:
+			// Drop punctuation.
+		}
+	}
+	return b.String()
 }
 
 // handleClassOrModule emits the symbol, records inheritance (class only),
@@ -288,7 +553,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	}); err != nil {
 		return err
 	}
-	return w.emitBareIdentifierCalls(body, qualified)
+	return w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic)
 }
 
 // emitCall produces a calls edge for one `call` node. The target is
@@ -310,6 +575,56 @@ func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTy
 	if methodName == "" {
 		return nil
 	}
+
+	switch methodName {
+	case "send", "public_send", "__send__":
+		target, ok := literalSendTarget(n, w.source)
+		if !ok {
+			return nil
+		}
+		line := extract.Line(n.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: source,
+			TargetQualified: target,
+			Kind:            model.EdgeCalls,
+			Line:            &line,
+			Confidence:      extract.ConfidenceDynamic,
+		})
+	}
+
+	recv := n.ChildByFieldName("receiver")
+	target, confidence := w.resolveCallTarget(recv, methodName, scope, localTypes)
+	if target == "" {
+		return nil
+	}
+	return w.emitCallWithConfidence(n, source, scope, localTypes, confidence)
+}
+
+// emitTestCall delegates to emitCall but substitutes ConfidenceTests and
+// skips RSpec matcher noise (eq, be_valid, raise_error, etc.).
+func (w *walker) emitTestCall(n *sitter.Node, source string, scope []string) error {
+	methodNode := n.ChildByFieldName("method")
+	if methodNode == nil {
+		return nil
+	}
+	if rspecMatcherMethods[extract.Text(methodNode, w.source)] {
+		return nil
+	}
+	return w.emitCallWithConfidence(n, source, scope, nil, extract.ConfidenceTests)
+}
+
+// emitCallWithConfidence is emitCall's core logic with an injectable
+// confidence value. Used by both production-method emission (1.0 / 0.7)
+// and test-block emission (0.8).
+func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []string, localTypes map[string]string, confidence float64) error {
+	methodNode := n.ChildByFieldName("method")
+	if methodNode == nil {
+		return nil
+	}
+	methodName := extract.Text(methodNode, w.source)
+	if methodName == "" {
+		return nil
+	}
 	line := extract.Line(n.StartPosition())
 
 	switch methodName {
@@ -323,12 +638,12 @@ func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTy
 			TargetQualified: target,
 			Kind:            model.EdgeCalls,
 			Line:            &line,
-			Confidence:      extract.ConfidenceDynamic,
+			Confidence:      confidence,
 		})
 	}
 
 	recv := n.ChildByFieldName("receiver")
-	target, confidence := w.resolveCallTarget(recv, methodName, scope, localTypes)
+	target, _ := w.resolveCallTarget(recv, methodName, scope, localTypes)
 	if target == "" {
 		return nil
 	}
@@ -440,8 +755,11 @@ var statementParents = map[string]bool{
 // calls without parentheses as identifier nodes rather than call
 // nodes; we emit them as `self.name` so the resolver rewrites them to
 // the enclosing class (e.g. `self.validate` → `Order#validate`).
-func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string) error {
+func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string, confidence float64) error {
 	return extract.WalkNamedDescendants(body, "identifier", func(ident *sitter.Node) error {
+		if w.isInsideNestedTestBlock(ident, body) {
+			return nil
+		}
 		parent := ident.Parent()
 		if parent == nil || !statementParents[parent.Kind()] {
 			return nil
@@ -456,7 +774,7 @@ func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified stri
 			TargetQualified: "self." + name,
 			Kind:            model.EdgeCalls,
 			Line:            &line,
-			Confidence:      extract.ConfidenceDynamic,
+			Confidence:      confidence,
 		})
 	})
 }
