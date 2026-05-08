@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -286,4 +288,28 @@ func TestEmbedControllerCancelIdempotent(_ *testing.T) {
 	ec := &embedController{}
 	ec.Cancel()
 	ec.Cancel()
+}
+
+// TestRunInitializesAndExits verifies that Run performs its initialization
+// (scan, config load, ignore build, DB open, watcher creation) and then
+// exits cleanly when the context is cancelled.
+func TestRunInitializesAndExits(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a minimal project structure.
+	if err := os.MkdirAll(filepath.Join(dir, ".sense"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Run should initialize and then exit when the context times out.
+	err := Run(ctx, RunOptions{Root: dir})
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
 }
