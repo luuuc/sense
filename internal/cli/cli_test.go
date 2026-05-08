@@ -217,6 +217,25 @@ func TestParseBlastArgs(t *testing.T) {
 	}
 }
 
+func TestRunDoctorHelp(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		cio, _, stderr := newTestIO()
+		if code := RunDoctor([]string{flag}, cio); code != ExitSuccess {
+			t.Fatalf("%s: exit code = %d, want %d", flag, code, ExitSuccess)
+		}
+		got := stderr.String()
+		for _, want := range []string{
+			"usage: sense doctor",
+			"--json",
+			"Exit codes:",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: help missing %q\ngot:\n%s", flag, want, got)
+			}
+		}
+	}
+}
+
 func TestRunBenchmarkHelp(t *testing.T) {
 	for _, flag := range []string{"--help", "-h"} {
 		cio, _, stderr := newTestIO()
@@ -299,5 +318,18 @@ func TestRunSetupErrors(t *testing.T) {
 				t.Errorf("stderr missing %q, got: %q", tt.wantStderr, stderr.String())
 			}
 		})
+	}
+}
+
+func TestDefaultIO(t *testing.T) {
+	cio := DefaultIO()
+	if cio.Stdout == nil {
+		t.Error("DefaultIO.Stdout is nil")
+	}
+	if cio.Stderr == nil {
+		t.Error("DefaultIO.Stderr is nil")
+	}
+	if cio.Dir == "" {
+		t.Error("DefaultIO.Dir is empty")
 	}
 }

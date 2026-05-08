@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/luuuc/sense/internal/scan"
+	"github.com/luuuc/sense/internal/sqlite"
 	_ "modernc.org/sqlite"
 )
 
@@ -749,5 +751,133 @@ func TestHasCodeExtension(t *testing.T) {
 		if got := hasCodeExtension(tc.path); got != tc.want {
 			t.Errorf("hasCodeExtension(%q) = %v, want %v", tc.path, got, tc.want)
 		}
+	}
+}
+
+func TestHandleSessionStartEmptyIndex(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	result, err := handleSessionStart(ctx, nil, adapter, dir)
+	if err != nil {
+		t.Fatalf("handleSessionStart error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected nil for empty index, got %v", result)
+	}
+}
+
+func TestHandleSessionStartWithLanguages(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	db := adapter.DB()
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files (id, path, language, hash, symbols, indexed_at) VALUES (1, 'main.go', 'go', 'abc', 1, ?)`, time.Now().Format(time.RFC3339Nano))
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files (id, path, language, hash, symbols, indexed_at) VALUES (2, 'app.py', 'python', 'def', 1, ?)`, time.Now().Format(time.RFC3339Nano))
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols (id, file_id, name, qualified, kind, visibility, parent_id, line_start, line_end, docstring, complexity, snippet) VALUES (1, 1, 'main', 'main', 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols (id, file_id, name, qualified, kind, visibility, parent_id, line_start, line_end, docstring, complexity, snippet) VALUES (2, 2, 'app', 'app', 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_edges (id, source_id, target_id, kind, file_id, line, confidence) VALUES (1, 1, 2, 'calls', 1, 1, 1.0)`)
+
+	result, err := handleSessionStart(ctx, nil, adapter, dir)
+	if err != nil {
+		t.Fatalf("handleSessionStart error: %v", err)
+	}
+	resp, ok := result.(*messageResponse)
+	if !ok {
+		t.Fatalf("expected *messageResponse, got %T", result)
+	}
+	if !strings.Contains(resp.Message, "go, python") {
+		t.Errorf("expected languages in message, got: %s", resp.Message)
+	}
+	if !strings.Contains(resp.Message, "2 symbols, 1 edges, 2 languages") {
+		t.Errorf("expected stats in message, got: %s", resp.Message)
+	}
+}
+
+func TestHandleSessionStartLastScanFormats(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	db := adapter.DB()
+
+	cases := []struct {
+		name      string
+		indexedAt string
+		wantAge   string
+	}{
+		{
+			name:      "just_now",
+			indexedAt: time.Now().Add(-30 * time.Second).Format(time.RFC3339Nano),
+			wantAge:   "just now",
+		},
+		{
+			name:      "minutes_ago",
+			indexedAt: time.Now().Add(-5 * time.Minute).Format(time.RFC3339Nano),
+			wantAge:   "5m0s ago",
+		},
+		{
+			name:      "invalid_format",
+			indexedAt: "not-a-valid-time",
+			wantAge:   "not-a-valid-time",
+		},
+		{
+			name:      "empty",
+			indexedAt: "",
+			wantAge:   "unknown",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Clear tables
+			_, _ = db.ExecContext(ctx, `DELETE FROM sense_files`)
+			_, _ = db.ExecContext(ctx, `DELETE FROM sense_symbols`)
+			_, _ = db.ExecContext(ctx, `DELETE FROM sense_edges`)
+
+			_, _ = db.ExecContext(ctx, `INSERT INTO sense_files (id, path, language, hash, symbols, indexed_at) VALUES (1, 'main.go', 'go', 'abc', 1, ?)`, tc.indexedAt)
+			_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols (id, file_id, name, qualified, kind, visibility, parent_id, line_start, line_end, docstring, complexity, snippet) VALUES (1, 1, 'main', 'main', 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`)
+
+			result, err := handleSessionStart(ctx, nil, adapter, dir)
+			if err != nil {
+				t.Fatalf("handleSessionStart error: %v", err)
+			}
+			resp, ok := result.(*messageResponse)
+			if !ok {
+				t.Fatalf("expected *messageResponse, got %T", result)
+			}
+			if !strings.Contains(resp.Message, tc.wantAge) {
+				t.Errorf("expected %q in message, got: %s", tc.wantAge, resp.Message)
+			}
+		})
 	}
 }

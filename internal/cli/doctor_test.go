@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/luuuc/sense/internal/sqlite"
 	_ "modernc.org/sqlite"
@@ -129,6 +132,246 @@ func TestDoctorExitCodeOnFailure(t *testing.T) {
 	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
 	if code != ExitGeneralError {
 		t.Errorf("doctor with no index: exit=%d, want %d", code, ExitGeneralError)
+	}
+}
+
+func createTestDB(t *testing.T, dir string, schemaVer int) *sql.DB {
+	t.Helper()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(senseDir, "index.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	_, _ = db.ExecContext(ctx, `
+		CREATE TABLE sense_files (id INTEGER PRIMARY KEY, path TEXT UNIQUE, language TEXT, hash TEXT, symbols INTEGER, indexed_at TEXT);
+		CREATE TABLE sense_symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, qualified TEXT, kind TEXT, visibility TEXT, parent_id INTEGER, line_start INTEGER, line_end INTEGER, docstring TEXT, complexity INTEGER, snippet TEXT, UNIQUE(file_id, qualified));
+		CREATE TABLE sense_edges (id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT, file_id INTEGER, line INTEGER, confidence REAL);
+		CREATE TABLE sense_embeddings (symbol_id INTEGER PRIMARY KEY, vector BLOB);
+		CREATE TABLE sense_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+	`)
+	_, _ = db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVer))
+	return db
+}
+
+func TestDoctorSchemaMismatch(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion+1)
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Errorf("doctor with schema mismatch: exit=%d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stdout.String(), "Schema version mismatch") {
+		t.Errorf("expected schema mismatch message, got: %s", stdout.String())
+	}
+}
+
+func TestDoctorModelMismatch(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('embedding_model', 'old-model')`)
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Errorf("doctor with model mismatch: exit=%d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stdout.String(), "Embedding model mismatch") {
+		t.Errorf("expected model mismatch message, got: %s", stdout.String())
+	}
+}
+
+func TestDoctorStaleFilesWarning(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+
+	// Create a file that will be stale
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set indexed_at to past so file is stale
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339Nano)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'main.go', 'go', 'abc', 1, ?)`, past)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (1, 1, 'main', 'main', 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`)
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Errorf("doctor with stale files warning: exit=%d, want %d", code, ExitSuccess)
+	}
+	if !strings.Contains(stdout.String(), "stale file") {
+		t.Errorf("expected stale files warning, got: %s", stdout.String())
+	}
+}
+
+func TestDoctorStaleFilesFail(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+
+	// Create 11 stale files to trigger fail status
+	for i := 0; i < 11; i++ {
+		fname := fmt.Sprintf("file%d.go", i)
+		fpath := filepath.Join(dir, fname)
+		if err := os.WriteFile(fpath, []byte("package main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		past := time.Now().Add(-time.Hour).Format(time.RFC3339Nano)
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (?, ?, 'go', 'abc', 1, ?)`, i+1, fname, past)
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (?, ?, 'main', 'main', 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`, i+1)
+	}
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Errorf("doctor with many stale files: exit=%d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stdout.String(), "stale files") {
+		t.Errorf("expected stale files fail message, got: %s", stdout.String())
+	}
+}
+
+func TestDoctorEmbeddingCompletenessWarn(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+
+	// 10 symbols, 9 embeddings = 90%
+	for i := 0; i < 10; i++ {
+		qualified := fmt.Sprintf("Foo%d", i)
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (?, 1, 'Foo', ?, 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`, i+1, qualified)
+	}
+	for i := 0; i < 9; i++ {
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_embeddings VALUES (?, X'00')`, i+1)
+	}
+	_ = db.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Errorf("doctor with embedding warning: exit=%d, want %d", code, ExitSuccess)
+	}
+	if !strings.Contains(stdout.String(), "Embeddings incomplete") {
+		t.Errorf("expected embedding completeness warning, got: %s", stdout.String())
+	}
+}
+
+func TestDoctorEmbeddingCompletenessFail(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+
+	// 10 symbols, 5 embeddings = 50%
+	for i := 0; i < 10; i++ {
+		qualified := fmt.Sprintf("Foo%d", i)
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (?, 1, 'Foo', ?, 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`, i+1, qualified)
+	}
+	for i := 0; i < 5; i++ {
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_embeddings VALUES (?, X'00')`, i+1)
+	}
+	_ = db.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Errorf("doctor with embedding fail: exit=%d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stdout.String(), "Embeddings incomplete") {
+		t.Errorf("expected embedding completeness fail message, got: %s", stdout.String())
+	}
+}
+
+func TestDoctorUnknownExtensions(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'main.xyz', 'xyz', 'abc', 1, '2026-01-01T00:00:00Z')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (1, 1, 'main', 'main', 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`)
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Errorf("doctor with unknown extensions: exit=%d, want %d", code, ExitSuccess)
+	}
+	if !strings.Contains(stdout.String(), "Unknown extensions") {
+		t.Errorf("expected unknown extensions warning, got: %s", stdout.String())
+	}
+}
+
+func TestDoctorJSONOutput(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor([]string{"--json"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Errorf("doctor with JSON flag: exit=%d, want %d", code, ExitSuccess)
+	}
+	var resp doctorResponse
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\noutput: %s", err, stdout.String())
+	}
+	if len(resp.Checks) == 0 {
+		t.Error("expected non-empty checks in JSON response")
+	}
+}
+
+func TestDoctorSENSE_DIR(t *testing.T) {
+	dir := t.TempDir()
+	customSenseDir := filepath.Join(dir, "custom-sense")
+	if err := os.MkdirAll(customSenseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(customSenseDir, "index.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, _ = db.ExecContext(ctx, `
+		CREATE TABLE sense_files (id INTEGER PRIMARY KEY, path TEXT UNIQUE, language TEXT, hash TEXT, symbols INTEGER, indexed_at TEXT);
+		CREATE TABLE sense_symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, qualified TEXT, kind TEXT, visibility TEXT, parent_id INTEGER, line_start INTEGER, line_end INTEGER, docstring TEXT, complexity INTEGER, snippet TEXT, UNIQUE(file_id, qualified));
+		CREATE TABLE sense_edges (id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT, file_id INTEGER, line INTEGER, confidence REAL);
+		CREATE TABLE sense_embeddings (symbol_id INTEGER PRIMARY KEY, vector BLOB);
+		CREATE TABLE sense_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+	`)
+	_, _ = db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", sqlite.SchemaVersion))
+	_ = db.Close()
+
+	t.Setenv("SENSE_DIR", customSenseDir)
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Errorf("doctor with SENSE_DIR: exit=%d, want %d", code, ExitSuccess)
+	}
+	if !strings.Contains(stdout.String(), customSenseDir) {
+		t.Errorf("expected custom sense dir in output, got: %s", stdout.String())
 	}
 }
 
