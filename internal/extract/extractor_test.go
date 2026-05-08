@@ -123,9 +123,11 @@ func TestLanguageTier(t *testing.T) {
 		{"", "basic"},
 	}
 	for _, tt := range tests {
-		got := LanguageTier(tt.lang)
-		if got != tt.want {
-			t.Errorf("LanguageTier(%q) = %q, want %q", tt.lang, got, tt.want)
-		}
+		t.Run(tt.lang, func(t *testing.T) {
+			got := LanguageTier(tt.lang)
+			if got != tt.want {
+				t.Errorf("LanguageTier(%q) = %q, want %q", tt.lang, got, tt.want)
+			}
+		})
 	}
 }

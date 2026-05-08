@@ -16,10 +16,12 @@ func TestNamespacePrefixFromPath(t *testing.T) {
 		{"root.go", "."},
 	}
 	for _, tt := range tests {
-		got := namespacePrefixFromPath(tt.input)
-		if got != tt.want {
-			t.Errorf("namespacePrefixFromPath(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		t.Run(tt.input, func(t *testing.T) {
+			got := namespacePrefixFromPath(tt.input)
+			if got != tt.want {
+				t.Errorf("namespacePrefixFromPath(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -35,10 +37,12 @@ func TestCommonPrefixCoverage(t *testing.T) {
 		{"a/b/c.go", "a/b/d.go", "a/b"},
 	}
 	for _, tt := range tests {
-		got := commonPrefix(tt.a, tt.b)
-		if got != tt.want {
-			t.Errorf("commonPrefix(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
-		}
+		t.Run(tt.a+"+"+tt.b, func(t *testing.T) {
+			got := commonPrefix(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("commonPrefix(%q, %q) = %q, want %q", tt.a, tt.b, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -54,10 +58,12 @@ func TestCapitalize(t *testing.T) {
 		{"123", "123"},
 	}
 	for _, tt := range tests {
-		got := capitalize(tt.input)
-		if got != tt.want {
-			t.Errorf("capitalize(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+		t.Run(tt.input, func(t *testing.T) {
+			got := capitalize(tt.input)
+			if got != tt.want {
+				t.Errorf("capitalize(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
