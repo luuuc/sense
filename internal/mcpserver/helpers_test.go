@@ -664,3 +664,10 @@ func TestDominantMatchAmbiguous(t *testing.T) {
 		t.Error("expected no dominant match for ambiguous results")
 	}
 }
+
+func TestRunWithOptionsBadDir(t *testing.T) {
+	err := RunWithOptions(RunOptions{Dir: "/nonexistent/path/that/does/not/exist"})
+	if err == nil {
+		t.Fatal("expected error for non-existent directory")
+	}
+}

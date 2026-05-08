@@ -3,6 +3,8 @@ package watch
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +119,171 @@ func TestProcessBatchDoesNotPanicOnCancelledContext(t *testing.T) {
 
 	batch := Batch{Changed: []string{"a.go"}, Removed: []string{}}
 	err := processBatch(ctx, batch, opts)
-	if err != nil && err != context.Canceled {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		t.Errorf("unexpected error: %v", err)
 	}
+}
+
+func TestEmbedControllerStartDisabled(t *testing.T) {
+	ec := &embedController{enabled: false}
+	ec.Start()
+	if ec.cancel != nil {
+		t.Error("Start should not set cancel when disabled")
+	}
+}
+
+func TestEmbedControllerStartCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ec := &embedController{
+		enabled: true,
+		ctx:     ctx,
+		checkDebt: func(context.Context) (int, error) {
+			return 10, nil
+		},
+	}
+	ec.Start()
+	if ec.cancel != nil {
+		t.Error("Start should not set cancel when context is already cancelled")
+	}
+}
+
+func TestEmbedControllerStartCheckDebtError(t *testing.T) {
+	var logged string
+	ec := &embedController{
+		enabled: true,
+		ctx:     context.Background(),
+		log:     func(f string, a ...any) { logged = fmt.Sprintf(f, a...) },
+		checkDebt: func(context.Context) (int, error) {
+			return 0, errors.New("debt check failed")
+		},
+	}
+	ec.Start()
+	if ec.cancel != nil {
+		t.Error("Start should not set cancel when checkDebt errors")
+	}
+	if !strings.Contains(logged, "check embedding debt") {
+		t.Errorf("expected log about debt check error, got: %q", logged)
+	}
+}
+
+func TestEmbedControllerStartZeroDebt(t *testing.T) {
+	ec := &embedController{
+		enabled: true,
+		ctx:     context.Background(),
+		checkDebt: func(context.Context) (int, error) {
+			return 0, nil
+		},
+	}
+	ec.Start()
+	if ec.cancel != nil {
+		t.Error("Start should not set cancel when debt is zero")
+	}
+}
+
+func TestEmbedControllerStartDoubleStart(t *testing.T) {
+	ec := &embedController{
+		enabled: true,
+		ctx:     context.Background(),
+		log:     func(string, ...any) {},
+		checkDebt: func(context.Context) (int, error) {
+			return 5, nil
+		},
+		runEmbed: func(context.Context) (int, error) {
+			return 1, nil
+		},
+	}
+	ec.Start()
+	if ec.cancel == nil {
+		t.Fatal("Start should set cancel on first call")
+	}
+
+	// Second start should be a no-op
+	ec.Start()
+	ec.Cancel()
+}
+
+func TestEmbedControllerStartGoroutineSuccess(t *testing.T) {
+	var logged string
+	ec := &embedController{
+		enabled: true,
+		ctx:     context.Background(),
+		log:     func(f string, a ...any) { logged = fmt.Sprintf(f, a...) },
+		checkDebt: func(context.Context) (int, error) {
+			return 5, nil
+		},
+		runEmbed: func(context.Context) (int, error) {
+			return 3, nil
+		},
+	}
+	ec.Start()
+	if ec.cancel == nil {
+		t.Fatal("Start should set cancel")
+	}
+
+	ec.Cancel()
+
+	if !strings.Contains(logged, "background embed complete") {
+		t.Errorf("expected log about completion, got: %q", logged)
+	}
+}
+
+func TestEmbedControllerStartGoroutineError(t *testing.T) {
+	logCh := make(chan string, 1)
+	ec := &embedController{
+		enabled: true,
+		ctx:     context.Background(),
+		log:     func(f string, a ...any) { logCh <- fmt.Sprintf(f, a...) },
+		checkDebt: func(context.Context) (int, error) {
+			return 5, nil
+		},
+		runEmbed: func(context.Context) (int, error) {
+			return 0, errors.New("embed failed")
+		},
+	}
+	ec.Start()
+
+	select {
+	case logged := <-logCh:
+		if !strings.Contains(logged, "background embed error") {
+			t.Errorf("expected log about error, got: %q", logged)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for error log")
+	}
+	ec.Cancel()
+}
+
+func TestEmbedControllerStartGoroutineContextCancelled(t *testing.T) {
+	var logged string
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ec := &embedController{
+		enabled: true,
+		ctx:     ctx,
+		log:     func(f string, a ...any) { logged = fmt.Sprintf(f, a...) },
+		checkDebt: func(context.Context) (int, error) {
+			return 5, nil
+		},
+		runEmbed: func(ectx context.Context) (int, error) {
+			<-ectx.Done()
+			return 0, ectx.Err()
+		},
+	}
+	ec.Start()
+	cancel()
+
+	ec.Cancel()
+
+	// When context is cancelled, the error should not be logged
+	if strings.Contains(logged, "background embed error") {
+		t.Error("should not log error when context is cancelled")
+	}
+}
+
+func TestEmbedControllerCancelIdempotent(_ *testing.T) {
+	ec := &embedController{}
+	ec.Cancel()
+	ec.Cancel()
 }

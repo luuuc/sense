@@ -1,7 +1,13 @@
 package search
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/sqlite"
 )
 
 
@@ -107,5 +113,187 @@ func TestMergeMultiQuerySingle(t *testing.T) {
 	got := mergeMultiQuery([][]Result{r})
 	if len(got) != 2 {
 		t.Errorf("mergeMultiQuery single list = %d results, want 2", len(got))
+	}
+}
+
+func openTestDB(t *testing.T) *sqlite.Adapter {
+	t.Helper()
+	a, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	return a
+}
+
+func TestPromoteParentsEmpty(t *testing.T) {
+	e := NewEngine(nil, nil, nil)
+	out, err := e.promoteParents(context.Background(), nil, 10)
+	if err != nil {
+		t.Fatalf("promoteParents empty: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("expected 0 results, got %d", len(out))
+	}
+}
+
+func TestPromoteParentsNoParents(t *testing.T) {
+	ctx := context.Background()
+	a := openTestDB(t)
+
+	fid, err := a.WriteFile(ctx, &model.File{Path: "test.go", Language: "go", Hash: "h1", Symbols: 1, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := a.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "Foo", Qualified: "pkg.Foo", Kind: "function", LineStart: 1, LineEnd: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewEngine(a, nil, nil)
+	results := []Result{{SymbolID: sid, Name: "Foo", Score: 0.9}}
+	out, err := e.promoteParents(ctx, results, 10)
+	if err != nil {
+		t.Fatalf("promoteParents: %v", err)
+	}
+	if len(out) != 1 || out[0].SymbolID != sid {
+		t.Errorf("expected unchanged results, got %+v", out)
+	}
+}
+
+func TestPromoteParentsPromotes(t *testing.T) {
+	ctx := context.Background()
+	a := openTestDB(t)
+
+	fid, err := a.WriteFile(ctx, &model.File{Path: "test.go", Language: "go", Hash: "h1", Symbols: 3, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "MyClass", Qualified: "pkg.MyClass", Kind: "class", LineStart: 1, LineEnd: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	child1, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Method1", Qualified: "pkg.MyClass.Method1", Kind: "method",
+		LineStart: 2, LineEnd: 3, ParentID: &parentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child2, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Method2", Qualified: "pkg.MyClass.Method2", Kind: "method",
+		LineStart: 4, LineEnd: 5, ParentID: &parentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewEngine(a, nil, nil)
+	results := []Result{
+		{SymbolID: child1, Name: "Method1", Score: 0.9},
+		{SymbolID: child2, Name: "Method2", Score: 0.8},
+	}
+	out, err := e.promoteParents(ctx, results, 10)
+	if err != nil {
+		t.Fatalf("promoteParents: %v", err)
+	}
+
+	if len(out) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(out))
+	}
+	if out[0].SymbolID != parentID {
+		t.Errorf("expected parent %d, got %d", parentID, out[0].SymbolID)
+	}
+	if out[0].Name != "MyClass" {
+		t.Errorf("expected name MyClass, got %q", out[0].Name)
+	}
+}
+
+func TestPromoteParentsThresholdNotMet(t *testing.T) {
+	ctx := context.Background()
+	a := openTestDB(t)
+
+	fid, err := a.WriteFile(ctx, &model.File{Path: "test.go", Language: "go", Hash: "h1", Symbols: 2, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "MyClass", Qualified: "pkg.MyClass", Kind: "class",
+		LineStart: 1, LineEnd: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child1, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Method1", Qualified: "pkg.MyClass.Method1", Kind: "method",
+		LineStart: 2, LineEnd: 3, ParentID: &parentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewEngine(a, nil, nil)
+	results := []Result{{SymbolID: child1, Name: "Method1", Score: 0.9}}
+	out, err := e.promoteParents(ctx, results, 10)
+	if err != nil {
+		t.Fatalf("promoteParents: %v", err)
+	}
+
+	if len(out) != 1 || out[0].SymbolID != child1 {
+		t.Errorf("expected unchanged results, got %+v", out)
+	}
+}
+
+func TestPromoteParentsSkipsExistingParent(t *testing.T) {
+	ctx := context.Background()
+	a := openTestDB(t)
+
+	fid, err := a.WriteFile(ctx, &model.File{Path: "test.go", Language: "go", Hash: "h1", Symbols: 4, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "MyClass", Qualified: "pkg.MyClass", Kind: "class",
+		LineStart: 1, LineEnd: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	child1, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Method1", Qualified: "pkg.MyClass.Method1", Kind: "method",
+		LineStart: 2, LineEnd: 3, ParentID: &parentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child2, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Method2", Qualified: "pkg.MyClass.Method2", Kind: "method",
+		LineStart: 4, LineEnd: 5, ParentID: &parentID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewEngine(a, nil, nil)
+	results := []Result{
+		{SymbolID: parentID, Name: "MyClass", Score: 0.95},
+		{SymbolID: child1, Name: "Method1", Score: 0.9},
+		{SymbolID: child2, Name: "Method2", Score: 0.8},
+	}
+	out, err := e.promoteParents(ctx, results, 10)
+	if err != nil {
+		t.Fatalf("promoteParents: %v", err)
+	}
+
+	// Parent already in results — children should not be replaced
+	if len(out) != 3 {
+		t.Fatalf("expected 3 results (parent already present), got %d", len(out))
 	}
 }

@@ -156,3 +156,40 @@ func TestDebounceBatchesEvents(t *testing.T) {
 		t.Fatal("timed out waiting for batch")
 	}
 }
+
+func TestWatcherAddDirAlreadyRegistered(t *testing.T) {
+	dir := t.TempDir()
+	matcher := ignore.New()
+	w, err := New(dir, matcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Adding the root directory again should be a no-op
+	err = w.AddDir(dir)
+	if err != nil {
+		t.Errorf("AddDir on already-registered dir should not error, got %v", err)
+	}
+}
+
+func TestWatcherAddDirSkipDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".hidden"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	matcher := ignore.New()
+	w, err := New(dir, matcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Adding a hidden directory should be skipped
+	err = w.AddDir(filepath.Join(dir, ".hidden"))
+	if err != nil {
+		t.Errorf("AddDir on hidden dir should not error, got %v", err)
+	}
+}
+

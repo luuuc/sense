@@ -216,3 +216,88 @@ func TestParseBlastArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestRunBenchmarkHelp(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		cio, _, stderr := newTestIO()
+		if code := RunBenchmark([]string{flag}, cio); code != ExitSuccess {
+			t.Fatalf("%s: exit code = %d, want %d", flag, code, ExitSuccess)
+		}
+		got := stderr.String()
+		for _, want := range []string{
+			"usage: sense benchmark",
+			"--iterations",
+			"--json",
+			"Exit codes:",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: help missing %q\ngot:\n%s", flag, want, got)
+			}
+		}
+	}
+}
+
+func TestRunBenchmarkErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantCode   int
+		wantStderr string
+	}{
+		{"missing index", nil, ExitIndexMissing, "no index found"},
+		{"bad flag", []string{"--badflag"}, ExitGeneralError, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cio, _, stderr := newTestIO()
+			if code := RunBenchmark(tt.args, cio); code != tt.wantCode {
+				t.Fatalf("exit code = %d, want %d", code, tt.wantCode)
+			}
+			if tt.wantStderr != "" && !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Errorf("stderr missing %q, got: %q", tt.wantStderr, stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunSetupHelp(t *testing.T) {
+	for _, flag := range []string{"--help", "-h"} {
+		cio, _, stderr := newTestIO()
+		if code := RunSetup([]string{flag}, cio); code != ExitSuccess {
+			t.Fatalf("%s: exit code = %d, want %d", flag, code, ExitSuccess)
+		}
+		got := stderr.String()
+		for _, want := range []string{
+			"usage: sense setup",
+			"--tools",
+			"Examples:",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: help missing %q\ngot:\n%s", flag, want, got)
+			}
+		}
+	}
+}
+
+func TestRunSetupErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantCode   int
+		wantStderr string
+	}{
+		{"bad flag", []string{"--badflag"}, ExitGeneralError, ""},
+		{"bad tools", []string{"--tools", "invalid-tool"}, ExitGeneralError, "sense setup:"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cio, _, stderr := newTestIO()
+			if code := RunSetup(tt.args, cio); code != tt.wantCode {
+				t.Fatalf("exit code = %d, want %d", code, tt.wantCode)
+			}
+			if tt.wantStderr != "" && !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Errorf("stderr missing %q, got: %q", tt.wantStderr, stderr.String())
+			}
+		})
+	}
+}

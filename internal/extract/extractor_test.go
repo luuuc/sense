@@ -104,3 +104,28 @@ func TestRegisterPanicsOnDuplicateExtension(t *testing.T) {
 	}()
 	Register(stubExtractor{lang: "crystal", exts: []string{".rb"}})
 }
+
+func TestLanguageTier(t *testing.T) {
+	tests := []struct {
+		lang string
+		want string
+	}{
+		{"go", "full"},
+		{"ruby", "full"},
+		{"python", "standard"},
+		{"javascript", "full"},
+		{"typescript", "full"},
+		{"rust", "standard"},
+		{"java", "standard"},
+		{"kotlin", "standard"},
+		{"cpp", "standard"},
+		{"unknown", "basic"},
+		{"", "basic"},
+	}
+	for _, tt := range tests {
+		got := LanguageTier(tt.lang)
+		if got != tt.want {
+			t.Errorf("LanguageTier(%q) = %q, want %q", tt.lang, got, tt.want)
+		}
+	}
+}
