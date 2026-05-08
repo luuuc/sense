@@ -11,6 +11,19 @@ import (
 	"github.com/luuuc/sense/internal/version"
 )
 
+// Overridden by tests. Tests that mutate these must not use t.Parallel().
+var (
+	osExecutable       = os.Executable
+	fetchLatestTagFn   = fetchLatestTag
+	isGoInstallFn      func() bool
+	runInstallScriptFn func(ver string, stdout, stderr io.Writer) error
+)
+
+func init() {
+	isGoInstallFn = isGoInstall
+	runInstallScriptFn = runInstallScript
+}
+
 const installScriptURL = "https://raw.githubusercontent.com/" + repo + "/main/install.sh"
 
 func Update(stdout, stderr io.Writer) int {
@@ -19,14 +32,14 @@ func Update(stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if isGoInstall() {
+	if isGoInstallFn() {
 		_, _ = fmt.Fprintln(stderr, "sense update: you installed via `go install`. Run:\n  go install github.com/luuuc/sense/cmd/sense@latest\nOr switch to the install script:\n  curl -fsSL "+installScriptURL+" | sh")
 		return 1
 	}
 
 	_, _ = fmt.Fprintln(stdout, "Checking for updates...")
 
-	latest, err := fetchLatestTag()
+	latest, err := fetchLatestTagFn()
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "sense update: %v\n", err)
 		return 1
@@ -40,7 +53,7 @@ func Update(stdout, stderr io.Writer) int {
 	_, _ = fmt.Fprintf(stdout, "v%s → v%s available.\n", version.Version, latest)
 	_, _ = fmt.Fprintln(stdout, "Downloading and installing v"+latest+"...")
 
-	if err := runInstallScript(latest, stdout, stderr); err != nil {
+	if err := runInstallScriptFn(latest, stdout, stderr); err != nil {
 		_, _ = fmt.Fprintf(stderr, "sense update: install failed: %v\n", err)
 		return 1
 	}
@@ -50,17 +63,22 @@ func Update(stdout, stderr io.Writer) int {
 }
 
 func runInstallScript(ver string, stdout, stderr io.Writer) error {
-	curlCmd := fmt.Sprintf("curl -fsSL %s | sh", installScriptURL)
-
-	cmd := exec.Command("sh", "-c", curlCmd)
-	cmd.Env = append(os.Environ(), "VERSION="+ver)
+	cmd := installCommand(ver)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
 }
 
+func installCommand(ver string) *exec.Cmd {
+	curlCmd := fmt.Sprintf("curl -fsSL %s | sh", installScriptURL)
+
+	cmd := exec.Command("sh", "-c", curlCmd)
+	cmd.Env = append(os.Environ(), "VERSION="+ver)
+	return cmd
+}
+
 func isGoInstall() bool {
-	exe, err := os.Executable()
+	exe, err := osExecutable()
 	if err != nil {
 		return false
 	}
