@@ -57,6 +57,75 @@ func TestWatcherIgnoresMatchedFiles(t *testing.T) {
 	}
 }
 
+func TestWatcherNewBadPath(t *testing.T) {
+	matcher := ignore.New()
+	_, err := New("/nonexistent/path/that/does/not/exist", matcher)
+	if err == nil {
+		t.Error("expected error for non-existent path")
+	}
+}
+
+func TestWatcherShouldIgnoreExactMatch(t *testing.T) {
+	dir := t.TempDir()
+	matcher := ignore.New("debug.log")
+	w, err := New(dir, matcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	if !w.ShouldIgnore(filepath.Join(dir, "debug.log")) {
+		t.Error("should ignore exact match")
+	}
+}
+
+func TestWatcherShouldIgnorePrefixMatch(t *testing.T) {
+	dir := t.TempDir()
+	matcher := ignore.New("test*")
+	w, err := New(dir, matcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	if !w.ShouldIgnore(filepath.Join(dir, "test_main.go")) {
+		t.Error("should ignore prefix match")
+	}
+	if w.ShouldIgnore(filepath.Join(dir, "main_test.go")) {
+		t.Error("should not ignore suffix match")
+	}
+}
+
+func TestWatcherShouldIgnoreNestedPath(t *testing.T) {
+	dir := t.TempDir()
+	matcher := ignore.New("vendor/")
+	w, err := New(dir, matcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	if !w.ShouldIgnore(filepath.Join(dir, "vendor", "pkg", "file.go")) {
+		t.Error("should ignore nested path under vendor/")
+	}
+	if w.ShouldIgnore(filepath.Join(dir, "src", "vendor.go")) {
+		t.Error("should not ignore file named vendor.go outside vendor/")
+	}
+}
+
+func TestWatcherRemoveDirNonExistent(t *testing.T) {
+	dir := t.TempDir()
+	matcher := ignore.New()
+	w, err := New(dir, matcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Removing a directory that was never registered should not panic.
+	w.RemoveDir(filepath.Join(dir, "never-registered"))
+}
+
 func TestDebounceBatchesEvents(t *testing.T) {
 	dir := t.TempDir()
 	matcher := ignore.New()
