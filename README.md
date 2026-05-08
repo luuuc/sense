@@ -15,7 +15,7 @@ One binary, one index, four tools for your AI. No SaaS account, no API key, no c
 Measured across 7 real-world codebases (Discourse, Flask, Next.js, Axum, Gin, Javalin, Maket).
 Full methodology and raw data: [`bench/`](bench/).
 
-![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (6 tool calls, 139K tokens, 59s)](docs/comparison.svg)
+![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (5 tool calls, 109K tokens, 48s)](docs/comparison.svg)
 
 | Metric | Claude Code (Opus 4.6) | Claude Code (Opus 4.6) + Sense | Change |
 |---|---|---|---|
@@ -24,7 +24,7 @@ Full methodology and raw data: [`bench/`](bench/).
 | Cost per task | $0.42 | $0.31 | -26% |
 | Session time | 91s | 73s | -19% |
 | Score per 100K tokens | 0.19 | 0.30 | +64% |
-| Score per minute | 0.28 | 0.36 | +28% |
+| Score per minute | 0.28 | 0.38 | +37% |
 
 Same correctness, dramatically less work. Sense doesn't make the model smarter — it gives the model structural understanding so it stops wasting effort.
 
