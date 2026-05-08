@@ -819,7 +819,7 @@
         <div class="brand reveal">
           <div class="braille-logo" aria-label="Sense">⠎⠑⠝⠎⠑</div>
           <div class="brand-meta">
-            <span id="versionTag">v0.23.0</span><span class="dot">·</span>MIT<span class="dot"
+            <span id="versionTag">v0.62.0</span><span class="dot">·</span>MIT<span class="dot"
               >·</span
             >one binary
           </div>
@@ -855,7 +855,7 @@
           <span class="sect-num">&sect; 01</span>
           <h2 class="sect-title">What your AI gets</h2>
           <div class="sect-rule"></div>
-          <span class="sect-num" style="color: var(--ink-4)">four tools</span>
+          <span class="sect-num" style="color: var(--ink-4)">five tools</span>
         </div>
 
         <div class="caps reveal">
@@ -1038,11 +1038,52 @@
       </div>
     </section>
 
-    <!-- How it works -->
+    <!-- What changes -->
     <section class="sect">
       <div class="wrap">
         <div class="sect-head reveal">
           <span class="sect-num">&sect; 02</span>
+          <h2 class="sect-title">What changes</h2>
+          <div class="sect-rule"></div>
+          <span class="sect-num" style="color: var(--ink-4)">measured</span>
+        </div>
+
+        <p class="cap-desc reveal" style="margin-bottom: 32px; max-width: 100%">
+          Measured across 7 real-world codebases. Same correctness, dramatically less work.
+          Full methodology and raw data:
+          <a href="https://github.com/luuuc/sense/tree/main/bench" style="color: var(--accent); border-bottom: 1px dotted var(--accent-deep)">bench/</a>
+        </p>
+
+        <div class="perf-row reveal">
+          <div class="perf-cell">
+            <div class="perf-val">-47%</div>
+            <div class="perf-label">tool calls</div>
+          </div>
+          <div class="perf-cell">
+            <div class="perf-val">-32%</div>
+            <div class="perf-label">tokens</div>
+          </div>
+          <div class="perf-cell">
+            <div class="perf-val">-19%</div>
+            <div class="perf-label">session time</div>
+          </div>
+          <div class="perf-cell">
+            <div class="perf-val">+64%</div>
+            <div class="perf-label">score per 100k tokens</div>
+          </div>
+        </div>
+
+        <p class="cap-desc reveal" style="margin-top: 24px; max-width: 100%; color: var(--ink-3); font-size: 13px">
+          Structural understanding is the product. Measurable efficiency is the proof.
+        </p>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="sect">
+      <div class="wrap">
+        <div class="sect-head reveal">
+          <span class="sect-num">&sect; 03</span>
           <h2 class="sect-title">How it works</h2>
           <div class="sect-rule"></div>
           <span class="sect-num" style="color: var(--ink-4)">three steps</span>
@@ -1068,7 +1109,8 @@
             <div class="step-cmd"><span class="accent">$</span> sense scan</div>
             <p class="step-desc">
               One command indexes your codebase and configures your AI tools. Tree-sitter for
-              structure, ONNX embeddings for meaning. Incremental on every run.
+              structure, ONNX embeddings for meaning. Generates a cold-start summary so your AI
+              knows the shape of the project at session start. Incremental on every run.
             </p>
             <div class="step-meta">
               <span>claude code</span><span>cursor</span><span>any mcp client</span
@@ -1102,96 +1144,20 @@
 
         <div class="perf-row reveal">
           <div class="perf-cell">
-            <div class="perf-val">&lt; 10 ms</div>
-            <div class="perf-label">graph queries</div>
+            <div class="perf-val">0.2 ms</div>
+            <div class="perf-label">graph queries (p50)</div>
           </div>
           <div class="perf-cell">
-            <div class="perf-val">&lt; 50 ms</div>
-            <div class="perf-label">semantic search</div>
+            <div class="perf-val">0.1 ms</div>
+            <div class="perf-label">blast radius (p50)</div>
           </div>
           <div class="perf-cell">
-            <div class="perf-val">&lt; 100 ms</div>
+            <div class="perf-val">48 ms</div>
             <div class="perf-label">cold start</div>
           </div>
           <div class="perf-cell">
             <div class="perf-val">0</div>
             <div class="perf-label">external dependencies</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- What Sense is not -->
-    <section class="sect">
-      <div class="wrap">
-        <div class="sect-head reveal">
-          <span class="sect-num">&sect; 03</span>
-          <h2 class="sect-title">What Sense is not</h2>
-          <div class="sect-rule"></div>
-          <span class="sect-num" style="color: var(--ink-4)">sharp edges</span>
-        </div>
-
-        <div class="nots reveal">
-          <div class="not">
-            <div class="not-mark">&times;</div>
-            <div>
-              <h4 class="not-title">Not a code editor.</h4>
-              <p class="not-body">
-                Sense is read-only by design. It observes your codebase but never modifies it. Your
-                editor and your tools stay in control. Read-only is the identity, not a limitation.
-              </p>
-            </div>
-          </div>
-          <div class="not">
-            <div class="not-mark">&times;</div>
-            <div>
-              <h4 class="not-title">Not a token optimizer.</h4>
-              <p class="not-body">
-                Token savings are a natural by-product. But if LLM costs dropped to zero tomorrow,
-                Sense would still be valuable. The goal is understanding, not compression.
-              </p>
-            </div>
-          </div>
-          <div class="not">
-            <div class="not-mark">&times;</div>
-            <div>
-              <h4 class="not-title">Not a search engine.</h4>
-              <p class="not-body">
-                Semantic search is one of four capabilities, not the product. The product is
-                structural understanding that your AI reasons over.
-              </p>
-            </div>
-          </div>
-          <div class="not">
-            <div class="not-mark">&times;</div>
-            <div>
-              <h4 class="not-title">Not a feature-count competitor.</h4>
-              <p class="not-body">
-                Four capabilities is a choice, not a constraint. Your AI doesn't need 102 tools to
-                choose from. It needs four that work.
-              </p>
-            </div>
-          </div>
-          <div class="not">
-            <div class="not-mark">&times;</div>
-            <div>
-              <h4 class="not-title">Not dependent on anything.</h4>
-              <p class="not-body">
-                No API keys. No Ollama. No Docker. No Python. The moment Sense requires an external
-                dependency, it loses its clearest advantage.
-              </p>
-            </div>
-          </div>
-          <div class="not">
-            <div class="not-mark">&times;</div>
-            <div>
-              <h4 class="not-title">Not a tool you interact with.</h4>
-              <p class="not-body">
-                You never open a TUI, never type a command, never read Sense output. You notice it
-                in the absence of frustration &mdash; faster answers, fewer wrong turns, code that
-                matches your conventions.
-              </p>
-            </div>
           </div>
         </div>
       </div>
@@ -1257,10 +1223,10 @@
           <div class="not">
             <div class="not-mark">&rarr;</div>
             <div>
-              <h4 class="not-title">Four capabilities, full stop.</h4>
+              <h4 class="not-title">Five tools, full stop.</h4>
               <p class="not-body">
-                Symbol graph, semantic search, blast radius, convention detection. Sense does these
-                cleanly and resists the gravity toward "do everything."
+                Symbol graph, semantic search, blast radius, convention detection, index health.
+                Sense does these cleanly and resists the gravity toward &ldquo;do everything.&rdquo;
               </p>
             </div>
           </div>
@@ -1270,6 +1236,83 @@
               <h4 class="not-title">Runs on your machine.</h4>
               <p class="not-body">
                 Your code, your data, never leaves it. No account, no telemetry, no tier.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- What Sense is not -->
+    <section class="sect">
+      <div class="wrap">
+        <div class="sect-head reveal">
+          <span class="sect-num">&sect; 05</span>
+          <h2 class="sect-title">What Sense is not</h2>
+          <div class="sect-rule"></div>
+          <span class="sect-num" style="color: var(--ink-4)">sharp edges</span>
+        </div>
+
+        <div class="nots reveal">
+          <div class="not">
+            <div class="not-mark">&times;</div>
+            <div>
+              <h4 class="not-title">Not a code editor.</h4>
+              <p class="not-body">
+                Sense is read-only by design. It observes your codebase but never modifies it. Your
+                editor and your tools stay in control. Read-only is the identity, not a limitation.
+              </p>
+            </div>
+          </div>
+          <div class="not">
+            <div class="not-mark">&times;</div>
+            <div>
+              <h4 class="not-title">Not a token optimizer.</h4>
+              <p class="not-body">
+                Structural understanding is the product. Measurable efficiency is the proof. If LLM
+                costs dropped to zero tomorrow, Sense would still be valuable &mdash; fewer tool
+                calls means fewer wrong turns, not just lower bills.
+              </p>
+            </div>
+          </div>
+          <div class="not">
+            <div class="not-mark">&times;</div>
+            <div>
+              <h4 class="not-title">Not a search engine.</h4>
+              <p class="not-body">
+                Semantic search is one of five tools, not the product. The product is
+                structural understanding that your AI reasons over.
+              </p>
+            </div>
+          </div>
+          <div class="not">
+            <div class="not-mark">&times;</div>
+            <div>
+              <h4 class="not-title">Not a feature-count competitor.</h4>
+              <p class="not-body">
+                Five tools is a choice, not a constraint. Your AI doesn't need 102 tools to
+                choose from. It needs a few that work.
+              </p>
+            </div>
+          </div>
+          <div class="not">
+            <div class="not-mark">&times;</div>
+            <div>
+              <h4 class="not-title">Not dependent on anything.</h4>
+              <p class="not-body">
+                No API keys. No Ollama. No Docker. No Python. The moment Sense requires an external
+                dependency, it loses its clearest advantage.
+              </p>
+            </div>
+          </div>
+          <div class="not">
+            <div class="not-mark">&times;</div>
+            <div>
+              <h4 class="not-title">Not a tool you interact with.</h4>
+              <p class="not-body">
+                You never open a TUI, never type a command, never read Sense output. You notice it
+                in the absence of frustration &mdash; faster answers, fewer wrong turns, code that
+                matches your conventions.
               </p>
             </div>
           </div>
