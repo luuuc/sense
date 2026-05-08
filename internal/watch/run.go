@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -115,56 +116,38 @@ func Run(ctx context.Context, opts RunOptions) error {
 
 	// Background embed management: the watch loop owns all embedding.
 	// The MCP server skips its own background embed when WatchState is set.
-	var embedCancel context.CancelFunc
-	var embedDone chan struct{}
-
-	startEmbed := func() {
-		if !opts.EmbeddingsEnabled || ctx.Err() != nil {
-			return
-		}
-		debt, derr := writeAdapter.EmbeddingDebtCount(ctx)
-		if derr != nil {
-			log("sense: check embedding debt: %v", derr)
-			return
-		}
-		if debt == 0 {
-			return
-		}
-		var embedCtx context.Context
-		embedCtx, embedCancel = context.WithCancel(ctx)
-		embedDone = make(chan struct{})
-		go func() {
-			defer close(embedDone)
-			n, err := scan.EmbedPending(embedCtx, writeAdapter, root, senseDir)
-			if err != nil {
-				if embedCtx.Err() == nil {
-					log("sense: background embed error: %v", err)
-				}
-				return
-			}
-			if n > 0 {
-				log("sense: background embed complete (%d symbols)", n)
-			}
-		}()
+	embedCtl := &embedController{
+		enabled:      opts.EmbeddingsEnabled,
+		ctx:          ctx,
+		writeAdapter: writeAdapter,
+		root:         root,
+		senseDir:     senseDir,
+		log:          log,
+		embedPending: func(ctx context.Context, idx debtChecker, root, senseDir string) (int, error) {
+			return scan.EmbedPending(ctx, idx.(*sqlite.Adapter), root, senseDir)
+		},
 	}
-
-	cancelEmbed := func() {
-		if embedCancel != nil {
-			embedCancel()
-			<-embedDone
-			embedCancel = nil
-			embedDone = nil
-		}
-	}
-	defer cancelEmbed()
+	defer embedCtl.Cancel()
 
 	// Mark watch start for status reporting
 	ws.Set(true, time.Now().UTC())
 	defer ws.Set(false, time.Time{})
 
-	startEmbed()
+	embedCtl.Start()
 
 	log("sense: watching for changes (debounce=%dms)", debounceMs)
+
+	pOpts := processOptions{
+		root:           root,
+		matcher:        matcher,
+		maxFileSizeKB:  cfg.Scan.MaxFileSizeKB,
+		parsers:        parsers,
+		idx:            writeAdapter,
+		log:            log,
+		runIncremental: scan.RunIncremental,
+		cancelEmbed:    embedCtl.Cancel,
+		startEmbed:     embedCtl.Start,
+	}
 
 	for {
 		select {
@@ -175,31 +158,130 @@ func Run(ctx context.Context, opts RunOptions) error {
 			if !ok {
 				return nil
 			}
-			total := len(batch.Changed) + len(batch.Removed)
-			if total == 0 {
-				continue
-			}
-			cancelEmbed()
-			res, err := scan.RunIncremental(ctx, scan.IncrementalOptions{
-				Root:          root,
-				Idx:           writeAdapter,
-				Matcher:       matcher,
-				MaxFileSizeKB: cfg.Scan.MaxFileSizeKB,
-				Output:        io.Discard,
-				Warnings:      os.Stderr,
-				Changed:       batch.Changed,
-				Removed:       batch.Removed,
-				Parsers:       parsers,
-			})
-			if err != nil {
-				log("sense: re-index error: %v", err)
-				continue
-			}
-			log("sense: re-indexed %d files (%d changed, %d removed, %d symbols) in %s",
-				total, res.Changed, res.Removed, res.Symbols, res.Duration)
-			startEmbed()
+			_ = processBatch(ctx, batch, pOpts)
 		}
 	}
 }
 
+// processOptions holds the dependencies for processing a single batch.
+type processOptions struct {
+	root           string
+	matcher        *ignore.Matcher
+	maxFileSizeKB  int
+	parsers        *scan.ParserCache
+	idx            *sqlite.Adapter
+	log            func(format string, args ...any)
+	runIncremental func(ctx context.Context, opts scan.IncrementalOptions) (*scan.Result, error)
+	cancelEmbed    func()
+	startEmbed     func()
+}
+
+// processBatch handles a single batch of file changes: cancels any running
+// embed, runs incremental scan, logs the result, and restarts embed.
+func processBatch(ctx context.Context, batch Batch, opts processOptions) error {
+	total := len(batch.Changed) + len(batch.Removed)
+	if total == 0 {
+		return nil
+	}
+	opts.cancelEmbed()
+	res, err := opts.runIncremental(ctx, scan.IncrementalOptions{
+		Root:          opts.root,
+		Idx:           opts.idx,
+		Matcher:       opts.matcher,
+		MaxFileSizeKB: opts.maxFileSizeKB,
+		Output:        io.Discard,
+		Warnings:      os.Stderr,
+		Changed:       batch.Changed,
+		Removed:       batch.Removed,
+		Parsers:       opts.parsers,
+	})
+	if err != nil {
+		opts.log("sense: re-index error: %v", err)
+		return err
+	}
+	opts.log("sense: re-indexed %d files (%d changed, %d removed, %d symbols) in %s",
+		total, res.Changed, res.Removed, res.Symbols, res.Duration)
+	opts.startEmbed()
+	return nil
+}
+
+// debtChecker is the subset of sqlite.Adapter that embedController needs.
+type debtChecker interface {
+	EmbeddingDebtCount(ctx context.Context) (int, error)
+}
+
+// embedPendingFunc is the signature of scan.EmbedPending, extracted for test injection.
+type embedPendingFunc func(ctx context.Context, idx debtChecker, root, senseDir string) (int, error)
+
+// embedController manages the lifecycle of a background embed goroutine.
+type embedController struct {
+	enabled      bool
+	ctx          context.Context
+	writeAdapter debtChecker
+	root         string
+	senseDir     string
+	log          func(format string, args ...any)
+	embedPending embedPendingFunc
+
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// Start begins a background embed if embeddings are enabled, the parent
+// context is still valid, and there is embedding debt to clear.
+func (ec *embedController) Start() {
+	if !ec.enabled || ec.ctx.Err() != nil {
+		return
+	}
+	debt, derr := ec.writeAdapter.EmbeddingDebtCount(ec.ctx)
+	if derr != nil {
+		ec.log("sense: check embedding debt: %v", derr)
+		return
+	}
+	if debt == 0 {
+		return
+	}
+
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+
+	// Don't double-start.
+	if ec.cancel != nil {
+		return
+	}
+
+	var embedCtx context.Context
+	embedCtx, ec.cancel = context.WithCancel(ec.ctx)
+	ec.done = make(chan struct{})
+	go func() {
+		defer close(ec.done)
+		n, err := ec.embedPending(embedCtx, ec.writeAdapter, ec.root, ec.senseDir)
+		if err != nil {
+			if embedCtx.Err() == nil {
+				ec.log("sense: background embed error: %v", err)
+			}
+			return
+		}
+		if n > 0 {
+			ec.log("sense: background embed complete (%d symbols)", n)
+		}
+	}()
+}
+
+// Cancel stops the background embed goroutine and waits for it to exit.
+// It is safe to call multiple times (idempotent).
+func (ec *embedController) Cancel() {
+	ec.mu.Lock()
+	cancel := ec.cancel
+	done := ec.done
+	ec.cancel = nil
+	ec.done = nil
+	ec.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+		<-done
+	}
+}
 
