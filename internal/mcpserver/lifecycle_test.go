@@ -78,6 +78,7 @@ func TestServerStartupSmoke(t *testing.T) {
 }
 
 func TestInvalidDirectoryError(t *testing.T) {
+	t.Parallel()
 	emptyDir := t.TempDir()
 
 	err := RunWithOptions(RunOptions{Dir: emptyDir})
@@ -89,6 +90,7 @@ func TestInvalidDirectoryError(t *testing.T) {
 }
 
 func TestInitializeAndToolList(t *testing.T) {
+	t.Parallel()
 	dir := setupTestProject(t)
 
 	s, _, cleanup, err := buildMCPServer(RunOptions{Dir: dir})
@@ -147,6 +149,7 @@ func TestInitializeAndToolList(t *testing.T) {
 }
 
 func TestSenseGraphRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := setupTestProject(t)
 
 	s, _, cleanup, err := buildMCPServer(RunOptions{Dir: dir})
@@ -203,6 +206,7 @@ func TestSenseGraphRoundTrip(t *testing.T) {
 }
 
 func TestBuildMCPServerReturnsServer(t *testing.T) {
+	t.Parallel()
 	dir := setupTestProject(t)
 
 	s, h, cleanup, err := buildMCPServer(RunOptions{Dir: dir})
@@ -241,8 +245,7 @@ func TestBuildMCPServerReturnsServer(t *testing.T) {
 }
 
 func TestRunWithOptionsEmptyDirDefaultsToCWD(t *testing.T) {
-	// RunWithOptions with empty Dir should default to cwd
-	// Since cwd likely has no .sense, it should error gracefully
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

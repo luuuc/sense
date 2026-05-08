@@ -159,10 +159,12 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 	}
 
 	embedCtx, cancelEmbed := context.WithCancel(ctx)
+	embedDone := make(chan struct{})
 
 	if embeddingsEnabled && hasDebt && opts.WatchState == nil {
 		senseDir := filepath.Join(dir, ".sense")
 		go func() {
+			defer close(embedDone)
 			n, err := scan.EmbedPending(embedCtx, adapter, dir, senseDir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "sense mcp: background embed failed: %v\n", err)
@@ -180,6 +182,8 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 			engine.SetVectors(newIdx)
 			fmt.Fprintf(os.Stderr, "sense mcp: embeddings complete (%d symbols) — search upgraded to hybrid mode\n", n)
 		}()
+	} else {
+		close(embedDone)
 	}
 
 	tracker := metrics.NewTracker(adapter.DB())
@@ -205,6 +209,7 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 
 	cleanup := func() {
 		cancelEmbed()
+		<-embedDone
 		if embedder != nil {
 			_ = embedder.Close()
 		}

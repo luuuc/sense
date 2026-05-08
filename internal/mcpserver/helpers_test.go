@@ -180,9 +180,11 @@ func TestHandleSearchEmptyQuery(t *testing.T) {
 	result, err := ts.handlers.handleSearch(ctx, toolReq(map[string]any{
 		"query": "",
 	}))
-	if err == nil && result != nil {
-		// Empty query should still work (not crash)
-		_ = result
+	if err != nil {
+		t.Fatalf("handleSearch with empty query: %v", err)
+	}
+	if result == nil {
+		t.Fatal("handleSearch returned nil result for empty query")
 	}
 }
 
@@ -398,8 +400,11 @@ func TestBuildKeyEntriesWithDomainCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildKeyEntries: %v", err)
 	}
-	// Should return entries filtered to auth domain
-	_ = entries
+	for _, e := range entries {
+		if e.Name == "" {
+			t.Error("buildKeyEntries returned entry with empty name")
+		}
+	}
 }
 
 func TestHandleGraphMaxDepthExceeded(t *testing.T) {
@@ -523,8 +528,9 @@ func TestBuildStructureCoverage(t *testing.T) {
 	if structure == nil {
 		t.Fatal("buildStructure returned nil")
 	}
-	// Should have some namespaces/hubs from the test fixtures
-	_ = structure.Fingerprint
+	if structure.Fingerprint == "" {
+		t.Error("expected non-empty fingerprint from seeded fixtures")
+	}
 }
 
 func TestCountStaleFilesWithRealDir(t *testing.T) {
@@ -535,8 +541,9 @@ func TestCountStaleFilesWithRealDir(t *testing.T) {
 	if count < 0 {
 		t.Errorf("countStaleFiles returned negative count: %d", count)
 	}
-	// maxMtime can be nil if no files are stale
-	_ = maxMtime
+	if count > 0 && maxMtime == nil {
+		t.Error("countStaleFiles returned stale files but nil maxMtime")
+	}
 }
 
 func TestComputeFreshnessWithNoWatch(t *testing.T) {
@@ -544,8 +551,9 @@ func TestComputeFreshnessWithNoWatch(t *testing.T) {
 	ctx := context.Background()
 
 	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, true, nil)
-	// f may be nil if no files indexed; that's ok for test coverage
-	_ = f
+	if f != nil && f.Watching != nil && *f.Watching {
+		t.Error("freshness should not report watching when no WatchState is provided")
+	}
 }
 
 func TestHandleBlastMissingSymbol(t *testing.T) {
