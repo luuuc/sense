@@ -54,7 +54,7 @@ func (Extractor) Extensions() []string      { return []string{".rb", ".rake", ".
 func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
 func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
-	w := &walker{source: source, emit: emit, filePath: filePath}
+	w := &walker{source: source, emit: emit, filePath: filePath, classInstanceVars: make(map[string]map[string]string)}
 	return w.walk(tree.RootNode(), nil)
 }
 
@@ -63,11 +63,12 @@ func init() { extract.Register(Extractor{}) }
 // ---- walker ----
 
 type walker struct {
-	source    []byte
-	emit      extract.Emitter
-	filePath  string
-	routeNS   []string // namespace stack for route files (e.g. ["Admin"])
-	testScope []string // nested RSpec block descriptions for synthetic scope
+	source            []byte
+	emit              extract.Emitter
+	filePath          string
+	routeNS           []string // namespace stack for route files (e.g. ["Admin"])
+	testScope         []string // nested RSpec block descriptions for synthetic scope
+	classInstanceVars map[string]map[string]string // @ivar type map per class
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -497,6 +498,8 @@ func (w *walker) handleClassOrModule(n *sitter.Node, scope []string, kind model.
 	}
 
 	if body := n.ChildByFieldName("body"); body != nil {
+		ivarTypes := buildInstanceVarTypeMap(body, w.source)
+		w.classInstanceVars[qualified] = ivarTypes
 		return w.walkChildren(body, newScope)
 	}
 	return nil
@@ -548,8 +551,9 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	// edge is an accurate record of what was written.
 	body := n.ChildByFieldName("body")
 	localTypes := buildLocalTypeMap(body, w.source)
+	ivarTypes := w.classInstanceVars[strings.Join(scope, "::")]
 	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified, scope, localTypes)
+		return w.emitCall(c, qualified, scope, localTypes, ivarTypes)
 	}); err != nil {
 		return err
 	}
@@ -566,7 +570,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 // `public_send` / `__send__` with a literal symbol or string first
 // argument is emitted with confidence 0.7; anything else in that family
 // is skipped.
-func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTypes map[string]string) error {
+func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTypes, ivarTypes map[string]string) error {
 	methodNode := n.ChildByFieldName("method")
 	if methodNode == nil {
 		return nil
@@ -593,11 +597,11 @@ func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTy
 	}
 
 	recv := n.ChildByFieldName("receiver")
-	target, confidence := w.resolveCallTarget(recv, methodName, scope, localTypes)
+	target, confidence := w.resolveCallTarget(recv, methodName, scope, localTypes, ivarTypes)
 	if target == "" {
 		return nil
 	}
-	return w.emitCallWithConfidence(n, source, scope, localTypes, confidence)
+	return w.emitCallWithConfidence(n, source, scope, localTypes, ivarTypes, confidence)
 }
 
 // emitTestCall delegates to emitCall but substitutes ConfidenceTests and
@@ -610,13 +614,13 @@ func (w *walker) emitTestCall(n *sitter.Node, source string, scope []string) err
 	if rspecMatcherMethods[extract.Text(methodNode, w.source)] {
 		return nil
 	}
-	return w.emitCallWithConfidence(n, source, scope, nil, extract.ConfidenceTests)
+	return w.emitCallWithConfidence(n, source, scope, nil, nil, extract.ConfidenceTests)
 }
 
 // emitCallWithConfidence is emitCall's core logic with an injectable
 // confidence value. Used by both production-method emission (1.0 / 0.7)
 // and test-block emission (0.8).
-func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []string, localTypes map[string]string, confidence float64) error {
+func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []string, localTypes, ivarTypes map[string]string, confidence float64) error {
 	methodNode := n.ChildByFieldName("method")
 	if methodNode == nil {
 		return nil
@@ -643,7 +647,7 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 	}
 
 	recv := n.ChildByFieldName("receiver")
-	target, _ := w.resolveCallTarget(recv, methodName, scope, localTypes)
+	target, _ := w.resolveCallTarget(recv, methodName, scope, localTypes, ivarTypes)
 	if target == "" {
 		return nil
 	}
@@ -658,7 +662,7 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 
 // resolveCallTarget decides what target string to emit for a call node.
 // It returns the target string and the confidence level.
-func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope []string, localTypes map[string]string) (string, float64) {
+func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope []string, localTypes, ivarTypes map[string]string) (string, float64) {
 	if recv == nil {
 		return "self." + methodName, 1.0
 	}
@@ -673,6 +677,15 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 	case "identifier":
 		name := extract.Text(recv, w.source)
 		if typ, ok := localTypes[name]; ok {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
+		return methodName, extract.ConfidenceUnresolved
+	case "instance_variable":
+		name := extract.Text(recv, w.source)
+		if typ, ok := localTypes[name]; ok {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
+		if typ, ok := ivarTypes[name]; ok {
 			return typ + "#" + methodName, extract.ConfidenceDynamic
 		}
 		return methodName, extract.ConfidenceUnresolved
@@ -711,6 +724,41 @@ func buildLocalTypeMap(body *sitter.Node, source []byte) map[string]string {
 			return nil
 		})
 	}
+	return types
+}
+
+// buildInstanceVarTypeMap scans a class body for `initialize` methods and
+// looks for instance-variable assignments whose RHS is `ClassName.new(...)`.
+// Returns a map from @ivar_name to class_name.
+func buildInstanceVarTypeMap(body *sitter.Node, source []byte) map[string]string {
+	types := make(map[string]string)
+	if body == nil {
+		return types
+	}
+	_ = extract.WalkNamedDescendants(body, "method", func(n *sitter.Node) error {
+		nameNode := n.ChildByFieldName("name")
+		if nameNode == nil || extract.Text(nameNode, source) != "initialize" {
+			return nil
+		}
+		initBody := n.ChildByFieldName("body")
+		if initBody == nil {
+			return nil
+		}
+		for _, kind := range []string{"assignment", "operator_assignment"} {
+			_ = extract.WalkNamedDescendants(initBody, kind, func(a *sitter.Node) error {
+				lhs := a.ChildByFieldName("left")
+				rhs := a.ChildByFieldName("right")
+				if lhs == nil || rhs == nil || lhs.Kind() != "instance_variable" {
+					return nil
+				}
+				if typ := typeFromNewCall(rhs, source, nil); typ != "" {
+					types[extract.Text(lhs, source)] = typ
+				}
+				return nil
+			})
+		}
+		return nil
+	})
 	return types
 }
 
