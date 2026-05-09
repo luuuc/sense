@@ -2895,3 +2895,424 @@ end
 		t.Errorf("recursive chain: got %q, want %q", got, want)
 	}
 }
+
+// --- block parameter type inference ---
+
+func TestBlockParameterEach(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    orders = Order.new
+    orders.each do |order|
+      order.save
+    end
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "Order#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge Service#process -> Order#save from block parameter inference")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+	// Verify no duplicate edges — each call should be emitted exactly once.
+	serviceEdges := 0
+	for _, edge := range r.edges {
+		if edge.SourceQualified == "Service#process" {
+			serviceEdges++
+		}
+	}
+	if serviceEdges != 3 {
+		t.Errorf("expected 3 edges from Service#process, got %d", serviceEdges)
+	}
+}
+
+func TestBlockParameterMap(t *testing.T) {
+	r := parseRuby(t, `
+class User
+  def name; end
+end
+
+class Service
+  def process
+    users = User.new
+    users.map { |user| user.name }
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "User#name", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge Service#process -> User#name from block parameter inference")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestBlockParameterNestedBlocks(t *testing.T) {
+	r := parseRuby(t, `
+class Item
+  def save; end
+end
+
+class Order
+  def items
+    Item.new
+  end
+end
+
+class Service
+  def process
+    orders = Order.new
+    orders.each do |order|
+      order.items.each do |item|
+        item.save
+      end
+    end
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "Item#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge Service#process -> Item#save from nested block parameter inference")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestBlockParameterNonCollectionSkipped(t *testing.T) {
+	r := parseRuby(t, `
+class File
+  def read; end
+end
+
+class Service
+  def process
+    File.open("x") { |f| f.read }
+  end
+end
+`)
+	// File.open is not a collection method → no block parameter inference
+	// The call inside the block falls back to bare method name
+	e := findEdge(r, "Service#process", "read", "calls")
+	if e == nil {
+		t.Fatal("missing bare fallback edge for non-collection block")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestBlockParameterFromLocalVariable(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def validate; end
+end
+
+class Service
+  def process
+    orders = Order.new
+    orders.each { |order| order.validate }
+  end
+end
+`)
+	// orders = Order.new makes orders an Order
+	// extractElementType("Order") returns "Order" (already singular)
+	e := findEdge(r, "Service#process", "Order#validate", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from block parameter with local variable collection")
+	}
+}
+
+func TestBlockParameterMultipleParams(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    orders = Order.new
+    orders.each { |order, index| order.save }
+  end
+end
+`)
+	// Multiple params: both get the element type
+	e := findEdge(r, "Service#process", "Order#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from block with multiple parameters")
+	}
+}
+
+func TestBlockParameterDestructuringSkipped(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    orders = Order.new
+    orders.each { |(id, name)| id.to_s }
+  end
+end
+`)
+	// Destructuring parameter → skip block parameter inference
+	// The call inside falls back to bare method name
+	e := findEdge(r, "Service#process", "to_s", "calls")
+	if e == nil {
+		t.Fatal("missing bare fallback edge for destructuring block parameter")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestBlockParameterFromInstanceVariable(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def initialize
+    @orders = Order.new
+  end
+
+  def process
+    @orders.each { |order| order.save }
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "Order#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from block parameter with instance variable collection")
+	}
+}
+
+func TestBlockParameterFromChain(t *testing.T) {
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class User
+  def orders
+    Order.new
+  end
+end
+
+class Service
+  def process
+    user = User.new
+    user.orders.each { |order| order.save }
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "Order#save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from block parameter with chain receiver")
+	}
+}
+
+func TestExtractBlockParams(t *testing.T) {
+	src := []byte(`orders.each { |order| order.save }`)
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(Extractor{}.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	callNode := tree.RootNode().NamedChild(0)
+	block := callNode.ChildByFieldName("block")
+	if block == nil {
+		t.Fatal("could not find block")
+	}
+
+	params := extractBlockParams(block, src)
+	if len(params) != 1 || params[0] != "order" {
+		t.Errorf("params = %v, want [order]", params)
+	}
+}
+
+func TestExtractBlockParamsMultiple(t *testing.T) {
+	src := []byte(`orders.each { |order, index| order.save }`)
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(Extractor{}.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	callNode := tree.RootNode().NamedChild(0)
+	block := callNode.ChildByFieldName("block")
+	params := extractBlockParams(block, src)
+	if len(params) != 2 || params[0] != "order" || params[1] != "index" {
+		t.Errorf("params = %v, want [order index]", params)
+	}
+}
+
+func TestExtractBlockParamsDestructuring(t *testing.T) {
+	src := []byte(`orders.each { |(id, name)| id.to_s }`)
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(Extractor{}.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	callNode := tree.RootNode().NamedChild(0)
+	block := callNode.ChildByFieldName("block")
+	params := extractBlockParams(block, src)
+	if params != nil {
+		t.Errorf("params = %v, want nil for destructuring", params)
+	}
+}
+
+func TestExtractElementType(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Array[Order]", "Order"},
+		{"Array[Admin::Order]", "Admin::Order"},
+		{"orders", "Order"},
+		{"users", "User"},
+		{"line_items", "LineItem"},
+		{"Order", "Order"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := extractElementType(tc.in); got != tc.want {
+			t.Errorf("extractElementType(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestBlockParameterNoParams(t *testing.T) {
+	// Block without parameters should still be walked, just without type augmentation
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    orders = Order.new
+    orders.each { order.save }
+  end
+end
+`)
+	// order is not a block parameter, it's treated as an unresolved identifier
+	// Since it's not in localTypes, it falls back to bare method name
+	e := findEdge(r, "Service#process", "save", "calls")
+	if e == nil {
+		t.Fatal("missing bare fallback edge for block without parameters")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestBlockParameterUnknownReceiverType(t *testing.T) {
+	// When receiver type is unknown, block body is still walked with original types
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    orders.each { |order| order.save }
+  end
+end
+`)
+	// orders is not in localTypes, so each falls back to bare method name
+	// and block parameter inference is skipped
+	e := findEdge(r, "Service#process", "save", "calls")
+	if e == nil {
+		t.Fatal("missing bare fallback edge for unknown receiver type")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestBlockParameterSplatSkipped(t *testing.T) {
+	// Splat parameter should skip block parameter inference
+	r := parseRuby(t, `
+class Order
+  def save; end
+end
+
+class Service
+  def process
+    orders = Order.new
+    orders.each { |*args| args.first }
+  end
+end
+`)
+	// args.first is a chain call, should fall back to bare method
+	e := findEdge(r, "Service#process", "first", "calls")
+	if e == nil {
+		t.Fatal("missing bare fallback edge for splat parameter")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestMergeMaps(t *testing.T) {
+	cases := []struct {
+		base, overlay, want map[string]string
+	}{
+		{
+			base:    map[string]string{"a": "1", "b": "2"},
+			overlay: map[string]string{"b": "3", "c": "4"},
+			want:    map[string]string{"a": "1", "b": "3", "c": "4"},
+		},
+		{
+			base:    nil,
+			overlay: map[string]string{"x": "y"},
+			want:    map[string]string{"x": "y"},
+		},
+		{
+			base:    map[string]string{"a": "1"},
+			overlay: nil,
+			want:    map[string]string{"a": "1"},
+		},
+		{
+			base:    nil,
+			overlay: nil,
+			want:    map[string]string{},
+		},
+	}
+	for _, tc := range cases {
+		got := mergeMaps(tc.base, tc.overlay)
+		if len(got) != len(tc.want) {
+			t.Errorf("mergeMaps(%v, %v) = %v, want %v", tc.base, tc.overlay, got, tc.want)
+			continue
+		}
+		for k, v := range tc.want {
+			if got[k] != v {
+				t.Errorf("mergeMaps(%v, %v)[%q] = %q, want %q", tc.base, tc.overlay, k, got[k], v)
+			}
+		}
+	}
+}
