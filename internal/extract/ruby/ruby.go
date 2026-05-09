@@ -67,6 +67,15 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit
 
 func init() { extract.Register(Extractor{}) }
 
+// collectionMethods is the set of method names for which block parameter
+// type inference is supported. When a call with a block uses one of these
+// methods, the block parameter inherits the receiver's element type.
+var collectionMethods = map[string]bool{
+	"each": true, "map": true, "select": true,
+	"reject": true, "find": true, "detect": true,
+	"flat_map": true, "collect": true, "filter": true,
+}
+
 // ---- walker ----
 
 type walker struct {
@@ -411,6 +420,94 @@ func getBlockBody(block *sitter.Node) *sitter.Node {
 	return nil
 }
 
+// isInsideBlock returns true if n is contained within a block or do_block.
+func isInsideBlock(n *sitter.Node) bool {
+	for p := n.Parent(); p != nil; p = p.Parent() {
+		if p.Kind() == "block" || p.Kind() == "do_block" {
+			return true
+		}
+	}
+	return false
+}
+
+// isInsideNestedBlock returns true if n is contained within a block that
+// is a descendant of parent (i.e. a nested block). parent itself should be
+// a block or do_block node.
+func isInsideNestedBlock(n, parent *sitter.Node) bool {
+	parentID := parent.Id()
+	for p := n.Parent(); p != nil && p.Id() != parentID; p = p.Parent() {
+		if p.Kind() == "block" || p.Kind() == "do_block" {
+			return true
+		}
+	}
+	return false
+}
+
+// extractBlockParams pulls simple identifier parameter names from a
+// block_parameters node.
+//
+// Returns nil when:
+//   - the block has no parameters node (e.g. bare block without |...|)
+//   - any parameter is not a simple identifier (destructuring, splat,
+//     optional, etc.)
+//
+// In both cases the caller should skip block parameter type inference
+// and fall back to walking the block body with the original local type
+// map.
+func extractBlockParams(block *sitter.Node, source []byte) []string {
+	paramsNode := block.ChildByFieldName("parameters")
+	if paramsNode == nil {
+		return nil
+	}
+	var params []string
+	count := paramsNode.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		c := paramsNode.NamedChild(i)
+		if c == nil {
+			continue
+		}
+		switch c.Kind() {
+		case "identifier":
+			params = append(params, extract.Text(c, source))
+		default:
+			// Destructuring, splat, optional parameters — skip the whole block.
+			return nil
+		}
+	}
+	return params
+}
+
+// extractElementType extracts the element type from a collection type string.
+// Handles Array[Type] syntax and falls back to a plural→singular heuristic.
+func extractElementType(collectionType string) string {
+	if collectionType == "" {
+		return ""
+	}
+	// Array[Order] → Order
+	if strings.HasPrefix(collectionType, "Array[") && strings.HasSuffix(collectionType, "]") {
+		return collectionType[6 : len(collectionType)-1]
+	}
+	// Plural → singular heuristic (e.g. orders → Order, users → User)
+	singular := singularize(collectionType)
+	if singular != collectionType {
+		return pascalCase(singular)
+	}
+	return collectionType
+}
+
+// mergeMaps returns a new map containing all entries from base, overlaid
+// with entries from overlay. Neither input map is modified.
+func mergeMaps(base, overlay map[string]string) map[string]string {
+	result := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, v := range overlay {
+		result[k] = v
+	}
+	return result
+}
+
 // hasInterpolation returns true if a string node contains interpolation.
 func hasInterpolation(n *sitter.Node) bool {
 	if n.Kind() != "string" {
@@ -561,6 +658,9 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	localTypes := buildLocalTypeMap(body, w.source)
 	ivarTypes := w.classInstanceVars[strings.Join(scope, "::")]
 	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
+		if isInsideBlock(c) {
+			return nil
+		}
 		return w.emitCall(c, qualified, scope, localTypes, ivarTypes)
 	}); err != nil {
 		return err
@@ -659,13 +759,37 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 	if target == "" {
 		return nil
 	}
-	return w.emit.Edge(extract.EmittedEdge{
+	if err := w.emit.Edge(extract.EmittedEdge{
 		SourceQualified: source,
 		TargetQualified: target,
 		Kind:            model.EdgeCalls,
 		Line:            &line,
 		Confidence:      confidence,
-	})
+	}); err != nil {
+		return err
+	}
+
+	// If this call has a block, infer block parameter types from the
+	// receiver's collection type and walk the block body with an
+	// augmented local type map. When inference is not possible (non-
+	// collection method, destructuring params, unknown receiver type),
+	// we still walk the block so calls inside are not lost.
+	if block := n.ChildByFieldName("block"); block != nil {
+		paramTypes := w.inferBlockParamTypes(n, scope, localTypes, ivarTypes)
+		blockTypes := localTypes
+		if paramTypes != nil {
+			blockTypes = mergeMaps(localTypes, paramTypes)
+		}
+		if err := extract.WalkNamedDescendants(block, "call", func(c *sitter.Node) error {
+			if isInsideNestedBlock(c, block) {
+				return nil
+			}
+			return w.emitCall(c, source, scope, blockTypes, ivarTypes)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveCallTarget decides what target string to emit for a call node.
@@ -759,6 +883,68 @@ func (w *walker) resolveChainReceiver(recv *sitter.Node, scope []string, localTy
 	}
 
 	return ""
+}
+
+// inferBlockParamTypes determines the element type for block parameters
+// when a call with a block uses a known collection method (each, map, etc.).
+// It looks up the receiver's collection type from local variables, instance
+// variables, or method chains, then extracts the singular element type.
+// Returns nil when the method is not in the whitelist or the type cannot
+// be inferred.
+func (w *walker) inferBlockParamTypes(callNode *sitter.Node, scope []string, localTypes, ivarTypes map[string]string) map[string]string {
+	methodNode := callNode.ChildByFieldName("method")
+	if methodNode == nil {
+		return nil
+	}
+	methodName := extract.Text(methodNode, w.source)
+	if !collectionMethods[methodName] {
+		return nil
+	}
+
+	recv := callNode.ChildByFieldName("receiver")
+	if recv == nil {
+		return nil
+	}
+
+	var collectionType string
+	switch recv.Kind() {
+	case "identifier":
+		collectionType = localTypes[extract.Text(recv, w.source)]
+	case "instance_variable":
+		name := extract.Text(recv, w.source)
+		if typ, ok := localTypes[name]; ok {
+			collectionType = typ
+		} else if typ, ok := ivarTypes[name]; ok {
+			collectionType = typ
+		}
+	case "call":
+		// For chain resolution, e.g. user.orders.each { |order| ... }
+		collectionType = w.resolveChainReceiver(recv, scope, localTypes, 1)
+	}
+
+	if collectionType == "" {
+		return nil
+	}
+
+	elementType := extractElementType(collectionType)
+	if elementType == "" {
+		return nil
+	}
+
+	block := callNode.ChildByFieldName("block")
+	if block == nil {
+		return nil
+	}
+	params := extractBlockParams(block, w.source)
+	if params == nil {
+		return nil
+	}
+
+	result := make(map[string]string)
+	for _, param := range params {
+		result[param] = elementType
+	}
+	return result
 }
 
 // buildLocalTypeMap scans a method body for local-variable assignments
