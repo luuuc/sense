@@ -1249,8 +1249,10 @@ func (w *walker) emitIncludeEdge(n *sitter.Node, scope []string) error {
 	}
 	source := strings.Join(scope, "::")
 	line := extract.Line(n.StartPosition())
-	// Each argument becomes a separate edge. Only simple constants are
-	// resolvable intra-file — skip anything else (dynamic include expressions).
+	// Each argument becomes a separate edge. Emit edges for static
+	// module references (constant and scope_resolution nodes); the
+	// resolver handles cross-file lookup. Skip dynamic expressions
+	// where the target cannot be determined (target == "").
 	count := args.NamedChildCount()
 	for i := uint(0); i < count; i++ {
 		arg := args.NamedChild(i)

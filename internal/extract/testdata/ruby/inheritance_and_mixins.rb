@@ -12,6 +12,7 @@ end
 class Child < Base
   include Printable
   extend Printable
+  prepend Enumerable
 
   def greet
   end
