@@ -40,6 +40,8 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		entry := BlastCaller{
 			Symbol:      qualifiedOrName(c),
 			File:        file,
+			LineStart:   c.LineStart,
+			LineEnd:     c.LineEnd,
 			ViaTemporal: r.DirectTemporalIDs[c.ID],
 		}
 
@@ -59,6 +61,8 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 					Symbol:      qualifiedOrName(hop.Symbol),
 					Via:         qualifiedOrName(hop.Via),
 					Hops:        hop.Hops,
+					LineStart:   hop.Symbol.LineStart,
+					LineEnd:     hop.Symbol.LineEnd,
 					ViaTemporal: hop.ViaTemporal,
 				})
 				tier1Count++
@@ -69,8 +73,10 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 				file = path
 			}
 			tier2All = append(tier2All, BlastCaller{
-				Symbol: qualifiedOrName(hop.Symbol),
-				File:   file,
+				Symbol:    qualifiedOrName(hop.Symbol),
+				File:      file,
+				LineStart: hop.Symbol.LineStart,
+				LineEnd:   hop.Symbol.LineEnd,
 			})
 		}
 	}
@@ -80,7 +86,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd}
 		resp.AffectedSubclasses = append(resp.AffectedSubclasses, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -89,7 +95,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd}
 		resp.AffectedViaComposition = append(resp.AffectedViaComposition, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -98,7 +104,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd}
 		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -161,8 +167,10 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 				file = path
 			}
 			resp.DirectCallers = append(resp.DirectCallers, BlastCaller{
-				Symbol: qualifiedOrName(c),
-				File:   file,
+				Symbol:    qualifiedOrName(c),
+				File:      file,
+				LineStart: c.LineStart,
+				LineEnd:   c.LineEnd,
 			})
 		}
 		for _, hop := range r.IndirectCallers {
@@ -171,9 +179,11 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 			}
 			indirectSeen[hop.Symbol.ID] = struct{}{}
 			resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
-				Symbol: qualifiedOrName(hop.Symbol),
-				Via:    qualifiedOrName(hop.Via),
-				Hops:   hop.Hops,
+				Symbol:    qualifiedOrName(hop.Symbol),
+				Via:       qualifiedOrName(hop.Via),
+				Hops:      hop.Hops,
+				LineStart: hop.Symbol.LineStart,
+				LineEnd:   hop.Symbol.LineEnd,
 			})
 		}
 		for _, t := range r.AffectedTests {
