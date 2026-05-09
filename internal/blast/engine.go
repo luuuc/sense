@@ -211,6 +211,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		frontier = append(frontier, id)
 	}
 
+	// childSet tracks a type's own methods. They seed the BFS frontier
+	// (so callers of methods are discoverable) but are explicitly excluded
+	// from blast radius output — see the partition loop below.
 	childSet := map[int64]struct{}{}
 	if shouldExpandChildren(subject.Kind) {
 		childIDs, err := loadChildIDs(ctx, db, symbolIDs)
@@ -283,39 +286,39 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		frontier = next
 	}
 
-	// Split visited into children (hop 0, from parent_id), caller-direct
-	// (hop ≤1, from edges), and indirect (hop >1). Seeds are skipped.
-	// Children bypass MaxResults — they're deterministic (parent_id).
+	// Split visited into caller-direct (hop ≤1, from edges) and indirect
+	// (hop >1). Seeds and children are skipped from output — children seed
+	// the BFS frontier so callers of methods are found, but they are not
+	// part of the blast radius (they are the symbol's own members).
 	seedSet := make(map[int64]struct{}, len(symbolIDs))
 	for _, id := range symbolIDs {
 		seedSet[id] = struct{}{}
 	}
-	var childDirectIDs, callerDirectIDs, indirectIDs []int64
+	var directIDs, indirectIDs []int64
 	for id, hops := range visited {
 		if _, isSeed := seedSet[id]; isSeed {
 			continue
 		}
+		if _, isChild := childSet[id]; isChild {
+			continue
+		}
 		if hops <= 1 {
-			if _, isChild := childSet[id]; isChild {
-				childDirectIDs = append(childDirectIDs, id)
-			} else {
-				callerDirectIDs = append(callerDirectIDs, id)
-			}
+			directIDs = append(directIDs, id)
 		} else {
 			indirectIDs = append(indirectIDs, id)
 		}
 	}
 
-	totalAffectedCount := len(childDirectIDs) + len(callerDirectIDs) + len(indirectIDs)
+	totalAffectedCount := len(directIDs) + len(indirectIDs)
 
-	callerCount := len(callerDirectIDs) + len(indirectIDs)
+	callerCount := len(directIDs) + len(indirectIDs)
 	if callerCount > opts.MaxResults {
 		type ranked struct {
 			id   int64
 			conf float64
 		}
 		all := make([]ranked, 0, callerCount)
-		for _, id := range callerDirectIDs {
+		for _, id := range directIDs {
 			all = append(all, ranked{id, pathConf[id]})
 		}
 		for _, id := range indirectIDs {
@@ -329,12 +332,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			kept[r.id] = struct{}{}
 		}
 
-		callerDirectIDs = filterIDs(callerDirectIDs, kept)
+		directIDs = filterIDs(directIDs, kept)
 		indirectIDs = filterIDs(indirectIDs, kept)
 	}
-
-	directIDs := childDirectIDs
-	directIDs = append(directIDs, callerDirectIDs...)
 
 	// Hydrate both sets to model.Symbol in a single bulk read.
 
@@ -418,7 +418,15 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 
 	affectedTests := []string{}
 	if opts.IncludeTests {
-		testIDs := append([]int64{subject.ID}, directIDs...)
+		// Include children in test lookup so tests directly targeting
+		// methods on the subject are surfaced even though children are
+		// excluded from the blast radius output.
+		testIDs := make([]int64, 0, 1+len(childSet)+len(directIDs)+len(indirectIDs))
+		testIDs = append(testIDs, subject.ID)
+		for id := range childSet {
+			testIDs = append(testIDs, id)
+		}
+		testIDs = append(testIDs, directIDs...)
 		testIDs = append(testIDs, indirectIDs...)
 		tests, err := loadTestsTargeting(ctx, db, testIDs)
 		if err != nil {

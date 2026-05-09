@@ -232,9 +232,8 @@ func TestComputeDefaultsStopWeakChains(t *testing.T) {
 
 // TestComputeHandlesCycle pins the pitch's explicit claim that BFS
 // tolerates cycles via the visited set rather than flagging them.
-// The fixture builds A → B → A (mutual recursion via send) and
-// asserts Compute on A terminates, surfaces B as the direct caller,
-// and does not loop forever or report A as its own caller.
+// TestComputeHandlesCycle pins the pitch's explicit claim that BFS
+// tolerates cycles via the visited set rather than flagging them.
 func TestComputeHandlesCycle(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "cycle.rb"), `class Cycle
@@ -898,7 +897,7 @@ func TestConfidenceDecayStopsAtThreshold(t *testing.T) {
 		t.Errorf("symbol F (cumulative 0.459) should be excluded at MinConfidence 0.5")
 	}
 	if res.TotalAffected != 4 {
-		t.Errorf("TotalAffected = %d, want 4", res.TotalAffected)
+		t.Errorf("TotalAffected = %d, want 4 (B + C survive, D pruned)", res.TotalAffected)
 	}
 
 	// With MinConfidence 0.8: only B (0.9) and C (0.81) pass.
@@ -1008,30 +1007,57 @@ func TestDoubleReachableAppearsInFirstGroup(t *testing.T) {
 func TestTierClassification(t *testing.T) {
 	fix := newFixtureDB(t)
 	subject := fix.addSymbol(t, "Target")
-	callsCaller := fix.addSymbol(t, "CallsCaller")
-	composesCaller := fix.addSymbol(t, "ComposesCaller")
-	inheritsCaller := fix.addSymbol(t, "InheritsCaller")
 
-	fix.addEdge(t, callsCaller, subject, model.EdgeCalls, 1.0)
-	fix.addEdge(t, composesCaller, subject, model.EdgeComposes, 1.0)
-	fix.addEdge(t, inheritsCaller, subject, model.EdgeInherits, 1.0)
+	kinds := []struct {
+		edgeKind model.EdgeKind
+		wantTier blast.Tier
+		name     string
+	}{
+		{model.EdgeCalls, blast.TierBreaks, "calls"},
+		{model.EdgeTemporal, blast.TierBreaks, "temporal"},
+		{model.EdgeTests, blast.TierTests, "tests"},
+		{model.EdgeComposes, blast.TierReferences, "composes"},
+		{model.EdgeInherits, blast.TierReferences, "inherits"},
+		{model.EdgeIncludes, blast.TierReferences, "includes"},
+	}
 
-	res, err := blast.Compute(context.Background(), fix.db, []int64{subject}, blast.Options{
-		MaxHops:       1,
-		MinConfidence: 0.1,
-	})
+	for _, tc := range kinds {
+		t.Run(tc.name, func(t *testing.T) {
+			caller := fix.addSymbol(t, "Caller_"+tc.name)
+			fix.addEdge(t, caller, subject, tc.edgeKind, 1.0)
+
+			res, err := blast.Compute(context.Background(), fix.db, []int64{subject}, blast.Options{
+				MaxHops:       1,
+				MinConfidence: 0.1,
+			})
+			if err != nil {
+				t.Fatalf("Compute: %v", err)
+			}
+
+			if res.SymbolTiers[caller] != tc.wantTier {
+				t.Errorf("%s edge → tier %d, want %d", tc.name, res.SymbolTiers[caller], tc.wantTier)
+			}
+		})
+	}
+}
+
+func TestTierMemberClassification(t *testing.T) {
+	fix := newFixtureDB(t)
+	typeID := fix.addSymbolWith(t, "Widget", model.KindType, nil)
+	childID := fix.addSymbolWith(t, "Widget.Run", model.KindMethod, &typeID)
+	callerID := fix.addSymbolWith(t, "App", model.KindFunction, nil)
+
+	// Caller calls the child method.
+	fix.addEdge(t, callerID, childID, model.EdgeCalls, 1.0)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{typeID}, blast.Options{MaxHops: 1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
 
-	if res.SymbolTiers[callsCaller] != blast.TierBreaks {
-		t.Errorf("calls edge → tier %d, want TierBreaks (%d)", res.SymbolTiers[callsCaller], blast.TierBreaks)
-	}
-	if res.SymbolTiers[composesCaller] != blast.TierReferences {
-		t.Errorf("composes edge → tier %d, want TierReferences (%d)", res.SymbolTiers[composesCaller], blast.TierReferences)
-	}
-	if res.SymbolTiers[inheritsCaller] != blast.TierReferences {
-		t.Errorf("inherits edge → tier %d, want TierReferences (%d)", res.SymbolTiers[inheritsCaller], blast.TierReferences)
+	if res.SymbolTiers[callerID] != blast.TierBreaks {
+		t.Errorf("caller tier = %d, want TierBreaks (%d); member seed should propagate TierBreaks",
+			res.SymbolTiers[callerID], blast.TierBreaks)
 	}
 }
 
@@ -1050,20 +1076,21 @@ func TestTypeMemberSeedInclusion(t *testing.T) {
 		t.Fatalf("Compute: %v", err)
 	}
 
-	// Param is a child of Context — appears in DirectCallers (type change breaks methods).
+	// Param is a child of Context — it seeds the BFS frontier but is NOT
+	// part of the blast radius (only external dependents are).
 	names := map[string]bool{}
 	for _, c := range res.DirectCallers {
 		names[c.Qualified] = true
 	}
-	if !names["gin.Context.Param"] {
-		t.Errorf("child method gin.Context.Param should appear in DirectCallers: %+v", res.DirectCallers)
+	if names["gin.Context.Param"] {
+		t.Errorf("child method gin.Context.Param should NOT appear in DirectCallers: %+v", res.DirectCallers)
 	}
 	if !names["app.ExternalHandler"] {
 		t.Errorf("external caller app.ExternalHandler missing from DirectCallers: %+v", res.DirectCallers)
 	}
 
-	if res.TotalAffected != 2 {
-		t.Errorf("TotalAffected = %d, want 2 (child + external caller)", res.TotalAffected)
+	if res.TotalAffected != 1 {
+		t.Errorf("TotalAffected = %d, want 1 (external caller only)", res.TotalAffected)
 	}
 }
 
@@ -1086,9 +1113,9 @@ func TestTypeMemberBFSPropagation(t *testing.T) {
 	for _, c := range res.DirectCallers {
 		names[c.Qualified] = true
 	}
-	// Param appears as a direct caller (child of Context).
-	if !names["gin.Context.Param"] {
-		t.Errorf("child method gin.Context.Param should appear in DirectCallers: %+v", res.DirectCallers)
+	// Param is a child of Context — seeds the BFS but is NOT part of output.
+	if names["gin.Context.Param"] {
+		t.Errorf("child method gin.Context.Param should be excluded from output: %+v", res.DirectCallers)
 	}
 	// HandlerFunc calls Param → appears as direct caller (Param is a seed, so
 	// HandlerFunc is discovered at hop 1).
@@ -1096,8 +1123,8 @@ func TestTypeMemberBFSPropagation(t *testing.T) {
 		t.Errorf("HandlerFunc should appear via Param seed, got: %+v", res.DirectCallers)
 	}
 
-	if res.TotalAffected != 2 {
-		t.Errorf("TotalAffected = %d, want 2 (child + caller of child)", res.TotalAffected)
+	if res.TotalAffected != 1 {
+		t.Errorf("TotalAffected = %d, want 1 (caller of child only)", res.TotalAffected)
 	}
 }
 
@@ -1267,18 +1294,27 @@ func TestTypeMemberTierClassification(t *testing.T) {
 
 	typeID := fix.addSymbolWith(t, "Widget", model.KindType, nil)
 	childID := fix.addSymbolWith(t, "Widget.Run", model.KindMethod, &typeID)
+	callerID := fix.addSymbolWith(t, "App", model.KindFunction, nil)
+
+	// Caller calls the child method.
+	fix.addEdge(t, callerID, childID, model.EdgeCalls, 1.0)
 
 	res, err := blast.Compute(context.Background(), fix.db, []int64{typeID}, blast.Options{MaxHops: 1})
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
 
-	if len(res.DirectCallers) != 1 || res.DirectCallers[0].ID != childID {
-		t.Fatalf("DirectCallers = %+v, want [Widget.Run]", res.DirectCallers)
+	// Child seeds BFS but is NOT in output; caller is discovered via BFS.
+	if len(res.DirectCallers) != 1 || res.DirectCallers[0].ID != callerID {
+		t.Fatalf("DirectCallers = %+v, want [App]", res.DirectCallers)
 	}
-	if res.SymbolTiers[childID] != blast.TierBreaks {
-		t.Errorf("child tier = %d, want TierBreaks (%d); member edge should classify as tier 1",
-			res.SymbolTiers[childID], blast.TierBreaks)
+	if res.SymbolTiers[callerID] != blast.TierBreaks {
+		t.Errorf("caller tier = %d, want TierBreaks (%d); calls edge should classify as tier 1",
+			res.SymbolTiers[callerID], blast.TierBreaks)
+	}
+	// Child should not have a tier since it's excluded from output.
+	if _, ok := res.SymbolTiers[childID]; ok {
+		t.Errorf("child should not have a tier; got %d", res.SymbolTiers[childID])
 	}
 }
 
@@ -1294,14 +1330,45 @@ func TestTypeKindExpandsChildren(t *testing.T) {
 		t.Fatalf("Compute: %v", err)
 	}
 
+	// Children seed the BFS but are NOT part of the blast radius output.
 	ids := map[int64]bool{}
 	for _, c := range res.DirectCallers {
 		ids[c.ID] = true
 	}
-	if !ids[m1] || !ids[m2] {
-		t.Errorf("KindType should expand children: got %+v, want Config.Get + Config.Set", res.DirectCallers)
+	if ids[m1] || ids[m2] {
+		t.Errorf("children should NOT appear in blast output: got %+v", res.DirectCallers)
 	}
-	if res.TotalAffected != 2 {
-		t.Errorf("TotalAffected = %d, want 2", res.TotalAffected)
+	if res.TotalAffected != 0 {
+		t.Errorf("TotalAffected = %d, want 0 (no external callers)", res.TotalAffected)
 	}
+}
+
+func TestComputeExpandFrontierErrors(t *testing.T) {
+	t.Run("db-closed", func(t *testing.T) {
+		fix := newFixtureDB(t)
+		subject := fix.addSymbol(t, "Subject")
+		fix.addEdge(t, fix.addSymbol(t, "Caller"), subject, model.EdgeCalls, 1.0)
+
+		db := fix.db
+		_ = db.Close()
+
+		_, err := blast.Compute(context.Background(), db, []int64{subject}, blast.Options{MaxHops: 1})
+		if err == nil {
+			t.Error("expected error when DB is closed, got nil")
+		}
+	})
+
+	t.Run("context-cancelled", func(t *testing.T) {
+		fix := newFixtureDB(t)
+		subject := fix.addSymbol(t, "Subject")
+		fix.addEdge(t, fix.addSymbol(t, "Caller"), subject, model.EdgeCalls, 1.0)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := blast.Compute(ctx, fix.db, []int64{subject}, blast.Options{MaxHops: 1})
+		if err == nil {
+			t.Error("expected error when context is cancelled, got nil")
+		}
+	})
 }
