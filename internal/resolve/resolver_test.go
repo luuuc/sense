@@ -303,3 +303,58 @@ func TestResolveBareTargetNoFallback(t *testing.T) {
 		t.Error("expected miss for bare target with no matches")
 	}
 }
+
+func TestResolveIncludesCrossFile(t *testing.T) {
+	// Include edges resolve cross-file via byQualified just like any
+	// other edge kind — there is no intra-file restriction.
+	tests := []struct {
+		name       string
+		refs       []model.SymbolRef
+		target     string
+		wantOK     bool
+		wantID     int64
+		wantConf   float64
+	}{
+		{
+			name:   "bare target cross-file",
+			refs:   []model.SymbolRef{{ID: 1, Qualified: "Topic", FileID: 10}, {ID: 2, Qualified: "HasErrors", FileID: 20}},
+			target: "HasErrors",
+			wantOK: true, wantID: 2, wantConf: 1.0,
+		},
+		{
+			name:   "scope resolution cross-file",
+			refs:   []model.SymbolRef{{ID: 1, Qualified: "Topic", FileID: 10}, {ID: 2, Qualified: "RateLimiter::OnCreate", FileID: 30}},
+			target: "RateLimiter::OnCreate",
+			wantOK: true, wantID: 2, wantConf: 1.0,
+		},
+		{
+			name:   "unresolved target",
+			refs:   []model.SymbolRef{{ID: 1, Qualified: "Topic", FileID: 10}},
+			target: "NonExistent",
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ix := resolve.NewIndex(tt.refs)
+			r, ok := ix.Resolve(resolve.Request{
+				Target:         tt.target,
+				Kind:           model.EdgeIncludes,
+				SourceFileID:   10,
+				BaseConfidence: 1.0,
+			})
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !tt.wantOK {
+				return
+			}
+			if r.SymbolID != tt.wantID {
+				t.Errorf("SymbolID = %d, want %d", r.SymbolID, tt.wantID)
+			}
+			if r.Confidence != tt.wantConf {
+				t.Errorf("Confidence = %v, want %v", r.Confidence, tt.wantConf)
+			}
+		})
+	}
+}

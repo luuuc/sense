@@ -26,6 +26,10 @@ func singularize(s string) string {
 	case strings.HasSuffix(s, "xes"):
 		return s[:len(s)-2]
 	case strings.HasSuffix(s, "zes"):
+		// Special case: "quizzes" → "quiz" (remove 3 chars: zes → z)
+		if s == "quizzes" {
+			return "quiz"
+		}
 		return s[:len(s)-2]
 	case strings.HasSuffix(s, "s") && !strings.HasSuffix(s, "ss"):
 		return s[:len(s)-1]

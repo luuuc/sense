@@ -34,6 +34,7 @@
 package ruby
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -53,19 +54,38 @@ func (Extractor) Extensions() []string      { return []string{".rb", ".rake", ".
 func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
 func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
-	w := &walker{source: source, emit: emit, filePath: filePath}
+	returnTypes := buildFileReturnTypeMap(tree.RootNode(), source)
+	w := &walker{
+		source:            source,
+		emit:              emit,
+		filePath:          filePath,
+		classInstanceVars: make(map[string]map[string]string),
+		returnTypes:       returnTypes,
+	}
 	return w.walk(tree.RootNode(), nil)
 }
 
 func init() { extract.Register(Extractor{}) }
 
+// collectionMethods is the set of method names for which block parameter
+// type inference is supported. When a call with a block uses one of these
+// methods, the block parameter inherits the receiver's element type.
+var collectionMethods = map[string]bool{
+	"each": true, "map": true, "select": true,
+	"reject": true, "find": true, "detect": true,
+	"flat_map": true, "collect": true, "filter": true,
+}
+
 // ---- walker ----
 
 type walker struct {
-	source   []byte
-	emit     extract.Emitter
-	filePath string
-	routeNS  []string // namespace stack for route files (e.g. ["Admin"])
+	source            []byte
+	emit              extract.Emitter
+	filePath          string
+	routeNS           []string // namespace stack for route files (e.g. ["Admin"])
+	testScope         []string // nested RSpec block descriptions for synthetic scope
+	classInstanceVars map[string]map[string]string // @ivar type map per class
+	returnTypes       map[string]string            // method_qualified → class_name (file-level)
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -137,8 +157,6 @@ func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 	// Top-level handlers (no enclosing class/module)
 	if !inScope {
 		switch methodName {
-		case "describe":
-			return false, w.emitDescribeEdge(n)
 		case "resources":
 			return true, w.handleResources(n, false)
 		case "resource":
@@ -155,7 +173,32 @@ func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 		}
 	}
 
+	// RSpec DSL blocks with a body — handled as test scopes.
+	if rspecDSLMethods[methodName] {
+		return w.handleTestBlock(n, scope, methodName)
+	}
+
 	return false, nil
+}
+
+// rspecDSLMethods is the set of RSpec DSL method names that create
+// test scopes when called with a block.
+var rspecDSLMethods = map[string]bool{
+	"it": true, "describe": true, "context": true,
+	"before": true, "after": true, "around": true,
+	"let": true, "expect": true,
+}
+
+// rspecMatcherMethods is the set of RSpec matcher chain methods that
+// should not be emitted as calls edges — they are DSL sugar, not
+// application method invocations.
+var rspecMatcherMethods = map[string]bool{
+	"to": true, "not_to": true, "to_not": true,
+	"eq": true, "be": true, "be_nil": true, "be_empty": true,
+	"be_valid": true, "be_present": true, "be_a": true,
+	"raise_error": true, "change": true, "receive": true,
+	"have_received": true, "match": true, "include": true,
+	"contain_exactly": true, "start_with": true, "end_with": true,
 }
 
 func (w *walker) walkChildren(n *sitter.Node, scope []string) error {
@@ -166,6 +209,334 @@ func (w *walker) walkChildren(n *sitter.Node, scope []string) error {
 		}
 	}
 	return nil
+}
+
+// handleTestBlock processes an RSpec DSL call that has a block body.
+// It builds a synthetic scope name, walks the block for calls/identifiers,
+// and recurses into nested test blocks.  Returns true to signal the node
+// was consumed.
+func (w *walker) handleTestBlock(n *sitter.Node, scope []string, methodName string) (bool, error) {
+	// Emit the conventional tests edge for top-level describe with a
+	// constant argument (e.g. `describe Order do … end`).
+	if methodName == "describe" && len(scope) == 0 {
+		if err := w.emitDescribeEdge(n); err != nil {
+			return true, err
+		}
+	}
+
+	block := getBlockChild(n)
+	if block == nil {
+		// No block — but the arguments may contain calls we still want to
+		// capture (e.g. `expect(TopicCreator.create(...))`).
+		synthetic := w.buildSyntheticSource(scope)
+		return true, extract.WalkNamedDescendants(n, "call", func(c *sitter.Node) error {
+			if w.isInsideNestedTestBlock(c, n) {
+				return nil
+			}
+			methodNode := c.ChildByFieldName("method")
+			if methodNode != nil && rspecDSLMethods[extract.Text(methodNode, w.source)] {
+				return nil
+			}
+			return w.emitTestCall(c, synthetic, scope)
+		})
+	}
+
+	segment := w.buildTestScopeSegment(n, methodName)
+	if segment == "" {
+		// Unnamed / unresolvable block — fall back to file-level scope.
+		return true, w.walkTestBlockWithFallback(block, scope)
+	}
+
+	// Push segment and cap depth at 3.
+	w.testScope = append(w.testScope, segment)
+	if len(w.testScope) > 3 {
+		w.testScope = w.testScope[:len(w.testScope)-1]
+		return true, w.walkTestBlockWithFallback(block, scope)
+	}
+	defer func() {
+		w.testScope = w.testScope[:len(w.testScope)-1]
+	}()
+
+	synthetic := w.buildSyntheticSource(scope)
+	body := getBlockBody(block)
+	if body == nil {
+		return true, nil
+	}
+	return true, w.walkTestBody(body, scope, synthetic)
+}
+
+// buildTestScopeSegment extracts a scope segment from a test DSL call.
+// Returns "" when the block should fall back to file-level scope.
+func (w *walker) buildTestScopeSegment(n *sitter.Node, methodName string) string {
+	args := n.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return ""
+	}
+	first := args.NamedChild(0)
+	if first == nil {
+		return ""
+	}
+
+	switch methodName {
+	case "describe", "context":
+		switch first.Kind() {
+		case "constant", "scope_resolution":
+			return extract.Text(first, w.source)
+		case "string":
+			if hasInterpolation(first) {
+				return ""
+			}
+			desc := extractStringValue(first, w.source)
+			if desc == "" {
+				return ""
+			}
+			if strings.HasPrefix(desc, "#") || strings.HasPrefix(desc, ".") {
+				return desc
+			}
+			return methodName + "_" + sanitizeDesc(desc)
+		default:
+			return ""
+		}
+	case "it":
+		if first.Kind() == "string" {
+			if hasInterpolation(first) {
+				return ""
+			}
+			desc := extractStringValue(first, w.source)
+			if desc == "" {
+				return ""
+			}
+			return "#it_" + sanitizeDesc(desc)
+		}
+		return ""
+	case "before", "after", "around", "let", "expect":
+		// These DSL nodes rarely carry a descriptive string arg;
+		// fall back to file-level scope.
+		return ""
+	default:
+		return ""
+	}
+}
+
+// buildSyntheticSource joins the class/module scope with the test-scope
+// stack into a single synthetic qualified name.
+func (w *walker) buildSyntheticSource(scope []string) string {
+	classScope := strings.Join(scope, "::")
+	testScope := strings.Join(w.testScope, "#")
+
+	if classScope == "" && testScope == "" {
+		return ""
+	}
+	if classScope == "" {
+		return testScope
+	}
+	if testScope == "" {
+		return classScope
+	}
+	return classScope + "#" + testScope
+}
+
+// walkTestBody walks a test block body emitting calls edges with the
+// given synthetic source.  It also recurses into nested test blocks.
+// A single tree walk handles both emission and recursion.
+func (w *walker) walkTestBody(body *sitter.Node, scope []string, source string) error {
+	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
+		if w.isInsideNestedTestBlock(c, body) {
+			return nil
+		}
+		methodNode := c.ChildByFieldName("method")
+		if methodNode == nil {
+			return nil
+		}
+		methodName := extract.Text(methodNode, w.source)
+		if rspecDSLMethods[methodName] {
+			// Recurse into nested test block.
+			_, err := w.handleTestBlock(c, scope, methodName)
+			return err
+		}
+		return w.emitTestCall(c, source, scope)
+	}); err != nil {
+		return err
+	}
+	// Emit edges for bare identifiers in statement position.
+	return w.emitBareIdentifierCalls(body, source, extract.ConfidenceTests)
+}
+
+// isInsideNestedTestBlock returns true if n sits inside a test DSL call
+// that is a descendant of body (i.e., a nested test block).
+func (w *walker) isInsideNestedTestBlock(n, body *sitter.Node) bool {
+	bodyID := body.Id()
+	for p := n.Parent(); p != nil && p.Id() != bodyID; p = p.Parent() {
+		if p.Kind() == "call" {
+			methodNode := p.ChildByFieldName("method")
+			if methodNode != nil && rspecDSLMethods[extract.Text(methodNode, w.source)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// walkTestBlockWithFallback walks a test block body using the file path
+// as the source scope (file-level fallback).
+func (w *walker) walkTestBlockWithFallback(block *sitter.Node, scope []string) error {
+	body := getBlockBody(block)
+	if body == nil {
+		return nil
+	}
+	source := w.fileLevelScope(block)
+	return w.walkTestBody(body, scope, source)
+}
+
+// fileLevelScope returns a file-level synthetic scope like "test.rb#L42".
+func (w *walker) fileLevelScope(n *sitter.Node) string {
+	base := w.filePath
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	line := extract.Line(n.StartPosition())
+	return fmt.Sprintf("%s#L%d", base, line)
+}
+
+// getBlockChild returns the block child (do_block or block) of a call node.
+func getBlockChild(n *sitter.Node) *sitter.Node {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		c := n.NamedChild(i)
+		if c != nil && (c.Kind() == "do_block" || c.Kind() == "block") {
+			return c
+		}
+	}
+	return nil
+}
+
+// getBlockBody returns the body child of a block node.
+func getBlockBody(block *sitter.Node) *sitter.Node {
+	for i := uint(0); i < block.NamedChildCount(); i++ {
+		c := block.NamedChild(i)
+		if c != nil && (c.Kind() == "body_statement" || c.Kind() == "block_body") {
+			return c
+		}
+	}
+	return nil
+}
+
+// isInsideBlock returns true if n is contained within a block or do_block.
+func isInsideBlock(n *sitter.Node) bool {
+	for p := n.Parent(); p != nil; p = p.Parent() {
+		if p.Kind() == "block" || p.Kind() == "do_block" {
+			return true
+		}
+	}
+	return false
+}
+
+// isInsideNestedBlock returns true if n is contained within a block that
+// is a descendant of parent (i.e. a nested block). parent itself should be
+// a block or do_block node.
+func isInsideNestedBlock(n, parent *sitter.Node) bool {
+	parentID := parent.Id()
+	for p := n.Parent(); p != nil && p.Id() != parentID; p = p.Parent() {
+		if p.Kind() == "block" || p.Kind() == "do_block" {
+			return true
+		}
+	}
+	return false
+}
+
+// extractBlockParams pulls simple identifier parameter names from a
+// block_parameters node.
+//
+// Returns nil when:
+//   - the block has no parameters node (e.g. bare block without |...|)
+//   - any parameter is not a simple identifier (destructuring, splat,
+//     optional, etc.)
+//
+// In both cases the caller should skip block parameter type inference
+// and fall back to walking the block body with the original local type
+// map.
+func extractBlockParams(block *sitter.Node, source []byte) []string {
+	paramsNode := block.ChildByFieldName("parameters")
+	if paramsNode == nil {
+		return nil
+	}
+	var params []string
+	count := paramsNode.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		c := paramsNode.NamedChild(i)
+		if c == nil {
+			continue
+		}
+		switch c.Kind() {
+		case "identifier":
+			params = append(params, extract.Text(c, source))
+		default:
+			// Destructuring, splat, optional parameters — skip the whole block.
+			return nil
+		}
+	}
+	return params
+}
+
+// extractElementType extracts the element type from a collection type string.
+// Handles Array[Type] syntax and falls back to a plural→singular heuristic.
+func extractElementType(collectionType string) string {
+	if collectionType == "" {
+		return ""
+	}
+	// Array[Order] → Order
+	if strings.HasPrefix(collectionType, "Array[") && strings.HasSuffix(collectionType, "]") {
+		return collectionType[6 : len(collectionType)-1]
+	}
+	// Plural → singular heuristic (e.g. orders → Order, users → User)
+	singular := singularize(collectionType)
+	if singular != collectionType {
+		return pascalCase(singular)
+	}
+	return collectionType
+}
+
+// mergeMaps returns a new map containing all entries from base, overlaid
+// with entries from overlay. Neither input map is modified.
+func mergeMaps(base, overlay map[string]string) map[string]string {
+	result := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, v := range overlay {
+		result[k] = v
+	}
+	return result
+}
+
+// hasInterpolation returns true if a string node contains interpolation.
+func hasInterpolation(n *sitter.Node) bool {
+	if n.Kind() != "string" {
+		return false
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		c := n.NamedChild(i)
+		if c != nil && c.Kind() == "interpolation" {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeDesc turns a human-readable block description into a safe
+// scope segment: spaces → underscores, strip non-alphanumerics.
+func sanitizeDesc(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteRune('_')
+		default:
+			// Drop punctuation.
+		}
+	}
+	return b.String()
 }
 
 // handleClassOrModule emits the symbol, records inheritance (class only),
@@ -232,6 +603,8 @@ func (w *walker) handleClassOrModule(n *sitter.Node, scope []string, kind model.
 	}
 
 	if body := n.ChildByFieldName("body"); body != nil {
+		ivarTypes := buildInstanceVarTypeMap(body, w.source)
+		w.classInstanceVars[qualified] = ivarTypes
 		return w.walkChildren(body, newScope)
 	}
 	return nil
@@ -283,12 +656,16 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	// edge is an accurate record of what was written.
 	body := n.ChildByFieldName("body")
 	localTypes := buildLocalTypeMap(body, w.source)
+	ivarTypes := w.classInstanceVars[strings.Join(scope, "::")]
 	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified, scope, localTypes)
+		if isInsideBlock(c) {
+			return nil
+		}
+		return w.emitCall(c, qualified, scope, localTypes, ivarTypes)
 	}); err != nil {
 		return err
 	}
-	return w.emitBareIdentifierCalls(body, qualified)
+	return w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic)
 }
 
 // emitCall produces a calls edge for one `call` node. The target is
@@ -301,7 +678,71 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 // `public_send` / `__send__` with a literal symbol or string first
 // argument is emitted with confidence 0.7; anything else in that family
 // is skipped.
-func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTypes map[string]string) error {
+func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTypes, ivarTypes map[string]string) error {
+	methodNode := n.ChildByFieldName("method")
+	if methodNode == nil {
+		return nil
+	}
+	methodName := extract.Text(methodNode, w.source)
+	if methodName == "" {
+		return nil
+	}
+
+	switch methodName {
+	case "send", "public_send", "__send__":
+		target, ok := literalSendTarget(n, w.source)
+		if ok {
+			line := extract.Line(n.StartPosition())
+			return w.emit.Edge(extract.EmittedEdge{
+				SourceQualified: source,
+				TargetQualified: target,
+				Kind:            model.EdgeCalls,
+				Line:            &line,
+				Confidence:      extract.ConfidenceDynamic,
+			})
+		}
+		// Heuristic: variable-based dynamic dispatch on self.
+		recv := n.ChildByFieldName("receiver")
+		if recv == nil || recv.Kind() == "self" {
+			if target, conf, ok := inferSendTargetFromVariable(n, w.source); ok {
+				line := extract.Line(n.StartPosition())
+				return w.emit.Edge(extract.EmittedEdge{
+					SourceQualified: source,
+					TargetQualified: target,
+					Kind:            model.EdgeCalls,
+					Line:            &line,
+					Confidence:      conf,
+				})
+			}
+		}
+		return nil
+	}
+
+	recv := n.ChildByFieldName("receiver")
+	target, confidence := w.resolveCallTarget(recv, methodName, scope, localTypes, ivarTypes)
+	if target == "" {
+		return nil
+	}
+	return w.emitCallWithConfidence(n, source, scope, localTypes, ivarTypes, confidence)
+}
+
+// emitTestCall delegates to emitCall but substitutes ConfidenceTests and
+// skips RSpec matcher noise (eq, be_valid, raise_error, etc.).
+func (w *walker) emitTestCall(n *sitter.Node, source string, scope []string) error {
+	methodNode := n.ChildByFieldName("method")
+	if methodNode == nil {
+		return nil
+	}
+	if rspecMatcherMethods[extract.Text(methodNode, w.source)] {
+		return nil
+	}
+	return w.emitCallWithConfidence(n, source, scope, nil, nil, extract.ConfidenceTests)
+}
+
+// emitCallWithConfidence is emitCall's core logic with an injectable
+// confidence value. Used by both production-method emission (1.0 / 0.7)
+// and test-block emission (0.8).
+func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []string, localTypes, ivarTypes map[string]string, confidence float64) error {
 	methodNode := n.ChildByFieldName("method")
 	if methodNode == nil {
 		return nil
@@ -315,35 +756,72 @@ func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTy
 	switch methodName {
 	case "send", "public_send", "__send__":
 		target, ok := literalSendTarget(n, w.source)
-		if !ok {
-			return nil
+		if ok {
+			return w.emit.Edge(extract.EmittedEdge{
+				SourceQualified: source,
+				TargetQualified: target,
+				Kind:            model.EdgeCalls,
+				Line:            &line,
+				Confidence:      confidence,
+			})
 		}
-		return w.emit.Edge(extract.EmittedEdge{
-			SourceQualified: source,
-			TargetQualified: target,
-			Kind:            model.EdgeCalls,
-			Line:            &line,
-			Confidence:      extract.ConfidenceDynamic,
-		})
+		// Heuristic: variable-based dynamic dispatch on self.
+		recv := n.ChildByFieldName("receiver")
+		if recv == nil || recv.Kind() == "self" {
+			if target, conf, ok := inferSendTargetFromVariable(n, w.source); ok {
+				return w.emit.Edge(extract.EmittedEdge{
+					SourceQualified: source,
+					TargetQualified: target,
+					Kind:            model.EdgeCalls,
+					Line:            &line,
+					Confidence:      conf,
+				})
+			}
+		}
+		return nil
 	}
 
 	recv := n.ChildByFieldName("receiver")
-	target, confidence := w.resolveCallTarget(recv, methodName, scope, localTypes)
+	target, _ := w.resolveCallTarget(recv, methodName, scope, localTypes, ivarTypes)
 	if target == "" {
 		return nil
 	}
-	return w.emit.Edge(extract.EmittedEdge{
+	if err := w.emit.Edge(extract.EmittedEdge{
 		SourceQualified: source,
 		TargetQualified: target,
 		Kind:            model.EdgeCalls,
 		Line:            &line,
 		Confidence:      confidence,
-	})
+	}); err != nil {
+		return err
+	}
+
+	// If this call has a block, infer block parameter types from the
+	// receiver's collection type and walk the block body with an
+	// augmented local type map. When inference is not possible (non-
+	// collection method, destructuring params, unknown receiver type),
+	// we still walk the block so calls inside are not lost.
+	if block := n.ChildByFieldName("block"); block != nil {
+		paramTypes := w.inferBlockParamTypes(n, scope, localTypes, ivarTypes)
+		blockTypes := localTypes
+		if paramTypes != nil {
+			blockTypes = mergeMaps(localTypes, paramTypes)
+		}
+		if err := extract.WalkNamedDescendants(block, "call", func(c *sitter.Node) error {
+			if isInsideNestedBlock(c, block) {
+				return nil
+			}
+			return w.emitCall(c, source, scope, blockTypes, ivarTypes)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveCallTarget decides what target string to emit for a call node.
 // It returns the target string and the confidence level.
-func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope []string, localTypes map[string]string) (string, float64) {
+func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope []string, localTypes, ivarTypes map[string]string) (string, float64) {
 	if recv == nil {
 		return "self." + methodName, 1.0
 	}
@@ -361,6 +839,15 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 			return typ + "#" + methodName, extract.ConfidenceDynamic
 		}
 		return methodName, extract.ConfidenceUnresolved
+	case "instance_variable":
+		name := extract.Text(recv, w.source)
+		if typ, ok := localTypes[name]; ok {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
+		if typ, ok := ivarTypes[name]; ok {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
+		return methodName, extract.ConfidenceUnresolved
 	case "call":
 		// Method chain — strip to the trailing method unless the inner
 		// call is `.new` on a constant or `self`, in which case we can
@@ -368,10 +855,123 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 		if typ := typeFromNewCall(recv, w.source, scope); typ != "" {
 			return typ + "#" + methodName, extract.ConfidenceDynamic
 		}
+		// Try to resolve multi-hop chains via return-type map.
+		if typ := w.resolveChainReceiver(recv, scope, localTypes, 1); typ != "" {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
 		return methodName, extract.ConfidenceUnresolved
 	}
 
 	return methodName, extract.ConfidenceUnresolved
+}
+
+// resolveChainReceiver recursively resolves a call-chain receiver to a type
+// by looking up local-variable types and method return types. It caps at 3
+// hops to avoid exponential lookups and absurd qualified names.
+func (w *walker) resolveChainReceiver(recv *sitter.Node, scope []string, localTypes map[string]string, depth int) string {
+	if depth > 3 || recv == nil || recv.Kind() != "call" {
+		return ""
+	}
+	methodNode := recv.ChildByFieldName("method")
+	if methodNode == nil {
+		return ""
+	}
+	methodName := extract.Text(methodNode, w.source)
+	innerRecv := recv.ChildByFieldName("receiver")
+
+	// Case 1: receiver is a local variable with known type.
+	if innerRecv != nil && innerRecv.Kind() == "identifier" {
+		if typ, ok := localTypes[extract.Text(innerRecv, w.source)]; ok {
+			qualified := typ + "#" + methodName
+			if ret, ok := w.returnTypes[qualified]; ok {
+				return ret
+			}
+		}
+	}
+
+	// Case 2: receiver is self (implicit or explicit).
+	if innerRecv == nil || innerRecv.Kind() == "self" {
+		parent := strings.Join(scope, "::")
+		qualified := parent + "#" + methodName
+		if ret, ok := w.returnTypes[qualified]; ok {
+			return ret
+		}
+	}
+
+	// Case 3: receiver is another chain (recursive).
+	if innerRecv != nil && innerRecv.Kind() == "call" {
+		innerType := w.resolveChainReceiver(innerRecv, scope, localTypes, depth+1)
+		if innerType != "" {
+			qualified := innerType + "#" + methodName
+			if ret, ok := w.returnTypes[qualified]; ok {
+				return ret
+			}
+		}
+	}
+
+	return ""
+}
+
+// inferBlockParamTypes determines the element type for block parameters
+// when a call with a block uses a known collection method (each, map, etc.).
+// It looks up the receiver's collection type from local variables, instance
+// variables, or method chains, then extracts the singular element type.
+// Returns nil when the method is not in the whitelist or the type cannot
+// be inferred.
+func (w *walker) inferBlockParamTypes(callNode *sitter.Node, scope []string, localTypes, ivarTypes map[string]string) map[string]string {
+	methodNode := callNode.ChildByFieldName("method")
+	if methodNode == nil {
+		return nil
+	}
+	methodName := extract.Text(methodNode, w.source)
+	if !collectionMethods[methodName] {
+		return nil
+	}
+
+	recv := callNode.ChildByFieldName("receiver")
+	if recv == nil {
+		return nil
+	}
+
+	var collectionType string
+	switch recv.Kind() {
+	case "identifier":
+		collectionType = localTypes[extract.Text(recv, w.source)]
+	case "instance_variable":
+		name := extract.Text(recv, w.source)
+		if typ, ok := localTypes[name]; ok {
+			collectionType = typ
+		} else if typ, ok := ivarTypes[name]; ok {
+			collectionType = typ
+		}
+	case "call":
+		// For chain resolution, e.g. user.orders.each { |order| ... }
+		collectionType = w.resolveChainReceiver(recv, scope, localTypes, 1)
+	}
+
+	if collectionType == "" {
+		return nil
+	}
+
+	elementType := extractElementType(collectionType)
+	if elementType == "" {
+		return nil
+	}
+
+	block := callNode.ChildByFieldName("block")
+	if block == nil {
+		return nil
+	}
+	params := extractBlockParams(block, w.source)
+	if params == nil {
+		return nil
+	}
+
+	result := make(map[string]string)
+	for _, param := range params {
+		result[param] = elementType
+	}
+	return result
 }
 
 // buildLocalTypeMap scans a method body for local-variable assignments
@@ -399,6 +999,41 @@ func buildLocalTypeMap(body *sitter.Node, source []byte) map[string]string {
 	return types
 }
 
+// buildInstanceVarTypeMap scans a class body for `initialize` methods and
+// looks for instance-variable assignments whose RHS is `ClassName.new(...)`.
+// Returns a map from @ivar_name to class_name.
+func buildInstanceVarTypeMap(body *sitter.Node, source []byte) map[string]string {
+	types := make(map[string]string)
+	if body == nil {
+		return types
+	}
+	_ = extract.WalkNamedDescendants(body, "method", func(n *sitter.Node) error {
+		nameNode := n.ChildByFieldName("name")
+		if nameNode == nil || extract.Text(nameNode, source) != "initialize" {
+			return nil
+		}
+		initBody := n.ChildByFieldName("body")
+		if initBody == nil {
+			return nil
+		}
+		for _, kind := range []string{"assignment", "operator_assignment"} {
+			_ = extract.WalkNamedDescendants(initBody, kind, func(a *sitter.Node) error {
+				lhs := a.ChildByFieldName("left")
+				rhs := a.ChildByFieldName("right")
+				if lhs == nil || rhs == nil || lhs.Kind() != "instance_variable" {
+					return nil
+				}
+				if typ := typeFromNewCall(rhs, source, nil); typ != "" {
+					types[extract.Text(lhs, source)] = typ
+				}
+				return nil
+			})
+		}
+		return nil
+	})
+	return types
+}
+
 // typeFromNewCall returns the receiver class name when the node is a
 // call to `.new`, e.g. `TopicCreator.new(...)` → `"TopicCreator"`.
 // When the receiver is `self`, the enclosing class scope is used.
@@ -423,6 +1058,115 @@ func typeFromNewCall(n *sitter.Node, source []byte, scope []string) string {
 	return ""
 }
 
+// buildReturnTypeMap scans a class/module body for methods whose body is
+// a single expression or a single `return` statement that calls `Class.new(...)`.
+// It returns a map from qualified method name to the inferred class name.
+func buildReturnTypeMap(body *sitter.Node, source []byte, scope []string) map[string]string {
+	types := make(map[string]string)
+	if body == nil {
+		return types
+	}
+	parent := strings.Join(scope, "::")
+	_ = extract.WalkNamedDescendants(body, "method", func(n *sitter.Node) error {
+		return recordMethodReturnType(n, source, parent, types, false)
+	})
+	_ = extract.WalkNamedDescendants(body, "singleton_method", func(n *sitter.Node) error {
+		return recordMethodReturnType(n, source, parent, types, true)
+	})
+	return types
+}
+
+// recordMethodReturnType extracts the return type from a single method
+// and records it in the map if it matches the simple factory pattern.
+func recordMethodReturnType(n *sitter.Node, source []byte, parent string, types map[string]string, singleton bool) error {
+	nameNode := n.ChildByFieldName("name")
+	if nameNode == nil {
+		return nil
+	}
+	name := extract.Text(nameNode, source)
+	if name == "" {
+		return nil
+	}
+	var qualified string
+	switch {
+	case parent == "":
+		qualified = name
+	case singleton:
+		qualified = parent + "." + name
+	default:
+		qualified = parent + "#" + name
+	}
+	body := n.ChildByFieldName("body")
+	if body == nil {
+		return nil
+	}
+	// Look for a single expression or single return statement.
+	var returnExpr *sitter.Node
+	childCount := body.NamedChildCount()
+	if childCount == 1 {
+		child := body.NamedChild(0)
+		if child.Kind() == "return" {
+			// return node has an argument_list as its first named child
+			if argList := child.NamedChild(0); argList != nil && argList.Kind() == "argument_list" {
+				if argList.NamedChildCount() == 1 {
+					returnExpr = argList.NamedChild(0)
+				}
+			}
+		} else {
+			returnExpr = child
+		}
+	}
+	if returnExpr != nil {
+		if typ := typeFromNewCall(returnExpr, source, nil); typ != "" {
+			types[qualified] = typ
+		}
+	}
+	return nil
+}
+
+// buildFileReturnTypeMap walks the entire AST and builds a map of all
+// method qualified names → return types for simple factory methods.
+func buildFileReturnTypeMap(root *sitter.Node, source []byte) map[string]string {
+	types := make(map[string]string)
+	var walk func(n *sitter.Node, scope []string)
+	walk = func(n *sitter.Node, scope []string) {
+		if n == nil {
+			return
+		}
+		switch n.Kind() {
+		case "class", "module":
+			nameNode := n.ChildByFieldName("name")
+			if nameNode != nil {
+				name := extract.Text(nameNode, source)
+				if name != "" {
+					segments := strings.Split(name, "::")
+					newScope := append(slices.Clone(scope), segments...)
+					body := n.ChildByFieldName("body")
+					if body != nil {
+						classTypes := buildReturnTypeMap(body, source, newScope)
+						for k, v := range classTypes {
+							types[k] = v
+						}
+						// Continue walking children with new scope.
+						count := body.NamedChildCount()
+						for i := uint(0); i < count; i++ {
+							walk(body.NamedChild(i), newScope)
+						}
+					}
+					return
+				}
+			}
+		}
+		// For non-class/module nodes, walk children with current scope.
+		count := n.NamedChildCount()
+		for i := uint(0); i < count; i++ {
+			walk(n.NamedChild(i), scope)
+		}
+	}
+	walk(root, nil)
+	return types
+}
+
 // statementParents is the set of tree-sitter-ruby node kinds whose
 // direct identifier children are in statement position — bare method
 // calls rather than variable references or subexpressions.
@@ -440,8 +1184,11 @@ var statementParents = map[string]bool{
 // calls without parentheses as identifier nodes rather than call
 // nodes; we emit them as `self.name` so the resolver rewrites them to
 // the enclosing class (e.g. `self.validate` → `Order#validate`).
-func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string) error {
+func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string, confidence float64) error {
 	return extract.WalkNamedDescendants(body, "identifier", func(ident *sitter.Node) error {
+		if w.isInsideNestedTestBlock(ident, body) {
+			return nil
+		}
 		parent := ident.Parent()
 		if parent == nil || !statementParents[parent.Kind()] {
 			return nil
@@ -456,7 +1203,7 @@ func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified stri
 			TargetQualified: "self." + name,
 			Kind:            model.EdgeCalls,
 			Line:            &line,
-			Confidence:      extract.ConfidenceDynamic,
+			Confidence:      confidence,
 		})
 	})
 }
@@ -491,6 +1238,117 @@ func literalSendTarget(call *sitter.Node, source []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// methodNamePatterns lists variable-name substrings that suggest the
+// variable holds a method name. Used by the dynamic-dispatch heuristic
+// to avoid emitting edges for every variable-based send() call.
+var methodNamePatterns = []string{
+	"callback", "handler", "method", "action", "hook",
+	"event", "listener", "processor", "task", "job",
+	"name", "attr",
+}
+
+// ConfidenceHeuristicDispatch is the confidence for variable-inferred
+// dynamic dispatch edges. Very low — we're guessing the method name from
+// a variable assignment, which could be wrong.
+const ConfidenceHeuristicDispatch = extract.ConfidenceUnresolved / 2
+
+// findEnclosingMethodBody walks up from n to the nearest "method" node
+// and returns its "body" child, or nil if none is found.
+func findEnclosingMethodBody(n *sitter.Node) *sitter.Node {
+	for p := n.Parent(); p != nil; p = p.Parent() {
+		if p.Kind() == "method" || p.Kind() == "singleton_method" {
+			return p.ChildByFieldName("body")
+		}
+	}
+	return nil
+}
+
+// traceVariableAssignment scans body for assignments to varName that
+// appear before the given call node, and returns the literal symbol or
+// string value from the RHS of the last such assignment. It only looks
+// at direct children (not nested blocks or methods) to keep the heuristic
+// simple and fast.
+func traceVariableAssignment(body *sitter.Node, varName string, source []byte, call *sitter.Node) (string, bool) {
+	if body == nil || call == nil {
+		return "", false
+	}
+	callRow := call.StartPosition().Row
+	var result string
+	found := false
+	for _, kind := range []string{"assignment", "operator_assignment"} {
+		_ = extract.WalkNamedDescendants(body, kind, func(n *sitter.Node) error {
+			// Skip assignments that appear after the send call.
+			if n.StartPosition().Row > callRow {
+				return nil
+			}
+			lhs := n.ChildByFieldName("left")
+			rhs := n.ChildByFieldName("right")
+			if lhs == nil || rhs == nil {
+				return nil
+			}
+			if lhs.Kind() != "identifier" || extract.Text(lhs, source) != varName {
+				return nil
+			}
+			switch rhs.Kind() {
+			case "simple_symbol":
+				result = strings.TrimPrefix(extract.Text(rhs, source), ":")
+				found = true
+			case "string":
+				count := rhs.NamedChildCount()
+				for i := uint(0); i < count; i++ {
+					c := rhs.NamedChild(i)
+					if c != nil && c.Kind() == "string_content" {
+						result = extract.Text(c, source)
+						found = true
+						break
+					}
+				}
+			}
+			return nil
+		})
+	}
+	return result, found
+}
+
+// inferSendTargetFromVariable applies a heuristic to variable-based
+// dynamic dispatch: if the first argument to send/public_send/__send__
+// is an identifier whose name suggests a method name, and we can trace
+// the variable back to a literal symbol or string assignment, return
+// the inferred target with very low confidence.
+func inferSendTargetFromVariable(call *sitter.Node, source []byte) (string, float64, bool) {
+	args := call.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return "", 0, false
+	}
+	first := args.NamedChild(0)
+	if first == nil || first.Kind() != "identifier" {
+		return "", 0, false
+	}
+	varName := extract.Text(first, source)
+
+	// Only apply heuristic when the variable name suggests a method name.
+	lowerVar := strings.ToLower(varName)
+	matchesPattern := false
+	for _, pat := range methodNamePatterns {
+		if strings.Contains(lowerVar, pat) {
+			matchesPattern = true
+			break
+		}
+	}
+	if !matchesPattern {
+		return "", 0, false
+	}
+
+	body := findEnclosingMethodBody(call)
+	if body == nil {
+		return "", 0, false
+	}
+	if target, ok := traceVariableAssignment(body, varName, source, call); ok {
+		return target, ConfidenceHeuristicDispatch, true
+	}
+	return "", 0, false
 }
 
 // handleConstantAssignment emits a KindConstant symbol when the LHS of
@@ -529,8 +1387,10 @@ func (w *walker) emitIncludeEdge(n *sitter.Node, scope []string) error {
 	}
 	source := strings.Join(scope, "::")
 	line := extract.Line(n.StartPosition())
-	// Each argument becomes a separate edge. Only simple constants are
-	// resolvable intra-file — skip anything else (dynamic include expressions).
+	// Each argument becomes a separate edge. Emit edges for static
+	// module references (constant and scope_resolution nodes); the
+	// resolver handles cross-file lookup. Skip dynamic expressions
+	// where the target cannot be determined (target == "").
 	count := args.NamedChildCount()
 	for i := uint(0); i < count; i++ {
 		arg := args.NamedChild(i)
