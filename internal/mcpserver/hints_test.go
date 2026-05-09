@@ -29,6 +29,27 @@ func TestGraphHintsManyCallers(t *testing.T) {
 	}
 }
 
+func TestGraphHintsManyCallersViaTestSummary(t *testing.T) {
+	resp := mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{
+			Name:      "Service",
+			Qualified: "pkg.Service",
+			File:      "internal/pkg/service.go",
+		},
+		Edges: mcpio.GraphEdges{
+			CalledBy: make([]mcpio.CallEdgeRef, 3),
+		},
+		TestCallerSummary: &mcpio.TestCallerSummary{Count: 3},
+	}
+	hints := graphHints(resp, "both")
+	if len(hints) != 1 {
+		t.Fatalf("want 1 hint, got %d", len(hints))
+	}
+	if hints[0].Tool != "sense_blast" {
+		t.Errorf("tool = %q, want sense_blast", hints[0].Tool)
+	}
+}
+
 func TestGraphHintsNoCallers(t *testing.T) {
 	resp := mcpio.GraphResponse{
 		Symbol: mcpio.GraphSymbol{

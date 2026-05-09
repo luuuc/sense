@@ -89,6 +89,8 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
 			Symbol:    qualifiedOrName(e.Target),
 			File:      fileRefOrNil(e.Target.FileID, files),
+			LineStart: e.Target.LineStart,
+			LineEnd:   e.Target.LineEnd,
 			CoChanges: coChanges,
 			Strength:  Confidence(e.Edge.Confidence),
 		})
@@ -108,6 +110,8 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
 			Symbol:    qualifiedOrName(e.Target),
 			File:      fileRefOrNil(e.Target.FileID, files),
+			LineStart: e.Target.LineStart,
+			LineEnd:   e.Target.LineEnd,
 			CoChanges: coChanges,
 			Strength:  Confidence(e.Edge.Confidence),
 		})
@@ -176,27 +180,37 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 				edges.Calls = append(edges.Calls, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
 					File:       fileRefOrNil(e.Target.FileID, files),
+					LineStart:  e.Target.LineStart,
+					LineEnd:    e.Target.LineEnd,
 					Confidence: Confidence(e.Edge.Confidence),
 				})
 			case model.EdgeInherits:
 				edges.Inherits = append(edges.Inherits, InheritEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fileRefOrNil(e.Target.FileID, files),
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
 				})
 			case model.EdgeComposes:
 				edges.Composes = append(edges.Composes, ComposeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fileRefOrNil(e.Target.FileID, files),
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
 				})
 			case model.EdgeIncludes:
 				edges.Includes = append(edges.Includes, IncludeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fileRefOrNil(e.Target.FileID, files),
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
 				})
 			case model.EdgeImports:
 				edges.Imports = append(edges.Imports, ImportEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fileRefOrNil(e.Target.FileID, files),
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
 				})
 			default:
 			}
@@ -210,22 +224,30 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 				edges.CalledBy = append(edges.CalledBy, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
 					File:       fileRefOrNil(e.Target.FileID, files),
+					LineStart:  e.Target.LineStart,
+					LineEnd:    e.Target.LineEnd,
 					Confidence: Confidence(e.Edge.Confidence),
 				})
 			case model.EdgeComposes:
 				edges.Composes = append(edges.Composes, ComposeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fileRefOrNil(e.Target.FileID, files),
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
 				})
 			case model.EdgeIncludes:
 				edges.Includes = append(edges.Includes, IncludeEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fileRefOrNil(e.Target.FileID, files),
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
 				})
 			case model.EdgeImports:
 				edges.Imports = append(edges.Imports, ImportEdgeRef{
-					Symbol: qualifiedOrName(e.Target),
-					File:   fileRefOrNil(e.Target.FileID, files),
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fileRefOrNil(e.Target.FileID, files),
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
 				})
 			case model.EdgeTests:
 				if path, ok := files(e.Target.FileID); ok {

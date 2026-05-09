@@ -251,6 +251,98 @@ func TestResponseRetainsFreshness(t *testing.T) {
 // a future editor re-enabling SetEscapeHTML by mistake would break
 // the byte-for-byte contract without failing a Go-level test
 // otherwise.
+// TestMarshalLineNumbers verifies that line_start and line_end appear
+// in serialized JSON for all edge ref types that carry them, and that
+// omitempty correctly suppresses zero values.
+func TestMarshalLineNumbers(t *testing.T) {
+	filePath := "app/models/user.rb"
+
+	t.Run("graph response includes line numbers", func(t *testing.T) {
+		in := GraphResponse{
+			Symbol: GraphSymbol{
+				Name: "User", Qualified: "User", File: filePath,
+				LineStart: 10, LineEnd: 85, Kind: "class",
+			},
+			Edges: GraphEdges{
+				Calls: []CallEdgeRef{
+					{Symbol: "Post", File: &filePath, LineStart: 20, LineEnd: 30, Confidence: 1.0},
+				},
+				CalledBy: []CallEdgeRef{
+					{Symbol: "SessionsController", File: &filePath, LineStart: 5, LineEnd: 15, Confidence: 0.9},
+				},
+				Temporal: []TemporalEdgeRef{
+					{Symbol: "Order", File: &filePath, LineStart: 40, LineEnd: 50, CoChanges: 8, Strength: 0.7},
+				},
+			},
+			NextSteps: []NextStep{},
+		}
+		raw, err := MarshalGraph(in)
+		if err != nil {
+			t.Fatalf("MarshalGraph: %v", err)
+		}
+		s := string(raw)
+		if !strings.Contains(s, `"line_start": 10`) {
+			t.Errorf("expected line_start 10 in graph response:\n%s", s)
+		}
+		if !strings.Contains(s, `"line_end": 85`) {
+			t.Errorf("expected line_end 85 in graph response:\n%s", s)
+		}
+	})
+
+	t.Run("blast response includes line numbers", func(t *testing.T) {
+		in := BlastResponse{
+			Symbol:      "User#email_verified?",
+			Risk:         "medium",
+			RiskFactors:  []string{"4 direct callers"},
+			DirectCallers: []BlastCaller{
+				{Symbol: "SessionsController#create", File: filePath, LineStart: 12, LineEnd: 24},
+			},
+			IndirectCallers: []BlastIndirect{
+				{Symbol: "OrdersController#new", Via: "SessionsController#create", Hops: 2, LineStart: 44, LineEnd: 56},
+			},
+			AffectedTests:          []string{"test/models/user_test.rb"},
+			TotalAffected:          2,
+			AffectedSubclasses:     []BlastCaller{},
+			AffectedViaComposition: []BlastCaller{},
+			AffectedViaIncludes:    []BlastCaller{},
+			References:             BlastTierSummary{Count: 0, Examples: []BlastCaller{}},
+			NextSteps:             []NextStep{},
+		}
+		raw, err := MarshalBlast(in)
+		if err != nil {
+			t.Fatalf("MarshalBlast: %v", err)
+		}
+		s := string(raw)
+		if !strings.Contains(s, `"line_start": 12`) {
+			t.Errorf("expected line_start 12 in blast response:\n%s", s)
+		}
+		if !strings.Contains(s, `"line_end": 24`) {
+			t.Errorf("expected line_end 24 in blast response:\n%s", s)
+		}
+	})
+
+	t.Run("zero line numbers are omitted", func(t *testing.T) {
+		in := BlastResponse{
+			Symbol:         "X",
+			Risk:           "low",
+			RiskFactors:    []string{"1 direct caller"},
+			DirectCallers:  []BlastCaller{{Symbol: "Y", File: "y.rb"}},
+			NextSteps:      []NextStep{},
+		}
+		raw, err := MarshalBlast(in)
+		if err != nil {
+			t.Fatalf("MarshalBlast: %v", err)
+		}
+		s := string(raw)
+		if strings.Contains(s, "line_start") {
+			t.Errorf("zero line_start should be omitted (omitempty):\n%s", s)
+		}
+		if strings.Contains(s, "line_end") {
+			t.Errorf("zero line_end should be omitted (omitempty):\n%s", s)
+		}
+	})
+}
+
 func TestMarshalNoHTMLEscape(t *testing.T) {
 	in := GraphResponse{
 		Symbol: GraphSymbol{

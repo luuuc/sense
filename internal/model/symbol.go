@@ -18,8 +18,8 @@ type Symbol struct {
 	Kind       SymbolKind
 	Visibility string
 	ParentID   *int64
-	LineStart  int
-	LineEnd    int
+	LineStart  int // 1-indexed; 0 means unknown (emitted as omitted via json:",omitempty" on wire types)
+	LineEnd    int // 1-indexed; 0 means unknown (emitted as omitted via json:",omitempty" on wire types)
 	Docstring  string
 	Complexity *int
 	Snippet    string

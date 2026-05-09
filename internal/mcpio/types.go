@@ -113,6 +113,8 @@ type GraphResponse struct {
 type DispatchInferredRef struct {
 	Symbol     string     `json:"symbol"`
 	File       *string    `json:"file"`
+	LineStart  int        `json:"line_start,omitempty"`
+	LineEnd    int        `json:"line_end,omitempty"`
 	Via        string     `json:"via"`
 	Confidence Confidence `json:"confidence"`
 }
@@ -170,6 +172,8 @@ type GraphEdges struct {
 type CallEdgeRef struct {
 	Symbol     string     `json:"symbol"`
 	File       *string    `json:"file"`
+	LineStart  int        `json:"line_start,omitempty"`
+	LineEnd    int        `json:"line_end,omitempty"`
 	Confidence Confidence `json:"confidence"`
 }
 
@@ -178,8 +182,10 @@ type CallEdgeRef struct {
 // syntactically explicit, so there is no probability to report);
 // leaving the field off keeps the on-wire shape honest.
 type InheritEdgeRef struct {
-	Symbol string  `json:"symbol"`
-	File   *string `json:"file"`
+	Symbol    string  `json:"symbol"`
+	File      *string `json:"file"`
+	LineStart int     `json:"line_start,omitempty"`
+	LineEnd   int     `json:"line_end,omitempty"`
 }
 
 // ComposeEdgeRef is the shape of a composes edge entry (has_many,
@@ -187,24 +193,30 @@ type InheritEdgeRef struct {
 // Like InheritEdgeRef, confidence is omitted — associations are
 // syntactically explicit.
 type ComposeEdgeRef struct {
-	Symbol string  `json:"symbol"`
-	File   *string `json:"file"`
+	Symbol    string  `json:"symbol"`
+	File      *string `json:"file"`
+	LineStart int     `json:"line_start,omitempty"`
+	LineEnd   int     `json:"line_end,omitempty"`
 }
 
 // IncludeEdgeRef is the shape of an includes edge entry (Ruby
 // `include SoftDeletable`, mixin inclusion). Like InheritEdgeRef,
 // confidence is omitted — includes are syntactically explicit.
 type IncludeEdgeRef struct {
-	Symbol string  `json:"symbol"`
-	File   *string `json:"file"`
+	Symbol    string  `json:"symbol"`
+	File      *string `json:"file"`
+	LineStart int     `json:"line_start,omitempty"`
+	LineEnd   int     `json:"line_end,omitempty"`
 }
 
 // ImportEdgeRef is the shape of an imports edge entry (JS/TS
 // `import { foo } from './bar'`, Python `from x import y`).
 // Confidence is omitted — imports are syntactically explicit.
 type ImportEdgeRef struct {
-	Symbol string  `json:"symbol"`
-	File   *string `json:"file"`
+	Symbol    string  `json:"symbol"`
+	File      *string `json:"file"`
+	LineStart int     `json:"line_start,omitempty"`
+	LineEnd   int     `json:"line_end,omitempty"`
 }
 
 // TestEdgeRef points at a test file rather than a symbol: the
@@ -221,6 +233,8 @@ type TestEdgeRef struct {
 type TemporalEdgeRef struct {
 	Symbol    string     `json:"symbol"`
 	File      *string    `json:"file"`
+	LineStart int        `json:"line_start,omitempty"`
+	LineEnd   int        `json:"line_end,omitempty"`
 	CoChanges int        `json:"co_changes"`
 	Strength  Confidence `json:"strength"`
 }
@@ -280,6 +294,8 @@ type BlastTierSummary struct {
 type BlastCaller struct {
 	Symbol      string `json:"symbol"`
 	File        string `json:"file"`
+	LineStart   int    `json:"line_start,omitempty"`
+	LineEnd     int    `json:"line_end,omitempty"`
 	ViaTemporal bool   `json:"via_temporal,omitempty"`
 }
 
@@ -291,6 +307,8 @@ type BlastIndirect struct {
 	Symbol      string `json:"symbol"`
 	Via         string `json:"via"`
 	Hops        int    `json:"hops"`
+	LineStart   int    `json:"line_start,omitempty"`
+	LineEnd     int    `json:"line_end,omitempty"`
 	ViaTemporal bool   `json:"via_temporal,omitempty"`
 }
 

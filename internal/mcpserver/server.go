@@ -496,6 +496,8 @@ func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.Symbo
 			inferred = append(inferred, mcpio.DispatchInferredRef{
 				Symbol:     callerName,
 				File:       filePath,
+				LineStart:  e.Target.LineStart,
+				LineEnd:    e.Target.LineEnd,
 				Via:        via,
 				Confidence: mcpio.Confidence(DispatchInferredConfidence),
 			})

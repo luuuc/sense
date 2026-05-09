@@ -45,7 +45,7 @@ func loadSymbol(ctx context.Context, db *sql.DB, id int64) (model.Symbol, error)
 		return model.Symbol{}, ErrSymbolNotFound
 	}
 	if err != nil {
-		return model.Symbol{}, err
+		return model.Symbol{}, fmt.Errorf("blast: load symbol %d: %w", id, err)
 	}
 	model.HydrateSymbolNullables(&s, parentID, complexity, visibility, docstring, snippet)
 	return s, nil

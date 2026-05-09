@@ -14,7 +14,9 @@ import (
 
 	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/metrics"
 	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/profile"
 	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
 )
@@ -885,4 +887,427 @@ func TestHandleBlastDiffError(t *testing.T) {
 		t.Fatal("expected error for diff in non-git directory")
 	}
 	_ = result
+}
+
+func TestRunWithBadDir(t *testing.T) {
+	err := Run("/nonexistent/path/that/does/not/exist")
+	if err == nil {
+		t.Fatal("expected error for Run with non-existent directory")
+	}
+}
+
+func TestHandleBlastWithIncludeTests(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result, err := ts.handlers.handleBlast(ctx, toolReq(map[string]any{
+		"symbol":         "auth.Verify",
+		"include_tests":  true,
+	}))
+	if err != nil {
+		t.Fatalf("handleBlast with include_tests: %v", err)
+	}
+	text := resultText(t, result)
+	var resp mcpio.BlastResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+}
+
+func TestHandleBlastWithMaxResults(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result, err := ts.handlers.handleBlast(ctx, toolReq(map[string]any{
+		"symbol":      "auth.Verify",
+		"max_results":  float64(2),
+	}))
+	if err != nil {
+		t.Fatalf("handleBlast with max_results: %v", err)
+	}
+	text := resultText(t, result)
+	var resp mcpio.BlastResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+}
+
+func TestHandleSearchWithLanguage(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result, err := ts.handlers.handleSearch(ctx, toolReq(map[string]any{
+		"query":    "auth",
+		"language": "go",
+	}))
+	if err != nil {
+		t.Fatalf("handleSearch with language: %v", err)
+	}
+	text := resultText(t, result)
+	var resp mcpio.SearchResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+}
+
+func TestHandleDeadCodeNoArgs(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result, err := ts.handlers.handleDeadCode(ctx, toolReq(map[string]any{
+		"dead_code": true,
+	}))
+	if err != nil {
+		t.Fatalf("handleDeadCode: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
+	}
+}
+
+func TestHandleConventionsNoDomain(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result, err := ts.handlers.handleConventions(ctx, toolReq(map[string]any{}))
+	if err != nil {
+		t.Fatalf("handleConventions: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
+	}
+}
+
+func TestHandleStatusWithVersion(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result, err := ts.handlers.handleStatus(ctx, mcp.CallToolRequest{})
+	if err != nil {
+		t.Fatalf("handleStatus: %v", err)
+	}
+	text := resultText(t, result)
+	var resp mcpio.StatusResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Index.Files == 0 {
+		t.Error("expected files > 0")
+	}
+	if resp.Structure == nil {
+		t.Error("expected Structure")
+	}
+	if resp.Version == nil {
+		t.Error("expected Version")
+	}
+}
+
+func TestBuildStatusResponseClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := adapter.DB()
+	_ = adapter.Close()
+
+	_, err = buildStatusResponse(ctx, db, dir, nil)
+	if err == nil {
+		t.Error("expected error from buildStatusResponse with closed DB")
+	}
+}
+
+func TestQueryTopNamespacesError(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "ns.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := adapter.DB()
+	_ = adapter.Close()
+
+	_, err = queryTopNamespaces(ctx, db)
+	if err == nil {
+		t.Error("expected error from queryTopNamespaces with closed DB")
+	}
+}
+
+func TestQueryHubSymbolsError(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := adapter.DB()
+	_ = adapter.Close()
+
+	_, err = queryHubSymbols(ctx, db)
+	if err == nil {
+		t.Error("expected error from queryHubSymbols with closed DB")
+	}
+}
+
+func TestQueryEntryPointsError(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "ep.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := adapter.DB()
+	_ = adapter.Close()
+
+	_, err = queryEntryPoints(ctx, db)
+	if err == nil {
+		t.Error("expected error from queryEntryPoints with closed DB")
+	}
+}
+
+func TestQueryLanguageBreakdownError(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "lang.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := adapter.DB()
+	_ = adapter.Close()
+
+	_, err = queryLanguageBreakdown(ctx, db)
+	if err == nil {
+		t.Error("expected error from queryLanguageBreakdown with closed DB")
+	}
+}
+
+func TestHandleGraphWithClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "graph_err.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := search.NewEngine(adapter, nil, nil)
+	tracker := metrics.NewTracker(adapter.DB())
+	h := &handlers{
+		adapter:  adapter,
+		db:       adapter.DB(),
+		dir:      dir,
+		search:   engine,
+		tracker:  tracker,
+		defaults: profile.DefaultParams(),
+	}
+	_ = adapter.Close()
+	tracker.Close()
+
+	_, err = h.handleGraph(ctx, toolReq(map[string]any{
+		"symbol": "anything",
+	}))
+	if err == nil {
+		t.Error("expected error from handleGraph with closed DB")
+	}
+}
+
+func TestHandleSearchWithClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "search_err.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := search.NewEngine(adapter, nil, nil)
+	tracker := metrics.NewTracker(adapter.DB())
+	h := &handlers{
+		adapter:  adapter,
+		db:       adapter.DB(),
+		dir:      dir,
+		search:   engine,
+		tracker:  tracker,
+		defaults: profile.DefaultParams(),
+	}
+	_ = adapter.Close()
+	tracker.Close()
+
+	_, err = h.handleSearch(ctx, toolReq(map[string]any{
+		"query": "anything",
+	}))
+	if err == nil {
+		t.Error("expected error from handleSearch with closed DB")
+	}
+}
+
+func TestHandleConventionsWithClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "conv_err.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := search.NewEngine(adapter, nil, nil)
+	tracker := metrics.NewTracker(adapter.DB())
+	h := &handlers{
+		adapter:  adapter,
+		db:       adapter.DB(),
+		dir:      dir,
+		search:   engine,
+		tracker:  tracker,
+		defaults: profile.DefaultParams(),
+	}
+	_ = adapter.Close()
+	tracker.Close()
+
+	_, err = h.handleConventions(ctx, toolReq(map[string]any{}))
+	if err == nil {
+		t.Error("expected error from handleConventions with closed DB")
+	}
+}
+
+func TestHandleBlastWithClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "blast_err.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := search.NewEngine(adapter, nil, nil)
+	tracker := metrics.NewTracker(adapter.DB())
+	h := &handlers{
+		adapter:  adapter,
+		db:       adapter.DB(),
+		dir:      dir,
+		search:   engine,
+		tracker:  tracker,
+		defaults: profile.DefaultParams(),
+	}
+	_ = adapter.Close()
+	tracker.Close()
+
+	_, err = h.handleBlast(ctx, toolReq(map[string]any{
+		"symbol": "anything",
+	}))
+	if err == nil {
+		t.Error("expected error from handleBlast with closed DB")
+	}
+}
+
+func TestHandleDeadCodeWithClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "dc_err.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := metrics.NewTracker(adapter.DB())
+	h := &handlers{
+		adapter:  adapter,
+		db:       adapter.DB(),
+		dir:      dir,
+		tracker:  tracker,
+		defaults: profile.DefaultParams(),
+	}
+	_ = adapter.Close()
+	tracker.Close()
+
+	_, err = h.handleDeadCode(ctx, toolReq(map[string]any{
+		"dead_code": true,
+	}))
+	if err == nil {
+		t.Error("expected error from handleDeadCode with closed DB")
+	}
+}
+
+func TestHandleStatusWithClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "stat_err.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := metrics.NewTracker(adapter.DB())
+	h := &handlers{
+		adapter:  adapter,
+		db:       adapter.DB(),
+		dir:      dir,
+		tracker:  tracker,
+		defaults: profile.DefaultParams(),
+	}
+	_ = adapter.Close()
+	tracker.Close()
+
+	_, err = h.handleStatus(ctx, mcp.CallToolRequest{})
+	if err == nil {
+		t.Error("expected error from handleStatus with closed DB")
+	}
+}
+
+func TestSearchHintsEmptyFileCluster(t *testing.T) {
+	resp := mcpio.SearchResponse{
+		Results: []mcpio.SearchResultEntry{
+			{Symbol: "A", File: "", Score: 0.5},
+			{Symbol: "B", File: "", Score: 0.4},
+		},
+	}
+	hints := searchHints(resp)
+	if hints != nil {
+		t.Fatalf("want nil hints for results with no file cluster, got %d", len(hints))
+	}
+}
+
+func TestSearchHintsFewerThanThreePerFile(t *testing.T) {
+	resp := mcpio.SearchResponse{
+		Results: []mcpio.SearchResultEntry{
+			{Symbol: "A", File: "pkg/foo.go", Score: 0.5},
+			{Symbol: "B", File: "pkg/foo.go", Score: 0.4},
+		},
+	}
+	hints := searchHints(resp)
+	if hints != nil {
+		t.Fatalf("want nil hints when file cluster < 3, got %d", len(hints))
+	}
 }
