@@ -1526,6 +1526,62 @@ end
 	}
 }
 
+func TestTestsEdgeErrorRuby(t *testing.T) {
+	// A class inheriting from a test superclass emits two edges:
+	// inherits + tests. Fail on the second edge to cover the
+	// error return inside the isTestSuperclass block.
+	err := parseWithEmitter(t, `class FooTest < ActiveSupport::TestCase
+end
+`, &failAfterN{symbolsLeft: 100, edgesLeft: 1})
+	if err == nil {
+		t.Error("expected error on tests edge emit")
+	}
+}
+
+func TestEmitCallNilMethodNode(t *testing.T) {
+	// `baz.()` is Ruby lambda shorthand. Tree-sitter parses it as a
+	// call node with a nil method field. emitCall should tolerate this.
+	r := parseRuby(t, `class Foo
+  def bar
+    baz.()
+  end
+end
+`)
+	// No edges expected — the call is skipped due to nil method.
+	if len(r.edges) != 0 {
+		t.Errorf("expected 0 edges for lambda shorthand with nil method, got %d", len(r.edges))
+	}
+}
+
+func TestEmitCallSafeNavNilMethodNode(t *testing.T) {
+	// `baz&.()` — safe navigation with lambda shorthand.
+	r := parseRuby(t, `class Foo
+  def bar
+    baz&.()
+  end
+end
+`)
+	// No edges expected — the call is skipped due to nil method.
+	if len(r.edges) != 0 {
+		t.Errorf("expected 0 edges for safe-nav lambda shorthand with nil method, got %d", len(r.edges))
+	}
+}
+
+func TestEmitCallEmptyMethodName(t *testing.T) {
+	// `foo.''()` produces a call node with an empty method name.
+	// Tree-sitter parses the empty string as an identifier with zero-length text.
+	r := parseRuby(t, `class Foo
+  def bar
+    baz.''()
+  end
+end
+`)
+	// No edges expected — the call is skipped due to empty method name.
+	if len(r.edges) != 0 {
+		t.Errorf("expected 0 edges for empty method name, got %d", len(r.edges))
+	}
+}
+
 func TestIncludeEdgeErrorRuby(t *testing.T) {
 	err := parseWithEmitter(t, `class Foo
   include Comparable
@@ -1612,7 +1668,262 @@ end
 		}
 	}
 	if !found {
-		t.Fatal("missing file-level fallback edge for interpolated description")
+		t.Fatal("missing file-level fallback edge for Product.new")
+	}
+}
+
+func TestInstanceVariableResolution(t *testing.T) {
+	r := parseRuby(t, `
+class TopicCreator
+  def create; end
+end
+
+class PostCreator
+  def initialize
+    @topic_creator = TopicCreator.new
+  end
+
+  def create_topic
+    @topic_creator.create
+  end
+end
+`)
+	// @topic_creator.create should resolve to TopicCreator#create via
+	// class-level instance-variable type map.
+	e := findEdge(r, "PostCreator#create_topic", "TopicCreator#create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge PostCreator#create_topic -> TopicCreator#create from instance variable resolution")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("inferred edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestInstanceVariableOperatorAssignment(t *testing.T) {
+	r := parseRuby(t, `
+class Cache
+  def fetch; end
+end
+
+class Service
+  def initialize
+    @cache ||= Cache.new
+  end
+
+  def get
+    @cache.fetch
+  end
+end
+`)
+	// @cache ||= Cache.new should be captured by buildInstanceVarTypeMap.
+	e := findEdge(r, "Service#get", "Cache#fetch", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge Service#get -> Cache#fetch from operator-assignment instance variable")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("inferred edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestInstanceVariableUnresolvedFallback(t *testing.T) {
+	r := parseRuby(t, `
+class PostCreator
+  def create_topic
+    @unknown.create
+  end
+end
+`)
+	// @unknown is not assigned in initialize, so it falls back to bare method name.
+	e := findEdge(r, "PostCreator#create_topic", "create", "calls")
+	if e == nil {
+		t.Fatal("missing bare fallback edge for unresolved instance variable")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("bare fallback confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
+	}
+}
+
+func TestInstanceVariableLocalOverride(t *testing.T) {
+	r := parseRuby(t, `
+class TopicCreator
+  def create; end
+end
+
+class CommentCreator
+  def create; end
+end
+
+class PostCreator
+  def initialize
+    @topic_creator = TopicCreator.new
+  end
+
+  def create_topic
+    topic_creator = CommentCreator.new
+    topic_creator.create
+    @topic_creator.create
+  end
+end
+`)
+	// Local variable (identifier receiver) resolves via localTypes.
+	eLocal := findEdge(r, "PostCreator#create_topic", "CommentCreator#create", "calls")
+	if eLocal == nil {
+		t.Fatal("missing calls edge from local variable")
+	}
+	if eLocal.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("local edge confidence = %v, want %v", eLocal.Confidence, extract.ConfidenceDynamic)
+	}
+	// Instance variable (instance_variable receiver) resolves via ivarTypes.
+	eIvar := findEdge(r, "PostCreator#create_topic", "TopicCreator#create", "calls")
+	if eIvar == nil {
+		t.Fatal("missing calls edge from instance variable")
+	}
+	if eIvar.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("ivar edge confidence = %v, want %v", eIvar.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestBuildInstanceVarTypeMap(t *testing.T) {
+	src := []byte(`
+class PostCreator
+  def initialize
+    @topic_creator = TopicCreator.new
+    @cache ||= Cache.new
+    @plain = "string"
+  end
+end
+`)
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(Extractor{}.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	// Find the class body node
+	root := tree.RootNode()
+	var body *sitter.Node
+	for i := uint(0); i < root.NamedChildCount(); i++ {
+		c := root.NamedChild(i)
+		if c != nil && c.Kind() == "class" {
+			body = c.ChildByFieldName("body")
+			break
+		}
+	}
+	if body == nil {
+		t.Fatal("could not find class body")
+	}
+
+	m := buildInstanceVarTypeMap(body, src)
+	if m["@topic_creator"] != "TopicCreator" {
+		t.Errorf("@topic_creator = %q, want TopicCreator", m["@topic_creator"])
+	}
+	if m["@cache"] != "Cache" {
+		t.Errorf("@cache = %q, want Cache", m["@cache"])
+	}
+	if _, ok := m["@plain"]; ok {
+		t.Error("@plain should not be in map (RHS is not .new)")
+	}
+}
+
+func TestBuildInstanceVarTypeMapNoInitialize(t *testing.T) {
+	src := []byte(`class PostCreator
+  def create_topic
+    @topic_creator.create
+  end
+end
+`)
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(Extractor{}.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	body := tree.RootNode().NamedChild(0).ChildByFieldName("body")
+	if body == nil {
+		t.Fatal("could not find class body")
+	}
+	m := buildInstanceVarTypeMap(body, src)
+	if len(m) != 0 {
+		t.Errorf("expected empty map, got %v", m)
+	}
+}
+
+func TestBuildInstanceVarTypeMapEmptyInitialize(t *testing.T) {
+	src := []byte(`class PostCreator
+  def initialize
+  end
+
+  def create_topic
+    @topic_creator.create
+  end
+end
+`)
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(Extractor{}.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	body := tree.RootNode().NamedChild(0).ChildByFieldName("body")
+	if body == nil {
+		t.Fatal("could not find class body")
+	}
+	m := buildInstanceVarTypeMap(body, src)
+	if len(m) != 0 {
+		t.Errorf("expected empty map, got %v", m)
+	}
+}
+
+func TestClassWithNoBody(t *testing.T) {
+	r := parseRuby(t, `class EmptyClass
+end
+`)
+	if len(r.symbols) == 0 {
+		t.Fatal("expected at least the EmptyClass symbol")
+	}
+	s := findSymbol(r, "EmptyClass")
+	if s == nil {
+		t.Fatal("missing EmptyClass symbol")
+	}
+}
+
+func TestInstanceVariableScopeResolution(t *testing.T) {
+	r := parseRuby(t, `
+class Admin::TopicCreator
+  def create; end
+end
+
+class PostCreator
+  def initialize
+    @topic_creator = Admin::TopicCreator.new
+  end
+
+  def create_topic
+    @topic_creator.create
+  end
+end
+`)
+	e := findEdge(r, "PostCreator#create_topic", "Admin::TopicCreator#create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge for scope-resolution instance variable type")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("inferred edge confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
 	}
 }
 
