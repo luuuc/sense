@@ -1311,3 +1311,46 @@ func TestSearchHintsFewerThanThreePerFile(t *testing.T) {
 		t.Fatalf("want nil hints when file cluster < 3, got %d", len(hints))
 	}
 }
+
+func TestGraphHintsTestFile(t *testing.T) {
+	resp := mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{Name: "X", Qualified: "pkg.X", File: "x_test.go", Kind: "function"},
+		Edges:  mcpio.GraphEdges{},
+	}
+	hints := graphHints(resp, model.DirectionBoth)
+	if len(hints) != 0 {
+		t.Fatalf("expected no search hint for test files, got %d hints", len(hints))
+	}
+}
+
+func TestGraphHintsDirectionCallers(t *testing.T) {
+	resp := mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{Name: "X", Qualified: "pkg.X", File: "x.go", Kind: "function"},
+		Edges:  mcpio.GraphEdges{},
+	}
+	hints := graphHints(resp, model.DirectionCallers)
+	if len(hints) == 0 {
+		t.Fatal("expected callees hint when direction=callers")
+	}
+}
+
+func TestConventionsHintsDomainFilter(t *testing.T) {
+	resp := mcpio.ConventionsResponse{
+		Conventions: []mcpio.ConventionEntry{},
+	}
+	hints := conventionsHints(resp, "internal/auth")
+	if len(hints) == 0 {
+		t.Fatal("expected conventions hint when domain filter is set")
+	}
+}
+
+func TestDeadCodeHintsNoDeadSymbols(t *testing.T) {
+	resp := mcpio.DeadCodeResponse{
+		DeadSymbols: []mcpio.DeadSymbolEntry{},
+		DeadCount:    0,
+	}
+	hints := deadCodeHints(resp)
+	if len(hints) != 0 {
+		t.Fatalf("expected no hints when no dead symbols, got %d", len(hints))
+	}
+}
