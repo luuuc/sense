@@ -1252,6 +1252,138 @@ end
 	}
 }
 
+func TestSendTargetVariableSymbol(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    callback = :after_save
+    send(callback)
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "after_save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from variable-based send with symbol assignment")
+	}
+	if e.Confidence != ConfidenceHeuristicDispatch {
+		t.Errorf("confidence = %v, want %v", e.Confidence, ConfidenceHeuristicDispatch)
+	}
+}
+
+func TestSendTargetVariableString(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    action = "index"
+    send(action)
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "index", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from variable-based send with string assignment")
+	}
+	if e.Confidence != ConfidenceHeuristicDispatch {
+		t.Errorf("confidence = %v, want %v", e.Confidence, ConfidenceHeuristicDispatch)
+	}
+}
+
+func TestPublicSendTargetVariable(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    callback = :process
+    public_send(callback)
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "process", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from variable-based public_send")
+	}
+}
+
+func TestSendTargetVariableUnderscoreSend(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    callback = :after_save
+    __send__(callback)
+  end
+end
+`)
+	e := findEdge(r, "Service#process", "after_save", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge from variable-based __send__")
+	}
+	if e.Confidence != ConfidenceHeuristicDispatch {
+		t.Errorf("confidence = %v, want %v", e.Confidence, ConfidenceHeuristicDispatch)
+	}
+}
+
+func TestSendTargetVariableAssignmentAfterSend(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    send(callback)
+    callback = :should_not_use_this
+  end
+end
+`)
+	for _, e := range r.edges {
+		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" {
+			t.Error("should not emit calls edge when assignment appears after send")
+		}
+	}
+}
+
+func TestSendTargetVariableNoPatternMatch(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    count = :something
+    send(count)
+  end
+end
+`)
+	for _, e := range r.edges {
+		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" && e.TargetQualified == "something" {
+			t.Error("should not emit calls edge when variable name does not match method-name patterns")
+		}
+	}
+}
+
+func TestSendTargetVariableNonSelfReceiver(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    callback = :after_save
+    obj.send(callback)
+  end
+end
+`)
+	for _, e := range r.edges {
+		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" && e.TargetQualified == "after_save" {
+			t.Error("should not emit heuristic edge when receiver is not self")
+		}
+	}
+}
+
+func TestSendTargetVariableNoAssignment(t *testing.T) {
+	r := parseRuby(t, `
+class Service
+  def process
+    send(callback)
+  end
+end
+`)
+	for _, e := range r.edges {
+		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" {
+			t.Error("should not emit calls edge when variable assignment cannot be traced")
+		}
+	}
+}
+
 func TestSingularizeViaHasMany(t *testing.T) {
 	r := parseRuby(t, `
 class User
