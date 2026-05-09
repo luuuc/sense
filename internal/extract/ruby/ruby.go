@@ -54,7 +54,14 @@ func (Extractor) Extensions() []string      { return []string{".rb", ".rake", ".
 func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
 func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
-	w := &walker{source: source, emit: emit, filePath: filePath, classInstanceVars: make(map[string]map[string]string)}
+	returnTypes := buildFileReturnTypeMap(tree.RootNode(), source)
+	w := &walker{
+		source:            source,
+		emit:              emit,
+		filePath:          filePath,
+		classInstanceVars: make(map[string]map[string]string),
+		returnTypes:       returnTypes,
+	}
 	return w.walk(tree.RootNode(), nil)
 }
 
@@ -69,6 +76,7 @@ type walker struct {
 	routeNS           []string // namespace stack for route files (e.g. ["Admin"])
 	testScope         []string // nested RSpec block descriptions for synthetic scope
 	classInstanceVars map[string]map[string]string // @ivar type map per class
+	returnTypes       map[string]string            // method_qualified → class_name (file-level)
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -696,10 +704,61 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 		if typ := typeFromNewCall(recv, w.source, scope); typ != "" {
 			return typ + "#" + methodName, extract.ConfidenceDynamic
 		}
+		// Try to resolve multi-hop chains via return-type map.
+		if typ := w.resolveChainReceiver(recv, scope, localTypes, 1); typ != "" {
+			return typ + "#" + methodName, extract.ConfidenceDynamic
+		}
 		return methodName, extract.ConfidenceUnresolved
 	}
 
 	return methodName, extract.ConfidenceUnresolved
+}
+
+// resolveChainReceiver recursively resolves a call-chain receiver to a type
+// by looking up local-variable types and method return types. It caps at 3
+// hops to avoid exponential lookups and absurd qualified names.
+func (w *walker) resolveChainReceiver(recv *sitter.Node, scope []string, localTypes map[string]string, depth int) string {
+	if depth > 3 || recv == nil || recv.Kind() != "call" {
+		return ""
+	}
+	methodNode := recv.ChildByFieldName("method")
+	if methodNode == nil {
+		return ""
+	}
+	methodName := extract.Text(methodNode, w.source)
+	innerRecv := recv.ChildByFieldName("receiver")
+
+	// Case 1: receiver is a local variable with known type.
+	if innerRecv != nil && innerRecv.Kind() == "identifier" {
+		if typ, ok := localTypes[extract.Text(innerRecv, w.source)]; ok {
+			qualified := typ + "#" + methodName
+			if ret, ok := w.returnTypes[qualified]; ok {
+				return ret
+			}
+		}
+	}
+
+	// Case 2: receiver is self (implicit or explicit).
+	if innerRecv == nil || innerRecv.Kind() == "self" {
+		parent := strings.Join(scope, "::")
+		qualified := parent + "#" + methodName
+		if ret, ok := w.returnTypes[qualified]; ok {
+			return ret
+		}
+	}
+
+	// Case 3: receiver is another chain (recursive).
+	if innerRecv != nil && innerRecv.Kind() == "call" {
+		innerType := w.resolveChainReceiver(innerRecv, scope, localTypes, depth+1)
+		if innerType != "" {
+			qualified := innerType + "#" + methodName
+			if ret, ok := w.returnTypes[qualified]; ok {
+				return ret
+			}
+		}
+	}
+
+	return ""
 }
 
 // buildLocalTypeMap scans a method body for local-variable assignments
@@ -784,6 +843,115 @@ func typeFromNewCall(n *sitter.Node, source []byte, scope []string) string {
 		return strings.Join(scope, "::")
 	}
 	return ""
+}
+
+// buildReturnTypeMap scans a class/module body for methods whose body is
+// a single expression or a single `return` statement that calls `Class.new(...)`.
+// It returns a map from qualified method name to the inferred class name.
+func buildReturnTypeMap(body *sitter.Node, source []byte, scope []string) map[string]string {
+	types := make(map[string]string)
+	if body == nil {
+		return types
+	}
+	parent := strings.Join(scope, "::")
+	_ = extract.WalkNamedDescendants(body, "method", func(n *sitter.Node) error {
+		return recordMethodReturnType(n, source, parent, types, false)
+	})
+	_ = extract.WalkNamedDescendants(body, "singleton_method", func(n *sitter.Node) error {
+		return recordMethodReturnType(n, source, parent, types, true)
+	})
+	return types
+}
+
+// recordMethodReturnType extracts the return type from a single method
+// and records it in the map if it matches the simple factory pattern.
+func recordMethodReturnType(n *sitter.Node, source []byte, parent string, types map[string]string, singleton bool) error {
+	nameNode := n.ChildByFieldName("name")
+	if nameNode == nil {
+		return nil
+	}
+	name := extract.Text(nameNode, source)
+	if name == "" {
+		return nil
+	}
+	var qualified string
+	switch {
+	case parent == "":
+		qualified = name
+	case singleton:
+		qualified = parent + "." + name
+	default:
+		qualified = parent + "#" + name
+	}
+	body := n.ChildByFieldName("body")
+	if body == nil {
+		return nil
+	}
+	// Look for a single expression or single return statement.
+	var returnExpr *sitter.Node
+	childCount := body.NamedChildCount()
+	if childCount == 1 {
+		child := body.NamedChild(0)
+		if child.Kind() == "return" {
+			// return node has an argument_list as its first named child
+			if argList := child.NamedChild(0); argList != nil && argList.Kind() == "argument_list" {
+				if argList.NamedChildCount() == 1 {
+					returnExpr = argList.NamedChild(0)
+				}
+			}
+		} else {
+			returnExpr = child
+		}
+	}
+	if returnExpr != nil {
+		if typ := typeFromNewCall(returnExpr, source, nil); typ != "" {
+			types[qualified] = typ
+		}
+	}
+	return nil
+}
+
+// buildFileReturnTypeMap walks the entire AST and builds a map of all
+// method qualified names → return types for simple factory methods.
+func buildFileReturnTypeMap(root *sitter.Node, source []byte) map[string]string {
+	types := make(map[string]string)
+	var walk func(n *sitter.Node, scope []string)
+	walk = func(n *sitter.Node, scope []string) {
+		if n == nil {
+			return
+		}
+		switch n.Kind() {
+		case "class", "module":
+			nameNode := n.ChildByFieldName("name")
+			if nameNode != nil {
+				name := extract.Text(nameNode, source)
+				if name != "" {
+					segments := strings.Split(name, "::")
+					newScope := append(slices.Clone(scope), segments...)
+					body := n.ChildByFieldName("body")
+					if body != nil {
+						classTypes := buildReturnTypeMap(body, source, newScope)
+						for k, v := range classTypes {
+							types[k] = v
+						}
+						// Continue walking children with new scope.
+						count := body.NamedChildCount()
+						for i := uint(0); i < count; i++ {
+							walk(body.NamedChild(i), newScope)
+						}
+					}
+					return
+				}
+			}
+		}
+		// For non-class/module nodes, walk children with current scope.
+		count := n.NamedChildCount()
+		for i := uint(0); i < count; i++ {
+			walk(n.NamedChild(i), scope)
+		}
+	}
+	walk(root, nil)
+	return types
 }
 
 // statementParents is the set of tree-sitter-ruby node kinds whose

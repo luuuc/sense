@@ -2624,3 +2624,274 @@ end
 		}
 	}
 }
+
+func TestBuildReturnTypeMap(t *testing.T) {
+	src := `class Factory
+  def builder
+    Builder.new
+  end
+
+  def self.create_factory
+    Factory.new
+  end
+
+  def config
+    return Config.new
+  end
+
+  def complex
+    x = 1
+    Builder.new
+  end
+
+  def plain
+    "not a new call"
+  end
+end
+`
+	ex := Extractor{}
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse([]byte(src), nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	// Find the class body node.
+	root := tree.RootNode()
+	var classBody *sitter.Node
+	for i := uint(0); i < root.NamedChildCount(); i++ {
+		child := root.NamedChild(i)
+		if child.Kind() == "class" {
+			classBody = child.ChildByFieldName("body")
+			break
+		}
+	}
+	if classBody == nil {
+		t.Fatal("could not find class body")
+	}
+
+	retTypes := buildReturnTypeMap(classBody, []byte(src), []string{"Factory"})
+
+	if got, want := retTypes["Factory#builder"], "Builder"; got != want {
+		t.Errorf("Factory#builder = %q, want %q", got, want)
+	}
+	if got, want := retTypes["Factory.create_factory"], "Factory"; got != want {
+		t.Errorf("Factory.create_factory = %q, want %q", got, want)
+	}
+	if got, want := retTypes["Factory#config"], "Config"; got != want {
+		t.Errorf("Factory#config = %q, want %q", got, want)
+	}
+	if _, ok := retTypes["Factory#complex"]; ok {
+		t.Error("Factory#complex should not be in return type map (multiple statements)")
+	}
+	if _, ok := retTypes["Factory#plain"]; ok {
+		t.Error("Factory#plain should not be in return type map (not a .new call)")
+	}
+
+	// Test nil body
+	emptyTypes := buildReturnTypeMap(nil, []byte(src), []string{"Factory"})
+	if len(emptyTypes) != 0 {
+		t.Errorf("nil body: expected empty map, got %d entries", len(emptyTypes))
+	}
+
+	// Test top-level method (parent == "")
+	topLevelSrc := `def helper
+  Helper.new
+end
+`
+	topLevelTree := p.Parse([]byte(topLevelSrc), nil)
+	if topLevelTree == nil {
+		t.Fatal("Parse returned nil tree for top-level")
+	}
+	defer topLevelTree.Close()
+
+	topLevelTypes := buildReturnTypeMap(topLevelTree.RootNode(), []byte(topLevelSrc), nil)
+	if got, want := topLevelTypes["helper"], "Helper"; got != want {
+		t.Errorf("top-level method: got %q, want %q", got, want)
+	}
+}
+
+func TestChainResolution(t *testing.T) {
+	r := parseRuby(t, `class Caller
+  def basic_chain
+    factory = Factory.new
+    factory.builder.create
+  end
+end
+
+class Factory
+  def builder
+    Builder.new
+  end
+end
+
+class Builder
+  def create; end
+end
+`)
+	e := findEdge(r, "Caller#basic_chain", "Builder#create", "calls")
+	if e == nil {
+		t.Fatal("missing resolved chain edge Caller#basic_chain -> Builder#create")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("chain confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestInstanceVariableLocalTypeOverride(t *testing.T) {
+	// When a local variable shadows an instance variable name,
+	// the local variable type should take precedence.
+	r := parseRuby(t, `class PostCreator
+  def initialize
+    @creator = TopicCreator.new
+  end
+
+  def create
+    creator = CommentCreator.new
+    @creator.create
+  end
+end
+
+class TopicCreator
+  def create; end
+end
+
+class CommentCreator
+  def create; end
+end
+`)
+	e := findEdge(r, "PostCreator#create", "TopicCreator#create", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge for instance variable with local override")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
+	}
+}
+
+func TestResolveChainReceiver(t *testing.T) {
+	src := `class Service
+  def builder
+    Builder.new
+  end
+end
+
+class Builder
+  def config
+    Config.new
+  end
+end
+`
+	ex := Extractor{}
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(ex.Grammar()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	tree := p.Parse([]byte(src), nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	defer tree.Close()
+
+	returnTypes := buildFileReturnTypeMap(tree.RootNode(), []byte(src))
+	localTypes := map[string]string{"svc": "Service"}
+	scope := []string{"Service"}
+
+	// Create a minimal walker to use the method
+	w := &walker{
+		source:      []byte(src),
+		returnTypes: returnTypes,
+	}
+
+	// Case 1: local variable receiver
+	// svc.builder → "Builder"
+	callSrc := `svc.builder`
+	callTree := p.Parse([]byte(callSrc), nil)
+	if callTree == nil {
+		t.Fatal("Parse returned nil tree for call")
+	}
+	defer callTree.Close()
+	callNode := callTree.RootNode().NamedChild(0)
+	if callNode == nil || callNode.Kind() != "call" {
+		t.Fatalf("expected call node, got %s", callNode.Kind())
+	}
+	// Use callSrc as the walker's source so node offsets match
+	w.source = []byte(callSrc)
+	got := w.resolveChainReceiver(callNode, scope, localTypes, 1)
+	if want := "Builder"; got != want {
+		t.Errorf("local var chain: got %q, want %q", got, want)
+	}
+
+	// Case 2: self receiver
+	// self.builder → "Builder"
+	callSrc = `self.builder`
+	callTree = p.Parse([]byte(callSrc), nil)
+	if callTree == nil {
+		t.Fatal("Parse returned nil tree for call")
+	}
+	defer callTree.Close()
+	callNode = callTree.RootNode().NamedChild(0)
+	if callNode == nil || callNode.Kind() != "call" {
+		t.Fatalf("expected call node, got %s", callNode.Kind())
+	}
+	w.source = []byte(callSrc)
+	got = w.resolveChainReceiver(callNode, scope, localTypes, 1)
+	if want := "Builder"; got != want {
+		t.Errorf("self chain: got %q, want %q", got, want)
+	}
+
+	// Case 3: unresolved chain (method not in returnTypes)
+	callSrc = `svc.unknown`
+	callTree = p.Parse([]byte(callSrc), nil)
+	if callTree == nil {
+		t.Fatal("Parse returned nil tree for call")
+	}
+	defer callTree.Close()
+	callNode = callTree.RootNode().NamedChild(0)
+	if callNode == nil || callNode.Kind() != "call" {
+		t.Fatalf("expected call node, got %s", callNode.Kind())
+	}
+	w.source = []byte(callSrc)
+	got = w.resolveChainReceiver(callNode, scope, localTypes, 1)
+	if got != "" {
+		t.Errorf("unresolved chain: got %q, want empty", got)
+	}
+
+	// Case 4: depth limit
+	callSrc = `svc.builder`
+	callTree = p.Parse([]byte(callSrc), nil)
+	if callTree == nil {
+		t.Fatal("Parse returned nil tree for call")
+	}
+	defer callTree.Close()
+	callNode = callTree.RootNode().NamedChild(0)
+	w.source = []byte(callSrc)
+	got = w.resolveChainReceiver(callNode, scope, localTypes, 4)
+	if got != "" {
+		t.Errorf("depth limit: got %q, want empty", got)
+	}
+
+	// Case 5: recursive chain (3 hops)
+	// svc.builder.config where builder returns Builder and config returns Config
+	callSrc = `svc.builder.config`
+	callTree = p.Parse([]byte(callSrc), nil)
+	if callTree == nil {
+		t.Fatal("Parse returned nil tree for call")
+	}
+	defer callTree.Close()
+	callNode = callTree.RootNode().NamedChild(0)
+	if callNode == nil || callNode.Kind() != "call" {
+		t.Fatalf("expected call node, got %s", callNode.Kind())
+	}
+	w.source = []byte(callSrc)
+	got = w.resolveChainReceiver(callNode, scope, localTypes, 1)
+	if want := "Config"; got != want {
+		t.Errorf("recursive chain: got %q, want %q", got, want)
+	}
+}
