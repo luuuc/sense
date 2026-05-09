@@ -727,6 +727,24 @@ end
 	}
 }
 
+func TestSuperclassNameWithUnsupportedNode(t *testing.T) {
+	// Test inheritance with a method call as superclass (should not emit inherits edge)
+	r := parseRuby(t, `
+class Foo < some_method()
+end
+`)
+	// Should not crash and should not emit any inherits edges
+	for _, e := range r.edges {
+		if string(e.Kind) == "inherits" && e.SourceQualified == "Foo" {
+			t.Error("should not emit inherits edge for method call superclass")
+		}
+	}
+}
+
+// Note: superclassName is thoroughly tested through integration tests
+// in TestClassInheritance and TestSuperclassNameScopeResolution.
+// Direct unit testing is complex due to tree-sitter CGO dependencies.
+
 func TestModuleWithMethods(t *testing.T) {
 	r := parseRuby(t, `
 module Services
@@ -1380,6 +1398,24 @@ end
 	for _, e := range r.edges {
 		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" {
 			t.Error("should not emit calls edge when variable assignment cannot be traced")
+		}
+	}
+}
+
+func TestSendTargetVariableEmptyString(t *testing.T) {
+	// Edge case: string assignment with empty string content
+	r := parseRuby(t, `
+class Service
+  def process
+    callback = ""
+    send(callback)
+  end
+end
+`)
+	// Should not emit edge for empty string assignment
+	for _, e := range r.edges {
+		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" && e.TargetQualified == "" {
+			t.Error("should not emit calls edge for empty string assignment")
 		}
 	}
 }
@@ -2150,6 +2186,48 @@ end
 		if e.TargetQualified == "eq" || e.TargetQualified == "be_valid" || e.TargetQualified == "raise_error" {
 			t.Errorf("should not emit edge for RSpec matcher %q", e.TargetQualified)
 		}
+	}
+}
+
+func TestRSpecLambdaShorthandCall(t *testing.T) {
+	// Lambda shorthand calls like `obj.()` should not emit test call edges
+	// because they have nil method nodes.
+	r := parseRuby(t, `describe Service do
+  it "calls lambda" do
+    callback = -> { puts "hello" }
+    callback.()
+  end
+end
+`)
+	// Should not crash and should not emit edges for lambda shorthand
+	for _, e := range r.edges {
+		if e.TargetQualified == "" || strings.Contains(e.TargetQualified, "callback") {
+			t.Errorf("should not emit edge for lambda shorthand call: %q", e.TargetQualified)
+		}
+	}
+}
+
+func TestNonNewCallLocalType(t *testing.T) {
+	// Method calls that are not `.new` should not create local type entries
+	r := parseRuby(t, `class Order
+  def save; end
+end
+
+class Service
+  def process
+    order = Order.create  # Not Order.new, should not create local type
+    order.save           # Should fall back to unresolved confidence
+  end
+end
+`)
+	// The order.save call should fall back to unresolved since Order.create
+	// doesn't match the .new pattern for local type inference
+	e := findEdge(r, "Service#process", "save", "calls")
+	if e == nil {
+		t.Fatal("missing fallback edge for non-.new assignment")
+	}
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("non-.new assignment confidence = %v, want %v", e.Confidence, extract.ConfidenceUnresolved)
 	}
 }
 
