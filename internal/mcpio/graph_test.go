@@ -380,3 +380,142 @@ func TestIsTestPath(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectEdgeFiles(t *testing.T) {
+	p1 := "a.go"
+	p2 := "b.go"
+	p3 := "test/c.go"
+	edges := GraphEdges{
+		Calls:    []CallEdgeRef{{Symbol: "A", File: &p1}},
+		CalledBy: []CallEdgeRef{{Symbol: "B", File: nil}},
+		Inherits: []InheritEdgeRef{{Symbol: "C", File: &p2}},
+		Composes: []ComposeEdgeRef{},
+		Includes: []IncludeEdgeRef{{Symbol: "D", File: nil}},
+		Imports:  []ImportEdgeRef{{Symbol: "E", File: nil}},
+		Tests:    []TestEdgeRef{{File: p3}},
+		Temporal: []TemporalEdgeRef{{Symbol: "F", File: nil}},
+	}
+	seen := map[string]struct{}{}
+	collectEdgeFiles(edges, seen)
+	if len(seen) != 3 {
+		t.Errorf("collectEdgeFiles collected %d unique files, want 3", len(seen))
+	}
+	if _, ok := seen[p1]; !ok {
+		t.Errorf("expected a.go in seen")
+	}
+	if _, ok := seen[p2]; !ok {
+		t.Errorf("expected b.go in seen")
+	}
+	if _, ok := seen[p3]; !ok {
+		t.Errorf("expected test/c.go in seen")
+	}
+}
+
+func TestFileRefOrNil(t *testing.T) {
+	files := map[int64]string{1: "a.go", 2: "b.go"}
+	lookup := func(id int64) (string, bool) {
+		p, ok := files[id]
+		return p, ok
+	}
+
+	if ref := fileRefOrNil(1, lookup); ref == nil || *ref != "a.go" {
+		t.Errorf("fileRefOrNil(1) = %v, want *a.go", ref)
+	}
+	if ref := fileRefOrNil(2, lookup); ref == nil || *ref != "b.go" {
+		t.Errorf("fileRefOrNil(2) = %v, want *b.go", ref)
+	}
+	if ref := fileRefOrNil(999, lookup); ref != nil {
+		t.Errorf("fileRefOrNil(999) = %v, want nil", ref)
+	}
+}
+
+func TestBuildTestCallerSummaryUnderThreshold(t *testing.T) {
+	ref1 := "spec/a_spec.rb"
+	ref2 := "test/b_test.rb"
+	callers := []CallEdgeRef{
+		{Symbol: "TestA", File: &ref1},
+		{Symbol: "TestB", File: &ref2},
+	}
+	sum := buildTestCallerSummary(callers)
+	if sum == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	if sum.Count != 2 {
+		t.Errorf("Count = %d, want 2", sum.Count)
+	}
+	if len(sum.Examples) != 2 {
+		t.Errorf("Examples len = %d, want 2", len(sum.Examples))
+	}
+}
+
+func TestBuildTestCallerSummaryExactlyThreshold(t *testing.T) {
+	callers := make([]CallEdgeRef, testCallerCollapseThreshold)
+	for i := range callers {
+		p := "spec/file" + string(rune('A'+i%26)) + string(rune('0'+i/26)) + "_spec.rb"
+		callers[i] = CallEdgeRef{Symbol: "Test" + string(rune('A'+i)), File: &p}
+	}
+	sum := buildTestCallerSummary(callers)
+	if sum == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	if sum.Count != testCallerCollapseThreshold {
+		t.Errorf("Count = %d, want %d", sum.Count, testCallerCollapseThreshold)
+	}
+	if len(sum.Examples) != testCallerCollapseThreshold {
+		t.Errorf("Examples len = %d, want %d (not truncated when exactly at threshold)", len(sum.Examples), testCallerCollapseThreshold)
+	}
+}
+
+func TestBuildTestCallerSummaryOverThreshold(t *testing.T) {
+	callers := make([]CallEdgeRef, testCallerCollapseThreshold+10)
+	for i := range callers {
+		p := "spec/test" + string(rune('A'+i)) + "_spec.rb"
+		callers[i] = CallEdgeRef{Symbol: "Test" + string(rune('A'+i)), File: &p}
+	}
+	sum := buildTestCallerSummary(callers)
+	if sum == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	if sum.Count != testCallerCollapseThreshold+10 {
+		t.Errorf("Count = %d, want %d", sum.Count, testCallerCollapseThreshold+10)
+	}
+	if len(sum.Examples) != 3 {
+		t.Errorf("Examples len = %d, want 3 (truncated)", len(sum.Examples))
+	}
+}
+
+func TestBuildTestCallerSummaryNilFiles(t *testing.T) {
+	callers := []CallEdgeRef{
+		{Symbol: "TestA", File: nil},
+		{Symbol: "TestB", File: nil},
+	}
+	sum := buildTestCallerSummary(callers)
+	if sum == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	if sum.Count != 2 {
+		t.Errorf("Count = %d, want 2", sum.Count)
+	}
+	if len(sum.Examples) != 0 {
+		t.Errorf("Examples len = %d, want 0 (nil files skipped)", len(sum.Examples))
+	}
+}
+
+func TestBuildTestCallerSummaryDuplicateFiles(t *testing.T) {
+	p := "spec/a_spec.rb"
+	callers := []CallEdgeRef{
+		{Symbol: "TestA", File: &p},
+		{Symbol: "TestB", File: &p},
+		{Symbol: "TestC", File: &p},
+	}
+	sum := buildTestCallerSummary(callers)
+	if sum == nil {
+		t.Fatal("expected non-nil summary")
+	}
+	if sum.Count != 3 {
+		t.Errorf("Count = %d, want 3", sum.Count)
+	}
+	if len(sum.Examples) != 1 {
+		t.Errorf("Examples len = %d, want 1 (deduplicated to 1 unique file)", len(sum.Examples))
+	}
+}

@@ -375,3 +375,142 @@ func TestMarshalNoHTMLEscape(t *testing.T) {
 		t.Fatalf("expected 'Option<T>' literally, got:\n%s", raw)
 	}
 }
+
+func TestSearchScoreMarshalJSON(t *testing.T) {
+	tests := []struct {
+		score  SearchScore
+		expect string
+	}{
+		{0.95, "0.95"},
+		{1.0, "1.00"},
+		{0.0, "0.00"},
+		{0.92, "0.92"},
+		{1.17, "1.17"},
+	}
+	for _, tt := range tests {
+		got, err := tt.score.MarshalJSON()
+		if err != nil {
+			t.Errorf("SearchScore(%v).MarshalJSON: %v", tt.score, err)
+			continue
+		}
+		if string(got) != tt.expect {
+			t.Errorf("SearchScore(%v).MarshalJSON = %q, want %q", tt.score, got, tt.expect)
+		}
+	}
+}
+
+func TestMarshalDeadCodeEmpty(t *testing.T) {
+	resp := DeadCodeResponse{
+		DeadSymbols:  []DeadSymbolEntry{},
+		TotalSymbols: 0,
+		DeadCount:    0,
+	}
+	raw, err := MarshalDeadCode(resp)
+	if err != nil {
+		t.Fatalf("MarshalDeadCode: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `"dead_symbols": []`) {
+		t.Errorf("expected dead_symbols: [] in output:\n%s", s)
+	}
+	if !strings.Contains(s, `"total_symbols": 0`) {
+		t.Errorf("expected total_symbols: 0 in output:\n%s", s)
+	}
+	if !strings.Contains(s, `"dead_count": 0`) {
+		t.Errorf("expected dead_count: 0 in output:\n%s", s)
+	}
+}
+
+func TestMarshalStatusNilSlices(t *testing.T) {
+	resp := StatusResponse{}
+	raw, err := MarshalStatus(resp)
+	if err != nil {
+		t.Fatalf("MarshalStatus: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `"languages": {}`) {
+		t.Errorf("expected languages: {} for nil map:\n%s", s)
+	}
+}
+
+func TestMarshalSearchEmpty(t *testing.T) {
+	resp := SearchResponse{}
+	raw, err := MarshalSearch(resp)
+	if err != nil {
+		t.Fatalf("MarshalSearch: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `"results": []`) {
+		t.Errorf("expected results: [] in output:\n%s", s)
+	}
+}
+
+func TestMarshalGraphWithLayers(t *testing.T) {
+	p := "a.go"
+	resp := GraphResponse{
+		Symbol: GraphSymbol{Name: "X", Qualified: "X", File: "x.go", Kind: "function"},
+		Edges: GraphEdges{
+			Calls: []CallEdgeRef{{Symbol: "Y", File: &p}},
+		},
+		Layers: []GraphLayer{
+			{Depth: 2, Edges: GraphEdges{Calls: []CallEdgeRef{{Symbol: "Z"}}}},
+			{Depth: 3, Edges: GraphEdges{CalledBy: []CallEdgeRef{{Symbol: "W"}}}},
+		},
+		Truncated: true,
+	}
+	raw, err := MarshalGraph(resp)
+	if err != nil {
+		t.Fatalf("MarshalGraph with layers: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `"layers"`) {
+		t.Errorf("expected layers in output:\n%s", s)
+	}
+	if !strings.Contains(s, `"truncated": true`) {
+		t.Errorf("expected truncated in output:\n%s", s)
+	}
+}
+
+func TestMarshalGraphWithDispatchInferred(t *testing.T) {
+	p := "a.go"
+	resp := GraphResponse{
+		Symbol: GraphSymbol{Name: "M", Qualified: "I.M", Kind: "method"},
+		Edges:  GraphEdges{},
+		DispatchInferred: []DispatchInferredRef{
+			{Symbol: "F", File: &p, Via: "S.M", Confidence: 0.8},
+		},
+	}
+	raw, err := MarshalGraph(resp)
+	if err != nil {
+		t.Fatalf("MarshalGraph with dispatch_inferred: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "dispatch_inferred") {
+		t.Errorf("expected dispatch_inferred in output:\n%s", s)
+	}
+}
+
+func TestMarshalGraphWithTestCallerSummary(t *testing.T) {
+	resp := GraphResponse{
+		Symbol:       GraphSymbol{Name: "X", Qualified: "X", File: "x.go", Kind: "class"},
+		TestCallerSummary: &TestCallerSummary{Count: 5, Examples: []string{"spec/a_spec.rb", "test/b_test.rb"}},
+	}
+	raw, err := MarshalGraph(resp)
+	if err != nil {
+		t.Fatalf("MarshalGraph with test_caller_summary: %v", err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "test_caller_summary") {
+		t.Errorf("expected test_caller_summary in output:\n%s", s)
+	}
+}
+
+func TestEstimateJSONTokens(t *testing.T) {
+	v := struct {
+		Name string `json:"name"`
+	}{Name: "test"}
+	n := estimateJSONTokens(v)
+	if n <= 0 {
+		t.Errorf("estimateJSONTokens returned %d, want > 0", n)
+	}
+}
