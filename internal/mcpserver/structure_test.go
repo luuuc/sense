@@ -346,3 +346,101 @@ func TestBuildStructureIntegration(t *testing.T) {
 		t.Error("expected non-empty fingerprint")
 	}
 }
+
+func TestBuildStatusResponseWithEmbeddings(t *testing.T) {
+	adapter := setupStructureFixture(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	resp, err := buildStatusResponse(ctx, adapter.DB(), dir, nil)
+	if err != nil {
+		t.Fatalf("buildStatusResponse: %v", err)
+	}
+	if resp.Index.Files == 0 {
+		t.Error("expected files > 0")
+	}
+	if resp.Index.Symbols == 0 {
+		t.Error("expected symbols > 0")
+	}
+	if resp.Index.Edges == 0 {
+		t.Error("expected edges > 0")
+	}
+}
+
+func TestQueryLanguageBreakdownData(t *testing.T) {
+	adapter := setupStructureFixture(t)
+	ctx := context.Background()
+
+	langs, err := queryLanguageBreakdown(ctx, adapter.DB())
+	if err != nil {
+		t.Fatalf("queryLanguageBreakdown: %v", err)
+	}
+	if len(langs) == 0 {
+		t.Fatal("expected at least one language")
+	}
+	ruby, ok := langs["ruby"]
+	if !ok {
+		t.Error("expected ruby language entry")
+	} else {
+		if ruby.Files == 0 {
+			t.Error("expected ruby files > 0")
+		}
+		if ruby.Symbols == 0 {
+			t.Error("expected ruby symbols > 0")
+		}
+		if ruby.Tier == "" {
+			t.Error("expected ruby tier to be set")
+		}
+	}
+}
+
+func TestBuildStatusResponseWithProfile(t *testing.T) {
+	adapter := setupStructureFixture(t)
+	ctx := context.Background()
+
+	_, err := adapter.DB().ExecContext(ctx, `INSERT INTO sense_meta(key, value) VALUES('profile_tier', 'full')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.DB().ExecContext(ctx, `INSERT INTO sense_meta(key, value) VALUES('profile_symbols', '7')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.DB().ExecContext(ctx, `INSERT INTO sense_meta(key, value) VALUES('profile_primary_lang', 'ruby')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	resp, err := buildStatusResponse(ctx, adapter.DB(), dir, nil)
+	if err != nil {
+		t.Fatalf("buildStatusResponse: %v", err)
+	}
+	if resp.Profile == nil {
+		t.Error("expected Profile to be set")
+	} else {
+		if resp.Profile.Tier != "full" {
+			t.Errorf("Profile.Tier = %q, want full", resp.Profile.Tier)
+		}
+		if resp.Profile.PrimaryLanguage != "ruby" {
+			t.Errorf("Profile.PrimaryLanguage = %q, want ruby", resp.Profile.PrimaryLanguage)
+		}
+	}
+}
+
+func TestBuildStatusResponseFreshnessWithWatch(t *testing.T) {
+	adapter := setupStructureFixture(t)
+	ctx := context.Background()
+
+	ws := &mcpio.WatchState{}
+	ws.Set(true, time.Now().Add(-5*time.Minute))
+
+	dir := t.TempDir()
+	resp, err := buildStatusResponse(ctx, adapter.DB(), dir, ws)
+	if err != nil {
+		t.Fatalf("buildStatusResponse: %v", err)
+	}
+	if resp.Freshness.Watching == nil || !*resp.Freshness.Watching {
+		t.Error("expected Watching=true with watch state")
+	}
+}

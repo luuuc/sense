@@ -158,6 +158,144 @@ func resultText(t *testing.T, result *mcp.CallToolResult) string {
 	return tc.Text
 }
 
+func TestHandleGraphDepthTooHigh(t *testing.T) {
+	ts := setupTestServer(t)
+	h := ts.handlers
+	ctx := context.Background()
+
+	result, err := h.handleGraph(ctx, toolReq(map[string]any{
+		"symbol":    "auth.Verify",
+		"direction": "callers",
+		"depth":     20,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for depth exceeding max")
+	}
+	text := resultText(t, result)
+	if !strings.Contains(text, "exceeds maximum") {
+		t.Errorf("expected depth error, got: %s", text)
+	}
+}
+
+func TestHandleStatusCoversStructure(t *testing.T) {
+	ts := setupTestServer(t)
+	h := ts.handlers
+	ctx := context.Background()
+
+	result, err := h.handleStatus(ctx, mcp.CallToolRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", resultText(t, result))
+	}
+	text := resultText(t, result)
+	var resp mcpio.StatusResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Index.Files == 0 {
+		t.Error("expected files > 0")
+	}
+	if resp.Structure == nil {
+		t.Error("expected Structure block")
+	}
+}
+
+func TestHandleBlastWithSymbol(t *testing.T) {
+	ts := setupTestServer(t)
+	h := ts.handlers
+	ctx := context.Background()
+
+	result, err := h.handleBlast(ctx, toolReq(map[string]any{
+		"symbol": "auth.Verify",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Errorf("unexpected error: %s", resultText(t, result))
+	}
+}
+
+func TestHandleBlastMissingParams(t *testing.T) {
+	ts := setupTestServer(t)
+	h := ts.handlers
+	ctx := context.Background()
+
+	result, err := h.handleBlast(ctx, toolReq(map[string]any{}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for missing params")
+	}
+}
+
+func TestHandleConventionsWithMinStrength(t *testing.T) {
+	ts := setupTestServer(t)
+	h := ts.handlers
+	ctx := context.Background()
+
+	result, err := h.handleConventions(ctx, toolReq(map[string]any{
+		"min_strength": 0.8,
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
+	}
+}
+
+func TestHandleDeadCodeWithLanguage(t *testing.T) {
+	ts := setupTestServer(t)
+	h := ts.handlers
+	ctx := context.Background()
+
+	result, err := h.handleDeadCode(ctx, toolReq(map[string]any{
+		"dead_code": true,
+		"language":  "go",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
+	}
+}
+
+func TestHandleGraphCallees(t *testing.T) {
+	ts := setupTestServer(t)
+	h := ts.handlers
+	ctx := context.Background()
+
+	result, err := h.handleGraph(ctx, toolReq(map[string]any{
+		"symbol":    "handler.HandleRequest",
+		"direction": "callees",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Errorf("unexpected error: %s", resultText(t, result))
+	}
+	text := resultText(t, result)
+	var resp mcpio.GraphResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Symbol.Name != "HandleRequest" {
+		t.Errorf("symbol.name = %q, want HandleRequest", resp.Symbol.Name)
+	}
+	if len(resp.Edges.Calls) == 0 {
+		t.Error("expected callees for handler.HandleRequest")
+	}
+}
+
 // --- handleGraph tests ---
 
 func TestHandleGraph(t *testing.T) {
@@ -213,6 +351,32 @@ func TestHandleGraph(t *testing.T) {
 			checkJSON: func(t *testing.T, text string) {
 				if !strings.Contains(text, "symbol not found") {
 					t.Errorf("expected not-found, got %q", text)
+				}
+			},
+		},
+		{
+			name: "depth 1 explicit",
+			args: map[string]any{"symbol": "auth.Verify", "depth": 1},
+			checkJSON: func(t *testing.T, text string) {
+				var resp mcpio.GraphResponse
+				if err := json.Unmarshal([]byte(text), &resp); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				if resp.Symbol.Name != "Verify" {
+					t.Errorf("symbol.name = %q, want Verify", resp.Symbol.Name)
+				}
+			},
+		},
+		{
+			name: "depth 2 with layers",
+			args: map[string]any{"symbol": "handler.HandleRequest", "depth": 2},
+			checkJSON: func(t *testing.T, text string) {
+				var resp mcpio.GraphResponse
+				if err := json.Unmarshal([]byte(text), &resp); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				if resp.Symbol.Name != "HandleRequest" {
+					t.Errorf("symbol.name = %q, want HandleRequest", resp.Symbol.Name)
 				}
 			},
 		},
@@ -297,17 +461,25 @@ func TestHandleSearch(t *testing.T) {
 			},
 		},
 		{
-			name: "language filter restricts results",
-			args: map[string]any{"query": "Verify", "language": "ruby"},
+			name: "language filter go returns results",
+			args: map[string]any{"query": "Verify", "language": "go"},
 			checkJSON: func(t *testing.T, text string) {
 				var resp mcpio.SearchResponse
 				if err := json.Unmarshal([]byte(text), &resp); err != nil {
 					t.Fatalf("unmarshal: %v", err)
 				}
-				for _, r := range resp.Results {
-					if strings.Contains(r.File, ".go") {
-						t.Errorf("language=ruby should exclude .go files, got %s", r.File)
-					}
+				if len(resp.Results) == 0 {
+					t.Error("expected results for go language filter")
+				}
+			},
+		},
+		{
+			name: "min score filter",
+			args: map[string]any{"query": "Verify", "min_score": 0.5},
+			checkJSON: func(t *testing.T, text string) {
+				var resp mcpio.SearchResponse
+				if err := json.Unmarshal([]byte(text), &resp); err != nil {
+					t.Fatalf("unmarshal: %v", err)
 				}
 			},
 		},

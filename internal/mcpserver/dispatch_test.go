@@ -163,6 +163,71 @@ func TestGraphNoInterfaceResolutionAtThreshold(t *testing.T) {
 	}
 }
 
+func TestDispatchCallersNotMethod(t *testing.T) {
+	adapter, db := openTestAdapter(t)
+	seedInterfaceFixture(t, db)
+	ctx := context.Background()
+	h := makeHandlers(adapter, db)
+
+	root := &model.SymbolContext{
+		Symbol: model.Symbol{ID: 30, Name: "F", Qualified: "pkg.F", Kind: model.KindFunction},
+	}
+	resp := &mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{Name: "F", Qualified: "pkg.F", Kind: "function"},
+		Edges:  mcpio.GraphEdges{CalledBy: []mcpio.CallEdgeRef{}},
+	}
+	lookup := fileLookup(nil)
+	inferred := h.resolveDispatchCallers(ctx, root, resp, lookup)
+	if len(inferred) != 0 {
+		t.Error("want 0 inferred for non-method symbols")
+	}
+}
+
+func TestDispatchCallersNoParent(t *testing.T) {
+	adapter, db := openTestAdapter(t)
+	seedInterfaceFixture(t, db)
+	ctx := context.Background()
+	h := makeHandlers(adapter, db)
+
+	root := &model.SymbolContext{
+		Symbol: model.Symbol{ID: 30, Name: "F", Qualified: "pkg.F", Kind: model.KindMethod, ParentID: nil},
+	}
+	resp := &mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{Name: "F", Qualified: "pkg.F", Kind: "method"},
+		Edges:  mcpio.GraphEdges{CalledBy: []mcpio.CallEdgeRef{}},
+	}
+	lookup := fileLookup(nil)
+	inferred := h.resolveDispatchCallers(ctx, root, resp, lookup)
+	if len(inferred) != 0 {
+		t.Error("want 0 inferred for method with no parent")
+	}
+}
+
+func TestDispatchCallersAboveThreshold(t *testing.T) {
+	adapter, db := openTestAdapter(t)
+	seedInterfaceFixture(t, db)
+	ctx := context.Background()
+	h := makeHandlers(adapter, db)
+
+	ifaceParent := int64(10)
+	root := &model.SymbolContext{
+		Symbol: model.Symbol{ID: 11, Name: "M", Qualified: "pkg.I.M", Kind: model.KindMethod, ParentID: &ifaceParent},
+	}
+	callers := make([]mcpio.CallEdgeRef, InterfaceResolutionThreshold+1)
+	for i := range callers {
+		callers[i] = mcpio.CallEdgeRef{Symbol: "c" + string(rune('A'+i))}
+	}
+	resp := &mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{Name: "M", Qualified: "pkg.I.M", Kind: "method"},
+		Edges:  mcpio.GraphEdges{CalledBy: callers},
+	}
+	lookup := fileLookup(nil)
+	inferred := h.resolveDispatchCallers(ctx, root, resp, lookup)
+	if len(inferred) != 0 {
+		t.Errorf("want 0 inferred above threshold (%d callers), got %d", len(callers), len(inferred))
+	}
+}
+
 func TestGraphInterfaceResolutionBelowThreshold(t *testing.T) {
 	adapter, db := openTestAdapter(t)
 	seedInterfaceFixture(t, db)
