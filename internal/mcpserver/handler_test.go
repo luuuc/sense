@@ -129,12 +129,13 @@ func setupTestServer(t *testing.T) *testServer {
 	t.Cleanup(func() { tracker.Close() })
 
 	h := &handlers{
-		adapter:  adapter,
-		db:       adapter.DB(),
-		dir:      dir,
-		search:   engine,
-		tracker:  tracker,
-		defaults: profile.DefaultParams(),
+		adapter:     adapter,
+		db:          adapter.DB(),
+		dir:         dir,
+		search:      engine,
+		tracker:     tracker,
+		defaults:    profile.DefaultParams(),
+		seenSymbols: make(map[int64]bool),
 	}
 
 	return &testServer{handlers: h, symbols: symIDs, files: fileIDs}

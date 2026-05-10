@@ -92,11 +92,12 @@ func setupHandlerFixture(t *testing.T) *handlers {
 	t.Cleanup(func() { tracker.Close() })
 
 	return &handlers{
-		adapter:  adapter,
-		db:       adapter.DB(),
-		dir:      dir,
-		tracker:  tracker,
-		defaults: profile.DefaultParams(),
+		adapter:     adapter,
+		db:          adapter.DB(),
+		dir:         dir,
+		tracker:     tracker,
+		defaults:    profile.DefaultParams(),
+		seenSymbols: make(map[int64]bool),
 	}
 }
 
