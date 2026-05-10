@@ -111,3 +111,17 @@ func TestRunSearchMissingIndex(t *testing.T) {
 	}
 }
 
+func TestRunSearchEmptyQuery(t *testing.T) {
+	dir := seedSearchProject(t)
+	var stdout, stderr bytes.Buffer
+	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: dir}
+
+	code := RunSearch([]string{}, cio)
+	if code != ExitGeneralError {
+		t.Fatalf("exit code = %d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "missing query") {
+		t.Errorf("expected 'missing query' in stderr, got: %s", stderr.String())
+	}
+}
+

@@ -1,6 +1,7 @@
 package python
 
 import (
+	"strings"
 	"testing"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -1321,6 +1322,193 @@ class Config:
 	}
 	if findSymbol(r, "Config.default_value") != nil {
 		t.Error("non-ALL_CAPS class attribute should not be emitted")
+	}
+}
+
+// --- coverage floor tests for framework.go ---
+
+func TestDecoratedAsyncFunction(t *testing.T) {
+	r := parse(t, `@app.get("/items")
+async def list_items():
+    pass
+`)
+	s := findSymbol(r, "list_items")
+	if s == nil {
+		t.Fatal("missing symbol list_items for decorated async function")
+	}
+	if s.Kind != "function" {
+		t.Errorf("list_items.Kind = %q, want function", s.Kind)
+	}
+}
+
+func TestFastapiRouteEdgeCases(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "non-call decorator",
+			src: `@app
+def handler():
+    pass
+`,
+		},
+		{
+			name: "decorator call with no args",
+			src: `@app.post()
+def handler():
+    pass
+`,
+		},
+		{
+			name: "decorator call with keyword-only arg",
+			src: `@app.post(path="/items")
+def handler():
+    pass
+`,
+		},
+		{
+			name: "decorator call with non-string path",
+			src: `@app.post(123)
+def handler():
+    pass
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := parse(t, tc.src)
+			s := findSymbol(r, "handler")
+			if s == nil {
+				t.Fatal("missing symbol handler")
+			}
+			// None of these should produce route edges
+			for _, e := range r.edges {
+				// Route sources are "METHOD /path" — reject any edge that looks like a route
+				for _, method := range []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"} {
+					if strings.HasPrefix(e.SourceQualified, method+" ") {
+						t.Errorf("unexpected route edge: %v", e)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDependsEdgeCases(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "Depends with no args",
+			src: `@app.get("/items")
+def handler(db = Depends()):
+    pass
+`,
+		},
+		{
+			name: "Depends with non-identifier arg",
+			src: `@app.get("/items")
+def handler(db = Depends(123)):
+    pass
+`,
+		},
+		{
+			name: "non-Depends call in parameter",
+			src: `@app.get("/items")
+def handler(db = Something(auth.get_user)):
+    pass
+`,
+		},
+		{
+			name: "attribute call in parameter",
+			src: `@app.get("/items")
+def handler(db = obj.method()):
+    pass
+`,
+		},
+		{
+			name: "Depends with keyword-only arg",
+			src: `@app.get("/items")
+def handler(db = Depends(factory=get_db)):
+    pass
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := parse(t, tc.src)
+			for _, e := range r.edges {
+				if e.SourceQualified == "handler" && string(e.Kind) == "calls" && e.TargetQualified != "Depends" {
+					t.Errorf("unexpected calls edge from parameter: %v", e)
+				}
+			}
+		})
+	}
+}
+
+func TestIncludeEdgeCases(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "include with no args",
+			src: `urlpatterns = [
+    path("api/", include()),
+]
+`,
+		},
+		{
+			name: "include with non-string arg",
+			src: `urlpatterns = [
+    path("api/", include(some_var)),
+]
+`,
+		},
+		{
+			name: "include with empty string",
+			src: `urlpatterns = [
+    path("api/", include("")),
+]
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := parse(t, tc.src)
+			for _, e := range r.edges {
+				if string(e.Kind) == "imports" && e.TargetQualified == "" {
+					t.Errorf("unexpected empty imports edge: %v", e)
+				}
+			}
+		})
+	}
+}
+
+func TestDjangoModelFieldIntegerArg(t *testing.T) {
+	r := parse(t, `class Order:
+    customer = models.ForeignKey(123)
+`)
+	// Integer literal is not identifier or string, so no composes edge
+	for _, e := range r.edges {
+		if string(e.Kind) == "composes" && e.SourceQualified == "Order" {
+			t.Errorf("unexpected composes edge for integer arg: %v", e.TargetQualified)
+		}
+	}
+}
+
+func TestEmptyStringContent(t *testing.T) {
+	r := parse(t, `class Order:
+    customer = models.ForeignKey("")
+`)
+	// Empty string has no string_content child, so stringContent returns ""
+	// No composes edge should be emitted
+	for _, e := range r.edges {
+		if string(e.Kind) == "composes" && e.SourceQualified == "Order" {
+			t.Errorf("unexpected composes edge for empty string target: %v", e.TargetQualified)
+		}
 	}
 }
 

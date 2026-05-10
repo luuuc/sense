@@ -88,3 +88,24 @@ func TestGitDiffFilesFlagInjectionBlocked(t *testing.T) {
 		})
 	}
 }
+
+func TestGitDiffFilesNoGit(t *testing.T) {
+	// Set PATH to empty dir so git is not found
+	t.Setenv("PATH", t.TempDir())
+	_, err := GitDiffFiles(context.Background(), t.TempDir(), "HEAD")
+	if err == nil {
+		t.Error("expected error when git not on PATH")
+	}
+}
+
+func TestSymbolsInFilesEmpty(t *testing.T) {
+	ctx := context.Background()
+	// Empty paths should return nil, nil immediately
+	ids, err := SymbolsInFiles(ctx, nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("expected empty ids, got %v", ids)
+	}
+}

@@ -262,3 +262,99 @@ func TestNewBundledRerankerEnsureORTLibError(t *testing.T) {
 		t.Fatal("expected error when ensureORTLib fails")
 	}
 }
+
+func TestEnsureORTLibCacheHit(t *testing.T) {
+	if len(ortLibData) == 0 {
+		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("SENSE_CACHE_DIR", tmp)
+
+	// First extraction
+	libPath1, err := ensureORTLib()
+	if err != nil {
+		t.Fatalf("first ensureORTLib: %v", err)
+	}
+
+	// Second call with matching version should return cached path immediately
+	libPath2, err := ensureORTLib()
+	if err != nil {
+		t.Fatalf("second ensureORTLib: %v", err)
+	}
+	if libPath2 != libPath1 {
+		t.Fatalf("path changed: %s vs %s", libPath1, libPath2)
+	}
+}
+
+func TestEnsureORTLibMissingLib(t *testing.T) {
+	if len(ortLibData) == 0 {
+		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("SENSE_CACHE_DIR", tmp)
+
+	// First extraction
+	libPath, err := ensureORTLib()
+	if err != nil {
+		t.Fatalf("first ensureORTLib: %v", err)
+	}
+
+	// Remove the library but keep the correct version file
+	if err := os.Remove(libPath); err != nil {
+		t.Fatalf("remove lib: %v", err)
+	}
+
+	// Should re-extract because lib is missing
+	libPath2, err := ensureORTLib()
+	if err != nil {
+		t.Fatalf("second ensureORTLib: %v", err)
+	}
+	if libPath2 != libPath {
+		t.Fatalf("path changed: %s vs %s", libPath, libPath2)
+	}
+
+	// Verify the lib was recreated
+	if _, err := os.Stat(libPath); err != nil {
+		t.Fatalf("lib not recreated: %v", err)
+	}
+}
+
+func TestEnsureORTLibWriteVersionFails(t *testing.T) {
+	if len(ortLibData) == 0 {
+		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("SENSE_CACHE_DIR", tmp)
+
+	libName := "libonnxruntime.so"
+	if runtime.GOOS == "darwin" {
+		libName = "libonnxruntime.dylib"
+	}
+
+	// First extraction to create the cache dir
+	_, err := ensureORTLib()
+	if err != nil {
+		t.Fatalf("first ensureORTLib: %v", err)
+	}
+
+	// Make the version stale to force re-extraction
+	versionPath := filepath.Join(tmp, "lib", libName+".version")
+	if err := os.WriteFile(versionPath, []byte("old-version"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make cache dir read-only so WriteFile(versionPath) fails
+	cacheDir := filepath.Join(tmp, "lib")
+	if err := os.Chmod(cacheDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(cacheDir, 0o755) }()
+
+	_, err = ensureORTLib()
+	if err == nil {
+		t.Fatal("expected error when version file write fails")
+	}
+}

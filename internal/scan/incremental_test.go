@@ -173,5 +173,46 @@ func TestRunIncrementalSkipsUnchangedHash(t *testing.T) {
 	}
 }
 
+func TestRunIncrementalNilDefaults(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc Hello() {}\n")
+
+	ctx := context.Background()
+
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("initial scan: %v", err)
+	}
+
+	// Modify a.go
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc Hello() {}\n\nfunc Goodbye() {}\n")
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	matcher, err := ignore.Build(root, nil)
+	if err != nil {
+		t.Fatalf("build matcher: %v", err)
+	}
+
+	// Call with nil Output, Warnings, and Parsers — should use defaults
+	res, err := scan.RunIncremental(ctx, scan.IncrementalOptions{
+		Root:          root,
+		Idx:           adapter,
+		Matcher:       matcher,
+		MaxFileSizeKB: 512,
+		Changed:       []string{"a.go"},
+	})
+	if err != nil {
+		t.Fatalf("RunIncremental: %v", err)
+	}
+	if res.Changed != 1 {
+		t.Errorf("Changed = %d, want 1", res.Changed)
+	}
+}
+
 // Suppress unused import warnings — sql is used via adapter.DB().
 var _ = sql.ErrNoRows
