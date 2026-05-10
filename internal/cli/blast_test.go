@@ -413,3 +413,60 @@ func TestRunBlastDiffBadRefErrors(t *testing.T) {
 		t.Errorf("expected git diff error, got: %s", stderr.String())
 	}
 }
+
+// seedAmbiguousBlastProject creates a project with two symbols
+// sharing the same name but in different files.
+func seedAmbiguousBlastProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	files := []model.File{
+		{Path: "app/services/user_service.rb", Language: "ruby", Hash: "a", IndexedAt: time.Now()},
+		{Path: "app/models/user.rb", Language: "ruby", Hash: "b", IndexedAt: time.Now()},
+	}
+	fids := make([]int64, len(files))
+	for i := range files {
+		id, werr := adapter.WriteFile(ctx, &files[i])
+		if werr != nil {
+			t.Fatalf("WriteFile: %v", werr)
+		}
+		fids[i] = id
+	}
+
+	// Two symbols both named "Handler" but with different qualified names
+	syms := []model.Symbol{
+		{FileID: fids[0], Name: "Handler", Qualified: "A::Handler", Kind: "class", LineStart: 1, LineEnd: 10},
+		{FileID: fids[1], Name: "Handler", Qualified: "B::Handler", Kind: "class", LineStart: 1, LineEnd: 10},
+	}
+	for i := range syms {
+		if _, werr := adapter.WriteSymbol(ctx, &syms[i]); werr != nil {
+			t.Fatalf("WriteSymbol: %v", werr)
+		}
+	}
+
+	return dir
+}
+
+func TestRunBlastAmbiguousSymbol(t *testing.T) {
+	dir := seedAmbiguousBlastProject(t)
+	var stdout, stderr bytes.Buffer
+	code := RunBlast([]string{"Handler"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSymbolIssue {
+		t.Errorf("exit = %d, want %d", code, ExitSymbolIssue)
+	}
+	if !strings.Contains(stderr.String(), "Multiple symbols match") {
+		t.Errorf("expected disambiguation message, got: %s", stderr.String())
+	}
+}
