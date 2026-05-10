@@ -460,6 +460,95 @@ end
 	}
 }
 
+func TestCallbackEdgesEmitsSymbol(t *testing.T) {
+	r := parseRuby(t, `class Order
+  before_save :validate_total
+  after_create :send_notification
+end
+`)
+	if s := findSymbol(r, "Order.before_save"); s == nil {
+		t.Error("missing symbol Order.before_save from callback declaration")
+	} else if s.Kind != "method" {
+		t.Errorf("callback symbol kind = %q, want method", s.Kind)
+	}
+	if findSymbol(r, "Order.after_create") == nil {
+		t.Error("missing symbol Order.after_create from callback declaration")
+	}
+}
+
+func TestCallbackEdgesDedup(t *testing.T) {
+	r := parseRuby(t, `class OrdersController
+  before_action :authenticate!
+  before_action :set_order
+end
+`)
+	count := 0
+	for _, s := range r.symbols {
+		if s.Qualified == "OrdersController.before_action" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 before_action symbol, got %d (duplicates not suppressed)", count)
+	}
+}
+
+func TestCallbackEdgesNoArgs(t *testing.T) {
+	r := parseRuby(t, `class Order
+  before_save
+end
+`)
+	if findSymbol(r, "Order.before_save") != nil {
+		t.Error("should not emit symbol for callback with no arguments")
+	}
+}
+
+func TestScopeEdge(t *testing.T) {
+	r := parseRuby(t, `class Product
+  scope :active, -> { where(active: true) }
+  scope :recent, -> { order(created_at: :desc) }
+end
+`)
+	if findSymbol(r, "Product.active") == nil {
+		t.Error("missing symbol Product.active from scope declaration")
+	}
+	if findSymbol(r, "Product.recent") == nil {
+		t.Error("missing symbol Product.recent from scope declaration")
+	}
+	if findEdge(r, "Product", "Product.active", "calls") == nil {
+		t.Error("missing calls edge Product -> Product.active from scope")
+	}
+	if findEdge(r, "Product", "Product.recent", "calls") == nil {
+		t.Error("missing calls edge Product -> Product.recent from scope")
+	}
+}
+
+func TestScopeEdgeNonSymbolArg(t *testing.T) {
+	r := parseRuby(t, `class Product
+  scope "not_a_symbol", -> { where(active: true) }
+end
+`)
+	for _, s := range r.symbols {
+		if s.Name == "not_a_symbol" {
+			t.Error("should not emit symbol for non-symbol scope argument")
+		}
+	}
+}
+
+func TestScopeEdgeNoArgs(t *testing.T) {
+	r := parseRuby(t, `class Product
+  scope
+end
+`)
+	if len(r.edges) > 0 {
+		for _, e := range r.edges {
+			if e.SourceQualified == "Product" && string(e.Kind) == "calls" {
+				t.Error("should not emit calls edge for scope with no arguments")
+			}
+		}
+	}
+}
+
 func TestRSpecDescribe(t *testing.T) {
 	r := parseRuby(t, `RSpec.describe Order do
 end
