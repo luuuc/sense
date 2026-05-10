@@ -31,6 +31,7 @@ type Symbol struct {
 	LineStart  int
 	LineEnd    int
 	ParentID   *int64
+	Visibility string
 	Confidence string
 }
 
@@ -71,7 +72,15 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	}
 
 	frameworks := readFrameworks(ctx, db)
-	candidates = excludeEntryPoints(candidates, testsTargets, interfaceIDs, frameworks)
+	hasMain, err := hasMainFunction(ctx, db, opts)
+	if err != nil {
+		return Result{}, err
+	}
+	isLibrary := !hasMain
+	interfaceMethodNames, err := queryInterfaceMethodNames(ctx, db)
+	if err != nil {
+		return Result{}, fmt.Errorf("dead: query interface method names: %w", err)
+	}
 
 	liveContainers, err := findLiveContainers(ctx, db, candidates)
 	if err != nil {
@@ -83,6 +92,15 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("dead: interface implementors: %w", err)
 	}
+
+	candidates = excludeEntryPoints(candidates, entryPointFilters{
+		testsTargets:        testsTargets,
+		interfaceIDs:       interfaceIDs,
+		frameworks:         frameworks,
+		isLibrary:          isLibrary,
+		interfaceMethodNames: interfaceMethodNames,
+		implementorIDs:    implementorIDs,
+	})
 
 	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs)
 
@@ -138,7 +156,7 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 			)`
 	}
 
-	q := `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.file_id, f.language, s.line_start, s.line_end, s.parent_id
+	q := `SELECT s.id, s.name, s.qualified, s.kind, f.path, s.file_id, f.language, s.line_start, s.line_end, s.parent_id, s.visibility
 		FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
 		WHERE NOT EXISTS (` + edgeFilter + `)
@@ -166,10 +184,12 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 	for rows.Next() {
 		var sym Symbol
 		var parentID sql.NullInt64
+		var visibility sql.NullString
 		if err := rows.Scan(&sym.ID, &sym.Name, &sym.Qualified, &sym.Kind,
-			&sym.File, &sym.FileID, &sym.Language, &sym.LineStart, &sym.LineEnd, &parentID); err != nil {
+			&sym.File, &sym.FileID, &sym.Language, &sym.LineStart, &sym.LineEnd, &parentID, &visibility); err != nil {
 			return nil, err
 		}
+		sym.Visibility = visibility.String
 		if parentID.Valid {
 			p := parentID.Int64
 			sym.ParentID = &p
@@ -217,6 +237,27 @@ func queryInterfaceIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, err
 	return out, rows.Err()
 }
 
+func queryInterfaceMethodNames(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT DISTINCT s.name FROM sense_symbols s
+		JOIN sense_symbols p ON s.parent_id = p.id AND p.kind = 'interface'
+		WHERE s.kind = 'method'`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
 func queryInterfaceImplementors(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT DISTINCT e.source_id FROM sense_edges e
@@ -238,10 +279,47 @@ func queryInterfaceImplementors(ctx context.Context, db *sql.DB) (map[int64]stru
 	return out, rows.Err()
 }
 
-func excludeEntryPoints(candidates []Symbol, testsTargets, interfaceIDs map[int64]struct{}, frameworks map[string]struct{}) []Symbol {
+func hasMainFunction(ctx context.Context, db *sql.DB, opts Options) (bool, error) {
+	q := `SELECT 1 FROM sense_symbols s
+		JOIN sense_files f ON s.file_id = f.id
+		WHERE s.name = 'main' AND s.kind = 'function'`
+	var args []any
+
+	if opts.Language != "" {
+		q += " AND f.language = ?"
+		args = append(args, opts.Language)
+	}
+	if opts.Domain != "" {
+		q += " AND f.path LIKE ?"
+		args = append(args, "%"+opts.Domain+"%")
+	}
+
+	q += " LIMIT 1"
+
+	var exists int
+	err := db.QueryRowContext(ctx, q, args...).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("dead: detect library: %w", err)
+	}
+	return true, nil
+}
+
+type entryPointFilters struct {
+	testsTargets        map[int64]struct{}
+	interfaceIDs        map[int64]struct{}
+	frameworks          map[string]struct{}
+	isLibrary           bool
+	interfaceMethodNames map[string]struct{}
+	implementorIDs      map[int64]struct{}
+}
+
+func excludeEntryPoints(candidates []Symbol, filters entryPointFilters) []Symbol {
 	var out []Symbol
 	for _, s := range candidates {
-		if isEntryPoint(s, testsTargets, interfaceIDs, frameworks) {
+		if isEntryPoint(s, filters) {
 			continue
 		}
 		out = append(out, s)
@@ -337,7 +415,7 @@ func excludeIDs(candidates []Symbol, exclude map[int64]struct{}) []Symbol {
 	return out
 }
 
-func isEntryPoint(s Symbol, testsTargets, interfaceIDs map[int64]struct{}, frameworks map[string]struct{}) bool {
+func isEntryPoint(s Symbol, f entryPointFilters) bool {
 	if isMainFunction(s) {
 		return true
 	}
@@ -350,16 +428,40 @@ func isEntryPoint(s Symbol, testsTargets, interfaceIDs map[int64]struct{}, frame
 	if isConstructor(s) {
 		return true
 	}
-	if isFrameworkHook(s, frameworks) {
+	if isFrameworkHook(s, f.frameworks) {
 		return true
 	}
-	if isInterfaceMethod(s, interfaceIDs) {
+	if isInterfaceMethod(s, f.interfaceIDs) {
 		return true
 	}
-	if _, ok := testsTargets[s.ID]; ok {
+	if isLibraryPublicAPI(s, f.isLibrary) {
+		return true
+	}
+	if mightBeTraitImplMethod(s, f.interfaceMethodNames, f.implementorIDs) {
+		return true
+	}
+	if _, ok := f.testsTargets[s.ID]; ok {
 		return true
 	}
 	return false
+}
+
+func mightBeTraitImplMethod(s Symbol, interfaceMethodNames map[string]struct{}, implementorIDs map[int64]struct{}) bool {
+	if s.Kind != "method" || s.ParentID == nil {
+		return false
+	}
+	if _, ok := implementorIDs[*s.ParentID]; !ok {
+		return false
+	}
+	_, ok := interfaceMethodNames[s.Name]
+	return ok
+}
+
+func isLibraryPublicAPI(s Symbol, isLibrary bool) bool {
+	if !isLibrary {
+		return false
+	}
+	return s.Visibility == "public" && (s.Kind == "function" || s.Kind == "method" || s.Kind == "class" || s.Kind == "type")
 }
 
 func isMainFunction(s Symbol) bool {
@@ -436,6 +538,9 @@ func isJVMLanguage(lang string) bool {
 }
 
 func isFrameworkHook(s Symbol, frameworks map[string]struct{}) bool {
+	if s.Language == "python" && strings.HasPrefix(s.Name, "__") && strings.HasSuffix(s.Name, "__") {
+		return true
+	}
 	if _, ok := frameworkHooks[s.Name]; ok {
 		return true
 	}
