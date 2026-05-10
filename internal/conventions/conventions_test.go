@@ -1713,3 +1713,78 @@ func TestDetectCallbacksAndScopesNoCollision(t *testing.T) {
 	}
 }
 
+func TestDetectExternalDependencies(t *testing.T) {
+	adapter := setupFixtureIndex(t)
+	ctx := context.Background()
+	db := adapter.DB()
+	now := time.Now()
+
+	// Create an "external" file that is outside the domain
+	extFile := model.File{Path: "vendor/lib/tower.rb", Language: "ruby", Hash: "x1", Symbols: 1, IndexedAt: now}
+	extFileID, err := adapter.WriteFile(ctx, &extFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extSymID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: extFileID, Name: "Service", Qualified: "Tower::Service",
+		Kind: "class", LineStart: 1, LineEnd: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3 in-domain symbols reference the external type
+	domainFile := model.File{Path: "app/services/a.rb", Language: "ruby", Hash: "x2", Symbols: 3, IndexedAt: now}
+	domainFileID, err := adapter.WriteFile(ctx, &domainFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"A", "B", "C"} {
+		srcID, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: domainFileID, Name: name, Qualified: "App::" + name,
+			Kind: "class", LineStart: 1, LineEnd: 5,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &srcID, TargetID: extSymID,
+			Kind: model.EdgeCalls, FileID: domainFileID, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fileFilter, err := resolveFileFilter(ctx, db, "app/services")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	convs := detectExternalDependencies(ctx, db, "app/services", fileFilter)
+	if len(convs) == 0 {
+		t.Fatal("expected at least one external dependency convention")
+	}
+	found := false
+	for _, c := range convs {
+		if strings.Contains(c.Description, "Tower::Service") {
+			found = true
+			if c.Category != "external" {
+				t.Errorf("category = %q, want external", c.Category)
+			}
+			if c.Instances < 3 {
+				t.Errorf("instances = %d, want >= 3", c.Instances)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected external convention mentioning Tower::Service")
+	}
+}
+
+func TestDetectExternalDependenciesNoDomain(t *testing.T) {
+	convs := detectExternalDependencies(context.Background(), nil, "", nil)
+	if len(convs) != 0 {
+		t.Errorf("expected no conventions without domain, got %d", len(convs))
+	}
+}
+
