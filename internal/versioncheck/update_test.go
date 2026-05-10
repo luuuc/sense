@@ -154,6 +154,35 @@ func TestIsGoInstall(t *testing.T) {
 			t.Error("expected false when os.Executable fails")
 		}
 	})
+
+	t.Run("eval symlinks error", func(t *testing.T) {
+		orig := osExecutable
+		osExecutable = func() (string, error) { return "/nonexistent/path/sense", nil }
+		t.Cleanup(func() { osExecutable = orig })
+
+		if isGoInstall() {
+			t.Error("expected false when EvalSymlinks fails")
+		}
+	})
+
+	t.Run("user home dir error", func(t *testing.T) {
+		tmp := t.TempDir()
+		tmp, _ = filepath.EvalSymlinks(tmp)
+		exePath := filepath.Join(tmp, "sense")
+		if err := os.WriteFile(exePath, []byte("fake"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := osExecutable
+		osExecutable = func() (string, error) { return exePath, nil }
+		t.Cleanup(func() { osExecutable = orig })
+		t.Setenv("GOPATH", "")
+		t.Setenv("HOME", "")
+
+		if isGoInstall() {
+			t.Error("expected false when UserHomeDir fails")
+		}
+	})
 }
 
 func TestUpdateEarlyExits(t *testing.T) {
