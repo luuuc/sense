@@ -593,6 +593,10 @@ func NewRouter() *Router { return &Router{} }
 
 func unusedFunc() {}
 `)
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func main() {}
+`)
 
 	ctx := context.Background()
 	if _, err := scan.Run(ctx, scan.Options{
@@ -744,6 +748,182 @@ func TestDeadCodeExcludesJVMLifecycle(t *testing.T) {
 		if excluded[s.Name] {
 			t.Errorf("%q should be excluded as JVM lifecycle/framework hook", s.Name)
 		}
+	}
+}
+
+func TestDeadCodeExcludesDunderMethods(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "widget.py"), `class Widget:
+    def __init__(self):
+        pass
+
+    def __repr__(self):
+        return "Widget()"
+
+    def __str__(self):
+        return "Widget"
+
+    def dead_method(self):
+        pass
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+
+	excluded := map[string]bool{"__init__": true, "__repr__": true, "__str__": true}
+	for _, s := range result.Dead {
+		if excluded[s.Name] {
+			t.Errorf("%q should be excluded as Python dunder method", s.Name)
+		}
+	}
+}
+
+func TestDeadCodeExcludesLibraryPublicAPI(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "lib.go"), `package lib
+
+func PublicFunc() {}
+
+func privateFunc() {}
+
+type PublicType struct{}
+
+func (p PublicType) PublicMethod() {}
+
+func (p PublicType) privateMethod() {}
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+
+	for _, s := range result.Dead {
+		if s.Name == "PublicFunc" {
+			t.Error("PublicFunc should be excluded as library public API")
+		}
+		if s.Name == "PublicType" {
+			t.Error("PublicType should be excluded as library public API")
+		}
+		if s.Name == "PublicMethod" {
+			t.Error("PublicMethod should be excluded as library public API")
+		}
+	}
+}
+
+func TestDeadCodeExcludesTraitImplMethods(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "iface.go"), `package render
+
+type Renderer interface {
+	Render() string
+}
+`)
+	writeFile(t, filepath.Join(root, "html.go"), `package render
+
+type HTMLRenderer struct{}
+
+func (h HTMLRenderer) Render() string {
+	return "<html/>"
+}
+
+func (h HTMLRenderer) unusedHelper() string {
+	return "unused"
+}
+`)
+	writeFile(t, filepath.Join(root, "caller.go"), `package render
+
+func RenderAll(rs []Renderer) {
+	for _, r := range rs {
+		r.Render()
+	}
+}
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+
+	deadNames := map[string]bool{}
+	for _, s := range result.Dead {
+		deadNames[s.Qualified] = true
+	}
+
+	if deadNames["render.HTMLRenderer.Render"] {
+		t.Error("HTMLRenderer.Render should be excluded — it implements Renderer.Render")
+	}
+
+	if !deadNames["render.HTMLRenderer.unusedHelper"] {
+		t.Error("HTMLRenderer.unusedHelper should be dead — no callers and no interface match")
 	}
 }
 
