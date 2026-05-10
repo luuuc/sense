@@ -848,7 +848,7 @@ func TestHandleSessionStartLastScanFormats(t *testing.T) {
 		{
 			name:      "invalid_format",
 			indexedAt: "not-a-valid-time",
-			wantAge:   "not-a-valid-time",
+			wantAge:   "unknown",
 		},
 		{
 			name:      "empty",

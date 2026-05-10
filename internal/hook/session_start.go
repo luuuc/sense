@@ -10,6 +10,18 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
+func formatScanAge(lastScan string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339Nano, lastScan)
+	if err != nil {
+		return "unknown"
+	}
+	age := now.Sub(t).Truncate(time.Minute)
+	if age < time.Minute {
+		return "just now"
+	}
+	return fmt.Sprintf("%s ago", age)
+}
+
 func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.Adapter, _ string) (any, error) {
 	db := adapter.DB()
 
@@ -45,17 +57,10 @@ func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.
 
 	var lastScan string
 	row := db.QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`)
-	if err := row.Scan(&lastScan); err == nil && lastScan != "" {
-		if t, err := time.Parse(time.RFC3339Nano, lastScan); err == nil {
-			age := time.Since(t).Truncate(time.Minute)
-			if age < time.Minute {
-				lastScan = "just now"
-			} else {
-				lastScan = fmt.Sprintf("%s ago", age)
-			}
-		}
-	} else {
+	if err := row.Scan(&lastScan); err != nil || lastScan == "" {
 		lastScan = "unknown"
+	} else {
+		lastScan = formatScanAge(lastScan, time.Now())
 	}
 
 	var sb strings.Builder
