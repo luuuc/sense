@@ -61,6 +61,7 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit
 		filePath:          filePath,
 		classInstanceVars: make(map[string]map[string]string),
 		returnTypes:       returnTypes,
+		emittedCallbacks:  make(map[string]bool),
 	}
 	return w.walk(tree.RootNode(), nil)
 }
@@ -86,6 +87,7 @@ type walker struct {
 	testScope         []string // nested RSpec block descriptions for synthetic scope
 	classInstanceVars map[string]map[string]string // @ivar type map per class
 	returnTypes       map[string]string            // method_qualified → class_name (file-level)
+	emittedCallbacks  map[string]bool              // dedup synthetic callback symbols by qualified name
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -148,9 +150,11 @@ func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 			return false, w.emitAssociationEdge(n, scope, methodName)
 		case "broadcasts_to", "broadcasts":
 			return false, w.emitBroadcastEdge(n, scope)
+		case "scope":
+			return false, w.emitScopeEdge(n, scope)
 		}
-		if railsCallbacks[methodName] {
-			return false, w.emitCallbackEdges(n, scope)
+		if model.RailsCallbackNames[methodName] {
+			return false, w.emitCallbackEdges(n, scope, methodName)
 		}
 	}
 
@@ -1546,33 +1550,10 @@ func (w *walker) emitAssociationEdge(n *sitter.Node, scope []string, methodName 
 	})
 }
 
-// railsCallbacks is the set of Rails lifecycle callback method names that
-// should emit calls edges when used as class-level declarations.
-var railsCallbacks = map[string]bool{
-	"before_action":     true,
-	"after_action":      true,
-	"around_action":     true,
-	"before_save":       true,
-	"after_save":        true,
-	"around_save":       true,
-	"before_create":     true,
-	"after_create":      true,
-	"around_create":     true,
-	"before_update":     true,
-	"after_update":      true,
-	"around_update":     true,
-	"before_destroy":    true,
-	"after_destroy":     true,
-	"around_destroy":    true,
-	"before_validation": true,
-	"after_validation":  true,
-	"before_commit":     true,
-	"after_commit":      true,
-	"after_rollback":    true,
-}
-
-// emitCallbackEdges emits calls edges for Rails lifecycle callbacks.
-func (w *walker) emitCallbackEdges(n *sitter.Node, scope []string) error {
+// emitCallbackEdges emits calls edges for Rails lifecycle callbacks and
+// a symbol for the callback declaration so convention detection can find it.
+// Duplicate symbols for the same callback name on the same class are suppressed.
+func (w *walker) emitCallbackEdges(n *sitter.Node, scope []string, callbackName string) error {
 	args := n.ChildByFieldName("arguments")
 	if args == nil || args.NamedChildCount() == 0 {
 		return nil
@@ -1581,7 +1562,21 @@ func (w *walker) emitCallbackEdges(n *sitter.Node, scope []string) error {
 	source := strings.Join(scope, "::")
 	line := extract.Line(n.StartPosition())
 
-	// Emit a calls edge for each symbol argument (callbacks can list multiple).
+	qualified := source + "." + callbackName
+	if !w.emittedCallbacks[qualified] {
+		w.emittedCallbacks[qualified] = true
+		if err := w.emit.Symbol(extract.EmittedSymbol{
+			Name:            callbackName,
+			Qualified:       qualified,
+			Kind:            model.KindMethod,
+			ParentQualified: source,
+			LineStart:       line,
+			LineEnd:         line,
+		}); err != nil {
+			return err
+		}
+	}
+
 	count := args.NamedChildCount()
 	for i := uint(0); i < count; i++ {
 		arg := args.NamedChild(i)
@@ -1600,6 +1595,43 @@ func (w *walker) emitCallbackEdges(n *sitter.Node, scope []string) error {
 		}
 	}
 	return nil
+}
+
+// emitScopeEdge handles `scope :name, -> { ... }` declarations.
+// It emits the scope name as a class method symbol and a calls edge
+// from the class to the scope name.
+func (w *walker) emitScopeEdge(n *sitter.Node, scope []string) error {
+	args := n.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return nil
+	}
+	first := args.NamedChild(0)
+	if first == nil || first.Kind() != "simple_symbol" {
+		return nil
+	}
+	name := strings.TrimPrefix(extract.Text(first, w.source), ":")
+	if name == "" {
+		return nil
+	}
+	source := strings.Join(scope, "::")
+	line := extract.Line(n.StartPosition())
+	if err := w.emit.Symbol(extract.EmittedSymbol{
+		Name:            name,
+		Qualified:       source + "." + name,
+		Kind:            model.KindMethod,
+		ParentQualified: source,
+		LineStart:       line,
+		LineEnd:         line,
+	}); err != nil {
+		return err
+	}
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: source + "." + name,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      extract.ConfidenceStatic,
+	})
 }
 
 // emitDescribeEdge detects RSpec.describe/describe with a constant

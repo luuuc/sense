@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/model"
 )
 
 const minInstances = 3
@@ -585,6 +586,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 	}
 
 	var out []Convention
+	var serializerExamples []Example
 	for _, g := range groups {
 		if g.count < minInstances {
 			continue
@@ -594,6 +596,10 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 			continue
 		}
 		sortExamples(g.examples)
+		if strings.HasSuffix(g.targetName, "Serializer") {
+			serializerExamples = append(serializerExamples, g.examples...)
+			continue
+		}
 		out = append(out, Convention{
 			Category:    CategoryComposition,
 			Description: fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), g.targetName, topNames(g.examples)),
@@ -601,6 +607,18 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 			Total:       total,
 			Strength:    float64(g.count) / float64(total),
 			Examples:    g.examples,
+		})
+	}
+	if len(serializerExamples) >= minInstances {
+		sortExamples(serializerExamples)
+		totalClasses := kindCounts["class"]
+		out = append(out, Convention{
+			Category:    CategoryComposition,
+			Description: fmt.Sprintf("Serializer composition: %d classes use custom serializers (%s)", len(serializerExamples), topNames(serializerExamples)),
+			Instances:   len(serializerExamples),
+			Total:       totalClasses,
+			Strength:    safeStrength(len(serializerExamples), totalClasses),
+			Examples:    serializerExamples,
 		})
 	}
 	return out
@@ -876,10 +894,19 @@ func detectDesignPatterns(symbols []symbolRow, symbolByID map[int64]symbolRow, f
 
 func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	var out []Convention
+	out = append(out, detectRailsConcerns(symbols, edges, symbolByID, filePathByID)...)
+	out = append(out, detectRailsCallbacks(symbols, edges, symbolByID, filePathByID)...)
+	out = append(out, detectScopes(symbols, edges, symbolByID, filePathByID)...)
+	out = append(out, detectGoInterfaces(symbols, edges, symbolByID, filePathByID)...)
+	out = append(out, detectReactHooks(symbols, edges, symbolByID, filePathByID)...)
+	out = append(out, detectGoTypeAliases(symbols, edges, symbolByID, filePathByID)...)
+	out = append(out, detectGoMiddleware(symbols, edges, symbolByID, filePathByID)...)
+	return out
+}
 
-	// Rails concerns: modules in paths containing "concerns" included by multiple classes
+func detectRailsConcerns(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	type concernGroup struct {
-		module   symbolRow
+		module    symbolRow
 		includers []Example
 	}
 	concerns := map[int64]*concernGroup{}
@@ -916,6 +943,7 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 			Path: filePathByID[g.module.fileID],
 		})
 	}
+	var out []Convention
 	if len(concernExamples) >= 1 {
 		sortExamples(concernExamples)
 		totalModules := countByKind(symbols, "module")
@@ -934,10 +962,146 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 			})
 		}
 	}
+	return out
+}
 
-	// Go interface satisfaction: interfaces implemented by multiple structs
+func detectRailsCallbacks(symbols []symbolRow, _ []edgeRow, _ map[int64]symbolRow, filePathByID map[int64]string) []Convention {
+	classByID := map[int64]symbolRow{}
+	for _, s := range symbols {
+		if s.kind == "class" {
+			classByID[s.id] = s
+		}
+	}
+	type classCallbacks struct {
+		cls       symbolRow
+		callbacks map[string]bool
+	}
+	byClass := map[int64]*classCallbacks{}
+	for _, s := range symbols {
+		if s.kind != "method" || !model.RailsCallbackNames[s.name] {
+			continue
+		}
+		if s.parentID == nil {
+			continue
+		}
+		cls, ok := classByID[*s.parentID]
+		if !ok {
+			continue
+		}
+		cc, exists := byClass[cls.id]
+		if !exists {
+			cc = &classCallbacks{cls: cls, callbacks: map[string]bool{}}
+			byClass[cls.id] = cc
+		}
+		cc.callbacks[s.name] = true
+	}
+	var examples []Example
+	for _, cc := range byClass {
+		examples = append(examples, Example{
+			Name:      cc.cls.name,
+			Path:      filePathByID[cc.cls.fileID],
+			EdgeCount: len(cc.callbacks),
+		})
+	}
+	if len(examples) < minInstances {
+		return nil
+	}
+	sort.Slice(examples, func(i, j int) bool {
+		return examples[i].EdgeCount > examples[j].EdgeCount
+	})
+	totalClasses := countByKind(symbols, "class")
+	return []Convention{{
+		Category:    CategoryFramework,
+		Description: fmt.Sprintf("Callback patterns: %d classes use Rails lifecycle callbacks (%s)", len(examples), topNames(examples)),
+		Instances:   len(examples),
+		Total:       totalClasses,
+		Strength:    safeStrength(len(examples), totalClasses),
+		Examples:    examples,
+	}}
+}
+
+func detectScopes(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
+	classByID := map[int64]symbolRow{}
+	for _, s := range symbols {
+		if s.kind == "class" {
+			classByID[s.id] = s
+		}
+	}
+	// Positive identification: scope symbols have a calls edge from their
+	// parent class pointing to them (emitted by emitScopeEdge). Regular
+	// class methods from `def self.x` do not have this edge.
+	scopeTargets := map[int64]bool{}
+	for _, e := range edges {
+		if e.kind != "calls" {
+			continue
+		}
+		src, ok := symbolByID[e.sourceID]
+		if !ok || src.kind != "class" {
+			continue
+		}
+		scopeTargets[e.targetID] = true
+	}
+	type classScopes struct {
+		cls    symbolRow
+		scopes []Example
+	}
+	byClass := map[int64]*classScopes{}
+	for _, s := range symbols {
+		if s.kind != "method" || s.parentID == nil {
+			continue
+		}
+		if !scopeTargets[s.id] {
+			continue
+		}
+		fp := filePathByID[s.fileID]
+		if !strings.HasSuffix(fp, ".rb") {
+			continue
+		}
+		if model.RailsCallbackNames[s.name] {
+			continue
+		}
+		cls, ok := classByID[*s.parentID]
+		if !ok {
+			continue
+		}
+		cs, exists := byClass[cls.id]
+		if !exists {
+			cs = &classScopes{cls: cls}
+			byClass[cls.id] = cs
+		}
+		cs.scopes = append(cs.scopes, Example{Name: s.name, Path: fp})
+	}
+	var examples []Example
+	for _, cs := range byClass {
+		if len(cs.scopes) < 2 {
+			continue
+		}
+		examples = append(examples, Example{
+			Name:      cs.cls.name,
+			Path:      filePathByID[cs.cls.fileID],
+			EdgeCount: len(cs.scopes),
+		})
+	}
+	if len(examples) < minInstances {
+		return nil
+	}
+	sort.Slice(examples, func(i, j int) bool {
+		return examples[i].EdgeCount > examples[j].EdgeCount
+	})
+	totalClasses := countByKind(symbols, "class")
+	return []Convention{{
+		Category:    CategoryFramework,
+		Description: fmt.Sprintf("Scope definitions: %d classes define query scopes (%s)", len(examples), topNames(examples)),
+		Instances:   len(examples),
+		Total:       totalClasses,
+		Strength:    safeStrength(len(examples), totalClasses),
+		Examples:    examples,
+	}}
+}
+
+func detectGoInterfaces(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	type ifaceGroup struct {
-		iface       symbolRow
+		iface        symbolRow
 		implementors []Example
 	}
 	ifaces := map[int64]*ifaceGroup{}
@@ -960,6 +1124,7 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 		}
 		g.implementors = append(g.implementors, Example{Name: src.name, Path: filePathByID[src.fileID]})
 	}
+	var out []Convention
 	for _, g := range ifaces {
 		if len(g.implementors) < minInterfaceInstances {
 			continue
@@ -976,8 +1141,10 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 			KeySymbol:   g.iface.name,
 		})
 	}
+	return out
+}
 
-	// Hook patterns: use* functions (React/TypeScript only)
+func detectReactHooks(symbols []symbolRow, _ []edgeRow, _ map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	var hooks []Example
 	for _, s := range symbols {
 		if s.kind != "function" {
@@ -992,20 +1159,22 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 			hooks = append(hooks, Example{Name: s.name, Path: filePathByID[s.fileID]})
 		}
 	}
-	if len(hooks) >= minInstances {
-		sortExamples(hooks)
-		totalFuncs := countByKind(symbols, "function")
-		out = append(out, Convention{
-			Category:    CategoryFramework,
-			Description: fmt.Sprintf("React hook pattern: %s — custom hooks encapsulate stateful logic (%d hooks)", topNames(hooks), len(hooks)),
-			Instances:   len(hooks),
-			Total:       totalFuncs,
-			Strength:    safeStrength(len(hooks), totalFuncs),
-			Examples:    hooks,
-		})
+	if len(hooks) < minInstances {
+		return nil
 	}
+	sortExamples(hooks)
+	totalFuncs := countByKind(symbols, "function")
+	return []Convention{{
+		Category:    CategoryFramework,
+		Description: fmt.Sprintf("React hook pattern: %s — custom hooks encapsulate stateful logic (%d hooks)", topNames(hooks), len(hooks)),
+		Instances:   len(hooks),
+		Total:       totalFuncs,
+		Strength:    safeStrength(len(hooks), totalFuncs),
+		Examples:    hooks,
+	}}
+}
 
-	// Go type aliases: named types wrapping another type (kind="type" in Go means alias/newtype)
+func detectGoTypeAliases(symbols []symbolRow, _ []edgeRow, _ map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	var goAliases []Example
 	for _, s := range symbols {
 		if s.kind != "type" {
@@ -1017,20 +1186,22 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 		}
 		goAliases = append(goAliases, Example{Name: s.name, Path: fp, Kind: s.kind})
 	}
-	if len(goAliases) >= minInstances {
-		sortExamples(goAliases)
-		totalTypes := countByKind(symbols, "type")
-		out = append(out, Convention{
-			Category:    CategoryStructure,
-			Description: fmt.Sprintf("Type aliases: %s — named domain types (%d aliases)", topNames(goAliases), len(goAliases)),
-			Instances:   len(goAliases),
-			Total:       totalTypes,
-			Strength:    safeStrength(len(goAliases), totalTypes),
-			Examples:    goAliases,
-		})
+	if len(goAliases) < minInstances {
+		return nil
 	}
+	sortExamples(goAliases)
+	totalTypes := countByKind(symbols, "type")
+	return []Convention{{
+		Category:    CategoryStructure,
+		Description: fmt.Sprintf("Type aliases: %s — named domain types (%d aliases)", topNames(goAliases), len(goAliases)),
+		Instances:   len(goAliases),
+		Total:       totalTypes,
+		Strength:    safeStrength(len(goAliases), totalTypes),
+		Examples:    goAliases,
+	}}
+}
 
-	// Go middleware factory pattern: functions called by router methods (Use, GET, POST, etc.)
+func detectGoMiddleware(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	routerMethods := map[string]bool{
 		"Use": true, "GET": true, "POST": true, "PUT": true, "DELETE": true,
 		"PATCH": true, "Handle": true, "HandleFunc": true, "Group": true,
@@ -1045,50 +1216,50 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 			}
 		}
 	}
-	if len(routerSymbolIDs) > 0 {
-		handlerCounts := map[int64]int{}
-		for _, e := range edges {
-			if e.kind != "calls" {
-				continue
-			}
-			if !routerSymbolIDs[e.sourceID] {
-				continue
-			}
-			handlerCounts[e.targetID]++
-		}
-		var factories []Example
-		seen := map[string]bool{}
-		for id, count := range handlerCounts {
-			s, ok := symbolByID[id]
-			if !ok || s.kind != "function" {
-				continue
-			}
-			if strings.HasPrefix(s.name, "Test") || strings.HasPrefix(s.name, "Benchmark") {
-				continue
-			}
-			if seen[s.name] {
-				continue
-			}
-			seen[s.name] = true
-			factories = append(factories, Example{Name: s.name, Path: filePathByID[s.fileID], EdgeCount: count})
-		}
-		if len(factories) >= minInstances {
-			sort.Slice(factories, func(i, j int) bool {
-				return factories[i].EdgeCount > factories[j].EdgeCount
-			})
-			totalFuncs := countByKind(symbols, "function")
-			out = append(out, Convention{
-				Category:    CategoryFramework,
-				Description: fmt.Sprintf("Middleware factories: %s return handler functions — composable request pipeline (%d factories)", topNames(factories), len(factories)),
-				Instances:   len(factories),
-				Total:       totalFuncs,
-				Strength:    safeStrength(len(factories), totalFuncs),
-				Examples:    factories,
-			})
-		}
+	if len(routerSymbolIDs) == 0 {
+		return nil
 	}
-
-	return out
+	handlerCounts := map[int64]int{}
+	for _, e := range edges {
+		if e.kind != "calls" {
+			continue
+		}
+		if !routerSymbolIDs[e.sourceID] {
+			continue
+		}
+		handlerCounts[e.targetID]++
+	}
+	var factories []Example
+	seen := map[string]bool{}
+	for id, count := range handlerCounts {
+		s, ok := symbolByID[id]
+		if !ok || s.kind != "function" {
+			continue
+		}
+		if strings.HasPrefix(s.name, "Test") || strings.HasPrefix(s.name, "Benchmark") {
+			continue
+		}
+		if seen[s.name] {
+			continue
+		}
+		seen[s.name] = true
+		factories = append(factories, Example{Name: s.name, Path: filePathByID[s.fileID], EdgeCount: count})
+	}
+	if len(factories) < minInstances {
+		return nil
+	}
+	sort.Slice(factories, func(i, j int) bool {
+		return factories[i].EdgeCount > factories[j].EdgeCount
+	})
+	totalFuncs := countByKind(symbols, "function")
+	return []Convention{{
+		Category:    CategoryFramework,
+		Description: fmt.Sprintf("Middleware factories: %s return handler functions — composable request pipeline (%d factories)", topNames(factories), len(factories)),
+		Instances:   len(factories),
+		Total:       totalFuncs,
+		Strength:    safeStrength(len(factories), totalFuncs),
+		Examples:    factories,
+	}}
 }
 
 func detectArchitectureLayers(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {

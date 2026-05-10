@@ -1156,3 +1156,560 @@ func TestDetectTestingJavaKotlinFallback(t *testing.T) {
 	}
 }
 
+func setupCallbackFixture(t *testing.T) *sqlite.Adapter {
+	t.Helper()
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	files := []model.File{
+		{Path: "app/models/order.rb", Language: "ruby", Hash: "a1", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/user.rb", Language: "ruby", Hash: "a2", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/product.rb", Language: "ruby", Hash: "a3", Symbols: 1, IndexedAt: now},
+	}
+	fileIDs := make(map[string]int64)
+	for i := range files {
+		id, err := adapter.WriteFile(ctx, &files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileIDs[files[i].Path] = id
+	}
+
+	type symDef struct {
+		fileKey, name, qualified, kind string
+	}
+	symDefs := []symDef{
+		{"app/models/order.rb", "Order", "Order", "class"},
+		{"app/models/order.rb", "before_save", "Order.before_save", "method"},
+		{"app/models/order.rb", "after_create", "Order.after_create", "method"},
+		{"app/models/user.rb", "User", "User", "class"},
+		{"app/models/user.rb", "before_validation", "User.before_validation", "method"},
+		{"app/models/user.rb", "after_save", "User.after_save", "method"},
+		{"app/models/product.rb", "Product", "Product", "class"},
+		{"app/models/product.rb", "before_destroy", "Product.before_destroy", "method"},
+		{"app/models/product.rb", "after_commit", "Product.after_commit", "method"},
+	}
+
+	symIDs := make(map[string]int64)
+	for _, sd := range symDefs {
+		fid := fileIDs[sd.fileKey]
+		s := &model.Symbol{
+			FileID:    fid,
+			Name:      sd.name,
+			Qualified: sd.qualified,
+			Kind:      model.SymbolKind(sd.kind),
+			LineStart: 1,
+			LineEnd:   10,
+		}
+		id, err := adapter.WriteSymbol(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		symIDs[sd.qualified] = id
+	}
+	parents := map[string]string{
+		"Order.before_save":        "Order",
+		"Order.after_create":       "Order",
+		"User.before_validation":   "User",
+		"User.after_save":          "User",
+		"Product.before_destroy":   "Product",
+		"Product.after_commit":     "Product",
+	}
+	for childQ, parentQ := range parents {
+		_, err := adapter.DB().ExecContext(ctx, `UPDATE sense_symbols SET parent_id = ? WHERE id = ?`, symIDs[parentQ], symIDs[childQ])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return adapter
+}
+
+func TestDetectRailsCallbacks(t *testing.T) {
+	adapter := setupCallbackFixture(t)
+	ctx := context.Background()
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fw := findByCategory(conventions, CategoryFramework)
+	found := false
+	for _, c := range fw {
+		if strings.Contains(c.Description, "Callback patterns") {
+			found = true
+			if c.Instances != 3 {
+				t.Errorf("expected 3 classes with callbacks, got %d", c.Instances)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected Callback patterns convention")
+	}
+}
+
+func TestDetectRailsCallbacksBelowThreshold(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	f := model.File{Path: "app/models/order.rb", Language: "ruby", Hash: "a1", Symbols: 1, IndexedAt: now}
+	fid, err := adapter.WriteFile(ctx, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cls := &model.Symbol{FileID: fid, Name: "Order", Qualified: "Order", Kind: "class", LineStart: 1, LineEnd: 10}
+	clsID, err := adapter.WriteSymbol(ctx, cls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb := &model.Symbol{FileID: fid, Name: "before_save", Qualified: "Order.before_save", Kind: "method", LineStart: 2, LineEnd: 2}
+	cbID, err := adapter.WriteSymbol(ctx, cb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = adapter.DB().ExecContext(ctx, `UPDATE sense_symbols SET parent_id = ? WHERE id = ?`, clsID, cbID)
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range findByCategory(conventions, CategoryFramework) {
+		if strings.Contains(c.Description, "Callback patterns") {
+			t.Error("should not detect callback pattern with only 1 class")
+		}
+	}
+}
+
+func setupScopeFixture(t *testing.T) *sqlite.Adapter {
+	t.Helper()
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	files := []model.File{
+		{Path: "app/models/order.rb", Language: "ruby", Hash: "a1", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/user.rb", Language: "ruby", Hash: "a2", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/product.rb", Language: "ruby", Hash: "a3", Symbols: 1, IndexedAt: now},
+	}
+	fileIDs := make(map[string]int64)
+	for i := range files {
+		id, err := adapter.WriteFile(ctx, &files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileIDs[files[i].Path] = id
+	}
+
+	type symDef struct {
+		fileKey, name, qualified, kind string
+	}
+	symDefs := []symDef{
+		{"app/models/order.rb", "Order", "Order", "class"},
+		{"app/models/order.rb", "active", "Order.active", "method"},
+		{"app/models/order.rb", "recent", "Order.recent", "method"},
+		{"app/models/user.rb", "User", "User", "class"},
+		{"app/models/user.rb", "verified", "User.verified", "method"},
+		{"app/models/user.rb", "admins", "User.admins", "method"},
+		{"app/models/product.rb", "Product", "Product", "class"},
+		{"app/models/product.rb", "published", "Product.published", "method"},
+		{"app/models/product.rb", "featured", "Product.featured", "method"},
+	}
+
+	symIDs := make(map[string]int64)
+	for _, sd := range symDefs {
+		fid := fileIDs[sd.fileKey]
+		s := &model.Symbol{
+			FileID:    fid,
+			Name:      sd.name,
+			Qualified: sd.qualified,
+			Kind:      model.SymbolKind(sd.kind),
+			LineStart: 1,
+			LineEnd:   10,
+		}
+		id, err := adapter.WriteSymbol(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		symIDs[sd.qualified] = id
+	}
+	parents := map[string]string{
+		"Order.active":      "Order",
+		"Order.recent":      "Order",
+		"User.verified":     "User",
+		"User.admins":       "User",
+		"Product.published": "Product",
+		"Product.featured":  "Product",
+	}
+	for childQ, parentQ := range parents {
+		_, err := adapter.DB().ExecContext(ctx, `UPDATE sense_symbols SET parent_id = ? WHERE id = ?`, symIDs[parentQ], symIDs[childQ])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Scope detection uses positive identification: each scope symbol needs a
+	// calls edge from its parent class (as emitted by emitScopeEdge).
+	scopeEdges := []struct{ source, target, file string }{
+		{"Order", "Order.active", "app/models/order.rb"},
+		{"Order", "Order.recent", "app/models/order.rb"},
+		{"User", "User.verified", "app/models/user.rb"},
+		{"User", "User.admins", "app/models/user.rb"},
+		{"Product", "Product.published", "app/models/product.rb"},
+		{"Product", "Product.featured", "app/models/product.rb"},
+	}
+	for _, se := range scopeEdges {
+		srcID := symIDs[se.source]
+		tgtID := symIDs[se.target]
+		fid := fileIDs[se.file]
+		e := &model.Edge{
+			SourceID:   &srcID,
+			TargetID:   tgtID,
+			Kind:       model.EdgeCalls,
+			FileID:     fid,
+			Confidence: 1.0,
+		}
+		if _, err := adapter.WriteEdge(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return adapter
+}
+
+func TestDetectScopes(t *testing.T) {
+	adapter := setupScopeFixture(t)
+	ctx := context.Background()
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fw := findByCategory(conventions, CategoryFramework)
+	found := false
+	for _, c := range fw {
+		if strings.Contains(c.Description, "Scope definitions") {
+			found = true
+			if c.Instances != 3 {
+				t.Errorf("expected 3 classes with scopes, got %d", c.Instances)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected Scope definitions convention")
+	}
+}
+
+func TestDetectScopesBelowThreshold(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	f := model.File{Path: "app/models/order.rb", Language: "ruby", Hash: "a1", Symbols: 1, IndexedAt: now}
+	fid, err := adapter.WriteFile(ctx, &f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cls := &model.Symbol{FileID: fid, Name: "Order", Qualified: "Order", Kind: "class", LineStart: 1, LineEnd: 10}
+	clsID, err := adapter.WriteSymbol(ctx, cls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := &model.Symbol{FileID: fid, Name: "active", Qualified: "Order.active", Kind: "method", LineStart: 2, LineEnd: 2}
+	scopeID, err := adapter.WriteSymbol(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = adapter.DB().ExecContext(ctx, `UPDATE sense_symbols SET parent_id = ? WHERE id = ?`, clsID, scopeID)
+	e := &model.Edge{SourceID: &clsID, TargetID: scopeID, Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0}
+	if _, err := adapter.WriteEdge(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range findByCategory(conventions, CategoryFramework) {
+		if strings.Contains(c.Description, "Scope definitions") {
+			t.Error("should not detect scope pattern with only 1 class")
+		}
+	}
+}
+
+func TestDetectCompositionSerializers(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	files := []model.File{
+		{Path: "app/serializers/order_serializer.rb", Language: "ruby", Hash: "a1", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/order.rb", Language: "ruby", Hash: "a2", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/user.rb", Language: "ruby", Hash: "a3", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/product.rb", Language: "ruby", Hash: "a4", Symbols: 1, IndexedAt: now},
+	}
+	fileIDs := make(map[string]int64)
+	for i := range files {
+		id, err := adapter.WriteFile(ctx, &files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileIDs[files[i].Path] = id
+	}
+
+	type symDef struct {
+		fileKey, name, qualified, kind string
+	}
+	symDefs := []symDef{
+		{"app/serializers/order_serializer.rb", "OrderSerializer", "OrderSerializer", "class"},
+		{"app/models/order.rb", "Order", "Order", "class"},
+		{"app/models/user.rb", "User", "User", "class"},
+		{"app/models/product.rb", "Product", "Product", "class"},
+	}
+
+	symIDs := make(map[string]int64)
+	for _, sd := range symDefs {
+		fid := fileIDs[sd.fileKey]
+		s := &model.Symbol{
+			FileID:    fid,
+			Name:      sd.name,
+			Qualified: sd.qualified,
+			Kind:      model.SymbolKind(sd.kind),
+			LineStart: 1,
+			LineEnd:   10,
+		}
+		id, err := adapter.WriteSymbol(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		symIDs[sd.qualified] = id
+	}
+
+	edgeDefs := []struct{ source, target, kind, file string }{
+		{"Order", "OrderSerializer", "composes", "app/models/order.rb"},
+		{"User", "OrderSerializer", "composes", "app/models/user.rb"},
+		{"Product", "OrderSerializer", "composes", "app/models/product.rb"},
+	}
+	for _, ed := range edgeDefs {
+		srcID := symIDs[ed.source]
+		tgtID := symIDs[ed.target]
+		fid := fileIDs[ed.file]
+		e := &model.Edge{
+			SourceID:   &srcID,
+			TargetID:   tgtID,
+			Kind:       model.EdgeKind(ed.kind),
+			FileID:     fid,
+			Confidence: 1.0,
+		}
+		if _, err := adapter.WriteEdge(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comp := findByCategory(conventions, CategoryComposition)
+	foundSerializer := false
+	foundGeneric := false
+	for _, c := range comp {
+		if strings.Contains(c.Description, "Serializer composition") {
+			foundSerializer = true
+			if c.Instances != 3 {
+				t.Errorf("expected 3 serializer composition instances, got %d", c.Instances)
+			}
+		}
+		if strings.Contains(c.Description, "mix in OrderSerializer") {
+			foundGeneric = true
+		}
+	}
+	if !foundSerializer {
+		t.Error("expected Serializer composition convention")
+	}
+	if foundGeneric {
+		t.Error("serializer should not appear in generic composition convention")
+	}
+}
+
+func TestDetectCallbacksAndScopesNoCollision(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	now := time.Now()
+	files := []model.File{
+		{Path: "app/models/order.rb", Language: "ruby", Hash: "a1", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/user.rb", Language: "ruby", Hash: "a2", Symbols: 1, IndexedAt: now},
+		{Path: "app/models/product.rb", Language: "ruby", Hash: "a3", Symbols: 1, IndexedAt: now},
+	}
+	fileIDs := make(map[string]int64)
+	for i := range files {
+		id, err := adapter.WriteFile(ctx, &files[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileIDs[files[i].Path] = id
+	}
+
+	type symDef struct {
+		fileKey, name, qualified, kind string
+	}
+	symDefs := []symDef{
+		// Each class has callbacks AND scopes
+		{"app/models/order.rb", "Order", "Order", "class"},
+		{"app/models/order.rb", "before_save", "Order.before_save", "method"},
+		{"app/models/order.rb", "active", "Order.active", "method"},
+		{"app/models/order.rb", "recent", "Order.recent", "method"},
+		{"app/models/user.rb", "User", "User", "class"},
+		{"app/models/user.rb", "after_create", "User.after_create", "method"},
+		{"app/models/user.rb", "verified", "User.verified", "method"},
+		{"app/models/user.rb", "admins", "User.admins", "method"},
+		{"app/models/product.rb", "Product", "Product", "class"},
+		{"app/models/product.rb", "before_destroy", "Product.before_destroy", "method"},
+		{"app/models/product.rb", "published", "Product.published", "method"},
+		{"app/models/product.rb", "featured", "Product.featured", "method"},
+	}
+
+	symIDs := make(map[string]int64)
+	for _, sd := range symDefs {
+		fid := fileIDs[sd.fileKey]
+		s := &model.Symbol{
+			FileID:    fid,
+			Name:      sd.name,
+			Qualified: sd.qualified,
+			Kind:      model.SymbolKind(sd.kind),
+			LineStart: 1,
+			LineEnd:   10,
+		}
+		id, err := adapter.WriteSymbol(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		symIDs[sd.qualified] = id
+	}
+	parents := map[string]string{
+		"Order.before_save":      "Order",
+		"Order.active":           "Order",
+		"Order.recent":           "Order",
+		"User.after_create":      "User",
+		"User.verified":          "User",
+		"User.admins":            "User",
+		"Product.before_destroy": "Product",
+		"Product.published":      "Product",
+		"Product.featured":       "Product",
+	}
+	for childQ, parentQ := range parents {
+		_, err := adapter.DB().ExecContext(ctx, `UPDATE sense_symbols SET parent_id = ? WHERE id = ?`, symIDs[parentQ], symIDs[childQ])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Scope edges (positive identification)
+	scopeEdges := []struct{ source, target, file string }{
+		{"Order", "Order.active", "app/models/order.rb"},
+		{"Order", "Order.recent", "app/models/order.rb"},
+		{"User", "User.verified", "app/models/user.rb"},
+		{"User", "User.admins", "app/models/user.rb"},
+		{"Product", "Product.published", "app/models/product.rb"},
+		{"Product", "Product.featured", "app/models/product.rb"},
+	}
+	for _, se := range scopeEdges {
+		srcID := symIDs[se.source]
+		tgtID := symIDs[se.target]
+		fid := fileIDs[se.file]
+		e := &model.Edge{SourceID: &srcID, TargetID: tgtID, Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0}
+		if _, err := adapter.WriteEdge(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conventions, _, err := Detect(ctx, adapter.DB(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fw := findByCategory(conventions, CategoryFramework)
+	var callbackConv, scopeConv *Convention
+	for i, c := range fw {
+		if strings.Contains(c.Description, "Callback patterns") {
+			callbackConv = &fw[i]
+		}
+		if strings.Contains(c.Description, "Scope definitions") {
+			scopeConv = &fw[i]
+		}
+	}
+	if callbackConv == nil {
+		t.Fatal("expected Callback patterns convention")
+	}
+	if scopeConv == nil {
+		t.Fatal("expected Scope definitions convention")
+	}
+	if callbackConv.Instances != 3 {
+		t.Errorf("callback instances = %d, want 3", callbackConv.Instances)
+	}
+	if scopeConv.Instances != 3 {
+		t.Errorf("scope instances = %d, want 3", scopeConv.Instances)
+	}
+	// Verify no cross-contamination: callback names must not appear in scope examples
+	for _, ex := range scopeConv.Examples {
+		if model.RailsCallbackNames[ex.Name] {
+			t.Errorf("scope convention contains callback name %q", ex.Name)
+		}
+	}
+}
+
