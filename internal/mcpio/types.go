@@ -498,6 +498,7 @@ type SearchResultEntry struct {
 	Snippet    string      `json:"snippet"`
 	References int         `json:"references,omitempty"`
 	Source     string      `json:"source"`
+	Seen       bool        `json:"seen,omitempty"`
 }
 
 // SearchScore is a relative relevance score. Scores are normalized
