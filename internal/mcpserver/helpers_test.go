@@ -691,6 +691,12 @@ func TestHandleSearchTextFallback(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
+	// Create a source file with text that matches the query
+	authFile := filepath.Join(ts.handlers.dir, "auth_helper.go")
+	if err := os.WriteFile(authFile, []byte("package main\n\n// auth helper function\nfunc authHelper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	// Enable text fallback if ripgrep is available.
 	tf := search.NewTextFallback()
 	if !tf.Available() {
@@ -707,6 +713,29 @@ func TestHandleSearchTextFallback(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("handleSearch returned nil result")
+	}
+
+	text := resultText(t, result)
+	var resp mcpio.SearchResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Verify text fallback fired by checking mode
+	if !strings.Contains(resp.SearchMode, "+text") {
+		t.Errorf("expected search mode to contain '+text', got %q", resp.SearchMode)
+	}
+
+	// Verify text fallback results were added
+	var hasTextResult bool
+	for _, r := range resp.Results {
+		if r.Source == "text" {
+			hasTextResult = true
+			break
+		}
+	}
+	if !hasTextResult {
+		t.Error("expected at least one text fallback result")
 	}
 }
 
@@ -823,6 +852,30 @@ func TestCountStaleFilesWithMtime(t *testing.T) {
 	}
 	if maxMtime == nil {
 		t.Fatal("expected non-nil maxMtime when stale files exist")
+	}
+}
+
+func TestCountStaleFilesClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "closed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Close DB before calling countStaleFiles
+	_ = adapter.Close()
+
+	count, maxMtime := countStaleFiles(ctx, adapter.DB(), dir)
+	if count != 0 {
+		t.Errorf("expected 0 stale files with closed DB, got %d", count)
+	}
+	if maxMtime != nil {
+		t.Error("expected nil maxMtime with closed DB")
 	}
 }
 

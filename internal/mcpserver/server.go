@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -48,6 +49,11 @@ const (
 	// Caps to bound query-time work when an interface has many implementors.
 	maxDispatchEquivalents = 20
 	maxDispatchInferred    = 50
+
+	// Response compaction thresholds (pitch 22-05).
+	compactEdgeKeepCount  = 10 // keep full line details for first N edges
+	snippetStripThreshold = 5  // strip snippets from results beyond this index
+	keySymbolsLimit       = 8  // max key symbols in conventions response
 )
 
 // RunOptions configures the MCP server.
@@ -199,7 +205,7 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 
 	textFallback := search.NewTextFallback()
 
-	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: opts.WatchState, tracker: tracker, defaults: defaults}
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: opts.WatchState, tracker: tracker, defaults: defaults, seenSymbols: make(map[int64]bool)}
 
 	s.AddTool(searchTool(), h.handleSearch)
 	s.AddTool(graphTool(), h.handleGraph)
@@ -235,6 +241,8 @@ type handlers struct {
 	watchState   *mcpio.WatchState
 	tracker      *metrics.Tracker
 	defaults     profile.Defaults
+	seenSymbols  map[int64]bool
+	seenMu       sync.Mutex
 }
 
 // ---------------------------------------------------------------
@@ -429,6 +437,20 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 	}
 
+	if len(resp.Edges.CalledBy) > compactEdgeKeepCount {
+		compactCallEdges(resp.Edges.CalledBy)
+	}
+	if len(resp.Edges.Calls) > compactEdgeKeepCount {
+		compactCallEdges(resp.Edges.Calls)
+	}
+	if len(resp.DispatchInferred) > compactEdgeKeepCount {
+		compactDispatchInferred(resp.DispatchInferred)
+	}
+
+	h.seenMu.Lock()
+	h.seenSymbols[gr.Root.Symbol.ID] = true
+	h.seenMu.Unlock()
+
 	h.tracker.Record("sense_graph", symbol,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
@@ -511,6 +533,20 @@ func qualifiedOrNameRef(s model.Symbol) string {
 		return s.Qualified
 	}
 	return s.Name
+}
+
+func compactCallEdges(edges []mcpio.CallEdgeRef) {
+	for i := compactEdgeKeepCount; i < len(edges); i++ {
+		edges[i].LineStart = 0
+		edges[i].LineEnd = 0
+	}
+}
+
+func compactDispatchInferred(edges []mcpio.DispatchInferredRef) {
+	for i := compactEdgeKeepCount; i < len(edges); i++ {
+		edges[i].LineStart = 0
+		edges[i].LineEnd = 0
+	}
 }
 
 func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.NextStep {
@@ -646,6 +682,16 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 			References: r.References,
 			Source:     "structural",
 		}
+		h.seenMu.Lock()
+		if h.seenSymbols[r.SymbolID] {
+			entries[i].Seen = true
+			entries[i].Snippet = ""
+		}
+		if i >= snippetStripThreshold {
+			entries[i].Snippet = ""
+		}
+		h.seenSymbols[r.SymbolID] = true
+		h.seenMu.Unlock()
 		if path != "" {
 			uniqueFiles[path] = struct{}{}
 		}
@@ -1101,7 +1147,7 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		return nil, fmt.Errorf("sense_conventions: %w", err)
 	}
 
-	keyEntries, err := buildKeyEntries(ctx, h.adapter, domain, 15)
+	keyEntries, err := buildKeyEntries(ctx, h.adapter, domain, keySymbolsLimit)
 	if err != nil {
 		return nil, fmt.Errorf("sense_conventions: key symbols: %w", err)
 	}
