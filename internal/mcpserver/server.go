@@ -1008,6 +1008,10 @@ func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Op
 		return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: compute: %w", err)
 	}
 
+	if err := blast.RollupParents(ctx, h.db, &blastResult); err != nil {
+		return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: rollup parents: %w", err)
+	}
+
 	fileIDs := cli.CollectBlastFileIDs(blastResult)
 	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
 	if err != nil {
@@ -1037,6 +1041,9 @@ func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options
 		r, err := blast.Compute(ctx, h.db, []int64{sid}, opts)
 		if err != nil {
 			return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: %w", err)
+		}
+		if err := blast.RollupParents(ctx, h.db, &r); err != nil {
+			return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: rollup parents: %w", err)
 		}
 		results = append(results, r)
 	}
