@@ -158,6 +158,40 @@ func TestBuildSkipsSenseDir(t *testing.T) {
 	}
 }
 
+func TestBuildUnreadableGitignore(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root — permission test won't work")
+	}
+	root := t.TempDir()
+	gi := filepath.Join(root, ".gitignore")
+	writeTestFile(t, gi, "*.log\n")
+	_ = os.Chmod(gi, 0o000)
+	t.Cleanup(func() { _ = os.Chmod(gi, 0o644) })
+
+	_, err := Build(root, nil)
+	// AddFromFile returns an error for unreadable files, which propagates
+	if err == nil {
+		t.Error("expected error from unreadable .gitignore")
+	}
+}
+
+func TestBuildUnreadableSenseignore(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root — permission test won't work")
+	}
+	root := t.TempDir()
+	si := filepath.Join(root, ".senseignore")
+	writeTestFile(t, si, "vendor/\n")
+	_ = os.Chmod(si, 0o000)
+	t.Cleanup(func() { _ = os.Chmod(si, 0o644) })
+
+	_, err := Build(root, nil)
+	// AddFromFile returns an error for unreadable files, which propagates
+	if err == nil {
+		t.Error("expected error from unreadable .senseignore")
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
