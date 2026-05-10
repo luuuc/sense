@@ -238,6 +238,47 @@ func TestTokenBudgetDefault(t *testing.T) {
 	}
 }
 
+func TestGenerateStoresProjectDescriptionInMeta(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func main() {}
+`)
+	writeFile(t, filepath.Join(root, "package.json"), `{"name":"test","description":"A test project from package.json"}`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	senseDir := filepath.Join(root, ".sense")
+	dbPath := filepath.Join(senseDir, "index.db")
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	outDir := t.TempDir()
+	if err := summary.Generate(ctx, adapter, outDir, root); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	var desc string
+	if err := adapter.DB().QueryRowContext(ctx, "SELECT value FROM sense_meta WHERE key = 'project_description'").Scan(&desc); err != nil {
+		t.Fatalf("read meta: %v", err)
+	}
+	if desc != "A test project from package.json" {
+		t.Errorf("project_description = %q, want %q", desc, "A test project from package.json")
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

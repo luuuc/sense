@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,11 @@ const stubSummary = "# Codebase Summary\n\nNo scan data yet. Run `sense scan` to
 const DefaultTokenBudget = 8000
 
 const charsPerToken = 4
+
+var (
+	gemspecDescRe = regexp.MustCompile(`\.\s*(?:summary|description)\s*=\s*["']([^"']+)["']`)
+	pomDescRe     = regexp.MustCompile(`<description>([^<]+)</description>`)
+)
 
 func TokenBudget() int {
 	if env := os.Getenv("SENSE_SUMMARY_TOKENS"); env != "" {
@@ -55,10 +61,17 @@ func Generate(ctx context.Context, adapter *sqlite.Adapter, senseDir, repoRoot s
 
 	budget := TokenBudget() * charsPerToken
 
+	desc := renderProject(repoRoot)
+	if desc != "" {
+		if err := adapter.WriteMeta(ctx, "project_description", desc); err != nil {
+			return err
+		}
+	}
+
 	sections := []section{
 		{"Fingerprint", renderFingerprint},
 		{"Project", func(_ context.Context, _ *sql.DB) (string, error) {
-			return renderProject(repoRoot), nil
+			return desc, nil
 		}},
 		{"Main Areas", renderMainAreas},
 		{"Key Abstractions", func(ctx context.Context, _ *sql.DB) (string, error) {
@@ -157,9 +170,122 @@ const (
 	maxDescBytes   = 300
 )
 
+func readStructuredDescription(repoRoot string) string {
+	// package.json
+	if data, err := os.ReadFile(filepath.Join(repoRoot, "package.json")); err == nil {
+		var pkg map[string]interface{}
+		if err := json.Unmarshal(data, &pkg); err == nil {
+			if desc, ok := pkg["description"].(string); ok && desc != "" {
+				if len(desc) > maxDescBytes {
+					return truncateUTF8(desc, maxDescBytes-3) + "..."
+				}
+				return desc
+			}
+		}
+	}
+
+	// Cargo.toml
+	if desc := scanTOMLValue(filepath.Join(repoRoot, "Cargo.toml"), "[package]", "description"); desc != "" {
+		return desc
+	}
+
+	// pyproject.toml
+	if desc := scanTOMLValue(filepath.Join(repoRoot, "pyproject.toml"), "[project]", "description"); desc != "" {
+		return desc
+	}
+
+	// setup.cfg
+	if desc := scanINIValue(filepath.Join(repoRoot, "setup.cfg"), "metadata", "description"); desc != "" {
+		return desc
+	}
+
+	// *.gemspec
+	if matches, _ := filepath.Glob(filepath.Join(repoRoot, "*.gemspec")); len(matches) > 0 {
+		if data, err := os.ReadFile(matches[0]); err == nil {
+			if m := gemspecDescRe.FindSubmatch(data); m != nil {
+				return string(m[1])
+			}
+		}
+	}
+
+	// pom.xml
+	if data, err := os.ReadFile(filepath.Join(repoRoot, "pom.xml")); err == nil {
+		if m := pomDescRe.FindSubmatch(data); m != nil {
+			return string(m[1])
+		}
+	}
+
+	return ""
+}
+
+func scanTOMLValue(path, section, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	inSection := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == section {
+			inSection = true
+			continue
+		}
+		if inSection && strings.HasPrefix(trimmed, "[") {
+			break
+		}
+		if inSection {
+			prefix := key + " = "
+			if strings.HasPrefix(trimmed, prefix) {
+				val := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+				val = strings.Trim(val, `"`)
+				val = strings.Trim(val, `'`)  
+				if len(val) > maxDescBytes {
+					val = truncateUTF8(val, maxDescBytes-3) + "..."
+				}
+				return val
+			}
+		}
+	}
+	return ""
+}
+
+func scanINIValue(path, section, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	inSection := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "["+section+"]" {
+			inSection = true
+			continue
+		}
+		if inSection && strings.HasPrefix(trimmed, "[") {
+			break
+		}
+		if inSection {
+			prefix := key + " = "
+			if strings.HasPrefix(trimmed, prefix) {
+				val := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+				if len(val) > maxDescBytes {
+					val = truncateUTF8(val, maxDescBytes-3) + "..."
+				}
+				return val
+			}
+		}
+	}
+	return ""
+}
+
 func renderProject(repoRoot string) string {
 	if repoRoot == "" {
 		return ""
+	}
+	if desc := readStructuredDescription(repoRoot); desc != "" {
+		return desc
 	}
 	f, err := os.Open(filepath.Join(repoRoot, "README.md"))
 	if err != nil {

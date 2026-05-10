@@ -365,6 +365,7 @@ type StatusProfile struct {
 	Symbols         int    `json:"symbols"`
 	PrimaryLanguage string `json:"primary_language"`
 	DynamicLanguage bool   `json:"dynamic_language"`
+	Description     string `json:"description,omitempty"`
 }
 
 // StatusStructure provides a project-level structural summary for
