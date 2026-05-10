@@ -460,6 +460,50 @@ func (a *Adapter) parentSymbolsBatch(ctx context.Context, batch []int64, out map
 	return rows.Err()
 }
 
+// SubstringSearch runs a LIKE query against the qualified column in
+// sense_symbols as a fallback when FTS5 returns few results. This catches
+// partial name matches like "middleware" finding "applyMiddlewareStack".
+func (a *Adapter) SubstringSearch(ctx context.Context, query string, language string, limit int) ([]SearchResult, error) {
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(strings.ToLower(query))
+	q := `SELECT s.id, s.name, s.qualified, s.kind, s.file_id, s.line_start,
+	             s.snippet, 1.0 AS score
+	      FROM sense_symbols s
+	      JOIN sense_files f ON f.id = s.file_id
+	      WHERE LOWER(s.qualified) LIKE ? ESCAPE '\'`
+	args := []any{"%" + escaped + "%"}
+	if language != "" {
+		q += " AND f.language = ?"
+		args = append(args, language)
+	}
+	q += " LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := a.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite SubstringSearch: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []SearchResult
+	for rows.Next() {
+		var r SearchResult
+		var snippet sql.NullString
+		if err := rows.Scan(&r.SymbolID, &r.Name, &r.Qualified, &r.Kind,
+			&r.FileID, &r.LineStart, &snippet, &r.Score); err != nil {
+			return nil, fmt.Errorf("sqlite SubstringSearch scan: %w", err)
+		}
+		r.Snippet = snippet.String
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
 // sanitizeFTS5Query quotes each whitespace-delimited token so that
 // FTS5 operator characters (*, ", OR, AND, NOT, NEAR, ^, :) in user
 // input are treated as literals. Embedded double-quotes are escaped
