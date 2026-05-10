@@ -1,7 +1,15 @@
 package scan
 
 import (
+	"context"
+	"database/sql"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/sqlite"
 )
 
 // TestImplSibling pins the test-association naming conventions for
@@ -94,5 +102,105 @@ func TestMirrorImpl(t *testing.T) {
 				t.Errorf("mirrorImpl(%q, %q)[%d] = %q, want %q", c.path, c.language, i, got[i], c.want[i])
 			}
 		}
+	}
+}
+
+func TestMigrateEmbeddingModel(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "index.db")
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	senseDir := filepath.Join(tmp, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	h := &harness{ctx: ctx, idx: adapter, root: tmp, out: io.Discard, warn: io.Discard}
+
+	// Case 1: No stored model → no migration
+	migrated, err := h.migrateEmbeddingModel(senseDir)
+	if err != nil {
+		t.Fatalf("migrate with no stored model: %v", err)
+	}
+	if migrated {
+		t.Error("expected no migration when no stored model")
+	}
+
+	// Case 2: Stored model matches current → no migration
+	if err := adapter.WriteMeta(ctx, "embedding_model", embed.ModelID); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+	migrated, err = h.migrateEmbeddingModel(senseDir)
+	if err != nil {
+		t.Fatalf("migrate with matching model: %v", err)
+	}
+	if migrated {
+		t.Error("expected no migration when stored model matches current")
+	}
+
+	// Case 3: Stored model differs → migration occurs
+	// Insert a fake embedding so we can verify it's cleared
+	if err := adapter.WriteMeta(ctx, "embedding_model", "old-model-v1"); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Insert a fake symbol first (required by FK constraint)
+	_, err = db.Exec("INSERT INTO sense_files (path, language, hash, symbols, indexed_at) VALUES (?, ?, ?, ?, ?)",
+		"test.go", "go", "abc", 1, "2024-01-01")
+	if err != nil {
+		t.Fatalf("insert file: %v", err)
+	}
+
+	// Insert a fake embedding
+	_, err = db.Exec("INSERT INTO sense_embeddings (symbol_id, vector) VALUES (?, ?)", 1, []byte{0x01, 0x02})
+	if err != nil {
+		t.Fatalf("insert embedding: %v", err)
+	}
+
+	// Create hnsw.bin to verify it's removed
+	hnswPath := filepath.Join(senseDir, "hnsw.bin")
+	if err := os.WriteFile(hnswPath, []byte("fake"), 0o644); err != nil {
+		t.Fatalf("write hnsw.bin: %v", err)
+	}
+
+	migrated, err = h.migrateEmbeddingModel(senseDir)
+	if err != nil {
+		t.Fatalf("migrate with mismatched model: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration when stored model differs")
+	}
+
+	// Verify embeddings cleared
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sense_embeddings").Scan(&count); err != nil {
+		t.Fatalf("count embeddings: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("embeddings count = %d, want 0", count)
+	}
+
+	// Verify meta deleted
+	var meta string
+	err = db.QueryRow("SELECT value FROM sense_meta WHERE key = ?", "embedding_model").Scan(&meta)
+	if err == nil {
+		t.Error("expected embedding_model meta to be deleted")
+	}
+
+	// Verify hnsw.bin removed
+	if _, err := os.Stat(hnswPath); !os.IsNotExist(err) {
+		t.Error("expected hnsw.bin to be removed")
 	}
 }
