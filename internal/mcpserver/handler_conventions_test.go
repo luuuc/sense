@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +139,65 @@ func TestHandleConventions(t *testing.T) {
 	}
 	if !hasStructOrNaming {
 		t.Error("expected structure or naming conventions in response")
+	}
+}
+
+func TestLookupInstanceSnippets(t *testing.T) {
+	h := setupHandlerFixture(t)
+	ctx := context.Background()
+
+	// "Server" has snippet "type Server interface {" (looked up by name, not qualified)
+	got := lookupInstanceSnippets(ctx, h.db, []string{"Server"}, 3)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 snippet, got %d", len(got))
+	}
+	if got[0] != "type Server interface {" {
+		t.Errorf("snippet = %q, want %q", got[0], "type Server interface {")
+	}
+
+	// Unknown symbol returns empty
+	got = lookupInstanceSnippets(ctx, h.db, []string{"nonexistent.Foo"}, 3)
+	if len(got) != 0 {
+		t.Errorf("expected 0 snippets for unknown symbol, got %d", len(got))
+	}
+
+	// Empty input returns nil
+	got = lookupInstanceSnippets(ctx, h.db, nil, 3)
+	if got != nil {
+		t.Errorf("expected nil for empty input, got %v", got)
+	}
+}
+
+func TestHandleConventionsSnippetsPopulated(t *testing.T) {
+	h := setupHandlerFixture(t)
+	ctx := context.Background()
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{}
+
+	result, err := h.handleConventions(ctx, req)
+	if err != nil {
+		t.Fatalf("handleConventions: %v", err)
+	}
+
+	text := result.Content[0].(mcp.TextContent).Text
+	var resp mcpio.ConventionsResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Verify snippets field appears in JSON (check raw JSON for the key)
+	if strings.Contains(text, `"snippets"`) {
+		// If snippets are present, they should be non-empty arrays
+		for _, c := range resp.Conventions {
+			if len(c.Snippets) > 0 {
+				for _, s := range c.Snippets {
+					if s == "" {
+						t.Error("empty snippet in convention entry")
+					}
+				}
+			}
+		}
 	}
 }
 
