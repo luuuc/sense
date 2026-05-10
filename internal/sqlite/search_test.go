@@ -664,3 +664,54 @@ func TestEmbeddingsForFilesNoMatch(t *testing.T) {
 		t.Errorf("expected empty map for file with no embeddings, got %d", len(got))
 	}
 }
+
+func TestSubstringSearch(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+	seedSearchIndex(ctx, t, a)
+
+	results, err := a.SubstringSearch(ctx, "Payment", "", 10)
+	if err != nil {
+		t.Fatalf("SubstringSearch: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results for 'Payment', got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Score != 1.0 {
+			t.Errorf("expected score 1.0, got %v", r.Score)
+		}
+	}
+
+	// Language filter
+	results, err = a.SubstringSearch(ctx, "User", "ruby", 10)
+	if err != nil {
+		t.Fatalf("SubstringSearch with language: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'User' in ruby, got %d", len(results))
+	}
+
+	// Empty query returns nil
+	results, err = a.SubstringSearch(ctx, "", "", 10)
+	if err != nil {
+		t.Fatalf("SubstringSearch empty: %v", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil for empty query, got %d results", len(results))
+	}
+
+	// No match
+	results, err = a.SubstringSearch(ctx, "xyznonexistent", "", 10)
+	if err != nil {
+		t.Fatalf("SubstringSearch no match: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for nonexistent, got %d", len(results))
+	}
+}

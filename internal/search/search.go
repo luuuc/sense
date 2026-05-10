@@ -164,6 +164,20 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 			}
 		}
 
+		kwResults = e.substringFallback(ctx, kwResults, q, opts.Language, candidateLimit)
+
+		queryTerms := strings.Fields(strings.ToLower(q))
+		kwFileIDs := make([]int64, 0, len(kwResults))
+		kwFileSeen := map[int64]struct{}{}
+		for _, r := range kwResults {
+			if _, ok := kwFileSeen[r.FileID]; !ok {
+				kwFileSeen[r.FileID] = struct{}{}
+				kwFileIDs = append(kwFileIDs, r.FileID)
+			}
+		}
+		kwPaths, _ := e.adapter.FilePathsByIDs(ctx, kwFileIDs)
+		boostPathMatches(kwResults, queryTerms, kwPaths)
+
 		qKwWeight, qVecWeight := 1.0, 0.0
 		if canVector {
 			vecConf := vectorConfidence(vecResults)
@@ -304,9 +318,9 @@ func fusionWeights(vecConfidence float64) (keyword, vector float64) {
 	case vecConfidence >= confidenceHighThreshold:
 		return 0.5, 0.5
 	case vecConfidence >= confidenceLowThreshold:
-		return 0.7, 0.3
+		return 0.6, 0.4
 	default:
-		return 0.8, 0.2
+		return 0.7, 0.3
 	}
 }
 
@@ -755,4 +769,48 @@ func (e *Engine) promoteParents(ctx context.Context, results []Result, limit int
 	})
 
 	return out, nil
+}
+
+const substringFallbackThreshold = 5
+
+func (e *Engine) substringFallback(ctx context.Context, kwResults []sqlite.SearchResult, query, language string, limit int) []sqlite.SearchResult {
+	if len(kwResults) >= substringFallbackThreshold {
+		return kwResults
+	}
+	subResults, err := e.adapter.SubstringSearch(ctx, query, language, limit-len(kwResults))
+	if err != nil {
+		return kwResults
+	}
+	return deduplicateResults(kwResults, subResults)
+}
+
+func deduplicateResults(primary, secondary []sqlite.SearchResult) []sqlite.SearchResult {
+	seen := make(map[int64]bool, len(primary))
+	for _, r := range primary {
+		seen[r.SymbolID] = true
+	}
+	out := make([]sqlite.SearchResult, len(primary))
+	copy(out, primary)
+	for _, r := range secondary {
+		if !seen[r.SymbolID] {
+			seen[r.SymbolID] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func boostPathMatches(results []sqlite.SearchResult, queryTerms []string, pathByID map[int64]string) {
+	if len(queryTerms) == 0 || len(results) == 0 {
+		return
+	}
+	for i := range results {
+		path := strings.ToLower(pathByID[results[i].FileID])
+		for _, term := range queryTerms {
+			if strings.Contains(path, term) {
+				results[i].Score *= 1.5
+				break
+			}
+		}
+	}
 }
