@@ -454,6 +454,10 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	h.tracker.Record("sense_graph", symbol,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
+	if len(resp.Edges.CalledBy) > 10 {
+		resp.CoverageNote = "Graph edges from indexed source files — may miss callers in examples/, scripts/, or macro-generated code"
+	}
+
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
 	resp.NextSteps = graphHints(resp, direction)
@@ -599,6 +603,7 @@ func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) 
 
 	rolled := dead.Rollup(result.Dead)
 	resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols)
+	resp.CoverageNote = "Static analysis — does not trace dynamic dispatch, decorator registration, or external API consumers"
 
 	h.tracker.Record("sense_graph", "dead_code",
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
@@ -834,6 +839,8 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 	if diff != "" {
 		blastArgs = diff
 	}
+	resp.CoverageNote = "Follows static call edges — does not trace reflection, runtime plugins, or cross-repo consumers"
+
 	h.tracker.Record("sense_blast", blastArgs,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 

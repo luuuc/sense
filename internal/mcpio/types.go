@@ -102,6 +102,7 @@ type GraphResponse struct {
 	Layers             []GraphLayer           `json:"layers,omitempty"`
 	Truncated          bool                   `json:"truncated,omitempty"`
 	TestCallerSummary  *TestCallerSummary     `json:"test_caller_summary,omitempty"`
+	CoverageNote       string                 `json:"coverage_note,omitempty"`
 	SenseMetrics       GraphMetrics           `json:"-"`
 	Freshness          *Freshness             `json:"freshness,omitempty"`
 	NextSteps          []NextStep             `json:"next_steps"`
@@ -274,9 +275,10 @@ type BlastResponse struct {
 	// Tier 3 — affected test count (detail omitted to keep response focused).
 	TestsAffectedCount int `json:"tests_affected_count"`
 
-	ProductionAffected int  `json:"production_affected"`
-	TestAffected       int  `json:"test_affected"`
-	Truncated          bool `json:"truncated,omitempty"`
+	ProductionAffected int    `json:"production_affected"`
+	TestAffected       int    `json:"test_affected"`
+	Truncated          bool   `json:"truncated,omitempty"`
+	CoverageNote       string `json:"coverage_note,omitempty"`
 
 	SenseMetrics BlastMetrics `json:"-"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`
@@ -531,6 +533,7 @@ type DeadCodeResponse struct {
 	TotalSymbols int               `json:"total_symbols"`
 	DeadCount    int               `json:"dead_count"`
 	Note         string            `json:"note,omitempty"`
+	CoverageNote string            `json:"coverage_note,omitempty"`
 	SenseMetrics DeadCodeMetrics   `json:"-"`
 	NextSteps    []NextStep        `json:"next_steps"`
 }
