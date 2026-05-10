@@ -136,15 +136,16 @@ func TestDeadCLIIntegration(t *testing.T) {
 		t.Fatal("expected dead symbols in smoke fixture, got none")
 	}
 
-	// Verify known-dead symbols are present.
+	// Verify known-alive symbols are absent.
 	deadSet := map[string]bool{}
 	for _, s := range rolled {
 		deadSet[s.Qualified] = true
 	}
 
-	// PaymentGateway.Refund is never called in the smoke fixture.
-	if !deadSet["smoke.PaymentGateway.Refund"] {
-		t.Error("expected smoke.PaymentGateway.Refund to be dead")
+	// In a library project (no main), public symbols like Refund are
+	// excluded as potential API surface — even if they're never called.
+	if deadSet["smoke.PaymentGateway.Refund"] {
+		t.Error("smoke.PaymentGateway.Refund should be excluded as library public API")
 	}
 
 	// Verify known-alive symbols are absent.
