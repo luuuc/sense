@@ -118,6 +118,84 @@ func TestBuildStatusResponseVersion(t *testing.T) {
 	}
 }
 
+func TestBuildStatusResponseDescription(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	if err := ts.handlers.adapter.WriteMeta(ctx, "profile_tier", "full"); err != nil {
+		t.Fatalf("WriteMeta profile_tier: %v", err)
+	}
+	if err := ts.handlers.adapter.WriteMeta(ctx, "project_description", "A test project"); err != nil {
+		t.Fatalf("WriteMeta: %v", err)
+	}
+
+	resp, err := buildStatusResponse(ctx, ts.handlers.db, ts.handlers.dir, nil)
+	if err != nil {
+		t.Fatalf("buildStatusResponse: %v", err)
+	}
+
+	if resp.Profile == nil {
+		t.Fatal("profile nil")
+	}
+	if resp.Profile.Description != "A test project" {
+		t.Errorf("profile.description = %q, want %q", resp.Profile.Description, "A test project")
+	}
+}
+
+func TestBuildStatusResponseDescriptionEmpty(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	if err := ts.handlers.adapter.WriteMeta(ctx, "profile_tier", "full"); err != nil {
+		t.Fatalf("WriteMeta profile_tier: %v", err)
+	}
+
+	resp, err := buildStatusResponse(ctx, ts.handlers.db, ts.handlers.dir, nil)
+	if err != nil {
+		t.Fatalf("buildStatusResponse: %v", err)
+	}
+
+	if resp.Profile == nil {
+		t.Fatal("profile nil")
+	}
+	if resp.Profile.Description != "" {
+		t.Errorf("profile.description = %q, want empty", resp.Profile.Description)
+	}
+}
+
+func TestBuildStatusResponseCountError(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	// Rename sense_symbols to trigger error on second count query
+	_, err := ts.handlers.db.ExecContext(ctx, "ALTER TABLE sense_symbols RENAME TO sense_symbols_gone")
+	if err != nil {
+		t.Fatalf("rename table: %v", err)
+	}
+
+	_, err = buildStatusResponse(ctx, ts.handlers.db, ts.handlers.dir, nil)
+	if err == nil {
+		t.Error("expected error from buildStatusResponse when sense_symbols is missing")
+	}
+}
+
+func TestBuildStatusResponseStructureError(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	// Drop sense_edges to trigger buildStructure error via queryHubSymbols
+	// (count queries for files/symbols/edges/embeddings run first and don't fail)
+	_, err := ts.handlers.db.ExecContext(ctx, "DROP TABLE sense_edges")
+	if err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	_, err = buildStatusResponse(ctx, ts.handlers.db, ts.handlers.dir, nil)
+	if err == nil {
+		t.Error("expected error from buildStatusResponse when sense_edges is missing")
+	}
+}
+
 func TestQueryLanguageBreakdown(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()

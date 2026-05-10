@@ -1340,6 +1340,7 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 			Symbols:         prof.Symbols,
 			PrimaryLanguage: prof.PrimaryLang,
 			DynamicLanguage: prof.DynamicLang,
+			Description:     readMeta(ctx, db, "project_description"),
 		}
 	}
 
