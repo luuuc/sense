@@ -49,6 +49,8 @@ Sense gives you structural understanding of the codebase — symbols, relationsh
 - **Debugging** → ` + "`sense_search`" + `
 - **Refactoring** → ` + "`sense_conventions`" + ` + ` + "`sense_graph`" + `
 
+**Verify list results:** For list outputs (dead code, blast radius, callers), verify a sample with grep before finalizing — static analysis may miss dynamic dispatch or cross-boundary usage.
+
 **When NOT to use Sense** (use grep instead):
 
 - Exact text/string search (regex, log messages, string literals)
