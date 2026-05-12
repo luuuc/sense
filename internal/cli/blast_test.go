@@ -97,7 +97,7 @@ func TestRunBlastHumanSuccess(t *testing.T) {
 		"Indirect callers (1):",
 		"WebhookJob#process  via OrdersController#create (2 hops)",
 		"Tests affected: 1",
-		"Total affected: 2",
+		"Affected: 2 symbols across",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q\ngot:\n%s", want, out)
@@ -391,8 +391,8 @@ func TestRunBlastDiffEmptyWhenNoIndexedFiles(t *testing.T) {
 	if code != ExitSuccess {
 		t.Fatalf("exit = %d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Total affected: 0") {
-		t.Errorf("expected Total affected: 0, got:\n%s", stdout.String())
+	if !strings.Contains(stdout.String(), "Affected: 0 symbols across 0 files") {
+		t.Errorf("expected 'Affected: 0 symbols across 0 files', got:\n%s", stdout.String())
 	}
 }
 
