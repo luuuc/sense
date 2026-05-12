@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/luuuc/sense/internal/sqlite"
@@ -73,6 +74,7 @@ func Generate(ctx context.Context, adapter *sqlite.Adapter, senseDir, repoRoot s
 		{"Project", func(_ context.Context, _ *sql.DB) (string, error) {
 			return desc, nil
 		}},
+		{"Quick Orientation", renderQuickOrientation},
 		{"Main Areas", renderMainAreas},
 		{"Key Abstractions", func(ctx context.Context, _ *sql.DB) (string, error) {
 			return renderKeyAbstractions(ctx, adapter)
@@ -613,8 +615,136 @@ func commonPrefix(a, b string) string {
 }
 
 func capitalize(s string) string {
-	if s == "" {
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError || size == 0 {
 		return s
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+	return string(unicode.ToUpper(r)) + s[size:]
+}
+
+func queryStrings(ctx context.Context, db *sql.DB, query string) []string {
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func renderQuickOrientation(ctx context.Context, db *sql.DB) (string, error) {
+	var b strings.Builder
+	if s := renderEntryPoints(ctx, db); s != "" {
+		b.WriteString(s)
+	}
+	if s := renderHubSymbols(ctx, db); s != "" {
+		b.WriteString(s)
+	}
+	if s := renderTestStructure(ctx, db); s != "" {
+		b.WriteString(s)
+	}
+	return b.String(), nil
+}
+
+func renderEntryPoints(ctx context.Context, db *sql.DB) string {
+	rows, err := db.QueryContext(ctx, `
+		WITH outgoing AS (
+			SELECT source_id, COUNT(*) AS cnt
+			FROM sense_edges WHERE kind IN ('calls', 'references')
+			GROUP BY source_id
+		),
+		incoming AS (
+			SELECT DISTINCT target_id FROM sense_edges
+			WHERE kind IN ('calls', 'references')
+		)
+		SELECT s.qualified, f.path, s.line_start
+		FROM sense_symbols s
+		JOIN sense_files f ON f.id = s.file_id
+		JOIN outgoing o ON o.source_id = s.id
+		WHERE s.id NOT IN (SELECT target_id FROM incoming)
+		  AND o.cnt >= 1
+		ORDER BY o.cnt DESC
+		LIMIT 5`)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = rows.Close() }()
+
+	var entries []string
+	for rows.Next() {
+		var qual, file string
+		var line int
+		if err := rows.Scan(&qual, &file, &line); err != nil {
+			continue
+		}
+		entries = append(entries, fmt.Sprintf("`%s` (%s:%d)", qual, file, line))
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("- Entry points: %s\n", strings.Join(entries, ", "))
+}
+
+func renderHubSymbols(ctx context.Context, db *sql.DB) string {
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.qualified, COUNT(e.id) as callers
+		FROM sense_symbols s
+		JOIN sense_edges e ON e.target_id = s.id
+		WHERE e.kind IN ('calls', 'references')
+		GROUP BY s.id
+		ORDER BY callers DESC
+		LIMIT 5`)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = rows.Close() }()
+
+	var hubs []string
+	for rows.Next() {
+		var qual string
+		var count int
+		if err := rows.Scan(&qual, &count); err != nil {
+			continue
+		}
+		hubs = append(hubs, fmt.Sprintf("`%s` (%d callers)", qual, count))
+	}
+	if len(hubs) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("- Hub symbols: %s\n", strings.Join(hubs, ", "))
+}
+
+func renderTestStructure(ctx context.Context, db *sql.DB) string {
+	testPaths := queryStrings(ctx, db, `
+		SELECT f.path FROM sense_files f
+		WHERE f.path LIKE '%_test.%'
+		   OR f.path LIKE '%.test.%'
+		   OR f.path LIKE '%/test/%'
+		   OR f.path LIKE '%/tests/%'
+		   OR f.path LIKE '%/spec/%'
+		ORDER BY f.path
+		LIMIT 100`)
+	if len(testPaths) == 0 {
+		return ""
+	}
+	dirs := map[string]int{}
+	for _, p := range testPaths {
+		dirs[filepath.Dir(p)]++
+	}
+	dirNames := make([]string, 0, len(dirs))
+	for d := range dirs {
+		dirNames = append(dirNames, d)
+	}
+	sort.Strings(dirNames)
+	if len(dirNames) > 3 {
+		dirNames = dirNames[:3]
+	}
+	return fmt.Sprintf("- Test structure: %d test files in %s\n", len(testPaths), strings.Join(dirNames, ", "))
 }
