@@ -16,23 +16,7 @@ const (
 const senseSection = `<!-- sense:start -->
 ## IMPORTANT: This project has a Sense index — you MUST use it
 
-Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
-
-**Your FIRST action in every conversation — before responding, before any tool call — MUST be:**
-
-1. Read ` + "`.sense/summary.md`" + ` — it is the cold-start map (project fingerprint, top namespaces, hub symbols, entry points, conventions)
-2. Load Sense tools: ` + "`ToolSearch(\"select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions,mcp__sense__sense_status\")`" + `
-3. Call ` + "`sense_status`" + ` to confirm index health
-4. Use Sense tools for ALL codebase understanding — exploration, research, architecture, callers, dependencies, search
-
-**You MUST NOT:**
-
-- Spawn deep-explore, Explore, or general-purpose agents for codebase questions — Sense answers them directly
-- Use grep/glob to find symbol callers, implementations, or dependencies
-- Skip Sense because tools are deferred — load them with ToolSearch first
-- Fall back to Read/Bash after a hook blocks another tool — the hook is telling you to use Sense
-
-**When to use each tool:**
+Sense tools are loaded at session start. Use them for ALL codebase understanding.
 
 | Question | Tool |
 |---|---|
@@ -41,21 +25,9 @@ Sense gives you structural understanding of the codebase — symbols, relationsh
 | What breaks if I change X? | ` + "`sense_blast symbol=\"X\"`" + ` |
 | What patterns does this project follow? | ` + "`sense_conventions`" + ` |
 
-**Workflows:**
+**You MUST NOT:** spawn Explore/deep-explore agents, use grep/glob for symbol lookup, or skip Sense because tools are deferred.
 
-- **Orientation** → read ` + "`.sense/summary.md`" + `, then ` + "`sense_search`" + ` with broad concepts + ` + "`sense_conventions`" + `
-- **Impact analysis** → ` + "`sense_blast`" + `
-- **Dependency tracing** → ` + "`sense_graph`" + `
-- **Debugging** → ` + "`sense_search`" + `
-- **Refactoring** → ` + "`sense_conventions`" + ` + ` + "`sense_graph`" + `
-
-**Verify list results:** For list outputs (dead code, blast radius, callers), verify a sample with grep before finalizing — static analysis may miss dynamic dispatch or cross-boundary usage.
-
-**When NOT to use Sense** (use grep instead):
-
-- Exact text/string search (regex, log messages, string literals)
-- Reading file contents → use Read
-- Editing code → Sense is read-only
+**Verify list results:** For list outputs (dead code, blast radius, callers), verify a sample with grep before finalizing.
 <!-- sense:end -->`
 
 // writeClaudeMD creates or updates the Sense section in CLAUDE.md.

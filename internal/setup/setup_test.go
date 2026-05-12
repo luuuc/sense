@@ -212,6 +212,27 @@ func TestClaudeMDAppendToExisting(t *testing.T) {
 	}
 }
 
+func TestClaudeMDAppendToDoubleNewline(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "CLAUDE.md")
+	if err := os.WriteFile(path, []byte("# My Project\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if strings.Contains(content, "\n\n\n") {
+		t.Error("should not add extra blank lines when content already ends with double newline")
+	}
+	if !strings.Contains(content, markerStart) {
+		t.Error("sense section not appended")
+	}
+}
+
 func TestClaudeMDMissingEndMarker(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "CLAUDE.md")
@@ -652,15 +673,60 @@ func TestResolveToolsDefaultsToClaudeCode(t *testing.T) {
 	}
 }
 
-func TestSenseSectionHasSummaryAsStep1(t *testing.T) {
-	if !strings.Contains(senseSection, "1. Read `.sense/summary.md`") {
-		t.Error("senseSection must include 'Read .sense/summary.md' as step 1 in the numbered cold-start instructions")
+func TestSenseSectionContent(t *testing.T) {
+	if !strings.Contains(senseSection, "sense_graph") {
+		t.Error("senseSection must include tool table with sense_graph")
+	}
+	if !strings.Contains(senseSection, "sense_search") {
+		t.Error("senseSection must include tool table with sense_search")
+	}
+	if !strings.Contains(senseSection, "sense_blast") {
+		t.Error("senseSection must include tool table with sense_blast")
+	}
+	if !strings.Contains(senseSection, "sense_conventions") {
+		t.Error("senseSection must include tool table with sense_conventions")
+	}
+	if !strings.Contains(senseSection, "MUST NOT") {
+		t.Error("senseSection must include MUST NOT rules")
+	}
+	if strings.Contains(senseSection, "FIRST action in every conversation") {
+		t.Error("senseSection must not include cold-start protocol (now handled by SessionStart hook)")
 	}
 	if strings.Contains(senseSection, "sense_orient") || strings.Contains(senseSection, "sense.orient") {
 		t.Error("senseSection must not reference the removed orient tool")
 	}
 	if strings.Contains(mcpio.ServerInstructions, "sense.orient") {
 		t.Error("ServerInstructions must not reference the removed orient tool")
+	}
+	lines := strings.Count(senseSection, "\n")
+	if lines > 20 {
+		t.Errorf("senseSection should be ≤20 lines (cold-start protocol removed), got %d", lines)
+	}
+}
+
+func TestClaudeMDShortenedIdempotent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "CLAUDE.md")
+	if err := os.WriteFile(path, []byte("# My Project\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if c := strings.Count(content, markerStart); c != 1 {
+		t.Errorf("expected 1 marker start after 3 runs, got %d", c)
+	}
+	if c := strings.Count(content, markerEnd); c != 1 {
+		t.Errorf("expected 1 marker end after 3 runs, got %d", c)
+	}
+	if !strings.HasPrefix(content, "# My Project\n") {
+		t.Error("user content before markers was lost")
 	}
 }
 
