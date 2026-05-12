@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/luuuc/sense/internal/model"
@@ -52,6 +53,7 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 			LineStart: sc.Symbol.LineStart,
 			LineEnd:   sc.Symbol.LineEnd,
 			Kind:      string(sc.Symbol.Kind),
+			Ref:       FormatRef(sc.File.Path, sc.Symbol.LineStart),
 		},
 	}
 
@@ -86,11 +88,13 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		if e.Edge.Line != nil {
 			coChanges = *e.Edge.Line
 		}
+		fp := fileRefOrNil(e.Target.FileID, files)
 		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
 			Symbol:    qualifiedOrName(e.Target),
-			File:      fileRefOrNil(e.Target.FileID, files),
+			File:      fp,
 			LineStart: e.Target.LineStart,
 			LineEnd:   e.Target.LineEnd,
+			Ref:       FormatRefPtr(fp, e.Target.LineStart),
 			CoChanges: coChanges,
 			Strength:  Confidence(e.Edge.Confidence),
 		})
@@ -107,11 +111,13 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		if e.Edge.Line != nil {
 			coChanges = *e.Edge.Line
 		}
+		fp := fileRefOrNil(e.Target.FileID, files)
 		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
 			Symbol:    qualifiedOrName(e.Target),
-			File:      fileRefOrNil(e.Target.FileID, files),
+			File:      fp,
 			LineStart: e.Target.LineStart,
 			LineEnd:   e.Target.LineEnd,
+			Ref:       FormatRefPtr(fp, e.Target.LineStart),
 			CoChanges: coChanges,
 			Strength:  Confidence(e.Edge.Confidence),
 		})
@@ -120,6 +126,8 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 	if len(testCallers) > 0 {
 		resp.TestCallerSummary = buildTestCallerSummary(testCallers)
 	}
+
+	resp.VerifyHint = graphVerifyHint(resp)
 
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) + len(testCallers) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
@@ -177,40 +185,50 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 		for _, e := range outbound {
 			switch e.Edge.Kind {
 			case model.EdgeCalls:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Calls = append(edges.Calls, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
-					File:       fileRefOrNil(e.Target.FileID, files),
+					File:       fp,
 					LineStart:  e.Target.LineStart,
 					LineEnd:    e.Target.LineEnd,
+					Ref:        FormatRefPtr(fp, e.Target.LineStart),
 					Confidence: Confidence(e.Edge.Confidence),
 				})
 			case model.EdgeInherits:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Inherits = append(edges.Inherits, InheritEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
-					File:      fileRefOrNil(e.Target.FileID, files),
+					File:      fp,
 					LineStart: e.Target.LineStart,
 					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			case model.EdgeComposes:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Composes = append(edges.Composes, ComposeEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
-					File:      fileRefOrNil(e.Target.FileID, files),
+					File:      fp,
 					LineStart: e.Target.LineStart,
 					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			case model.EdgeIncludes:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Includes = append(edges.Includes, IncludeEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
-					File:      fileRefOrNil(e.Target.FileID, files),
+					File:      fp,
 					LineStart: e.Target.LineStart,
 					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			case model.EdgeImports:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Imports = append(edges.Imports, ImportEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
-					File:      fileRefOrNil(e.Target.FileID, files),
+					File:      fp,
 					LineStart: e.Target.LineStart,
 					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			default:
 			}
@@ -221,33 +239,41 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 		for _, e := range inbound {
 			switch e.Edge.Kind {
 			case model.EdgeCalls:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.CalledBy = append(edges.CalledBy, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
-					File:       fileRefOrNil(e.Target.FileID, files),
+					File:       fp,
 					LineStart:  e.Target.LineStart,
 					LineEnd:    e.Target.LineEnd,
+					Ref:        FormatRefPtr(fp, e.Target.LineStart),
 					Confidence: Confidence(e.Edge.Confidence),
 				})
 			case model.EdgeComposes:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Composes = append(edges.Composes, ComposeEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
-					File:      fileRefOrNil(e.Target.FileID, files),
+					File:      fp,
 					LineStart: e.Target.LineStart,
 					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			case model.EdgeIncludes:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Includes = append(edges.Includes, IncludeEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
-					File:      fileRefOrNil(e.Target.FileID, files),
+					File:      fp,
 					LineStart: e.Target.LineStart,
 					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			case model.EdgeImports:
+				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Imports = append(edges.Imports, ImportEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
-					File:      fileRefOrNil(e.Target.FileID, files),
+					File:      fp,
 					LineStart: e.Target.LineStart,
 					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			case model.EdgeTests:
 				if path, ok := files(e.Target.FileID); ok {
@@ -371,6 +397,39 @@ func buildTestCallerSummary(callers []CallEdgeRef) *TestCallerSummary {
 		summary.Examples = examples[:3]
 	}
 	return summary
+}
+
+// FormatRef builds a copy-paste-ready "file:line" reference string.
+func FormatRef(file string, lineStart int) string {
+	if file == "" || lineStart == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", file, lineStart)
+}
+
+// FormatRefPtr is FormatRef for nullable file pointers (edge endpoints).
+func FormatRefPtr(file *string, lineStart int) string {
+	if file == nil {
+		return ""
+	}
+	return FormatRef(*file, lineStart)
+}
+
+func graphVerifyHint(resp GraphResponse) string {
+	if len(resp.Edges.CalledBy) > 0 {
+		return ""
+	}
+	kind := resp.Symbol.Kind
+	if kind != string(model.KindConstant) && kind != string(model.KindFunction) {
+		return ""
+	}
+	if len(resp.Edges.Calls) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Zero callers found in the index. Constants and short functions may have callers not captured by static analysis. Verify with: grep -rn '%s' .",
+		resp.Symbol.Name,
+	)
 }
 
 // IsTestPath returns true if the file path matches common test

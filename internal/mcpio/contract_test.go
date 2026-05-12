@@ -152,6 +152,7 @@ func fixtureGraphCheckoutService() GraphResponse {
 			LineStart: 12,
 			LineEnd:   85,
 			Kind:      "class",
+			Ref:       "app/services/checkout_service.rb:12",
 		},
 		Edges: GraphEdges{
 			Calls: []CallEdgeRef{
@@ -191,6 +192,7 @@ func fixtureGraphEmpty() GraphResponse {
 			LineStart: 1,
 			LineEnd:   3,
 			Kind:      "class",
+			Ref:       "app/models/orphan.rb:1",
 		},
 	}
 }

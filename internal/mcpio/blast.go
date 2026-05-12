@@ -42,6 +42,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 			File:        file,
 			LineStart:   c.LineStart,
 			LineEnd:     c.LineEnd,
+			Ref:         FormatRef(file, c.LineStart),
 			ViaTemporal: r.DirectTemporalIDs[c.ID],
 		}
 
@@ -57,12 +58,17 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 	for _, hop := range r.IndirectCallers {
 		if !hasTiers || r.SymbolTiers[hop.Symbol.ID] == blast.TierBreaks {
 			if tier1Count < tier1Cap {
+				var file string
+				if path, ok := files(hop.Symbol.FileID); ok {
+					file = path
+				}
 				resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
 					Symbol:      qualifiedOrName(hop.Symbol),
 					Via:         qualifiedOrName(hop.Via),
 					Hops:        hop.Hops,
 					LineStart:   hop.Symbol.LineStart,
 					LineEnd:     hop.Symbol.LineEnd,
+					Ref:         FormatRef(file, hop.Symbol.LineStart),
 					ViaTemporal: hop.ViaTemporal,
 				})
 				tier1Count++
@@ -77,6 +83,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 				File:      file,
 				LineStart: hop.Symbol.LineStart,
 				LineEnd:   hop.Symbol.LineEnd,
+				Ref:       FormatRef(file, hop.Symbol.LineStart),
 			})
 		}
 	}
@@ -86,7 +93,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedSubclasses = append(resp.AffectedSubclasses, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -95,7 +102,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedViaComposition = append(resp.AffectedViaComposition, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -104,7 +111,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -118,7 +125,13 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		Examples: examples,
 	}
 
+	resp.Note = "total_affected counts unique symbols in the blast radius — not source-level references or graph edges traversed."
+
 	segmentBlastCallers(&resp)
+
+	if r.TotalAffected == 0 && r.SubjectHasCallees {
+		resp.VerifyHint = "This symbol has outgoing calls but zero incoming callers in the index. This is unusual — verify with grep before concluding it's unused."
+	}
 
 	uniqueFiles := countUniqueBlastFiles(resp)
 	resp.SenseMetrics = BlastMetrics{
@@ -171,6 +184,7 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 				File:      file,
 				LineStart: c.LineStart,
 				LineEnd:   c.LineEnd,
+				Ref:       FormatRef(file, c.LineStart),
 			})
 		}
 		for _, hop := range r.IndirectCallers {
@@ -178,12 +192,17 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 				continue
 			}
 			indirectSeen[hop.Symbol.ID] = struct{}{}
+			var file string
+			if path, ok := files(hop.Symbol.FileID); ok {
+				file = path
+			}
 			resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
 				Symbol:    qualifiedOrName(hop.Symbol),
 				Via:       qualifiedOrName(hop.Via),
 				Hops:      hop.Hops,
 				LineStart: hop.Symbol.LineStart,
 				LineEnd:   hop.Symbol.LineEnd,
+				Ref:       FormatRef(file, hop.Symbol.LineStart),
 			})
 		}
 		for _, t := range r.AffectedTests {
@@ -197,6 +216,7 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 
 	resp.Risk = risk
 	resp.TotalAffected = len(resp.DirectCallers) + len(resp.IndirectCallers)
+	resp.Note = "total_affected counts unique symbols in the blast radius — not source-level references or graph edges traversed."
 	resp.RiskFactors = []string{
 		fmt.Sprintf("%d modified symbols; %d direct callers", len(results), len(resp.DirectCallers)),
 	}

@@ -524,6 +524,7 @@ func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.Symbo
 				File:       filePath,
 				LineStart:  e.Target.LineStart,
 				LineEnd:    e.Target.LineEnd,
+				Ref:        mcpio.FormatRefPtr(filePath, e.Target.LineStart),
 				Via:        via,
 				Confidence: mcpio.Confidence(DispatchInferredConfidence),
 			})
