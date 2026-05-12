@@ -70,7 +70,7 @@ const (
 // classifyTier maps an edge kind to its relevance tier.
 func classifyTier(edgeKind string) Tier {
 	switch edgeKind {
-	case "calls", "temporal", "member":
+	case "calls", "temporal", "member", "references":
 		return TierBreaks
 	case "tests":
 		return TierTests
@@ -147,6 +147,12 @@ type CallerHop struct {
 // module boundary") when the pitch's extension clause triggers.
 // AffectedTests is populated only when Options.IncludeTests is set;
 // the empty, non-nil default keeps JSON encoders stable.
+// EdgeSite records the file and line of an edge for snippet generation.
+type EdgeSite struct {
+	FileID *int64
+	Line   *int
+}
+
 type Result struct {
 	Symbol          model.Symbol
 	Risk            string
@@ -158,6 +164,13 @@ type Result struct {
 	// DirectTemporalIDs tracks which direct callers were reached via
 	// a temporal edge. Keyed by symbol ID.
 	DirectTemporalIDs map[int64]bool
+
+	// DirectEdgeSites records the edge file/line for each direct caller,
+	// keyed by symbol ID. Used for call-site snippet generation.
+	DirectEdgeSites map[int64]EdgeSite
+
+	EdgesTraversed    int
+	SubjectHasCallees bool
 
 	// Edge-kind groups: filtered views over the same nodes that appear
 	// in DirectCallers/IndirectCallers. A node appears in at most one
@@ -199,11 +212,14 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		return Result{}, fmt.Errorf("blast: load subject %d: %w", symbolIDs[0], err)
 	}
 
+	hasCallees := subjectHasCallees(ctx, db, symbolIDs)
+
 	visited := map[int64]int{}
 	predecessor := map[int64]int64{}
 	viaTemporal := map[int64]bool{}
 	visitedKind := map[int64]string{}
 	pathConf := map[int64]float64{}
+	edgeSites := map[int64]EdgeSite{}
 	frontier := make([]int64, 0, len(symbolIDs))
 	for _, id := range symbolIDs {
 		visited[id] = 0
@@ -232,6 +248,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 
 	truncated := false
+	edgesTraversed := 0
 	for hop := 1; hop <= opts.MaxHops; hop++ {
 		if err := ctx.Err(); err != nil {
 			return Result{}, fmt.Errorf("blast: cancelled at hop %d: %w", hop, err)
@@ -240,6 +257,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		if err != nil {
 			return Result{}, fmt.Errorf("blast: hop %d: %w", hop, err)
 		}
+		edgesTraversed += len(pairs)
 		var next []int64
 		for _, pair := range pairs {
 			if _, seen := visited[pair.source]; seen {
@@ -257,6 +275,8 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			predecessor[pair.source] = pair.target
 			visitedKind[pair.source] = pair.kind
 			pathConf[pair.source] = cumConf
+			edgeSites[pair.source] = EdgeSite{FileID: pair.fileID, Line: pair.line}
+
 			if pair.kind == "temporal" {
 				viaTemporal[pair.source] = true
 			}
@@ -379,6 +399,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	excluded := 0
 	directCallers := make([]model.Symbol, 0, len(directIDs))
 	directTemporalIDs := map[int64]bool{}
+	directEdgeSites := make(map[int64]EdgeSite, len(directIDs))
 	for _, id := range directIDs {
 		sym, ok := symbolsByID[id]
 		if !ok {
@@ -391,6 +412,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		directCallers = append(directCallers, sym)
 		if viaTemporal[id] {
 			directTemporalIDs[id] = true
+		}
+		if es, ok := edgeSites[id]; ok {
+			directEdgeSites[id] = es
 		}
 	}
 	sortSymbolsByID(directCallers)
@@ -484,7 +508,10 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		IndirectCallers:        indirectCallers,
 		AffectedTests:          affectedTests,
 		TotalAffected:          totalAffectedCount,
+		EdgesTraversed:         edgesTraversed,
+		SubjectHasCallees:      hasCallees,
 		DirectTemporalIDs:      directTemporalIDs,
+		DirectEdgeSites:        directEdgeSites,
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
@@ -501,6 +528,20 @@ type edgePair struct {
 	target     int64
 	kind       string
 	confidence float64
+	fileID     *int64
+	line       *int
+}
+
+func subjectHasCallees(ctx context.Context, db *sql.DB, symbolIDs []int64) bool {
+	placeholders := strings.Repeat("?,", len(symbolIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := `SELECT 1 FROM sense_edges WHERE source_id IN (` + placeholders + `) AND kind = 'calls' LIMIT 1`
+	args := make([]any, len(symbolIDs))
+	for i, id := range symbolIDs {
+		args[i] = id
+	}
+	var one int
+	return db.QueryRowContext(ctx, q, args...).Scan(&one) == nil
 }
 
 // expandFrontier runs the BFS hop query: "which symbols reference
@@ -526,10 +567,10 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64) ([]edgePa
 		placeholders := strings.Repeat("?,", len(batch))
 		placeholders = placeholders[:len(placeholders)-1]
 
-		q := `SELECT source_id, target_id, kind, confidence FROM sense_edges
+		q := `SELECT source_id, target_id, kind, confidence, file_id, line FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
-		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal', 'tests')
+		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal', 'tests', 'references')
 		        AND confidence >= 0.1`
 
 		args := make([]any, 0, len(batch))
@@ -543,7 +584,7 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64) ([]edgePa
 		}
 		for rows.Next() {
 			var p edgePair
-			if err := rows.Scan(&p.source, &p.target, &p.kind, &p.confidence); err != nil {
+			if err := rows.Scan(&p.source, &p.target, &p.kind, &p.confidence, &p.fileID, &p.line); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}

@@ -243,6 +243,9 @@ type handlers struct {
 	defaults     profile.Defaults
 	seenSymbols  map[int64]bool
 	seenMu       sync.Mutex
+
+	symbolCountOnce sync.Once
+	symbolCountVal  int
 }
 
 // ---------------------------------------------------------------
@@ -316,6 +319,9 @@ func graphTool() mcp.Tool {
 		mcp.WithString("domain",
 			mcp.Description("Filter dead code results to a path substring, e.g. 'services', 'models'. Only used when dead_code is true."),
 		),
+		mcp.WithNumber("context_lines",
+			mcp.Description("Lines of source context around each call site (default 2, 0 to suppress snippets)"),
+		),
 	)
 }
 
@@ -347,6 +353,9 @@ func blastTool() mcp.Tool {
 		),
 		mcp.WithBoolean("include_tests",
 			mcp.Description("Include affected test files in the results (default true)"),
+		),
+		mcp.WithNumber("context_lines",
+			mcp.Description("Lines of source context around each call site (default 2, 0 to suppress snippets)"),
 		),
 	)
 }
@@ -424,17 +433,23 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return p, ok
 	}
 
+	contextLines := req.GetInt("context_lines", mcpio.DefaultContextLines)
 	buildReq := mcpio.BuildGraphRequest{
 		Direction:      direction,
 		SegmentCallers: h.defaults.GraphSegmentCallers,
+		Snippets:       mcpio.NewSnippetReader(h.dir, contextLines),
 	}
-	resp := mcpio.BuildFullGraphResponse(gr, lookup, buildReq)
+	resp := mcpio.BuildFullGraphResponse(ctx, gr, lookup, buildReq)
 
 	if direction != model.DirectionCallees {
 		inferred := h.resolveDispatchCallers(ctx, &gr.Root, &resp, lookup)
 		if len(inferred) > 0 {
 			resp.DispatchInferred = inferred
 		}
+	}
+
+	if direction == model.DirectionCallees || direction == model.DirectionBoth {
+		enrichAlsoCalledBy(ctx, h.adapter, h.cachedSymbolCount(ctx), gr, &resp)
 	}
 
 	if len(resp.Edges.CalledBy) > compactEdgeKeepCount {
@@ -467,6 +482,66 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return nil, fmt.Errorf("sense_graph: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+const (
+	// Thresholds for also_called_by enrichment on graph callee queries.
+	// 5000: small enough that the batch caller query is fast; covers repos
+	// where reading all files is still feasible for an LLM.
+	alsoCalledBySymbolThreshold = 5000
+	// 20: suppress noisy hub symbols that everything calls.
+	alsoCalledByCallerCap = 20
+)
+
+func (h *handlers) cachedSymbolCount(ctx context.Context) int {
+	h.symbolCountOnce.Do(func() {
+		_ = h.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols`).Scan(&h.symbolCountVal)
+	})
+	return h.symbolCountVal
+}
+
+func enrichAlsoCalledBy(ctx context.Context, adapter *sqlite.Adapter, symbolCount int, gr *model.GraphResult, resp *mcpio.GraphResponse) {
+	if len(resp.Edges.Calls) == 0 {
+		return
+	}
+	if symbolCount >= alsoCalledBySymbolThreshold {
+		return
+	}
+
+	nameToID := make(map[string]int64)
+	for _, e := range gr.Root.Outbound {
+		if e.Edge.Kind == model.EdgeCalls || e.Edge.Kind == model.EdgeReferences {
+			nameToID[qualifiedOrNameRef(e.Target)] = e.Target.ID
+		}
+	}
+
+	var targetIDs []int64
+	for _, c := range resp.Edges.Calls {
+		if id, ok := nameToID[c.Symbol]; ok {
+			targetIDs = append(targetIDs, id)
+		}
+	}
+	if len(targetIDs) == 0 {
+		return
+	}
+
+	// Fetch cap+1 so we can detect overflow: if we get more than cap, suppress the callee.
+	callerMap, err := adapter.CallersOfTargets(ctx, targetIDs, gr.Root.Symbol.ID, alsoCalledByCallerCap+1)
+	if err != nil {
+		return
+	}
+
+	for i := range resp.Edges.Calls {
+		id, ok := nameToID[resp.Edges.Calls[i].Symbol]
+		if !ok {
+			continue
+		}
+		callers := callerMap[id]
+		if len(callers) == 0 || len(callers) > alsoCalledByCallerCap {
+			continue
+		}
+		resp.Edges.Calls[i].AlsoCalledBy = callers
+	}
 }
 
 func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.SymbolContext, resp *mcpio.GraphResponse, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {
@@ -524,6 +599,7 @@ func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.Symbo
 				File:       filePath,
 				LineStart:  e.Target.LineStart,
 				LineEnd:    e.Target.LineEnd,
+				Ref:        mcpio.FormatRefPtr(filePath, e.Target.LineStart),
 				Via:        via,
 				Confidence: mcpio.Confidence(DispatchInferredConfidence),
 			})
@@ -813,16 +889,19 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		IncludeTests:  includeTests,
 	}
 
+	contextLines := req.GetInt("context_lines", mcpio.DefaultContextLines)
+	snippets := mcpio.NewSnippetReader(h.dir, contextLines)
+
 	var resp mcpio.BlastResponse
 
 	if diff != "" {
-		resp2, err := h.blastDiff(ctx, diff, opts)
+		resp2, err := h.blastDiff(ctx, diff, opts, snippets)
 		if err != nil {
 			return nil, err
 		}
 		resp = resp2
 	} else {
-		resp2, err := h.blastSymbol(ctx, symbol, opts)
+		resp2, err := h.blastSymbol(ctx, symbol, opts, snippets)
 		if err != nil {
 			if re, ok := err.(*resolveError); ok {
 				return re.result, nil
@@ -1045,7 +1124,7 @@ func (h *handlers) disambiguationResult(ctx context.Context, symbol string, matc
 	return mcp.NewToolResultText(string(out))
 }
 
-func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options) (mcpio.BlastResponse, error) {
+func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
 	match, err := h.resolveSymbol(ctx, "sense_blast", symbol)
 	if err != nil {
 		return mcpio.BlastResponse{}, err
@@ -1075,10 +1154,10 @@ func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Op
 		return p, ok
 	}
 
-	return mcpio.BuildBlastResponse(blastResult, lookup), nil
+	return mcpio.BuildBlastResponse(ctx, blastResult, lookup, snippets), nil
 }
 
-func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options) (mcpio.BlastResponse, error) {
+func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
 	paths, err := cli.GitDiffFiles(ctx, h.dir, ref)
 	if err != nil {
 		return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: %w", err)
@@ -1111,7 +1190,7 @@ func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options
 		return p, ok
 	}
 
-	return mcpio.BuildDiffBlastResponse(ref, results, lookup), nil
+	return mcpio.BuildDiffBlastResponse(ctx, ref, results, lookup, snippets), nil
 }
 
 // ---------------------------------------------------------------

@@ -61,7 +61,8 @@ func (Extractor) Extensions() []string      { return []string{".py", ".pyi"} }
 func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
 func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
-	w := &walker{source: source, emit: emit}
+	w := &walker{source: source, emit: emit, pkgBindings: map[string]string{}}
+	w.collectModuleConstants(tree.RootNode())
 	return w.walk(tree.RootNode(), nil)
 }
 
@@ -72,6 +73,73 @@ func init() { extract.Register(Extractor{}) }
 type walker struct {
 	source []byte
 	emit   extract.Emitter
+	pkgBindings map[string]string // unqualified name → qualified name for module-level constants
+}
+
+// collectModuleConstants pre-scans the module for ALL_CAPS assignments
+// at the top level so function bodies can emit references edges.
+func (w *walker) collectModuleConstants(root *sitter.Node) {
+	if root == nil {
+		return
+	}
+	count := root.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		n := root.NamedChild(i)
+		if n == nil {
+			continue
+		}
+		// Assignments are wrapped in expression_statement at module level.
+		if n.Kind() == "expression_statement" {
+			if n.NamedChildCount() > 0 {
+				n = n.NamedChild(0)
+			}
+		}
+		if n == nil || n.Kind() != "assignment" {
+			continue
+		}
+		lhs := n.ChildByFieldName("left")
+		if lhs == nil || lhs.Kind() != "identifier" {
+			continue
+		}
+		name := extract.Text(lhs, w.source)
+		if isAllCaps(name) {
+			w.pkgBindings[name] = name
+		}
+	}
+}
+
+// emitConstRefs walks a function body for identifiers that resolve to
+// module-level constants and emits references edges.
+func (w *walker) emitConstRefs(body *sitter.Node, sourceQualified string, params map[string]bool) error {
+	if body == nil || len(w.pkgBindings) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	return extract.WalkNamedDescendants(body, "identifier", func(id *sitter.Node) error {
+		name := extract.Text(id, w.source)
+		if name == "" || params[name] || seen[name] {
+			return nil
+		}
+		targetQ, ok := w.pkgBindings[name]
+		if !ok {
+			return nil
+		}
+		// Skip call targets: parent is `call` and this is the `function` field.
+		if p := id.Parent(); p != nil && p.Kind() == "call" {
+			if fn := p.ChildByFieldName("function"); fn != nil && fn.Id() == id.Id() {
+				return nil
+			}
+		}
+		seen[name] = true
+		line := extract.Line(id.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: sourceQualified,
+			TargetQualified: targetQ,
+			Kind:            model.EdgeReferences,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		})
+	})
 }
 
 // walk visits node and its children under the given class-name scope.
@@ -238,9 +306,15 @@ func (w *walker) emitFunctionAndWalkBody(n *sitter.Node, scope []string, decorat
 		}
 	}
 
-	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call", func(c *sitter.Node) error {
+	body := n.ChildByFieldName("body")
+	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
 		return w.emitCall(c, qualified)
-	})
+	}); err != nil {
+		return err
+	}
+
+	params := collectParams(n, w.source)
+	return w.emitConstRefs(body, qualified, params)
 }
 
 // emitCall produces one calls edge. Identifier / attribute callees
@@ -357,6 +431,35 @@ func (w *walker) handleAssignment(n *sitter.Node, scope []string) error {
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
 	})
+}
+
+// collectParams returns parameter names from a function_definition node.
+func collectParams(funcNode *sitter.Node, source []byte) map[string]bool {
+	out := map[string]bool{}
+	params := funcNode.ChildByFieldName("parameters")
+	if params == nil {
+		return out
+	}
+	count := params.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		p := params.NamedChild(i)
+		if p == nil {
+			continue
+		}
+		switch p.Kind() {
+		case "identifier":
+			out[extract.Text(p, source)] = true
+		case "default_parameter", "typed_parameter", "typed_default_parameter":
+			if name := p.ChildByFieldName("name"); name != nil {
+				out[extract.Text(name, source)] = true
+			}
+		case "list_splat_pattern", "dictionary_splat_pattern":
+			if p.NamedChildCount() > 0 {
+				out[extract.Text(p.NamedChild(0), source)] = true
+			}
+		}
+	}
+	return out
 }
 
 // isAllCaps tests the Python "constant" convention: non-empty, every

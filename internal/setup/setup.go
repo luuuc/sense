@@ -121,6 +121,14 @@ func configureClaudeCode(root string) (*ToolResult, error) {
 		tr.Files = append(tr.Files, fmt.Sprintf("%d skill files in .claude/skills/", n))
 	}
 
+	na, err := writeAgents(root)
+	if err != nil {
+		return nil, fmt.Errorf("write .claude/agents: %w", err)
+	}
+	if na > 0 {
+		tr.Files = append(tr.Files, fmt.Sprintf("%d agent files in .claude/agents/", na))
+	}
+
 	return tr, nil
 }
 

@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -13,6 +14,8 @@ import (
 // BlastCaller.File will be "" under this lookup, which matches the
 // documented "lookup miss → empty string" contract.
 var noFiles FileLookup = func(int64) (string, bool) { return "", false }
+
+func int64p(v int64) *int64 { return &v }
 
 // TestBuildDiffBlastResponseMaxRisk pins the conservative risk
 // aggregation: if any modified subject classifies as "high", the
@@ -36,7 +39,7 @@ func TestBuildDiffBlastResponseMaxRisk(t *testing.T) {
 			for i, r := range tc.risks {
 				results[i] = blast.Result{Risk: r}
 			}
-			resp := BuildDiffBlastResponse("HEAD~1", results, noFiles)
+			resp := BuildDiffBlastResponse(context.Background(), "HEAD~1", results, noFiles, nil)
 			if resp.Risk != tc.want {
 				t.Errorf("Risk = %q, want %q", resp.Risk, tc.want)
 			}
@@ -75,7 +78,7 @@ func TestBuildDiffBlastResponseDedupCallers(t *testing.T) {
 		},
 	}
 
-	resp := BuildDiffBlastResponse("HEAD~1", results, noFiles)
+	resp := BuildDiffBlastResponse(context.Background(), "HEAD~1", results, noFiles, nil)
 	if len(resp.DirectCallers) != 1 {
 		t.Errorf("DirectCallers = %d, want 1 (shared caller appears in both subjects)",
 			len(resp.DirectCallers))
@@ -124,7 +127,7 @@ func TestBuildBlastResponseViaTemporal(t *testing.T) {
 		return p, ok
 	}
 
-	resp := BuildBlastResponse(r, files)
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
 
 	if len(resp.DirectCallers) != 1 {
 		t.Fatalf("DirectCallers = %d, want 1", len(resp.DirectCallers))
@@ -168,7 +171,7 @@ func TestBuildBlastResponseTier1Cap(t *testing.T) {
 		SymbolTiers:   tiers,
 	}
 
-	resp := BuildBlastResponse(r, noFiles)
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
 
 	if len(resp.DirectCallers) != 200 {
 		t.Errorf("DirectCallers = %d, want 200 (tier1 cap)", len(resp.DirectCallers))
@@ -205,7 +208,7 @@ func TestBuildBlastResponseTierPartitioning(t *testing.T) {
 		SymbolTiers:   tiers,
 	}
 
-	resp := BuildBlastResponse(r, noFiles)
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
 
 	if len(resp.DirectCallers) != 3 {
 		t.Errorf("DirectCallers = %d, want 3 (Tier 1 only)", len(resp.DirectCallers))
@@ -251,7 +254,7 @@ func TestBuildBlastResponseEdgeKindGroups(t *testing.T) {
 		return p, ok
 	}
 
-	resp := BuildBlastResponse(r, files)
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
 
 	if len(resp.AffectedSubclasses) != 1 || resp.AffectedSubclasses[0].Symbol != "SubA" {
 		t.Errorf("AffectedSubclasses = %+v, want [SubA]", resp.AffectedSubclasses)
@@ -302,7 +305,7 @@ func TestBuildBlastResponseIndirectTier2(t *testing.T) {
 		return p, ok
 	}
 
-	resp := BuildBlastResponse(r, files)
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
 
 	if len(resp.IndirectCallers) != 1 || resp.IndirectCallers[0].Symbol != "Tier1Indirect" {
 		t.Errorf("IndirectCallers = %+v, want [Tier1Indirect] (tier-1 only)", resp.IndirectCallers)
@@ -335,7 +338,7 @@ func TestBuildBlastResponseTier2ExamplesCap(t *testing.T) {
 		SymbolTiers:   tiers,
 	}
 
-	resp := BuildBlastResponse(r, noFiles)
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
 
 	if len(resp.DirectCallers) != 0 {
 		t.Errorf("DirectCallers = %d, want 0 (all tier-2)", len(resp.DirectCallers))
@@ -389,12 +392,461 @@ func TestBuildBlastResponseSegmentTestFiles(t *testing.T) {
 		return p, ok
 	}
 
-	resp := BuildBlastResponse(r, files)
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
 
 	if resp.ProductionAffected != 1 {
 		t.Errorf("ProductionAffected = %d, want 1 (only lib/prod.rb)", resp.ProductionAffected)
 	}
 	if resp.TestAffected != 5 {
 		t.Errorf("TestAffected = %d, want 5 (test_helper + sub_test + comp_spec + incl_spec + affected_test)", resp.TestAffected)
+	}
+}
+
+func TestBlastResponseRefField(t *testing.T) {
+	r := blast.Result{
+		Symbol:      model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:        blast.RiskLow,
+		RiskReasons: []string{"2 callers"},
+		DirectCallers: []model.Symbol{
+			{ID: 1, Qualified: "DirectCaller", FileID: 10, LineStart: 25},
+			{ID: 2, Qualified: "NoFileCaller", FileID: 999, LineStart: 10},
+		},
+		IndirectCallers: []blast.CallerHop{
+			{
+				Symbol: model.Symbol{ID: 3, Qualified: "IndirectCaller", FileID: 11, LineStart: 42},
+				Via:    model.Symbol{ID: 1, Qualified: "DirectCaller"},
+				Hops:   2,
+			},
+		},
+		AffectedTests: []string{},
+		TotalAffected: 3,
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{10: "lib/caller.rb", 11: "lib/indirect.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	// DirectCallers — with file
+	if resp.DirectCallers[0].Ref != "lib/caller.rb:25" {
+		t.Errorf("DirectCallers[0].Ref = %q, want %q", resp.DirectCallers[0].Ref, "lib/caller.rb:25")
+	}
+	// DirectCallers — no file (lookup miss)
+	if resp.DirectCallers[1].Ref != "" {
+		t.Errorf("DirectCallers[1].Ref = %q, want empty (no file)", resp.DirectCallers[1].Ref)
+	}
+
+	// IndirectCallers
+	if resp.IndirectCallers[0].Ref != "lib/indirect.rb:42" {
+		t.Errorf("IndirectCallers[0].Ref = %q, want %q", resp.IndirectCallers[0].Ref, "lib/indirect.rb:42")
+	}
+}
+
+func TestBlastDiffResponseRefField(t *testing.T) {
+	sharedCaller := model.Symbol{ID: 42, Qualified: "Caller", FileID: 7, LineStart: 15}
+	results := []blast.Result{
+		{
+			Symbol:        model.Symbol{ID: 1, Qualified: "A"},
+			Risk:          blast.RiskLow,
+			DirectCallers: []model.Symbol{sharedCaller},
+			AffectedTests: []string{},
+		},
+	}
+
+	files := func(id int64) (string, bool) {
+		if id == 7 {
+			return "lib/caller.rb", true
+		}
+		return "", false
+	}
+
+	resp := BuildDiffBlastResponse(context.Background(), "HEAD~1", results, files, nil)
+
+	if len(resp.DirectCallers) != 1 {
+		t.Fatalf("DirectCallers = %d, want 1", len(resp.DirectCallers))
+	}
+	if resp.DirectCallers[0].Ref != "lib/caller.rb:15" {
+		t.Errorf("DirectCallers[0].Ref = %q, want %q", resp.DirectCallers[0].Ref, "lib/caller.rb:15")
+	}
+}
+
+func TestBlastVerifyHintZeroAffectedWithCallees(t *testing.T) {
+	r := blast.Result{
+		Symbol:            model.Symbol{ID: 1, Qualified: "Unused"},
+		Risk:              blast.RiskLow,
+		RiskReasons:       []string{"0 direct callers"},
+		DirectCallers:     []model.Symbol{},
+		IndirectCallers:   []blast.CallerHop{},
+		AffectedTests:     []string{},
+		TotalAffected:     0,
+		SubjectHasCallees: true,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
+
+	if resp.VerifyHint == "" {
+		t.Fatal("VerifyHint should be set when TotalAffected=0 and SubjectHasCallees=true")
+	}
+}
+
+func TestBlastVerifyHintNotEmittedWithCallers(t *testing.T) {
+	r := blast.Result{
+		Symbol:            model.Symbol{ID: 1, Qualified: "Used"},
+		Risk:              blast.RiskLow,
+		RiskReasons:       []string{"1 direct caller"},
+		DirectCallers:     []model.Symbol{{ID: 2, Qualified: "Caller", FileID: 10}},
+		IndirectCallers:   []blast.CallerHop{},
+		AffectedTests:     []string{},
+		TotalAffected:     1,
+		SubjectHasCallees: true,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
+
+	if resp.VerifyHint != "" {
+		t.Errorf("VerifyHint should be empty when TotalAffected > 0, got %q", resp.VerifyHint)
+	}
+}
+
+func TestBuildBlastResponseAffectedSymbolsAndFiles(t *testing.T) {
+	r := blast.Result{
+		Symbol:      model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:        blast.RiskLow,
+		RiskReasons: []string{"3 callers"},
+		DirectCallers: []model.Symbol{
+			{ID: 1, Qualified: "CallerA", FileID: 10, LineStart: 5},
+			{ID: 2, Qualified: "CallerB", FileID: 11, LineStart: 10},
+		},
+		IndirectCallers: []blast.CallerHop{
+			{
+				Symbol: model.Symbol{ID: 3, Qualified: "IndirectC", FileID: 10, LineStart: 20},
+				Via:    model.Symbol{ID: 1, Qualified: "CallerA"},
+				Hops:   2,
+			},
+		},
+		AffectedTests:  []string{"test/subject_test.rb"},
+		TotalAffected:  3,
+		EdgesTraversed: 47,
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{10: "lib/a.rb", 11: "lib/b.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	if resp.AffectedSymbols != 3 {
+		t.Errorf("AffectedSymbols = %d, want 3", resp.AffectedSymbols)
+	}
+	if resp.AffectedSymbols != resp.TotalAffected {
+		t.Errorf("AffectedSymbols (%d) != TotalAffected (%d), should be aliases",
+			resp.AffectedSymbols, resp.TotalAffected)
+	}
+	// lib/a.rb, lib/b.rb, test/subject_test.rb = 3 unique files
+	if resp.AffectedFiles != 3 {
+		t.Errorf("AffectedFiles = %d, want 3 (2 caller files + 1 test)", resp.AffectedFiles)
+	}
+	if resp.GraphEdgesTraversed != 47 {
+		t.Errorf("GraphEdgesTraversed = %d, want 47", resp.GraphEdgesTraversed)
+	}
+}
+
+func TestBuildDiffBlastResponseAffectedSymbolsAndFiles(t *testing.T) {
+	results := []blast.Result{
+		{
+			Symbol:         model.Symbol{ID: 1, Qualified: "A"},
+			Risk:           blast.RiskLow,
+			DirectCallers:  []model.Symbol{{ID: 10, Qualified: "C1", FileID: 100}},
+			AffectedTests:  []string{"test/a_test.rb"},
+			EdgesTraversed: 20,
+		},
+		{
+			Symbol:         model.Symbol{ID: 2, Qualified: "B"},
+			Risk:           blast.RiskLow,
+			DirectCallers:  []model.Symbol{{ID: 11, Qualified: "C2", FileID: 101}},
+			AffectedTests:  []string{"test/b_test.rb"},
+			EdgesTraversed: 15,
+		},
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{100: "lib/c1.rb", 101: "lib/c2.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildDiffBlastResponse(context.Background(), "HEAD~1", results, files, nil)
+
+	if resp.AffectedSymbols != 2 {
+		t.Errorf("AffectedSymbols = %d, want 2", resp.AffectedSymbols)
+	}
+	if resp.AffectedSymbols != resp.TotalAffected {
+		t.Errorf("AffectedSymbols (%d) != TotalAffected (%d)", resp.AffectedSymbols, resp.TotalAffected)
+	}
+	// lib/c1.rb, lib/c2.rb, test/a_test.rb, test/b_test.rb = 4
+	if resp.AffectedFiles != 4 {
+		t.Errorf("AffectedFiles = %d, want 4", resp.AffectedFiles)
+	}
+	if resp.GraphEdgesTraversed != 35 {
+		t.Errorf("GraphEdgesTraversed = %d, want 35 (20+15)", resp.GraphEdgesTraversed)
+	}
+}
+
+func TestBuildBlastResponseZeroEdges(t *testing.T) {
+	r := blast.Result{
+		Symbol:         model.Symbol{ID: 1, Qualified: "Isolated"},
+		Risk:           blast.RiskLow,
+		RiskReasons:    []string{"0 direct callers"},
+		DirectCallers:  []model.Symbol{},
+		AffectedTests:  []string{},
+		TotalAffected:  0,
+		EdgesTraversed: 0,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
+
+	if resp.AffectedSymbols != 0 {
+		t.Errorf("AffectedSymbols = %d, want 0", resp.AffectedSymbols)
+	}
+	if resp.AffectedFiles != 0 {
+		t.Errorf("AffectedFiles = %d, want 0", resp.AffectedFiles)
+	}
+	if resp.GraphEdgesTraversed != 0 {
+		t.Errorf("GraphEdgesTraversed = %d, want 0", resp.GraphEdgesTraversed)
+	}
+}
+
+func TestBlastVerifyHintNotEmittedLeafSymbol(t *testing.T) {
+	r := blast.Result{
+		Symbol:            model.Symbol{ID: 1, Qualified: "Leaf"},
+		Risk:              blast.RiskLow,
+		RiskReasons:       []string{"0 direct callers"},
+		DirectCallers:     []model.Symbol{},
+		IndirectCallers:   []blast.CallerHop{},
+		AffectedTests:     []string{},
+		TotalAffected:     0,
+		SubjectHasCallees: false,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
+
+	if resp.VerifyHint != "" {
+		t.Errorf("VerifyHint should be empty for leaf symbol, got %q", resp.VerifyHint)
+	}
+}
+
+func TestBuildBlastResponseCallSiteSnippets(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "package main\n\nfunc caller() {\n\ttarget()\n\treturn\n}\n")
+
+	line := 4
+	filePaths := map[int64]string{
+		1: "target.go",
+		2: "caller.go",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	r := blast.Result{
+		Symbol: model.Symbol{Name: "target", Qualified: "target"},
+		Risk:   blast.RiskLow,
+		DirectCallers: []model.Symbol{
+			{ID: 10, Name: "caller", Qualified: "caller", FileID: 2, LineStart: 3, LineEnd: 6},
+		},
+		DirectEdgeSites: map[int64]blast.EdgeSite{
+			10: {FileID: int64p(2), Line: &line},
+		},
+		AffectedTests: []string{},
+		RiskReasons:   []string{},
+	}
+
+	snippets := NewSnippetReader(dir, 2)
+	resp := BuildBlastResponse(context.Background(), r, files, snippets)
+
+	if len(resp.DirectCallers) != 1 {
+		t.Fatalf("DirectCallers = %d, want 1", len(resp.DirectCallers))
+	}
+	c := resp.DirectCallers[0]
+	if c.CallSite == nil {
+		t.Fatal("CallSite is nil, want non-nil")
+	}
+	if c.CallSite.Line != 4 {
+		t.Errorf("CallSite.Line = %d, want 4", c.CallSite.Line)
+	}
+	lines := splitLines(c.CallSite.Snippet)
+	if len(lines) != 5 {
+		t.Errorf("snippet lines = %d, want 5; snippet:\n%s", len(lines), c.CallSite.Snippet)
+	}
+}
+
+func TestBuildBlastResponseCallSiteZeroSuppresses(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "package main\n\nfunc caller() {\n\ttarget()\n}\n")
+
+	line := 4
+	files := func(id int64) (string, bool) {
+		if id == 2 {
+			return "caller.go", true
+		}
+		return "", false
+	}
+
+	r := blast.Result{
+		Symbol: model.Symbol{Name: "target", Qualified: "target"},
+		Risk:   blast.RiskLow,
+		DirectCallers: []model.Symbol{
+			{ID: 10, Name: "caller", Qualified: "caller", FileID: 2, LineStart: 3},
+		},
+		DirectEdgeSites: map[int64]blast.EdgeSite{
+			10: {FileID: int64p(2), Line: &line},
+		},
+		AffectedTests: []string{},
+		RiskReasons:   []string{},
+	}
+
+	snippets := NewSnippetReader(dir, 0)
+	resp := BuildBlastResponse(context.Background(), r, files, snippets)
+
+	if resp.DirectCallers[0].CallSite != nil {
+		t.Error("CallSite should be nil when context_lines=0")
+	}
+}
+
+func TestBuildBlastResponseCallSiteMissingEdgeSite(t *testing.T) {
+	files := func(_ int64) (string, bool) { return "x.go", true }
+
+	r := blast.Result{
+		Symbol: model.Symbol{Name: "target", Qualified: "target"},
+		Risk:   blast.RiskLow,
+		DirectCallers: []model.Symbol{
+			{ID: 10, Name: "caller", Qualified: "caller", FileID: 1, LineStart: 3},
+		},
+		AffectedTests: []string{},
+		RiskReasons:   []string{},
+	}
+
+	snippets := NewSnippetReader(t.TempDir(), 2)
+	resp := BuildBlastResponse(context.Background(), r, files, snippets)
+
+	if resp.DirectCallers[0].CallSite != nil {
+		t.Error("CallSite should be nil when no edge site exists")
+	}
+}
+
+func TestBuildBlastResponseCallSiteEdgeFileMissing(t *testing.T) {
+	noFiles := func(int64) (string, bool) { return "", false }
+
+	line := 4
+	r := blast.Result{
+		Symbol: model.Symbol{Name: "target", Qualified: "target"},
+		Risk:   blast.RiskLow,
+		DirectCallers: []model.Symbol{
+			{ID: 10, Name: "caller", Qualified: "caller", FileID: 2, LineStart: 3},
+		},
+		DirectEdgeSites: map[int64]blast.EdgeSite{
+			10: {FileID: int64p(99), Line: &line},
+		},
+		AffectedTests: []string{},
+		RiskReasons:   []string{},
+	}
+
+	snippets := NewSnippetReader(t.TempDir(), 2)
+	resp := BuildBlastResponse(context.Background(), r, noFiles, snippets)
+
+	if resp.DirectCallers[0].CallSite != nil {
+		t.Error("CallSite should be nil when edge file not in lookup")
+	}
+}
+
+func TestBuildDiffBlastResponseCallSiteSnippets(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "package main\n\nfunc caller() {\n\ttarget()\n\treturn\n}\n")
+
+	line := 4
+	filePaths := map[int64]string{
+		1: "target.go",
+		2: "caller.go",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	results := []blast.Result{
+		{
+			Symbol: model.Symbol{ID: 1, Name: "target", Qualified: "target"},
+			Risk:   blast.RiskLow,
+			DirectCallers: []model.Symbol{
+				{ID: 10, Name: "caller", Qualified: "caller", FileID: 2, LineStart: 3, LineEnd: 6},
+			},
+			DirectEdgeSites: map[int64]blast.EdgeSite{
+				10: {FileID: int64p(2), Line: &line},
+			},
+			AffectedTests: []string{},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 2)
+	resp := BuildDiffBlastResponse(context.Background(), "HEAD~1", results, files, snippets)
+
+	if len(resp.DirectCallers) != 1 {
+		t.Fatalf("DirectCallers = %d, want 1", len(resp.DirectCallers))
+	}
+	c := resp.DirectCallers[0]
+	if c.CallSite == nil {
+		t.Fatal("CallSite is nil in diff blast, want non-nil")
+	}
+	if c.CallSite.Line != 4 {
+		t.Errorf("CallSite.Line = %d, want 4", c.CallSite.Line)
+	}
+}
+
+func TestBuildBlastResponseSnippetsTruncated(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n")
+
+	files := func(_ int64) (string, bool) { return "caller.go", true }
+
+	var callers []model.Symbol
+	edgeSites := map[int64]blast.EdgeSite{}
+	for i := 0; i < 15; i++ {
+		line := i + 1
+		callers = append(callers, model.Symbol{
+			ID: int64(i + 10), Name: "c", Qualified: "c", FileID: 1, LineStart: line,
+		})
+		edgeSites[int64(i+10)] = blast.EdgeSite{FileID: int64p(1), Line: &line}
+	}
+
+	r := blast.Result{
+		Symbol:          model.Symbol{Name: "target", Qualified: "target"},
+		Risk:            blast.RiskLow,
+		DirectCallers:   callers,
+		DirectEdgeSites: edgeSites,
+		AffectedTests:   []string{},
+		RiskReasons:     []string{},
+	}
+
+	snippets := NewSnippetReader(dir, 1)
+	resp := BuildBlastResponse(context.Background(), r, files, snippets)
+
+	if !resp.SnippetsTruncated {
+		t.Error("SnippetsTruncated should be true")
+	}
+
+	withSnippet := 0
+	for _, c := range resp.DirectCallers {
+		if c.CallSite != nil {
+			withSnippet++
+		}
+	}
+	if withSnippet != SnippetCap {
+		t.Errorf("snippets with content = %d, want %d", withSnippet, SnippetCap)
 	}
 }

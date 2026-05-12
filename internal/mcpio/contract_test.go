@@ -152,6 +152,7 @@ func fixtureGraphCheckoutService() GraphResponse {
 			LineStart: 12,
 			LineEnd:   85,
 			Kind:      "class",
+			Ref:       "app/services/checkout_service.rb:12",
 		},
 		Edges: GraphEdges{
 			Calls: []CallEdgeRef{
@@ -191,6 +192,7 @@ func fixtureGraphEmpty() GraphResponse {
 			LineStart: 1,
 			LineEnd:   3,
 			Kind:      "class",
+			Ref:       "app/models/orphan.rb:1",
 		},
 	}
 }
@@ -252,7 +254,10 @@ func fixtureBlastUserEmailVerified() BlastResponse {
 			"test/controllers/admin/users_controller_test.rb",
 			"test/controllers/orders_controller_test.rb",
 		},
-		TotalAffected:      11,
+		AffectedSymbols:     11,
+		AffectedFiles:       10,
+		GraphEdgesTraversed: 91,
+		TotalAffected:       11,
 		ProductionAffected: 5,
 		TestAffected:       6,
 		SenseMetrics: BlastMetrics{
