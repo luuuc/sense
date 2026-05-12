@@ -10,26 +10,14 @@ type messageResponse struct {
 	Message string `json:"message,omitempty"`
 }
 
-type denyResponse struct {
-	Output denyOutput `json:"hookSpecificOutput"`
+type nudgeResponse struct {
+	AdditionalContext string `json:"additionalContext,omitempty"`
+	SystemMessage     string `json:"systemMessage,omitempty"`
 }
 
-type denyOutput struct {
-	Event    string `json:"hookEventName"`
-	Decision string `json:"permissionDecision"`
-	Reason   string `json:"permissionDecisionReason"`
-}
-
-func deny(reason string) *denyResponse {
-	return &denyResponse{
-		Output: denyOutput{
-			Event:    "PreToolUse",
-			Decision: "deny",
-			Reason:   reason,
-		},
+func nudge(tip, context string) *nudgeResponse {
+	return &nudgeResponse{
+		SystemMessage:     tip,
+		AdditionalContext: context,
 	}
-}
-
-func advise(msg string) *hookResponse {
-	return &hookResponse{AdditionalContext: msg}
 }

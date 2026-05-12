@@ -1,9 +1,12 @@
 package hook
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,7 +25,7 @@ func formatScanAge(lastScan string, now time.Time) string {
 	return fmt.Sprintf("%s ago", age)
 }
 
-func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.Adapter, _ string) (any, error) {
+func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.Adapter, dir string) (any, error) {
 	db := adapter.DB()
 
 	var symbolCount, edgeCount int
@@ -67,6 +70,16 @@ func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.
 	fmt.Fprintf(&sb, "Sense index: %d symbols, %d edges, %d languages (%s). Last scan: %s.\n", symbolCount, edgeCount, len(langs), strings.Join(langs, ", "), lastScan)
 	fmt.Fprintf(&sb, "REQUIRED: Your FIRST tool call MUST be %s to load Sense tools.\n", toolSearchCmd)
 	sb.WriteString("Use Sense MCP tools for ALL codebase understanding — do not use grep, glob, Read, Bash, or agents before loading Sense.")
+
+	summaryPath := filepath.Join(dir, ".sense", "summary.md")
+	if summary, err := os.ReadFile(summaryPath); err == nil && len(bytes.TrimSpace(summary)) > 0 {
+		sb.WriteString("\n\n--- Codebase Summary ---\n")
+		sb.Write(summary)
+		if !bytes.HasSuffix(summary, []byte("\n")) {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString("--- End Summary ---")
+	}
 
 	return &messageResponse{Message: sb.String()}, nil
 }
