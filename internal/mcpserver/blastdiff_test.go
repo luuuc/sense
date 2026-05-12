@@ -124,7 +124,7 @@ func TestBlastDiffEmptyDiff(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	resp, err := h.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1})
+	resp, err := h.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1}, nil)
 	if err != nil {
 		t.Fatalf("blastDiff empty diff: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestBlastDiffSingleChange(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	resp, err := h.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1})
+	resp, err := h.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1}, nil)
 	if err != nil {
 		t.Fatalf("blastDiff single change: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestBlastDiffInvalidRef(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	_, err := h.blastDiff(ctx, "invalid-ref-12345", blast.Options{MaxHops: 1})
+	_, err := h.blastDiff(ctx, "invalid-ref-12345", blast.Options{MaxHops: 1}, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid git ref")
 	}
@@ -183,7 +183,7 @@ func TestBlastDiffNonGitDirectory(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
-	_, err := ts.handlers.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1})
+	_, err := ts.handlers.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1}, nil)
 	if err == nil {
 		t.Fatal("expected error for non-git directory")
 	}
@@ -246,7 +246,7 @@ func TestBlastDiffMultipleFiles(t *testing.T) {
 		t.Fatalf("git add: %v\n%s", err, out)
 	}
 
-	resp, err := h.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1})
+	resp, err := h.blastDiff(ctx, "HEAD", blast.Options{MaxHops: 1}, nil)
 	if err != nil {
 		t.Fatalf("blastDiff multiple files: %v", err)
 	}

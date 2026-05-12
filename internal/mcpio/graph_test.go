@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"context"
 	"testing"
 
 	"github.com/luuuc/sense/internal/model"
@@ -41,7 +42,7 @@ func TestBuildGraphResponseComposesEdges(t *testing.T) {
 		},
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if len(resp.Edges.Composes) != 3 {
 		t.Fatalf("Composes = %d, want 3 (2 outbound + 1 inbound)", len(resp.Edges.Composes))
@@ -73,12 +74,12 @@ func TestBuildGraphResponseComposesDirection(t *testing.T) {
 	}
 	files := func(int64) (string, bool) { return "", false }
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallees})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallees})
 	if len(resp.Edges.Composes) != 1 || resp.Edges.Composes[0].Symbol != "Order" {
 		t.Errorf("callees direction: want only outbound Order, got %v", resp.Edges.Composes)
 	}
 
-	resp = BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
+	resp = BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
 	if len(resp.Edges.Composes) != 1 || resp.Edges.Composes[0].Symbol != "Profile" {
 		t.Errorf("callers direction: want only inbound Profile, got %v", resp.Edges.Composes)
 	}
@@ -113,7 +114,7 @@ func TestBuildGraphResponseIncludesImports(t *testing.T) {
 		},
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if len(resp.Edges.Includes) != 1 {
 		t.Fatalf("Includes = %d, want 1", len(resp.Edges.Includes))
@@ -161,7 +162,7 @@ func TestBuildGraphResponseTemporalEdges(t *testing.T) {
 		},
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	// Temporal edges are deduplicated — even though the same symbol appears
 	// in both inbound and outbound, only one entry should appear.
@@ -189,7 +190,7 @@ func TestBuildGraphResponseTemporalEmptyWhenNoEdges(t *testing.T) {
 		File:   model.File{Path: "foo.rb"},
 	}
 	files := func(int64) (string, bool) { return "", false }
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 	if resp.Edges.Temporal != nil {
 		t.Errorf("Temporal should be nil (not empty slice) before normalization, got %v", resp.Edges.Temporal)
 	}
@@ -211,7 +212,7 @@ func TestBuildGraphResponseTemporalDirectionIndependent(t *testing.T) {
 
 	// Temporal should appear regardless of direction filter.
 	for _, dir := range []model.Direction{model.DirectionBoth, model.DirectionCallers, model.DirectionCallees} {
-		resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: dir})
+		resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: dir})
 		if len(resp.Edges.Temporal) != 1 {
 			t.Errorf("direction=%q: Temporal = %d, want 1", dir, len(resp.Edges.Temporal))
 		}
@@ -247,7 +248,7 @@ func TestCallerSegmentation(t *testing.T) {
 		},
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: true})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: true})
 
 	if len(resp.Edges.CalledBy) != 2 {
 		t.Fatalf("CalledBy (production) = %d, want 2", len(resp.Edges.CalledBy))
@@ -263,7 +264,7 @@ func TestCallerSegmentation(t *testing.T) {
 	}
 
 	// Without SegmentCallers, all callers stay in CalledBy.
-	resp = BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: false})
+	resp = BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: false})
 	if len(resp.Edges.CalledBy) != 5 {
 		t.Fatalf("CalledBy (unsegmented) = %d, want 5", len(resp.Edges.CalledBy))
 	}
@@ -311,7 +312,7 @@ func TestCallerSegmentationCollapseOver20(t *testing.T) {
 		Inbound: inbound,
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: true})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers, SegmentCallers: true})
 
 	if len(resp.Edges.CalledBy) != 1 {
 		t.Fatalf("CalledBy (production) = %d, want 1", len(resp.Edges.CalledBy))
@@ -344,7 +345,7 @@ func TestBuildGraphResponseTemporalCountsInMetrics(t *testing.T) {
 		p, ok := filePaths[id]
 		return p, ok
 	}
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 	if resp.SenseMetrics.SymbolsReturned != 1 {
 		t.Errorf("SymbolsReturned = %d, want 1", resp.SenseMetrics.SymbolsReturned)
 	}
@@ -537,7 +538,7 @@ func TestGraphVerifyHintConstantZeroCallers(t *testing.T) {
 		return p, ok
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if resp.VerifyHint == "" {
 		t.Fatal("VerifyHint should be set for constant with zero callers and outgoing calls")
@@ -560,7 +561,7 @@ func TestGraphVerifyHintFunctionZeroCallers(t *testing.T) {
 	}
 	files := func(int64) (string, bool) { return "", false }
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if resp.VerifyHint == "" {
 		t.Fatal("VerifyHint should be set for function with zero callers and outgoing calls")
@@ -587,7 +588,7 @@ func TestGraphVerifyHintNotEmittedWithCallers(t *testing.T) {
 		return p, ok
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if resp.VerifyHint != "" {
 		t.Errorf("VerifyHint should be empty when callers exist, got %q", resp.VerifyHint)
@@ -607,7 +608,7 @@ func TestGraphVerifyHintNotEmittedForClass(t *testing.T) {
 	}
 	files := func(int64) (string, bool) { return "", false }
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if resp.VerifyHint != "" {
 		t.Errorf("VerifyHint should be empty for class kind, got %q", resp.VerifyHint)
@@ -639,7 +640,7 @@ func TestCategorizeEdgesInboundIncludesImportsTests(t *testing.T) {
 		},
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
 
 	if len(resp.Edges.Includes) != 1 || resp.Edges.Includes[0].Symbol != "SoftDeletable" {
 		t.Errorf("Includes = %+v, want [SoftDeletable]", resp.Edges.Includes)
@@ -673,7 +674,7 @@ func TestBuildGraphResponseInboundOnlyTemporal(t *testing.T) {
 		return p, ok
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if len(resp.Edges.Temporal) != 1 {
 		t.Fatalf("Temporal = %d, want 1", len(resp.Edges.Temporal))
@@ -756,7 +757,7 @@ func TestBuildGraphResponseRefField(t *testing.T) {
 		},
 	}
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	// Focal symbol ref
 	if resp.Symbol.Ref != "app/models/user.rb:10" {
@@ -808,9 +809,356 @@ func TestGraphVerifyHintNotEmittedWithoutCallees(t *testing.T) {
 	}
 	files := func(int64) (string, bool) { return "", false }
 
-	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
 	if resp.VerifyHint != "" {
 		t.Errorf("VerifyHint should be empty for leaf symbol with no callees, got %q", resp.VerifyHint)
+	}
+}
+
+func TestGraphCallSiteSnippet(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "package main\n\nimport \"fmt\"\n\nfunc caller() {\n\tfmt.Println(target())\n\treturn\n}\n")
+
+	line := 6
+	filePaths := map[int64]string{
+		1: "target.go",
+		2: "caller.go",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "target", Qualified: "target", Kind: "function", FileID: 1, LineStart: 1},
+		File:   model.File{Path: "target.go"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0, FileID: 2, Line: &line},
+				Target: model.Symbol{Qualified: "caller", FileID: 2, LineStart: 5, LineEnd: 7},
+			},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 2)
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{
+		Direction: model.DirectionCallers,
+		Snippets:  snippets,
+	})
+
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	ref := resp.Edges.CalledBy[0]
+	if ref.CallSite == nil {
+		t.Fatal("CallSite is nil, want non-nil")
+	}
+	if ref.CallSite.Line != 6 {
+		t.Errorf("CallSite.Line = %d, want 6", ref.CallSite.Line)
+	}
+	lines := splitLines(ref.CallSite.Snippet)
+	if len(lines) != 5 {
+		t.Errorf("snippet lines = %d, want 5; snippet:\n%s", len(lines), ref.CallSite.Snippet)
+	}
+}
+
+func TestGraphCallSiteZeroContextSuppresses(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "package main\n\nfunc caller() {\n\ttarget()\n}\n")
+
+	line := 4
+	files := func(id int64) (string, bool) {
+		if id == 1 {
+			return "caller.go", true
+		}
+		return "", false
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "target", Qualified: "target", Kind: "function"},
+		File:   model.File{Path: "target.go"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0, FileID: 1, Line: &line},
+				Target: model.Symbol{Qualified: "caller", FileID: 1, LineStart: 3},
+			},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 0)
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{
+		Direction: model.DirectionCallers,
+		Snippets:  snippets,
+	})
+
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	if resp.Edges.CalledBy[0].CallSite != nil {
+		t.Error("CallSite should be nil when context_lines=0")
+	}
+}
+
+func TestGraphCallSiteNoSnippetForNonCallEdges(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "parent.go", "package main\n\ntype Parent struct{}\n")
+
+	line := 3
+	files := func(id int64) (string, bool) {
+		if id == 1 {
+			return "parent.go", true
+		}
+		return "", false
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "Child", Qualified: "Child", Kind: "class"},
+		File:   model.File{Path: "child.go"},
+		Outbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeInherits, Confidence: 1.0, FileID: 1, Line: &line},
+				Target: model.Symbol{Qualified: "Parent", FileID: 1, LineStart: 3},
+			},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 2)
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Snippets: snippets})
+
+	if len(resp.Edges.Inherits) != 1 {
+		t.Fatalf("Inherits = %d, want 1", len(resp.Edges.Inherits))
+	}
+}
+
+func TestGraphCallSiteMissingFile(t *testing.T) {
+	dir := t.TempDir()
+
+	line := 5
+	files := func(id int64) (string, bool) {
+		if id == 1 {
+			return "nonexistent.go", true
+		}
+		return "", false
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "target", Qualified: "target", Kind: "function"},
+		File:   model.File{Path: "target.go"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0, FileID: 1, Line: &line},
+				Target: model.Symbol{Qualified: "caller", FileID: 1, LineStart: 3},
+			},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 2)
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{
+		Direction: model.DirectionCallers,
+		Snippets:  snippets,
+	})
+
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	if resp.Edges.CalledBy[0].CallSite != nil {
+		t.Error("CallSite should be nil when source file doesn't exist")
+	}
+}
+
+func TestGraphCallSiteReferencesEdge(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "ref.go", "package main\n\nvar x = CONSTANT\n")
+
+	line := 3
+	files := func(id int64) (string, bool) {
+		if id == 1 {
+			return "ref.go", true
+		}
+		return "", false
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "CONSTANT", Qualified: "CONSTANT", Kind: "constant"},
+		File:   model.File{Path: "const.go"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeReferences, Confidence: 1.0, FileID: 1, Line: &line},
+				Target: model.Symbol{Qualified: "main.init", FileID: 1, LineStart: 1},
+			},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 2)
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{
+		Direction: model.DirectionCallers,
+		Snippets:  snippets,
+	})
+
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	ref := resp.Edges.CalledBy[0]
+	if ref.CallSite == nil {
+		t.Fatal("CallSite is nil for references edge, want non-nil")
+	}
+	if ref.CallSite.Line != 3 {
+		t.Errorf("CallSite.Line = %d, want 3", ref.CallSite.Line)
+	}
+}
+
+func TestGraphSnippetsTruncated(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n")
+
+	files := func(_ int64) (string, bool) {
+		return "caller.go", true
+	}
+
+	var inbound []model.EdgeRef
+	for i := 0; i < 15; i++ {
+		line := i + 1
+		inbound = append(inbound, model.EdgeRef{
+			Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0, FileID: 1, Line: &line},
+			Target: model.Symbol{ID: int64(i + 10), Qualified: "caller" + string(rune('A'+i)), FileID: 1, LineStart: line},
+		})
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "target", Qualified: "target", Kind: "function"},
+		File:   model.File{Path: "target.go"},
+		Inbound: inbound,
+	}
+
+	snippets := NewSnippetReader(dir, 1)
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{
+		Direction: model.DirectionCallers,
+		Snippets:  snippets,
+	})
+
+	if !resp.SnippetsTruncated {
+		t.Error("SnippetsTruncated should be true when more edges than SnippetCap")
+	}
+
+	withSnippet := 0
+	for _, ref := range resp.Edges.CalledBy {
+		if ref.CallSite != nil {
+			withSnippet++
+		}
+	}
+	if withSnippet != SnippetCap {
+		t.Errorf("snippets with content = %d, want %d", withSnippet, SnippetCap)
+	}
+}
+
+func TestGraphCallSiteOutboundSnippet(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "main.go", "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(hello())\n\treturn\n}\n")
+
+	line := 6
+	filePaths := map[int64]string{
+		1: "main.go",
+		2: "hello.go",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "main", Qualified: "main", Kind: "function", FileID: 1, LineStart: 5},
+		File:   model.File{Path: "main.go"},
+		Outbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0, FileID: 1, Line: &line},
+				Target: model.Symbol{Qualified: "hello", FileID: 2, LineStart: 1, LineEnd: 3},
+			},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 2)
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{
+		Direction: model.DirectionCallees,
+		Snippets:  snippets,
+	})
+
+	if len(resp.Edges.Calls) != 1 {
+		t.Fatalf("Calls = %d, want 1", len(resp.Edges.Calls))
+	}
+	ref := resp.Edges.Calls[0]
+	if ref.CallSite == nil {
+		t.Fatal("CallSite is nil on outbound call, want non-nil")
+	}
+	if ref.CallSite.Line != 6 {
+		t.Errorf("CallSite.Line = %d, want 6", ref.CallSite.Line)
+	}
+}
+
+func TestFullGraphResponseSharedSnippetBudget(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "caller.go", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n")
+
+	files := func(_ int64) (string, bool) {
+		return "caller.go", true
+	}
+
+	var rootInbound []model.EdgeRef
+	for i := 0; i < 8; i++ {
+		line := i + 1
+		rootInbound = append(rootInbound, model.EdgeRef{
+			Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0, FileID: 1, Line: &line},
+			Target: model.Symbol{ID: int64(i + 10), Qualified: "caller" + string(rune('A'+i)), FileID: 1, LineStart: line},
+		})
+	}
+
+	var layerInbound []model.EdgeRef
+	for i := 0; i < 8; i++ {
+		line := i + 11
+		layerInbound = append(layerInbound, model.EdgeRef{
+			Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 1.0, FileID: 1, Line: &line},
+			Target: model.Symbol{ID: int64(i + 20), Qualified: "layer" + string(rune('A'+i)), FileID: 1, LineStart: line},
+		})
+	}
+
+	gr := &model.GraphResult{
+		Root: model.SymbolContext{
+			Symbol:  model.Symbol{Name: "target", Qualified: "target", Kind: "function"},
+			File:    model.File{Path: "target.go"},
+			Inbound: rootInbound,
+		},
+		Layers: []model.HopEdges{
+			{Inbound: layerInbound},
+		},
+	}
+
+	snippets := NewSnippetReader(dir, 1)
+	resp := BuildFullGraphResponse(context.Background(), gr, files, BuildGraphRequest{
+		Direction: model.DirectionCallers,
+		Snippets:  snippets,
+	})
+
+	rootSnippets := 0
+	for _, ref := range resp.Edges.CalledBy {
+		if ref.CallSite != nil {
+			rootSnippets++
+		}
+	}
+	layerSnippets := 0
+	if len(resp.Layers) > 0 {
+		for _, ref := range resp.Layers[0].Edges.CalledBy {
+			if ref.CallSite != nil {
+				layerSnippets++
+			}
+		}
+	}
+
+	total := rootSnippets + layerSnippets
+	if total > SnippetCap {
+		t.Errorf("total snippets = %d (root=%d + layer=%d), want <= %d (shared budget)",
+			total, rootSnippets, layerSnippets, SnippetCap)
+	}
+	if !resp.SnippetsTruncated {
+		t.Error("SnippetsTruncated should be true when total edges exceed cap")
 	}
 }
