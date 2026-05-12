@@ -20,8 +20,6 @@ func handleSubagentStart(ctx context.Context, _ json.RawMessage, adapter *sqlite
 		edgeCount = 0
 	}
 
-	const toolSearchCmd = `ToolSearch("select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions,mcp__sense__sense_status")`
-
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "This project has a Sense index (%d symbols, %d edges).\n\n", symbolCount, edgeCount)
 	sb.WriteString("Before using grep/find/file-walking, load Sense tools:\n")

@@ -3,6 +3,7 @@ package hook
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -23,6 +24,48 @@ func formatScanAge(lastScan string, now time.Time) string {
 		return "just now"
 	}
 	return fmt.Sprintf("%s ago", age)
+}
+
+func checkFreshness(ctx context.Context, db *sql.DB, dir string) string {
+	rows, err := db.QueryContext(ctx, `SELECT path, indexed_at FROM sense_files`)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = rows.Close() }()
+
+	var stale, deleted int
+	for rows.Next() {
+		var path, indexedAtStr string
+		if err := rows.Scan(&path, &indexedAtStr); err != nil {
+			continue
+		}
+		indexedAt, err := time.Parse(time.RFC3339Nano, indexedAtStr)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(dir, path))
+		if err != nil {
+			deleted++
+			continue
+		}
+		if info.ModTime().After(indexedAt) {
+			stale++
+		}
+	}
+	if rows.Err() != nil {
+		return ""
+	}
+	if stale == 0 && deleted == 0 {
+		return "Index is current."
+	}
+	var parts []string
+	if stale > 0 {
+		parts = append(parts, fmt.Sprintf("%d modified", stale))
+	}
+	if deleted > 0 {
+		parts = append(parts, fmt.Sprintf("%d removed", deleted))
+	}
+	return fmt.Sprintf("Index is stale (%s since last scan).", strings.Join(parts, ", "))
 }
 
 func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.Adapter, dir string) (any, error) {
@@ -58,17 +101,28 @@ func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.
 		return nil, err
 	}
 
-	var lastScan string
+	var lastScanStr string
 	row := db.QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`)
-	if err := row.Scan(&lastScan); err != nil || lastScan == "" {
-		lastScan = "unknown"
-	} else {
-		lastScan = formatScanAge(lastScan, time.Now())
+	if err := row.Scan(&lastScanStr); err != nil || lastScanStr == "" {
+		lastScanStr = ""
+	}
+
+	now := time.Now()
+	scanAge := "unknown"
+	freshness := ""
+	if lastScanStr != "" {
+		scanAge = formatScanAge(lastScanStr, now)
+		freshness = checkFreshness(ctx, db, dir)
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Sense index: %d symbols, %d edges, %d languages (%s). Last scan: %s.\n", symbolCount, edgeCount, len(langs), strings.Join(langs, ", "), lastScan)
+	fmt.Fprintf(&sb, "Sense index: %d symbols, %d edges, %d languages (%s). Last scan: %s.", symbolCount, edgeCount, len(langs), strings.Join(langs, ", "), scanAge)
+	if freshness != "" {
+		fmt.Fprintf(&sb, " %s", freshness)
+	}
+	sb.WriteByte('\n')
 	fmt.Fprintf(&sb, "REQUIRED: Your FIRST tool call MUST be %s to load Sense tools.\n", toolSearchCmd)
+	sb.WriteString("Do NOT call sense_status — index health was verified at session start.\n")
 	sb.WriteString("Use Sense MCP tools for ALL codebase understanding — do not use grep, glob, Read, Bash, or agents before loading Sense.")
 
 	summaryPath := filepath.Join(dir, ".sense", "summary.md")
