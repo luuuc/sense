@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -27,7 +28,8 @@ type FileLookup func(fileID int64) (path string, ok bool)
 // from the DB layer.
 type BuildGraphRequest struct {
 	Direction       model.Direction // DirectionBoth, DirectionCallers, DirectionCallees; "" == both
-	SegmentCallers  bool   // split callers into production vs test
+	SegmentCallers  bool
+	Snippets        *SnippetReader
 }
 
 // BuildGraphResponse assembles the wire-shape response from the
@@ -44,7 +46,7 @@ type BuildGraphRequest struct {
 // Test edges with an unknown file are dropped entirely — the test
 // row is (file, confidence) only, so without a file there is no
 // row to emit.
-func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGraphRequest) GraphResponse {
+func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files FileLookup, req BuildGraphRequest) GraphResponse {
 	resp := GraphResponse{
 		Symbol: GraphSymbol{
 			Name:      sc.Symbol.Name,
@@ -57,7 +59,8 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 		},
 	}
 
-	resp.Edges = categorizeEdges(sc.Outbound, sc.Inbound, files, req.Direction)
+	resp.Edges = categorizeEdges(ctx, sc.Outbound, sc.Inbound, files, req.Direction, req.Snippets)
+	resp.SnippetsTruncated = req.Snippets.Truncated(len(sc.Outbound) + len(sc.Inbound))
 
 	// Test-caller segmentation: split test callers out of CalledBy.
 	var testCallers []CallEdgeRef
@@ -147,12 +150,17 @@ func BuildGraphResponse(sc *model.SymbolContext, files FileLookup, req BuildGrap
 // graph result, including root edges and any transitive layers.
 // Metrics are recomputed after layers are added so they account for
 // the full traversal, not just depth-1 edges.
-func BuildFullGraphResponse(gr *model.GraphResult, files FileLookup, req BuildGraphRequest) GraphResponse {
-	resp := BuildGraphResponse(&gr.Root, files, req)
+func BuildFullGraphResponse(ctx context.Context, gr *model.GraphResult, files FileLookup, req BuildGraphRequest) GraphResponse {
+	resp := BuildGraphResponse(ctx, &gr.Root, files, req)
 	for i, layer := range gr.Layers {
-		resp.Layers = append(resp.Layers, BuildGraphLayer(layer, i+2, files, req))
+		resp.Layers = append(resp.Layers, BuildGraphLayer(ctx, layer, i+2, files, req))
 	}
 	resp.Truncated = gr.Truncated
+	totalEdges := len(gr.Root.Outbound) + len(gr.Root.Inbound)
+	for _, l := range gr.Layers {
+		totalEdges += len(l.Outbound) + len(l.Inbound)
+	}
+	resp.SnippetsTruncated = req.Snippets.Truncated(totalEdges)
 
 	if len(resp.Layers) > 0 {
 		for _, l := range resp.Layers {
@@ -167,10 +175,10 @@ func BuildFullGraphResponse(gr *model.GraphResult, files FileLookup, req BuildGr
 
 // BuildGraphLayer converts a model.HopEdges into a wire-format
 // GraphLayer for the given hop depth.
-func BuildGraphLayer(hop model.HopEdges, depth int, files FileLookup, req BuildGraphRequest) GraphLayer {
+func BuildGraphLayer(ctx context.Context, hop model.HopEdges, depth int, files FileLookup, req BuildGraphRequest) GraphLayer {
 	return GraphLayer{
 		Depth: depth,
-		Edges: categorizeEdges(hop.Outbound, hop.Inbound, files, req.Direction),
+		Edges: categorizeEdges(ctx, hop.Outbound, hop.Inbound, files, req.Direction, req.Snippets),
 	}
 }
 
@@ -178,13 +186,24 @@ func BuildGraphLayer(hop model.HopEdges, depth int, files FileLookup, req BuildG
 // shape, dispatching each edge kind to the right bucket. Temporal edges
 // and test-caller segmentation are root-only concerns handled by
 // BuildGraphResponse on top of this.
-func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direction model.Direction) GraphEdges {
+func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, files FileLookup, direction model.Direction, snippets *SnippetReader) GraphEdges {
 	var edges GraphEdges
+
+	readSnippet := func(e model.EdgeRef) *CallSite {
+		if e.Edge.Line == nil {
+			return nil
+		}
+		edgeFile, ok := files(e.Edge.FileID)
+		if !ok {
+			return nil
+		}
+		return snippets.Read(ctx, edgeFile, *e.Edge.Line)
+	}
 
 	if direction != model.DirectionCallers {
 		for _, e := range outbound {
 			switch e.Edge.Kind {
-			case model.EdgeCalls:
+			case model.EdgeCalls, model.EdgeReferences:
 				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Calls = append(edges.Calls, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
@@ -193,6 +212,7 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 					LineEnd:    e.Target.LineEnd,
 					Ref:        FormatRefPtr(fp, e.Target.LineStart),
 					Confidence: Confidence(e.Edge.Confidence),
+					CallSite:   readSnippet(e),
 				})
 			case model.EdgeInherits:
 				fp := fileRefOrNil(e.Target.FileID, files)
@@ -238,7 +258,7 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 	if direction != model.DirectionCallees {
 		for _, e := range inbound {
 			switch e.Edge.Kind {
-			case model.EdgeCalls:
+			case model.EdgeCalls, model.EdgeReferences:
 				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.CalledBy = append(edges.CalledBy, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
@@ -247,6 +267,7 @@ func categorizeEdges(outbound, inbound []model.EdgeRef, files FileLookup, direct
 					LineEnd:    e.Target.LineEnd,
 					Ref:        FormatRefPtr(fp, e.Target.LineStart),
 					Confidence: Confidence(e.Edge.Confidence),
+					CallSite:   readSnippet(e),
 				})
 			case model.EdgeComposes:
 				fp := fileRefOrNil(e.Target.FileID, files)

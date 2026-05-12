@@ -141,7 +141,7 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 		return p, ok
 	}
 
-	resp := mcpio.BuildDiffBlastResponse(opts.Diff, results, lookup)
+	resp := mcpio.BuildDiffBlastResponse(ctx, opts.Diff, results, lookup, nil)
 
 	if opts.JSON {
 		out, merr := mcpio.MarshalBlast(resp)
@@ -238,7 +238,7 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 		return p, ok
 	}
 
-	resp := mcpio.BuildBlastResponse(result, lookup)
+	resp := mcpio.BuildBlastResponse(ctx, result, lookup, nil)
 
 	if opts.JSON {
 		out, merr := mcpio.MarshalBlast(resp)

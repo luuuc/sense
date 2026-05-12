@@ -100,8 +100,9 @@ type GraphResponse struct {
 	Edges              GraphEdges             `json:"edges"`
 	DispatchInferred   []DispatchInferredRef  `json:"dispatch_inferred,omitempty"`
 	Layers             []GraphLayer           `json:"layers,omitempty"`
-	Truncated          bool                   `json:"truncated,omitempty"`
-	TestCallerSummary  *TestCallerSummary     `json:"test_caller_summary,omitempty"`
+	Truncated          bool               `json:"truncated,omitempty"`
+	SnippetsTruncated  bool               `json:"snippets_truncated,omitempty"`
+	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
 	CoverageNote       string                 `json:"coverage_note,omitempty"`
 	VerifyHint         string                 `json:"verify_hint,omitempty"`
 	SenseMetrics       GraphMetrics           `json:"-"`
@@ -180,6 +181,7 @@ type CallEdgeRef struct {
 	LineEnd    int        `json:"line_end,omitempty"`
 	Ref        string     `json:"ref,omitempty"`
 	Confidence Confidence `json:"confidence"`
+	CallSite   *CallSite  `json:"call_site,omitempty"`
 }
 
 // InheritEdgeRef is the shape of an inherits edge entry. The
@@ -273,10 +275,10 @@ type BlastResponse struct {
 	DirectCallers   []BlastCaller   `json:"direct_callers"`
 	IndirectCallers []BlastIndirect `json:"indirect_callers"`
 	AffectedTests   []string        `json:"affected_tests"`
-	AffectedSymbols      int             `json:"affected_symbols"`
-	AffectedFiles        int             `json:"affected_files"`
-	GraphEdgesTraversed  int             `json:"graph_edges_traversed"`
-	TotalAffected        int             `json:"total_affected"`
+	AffectedSymbols     int `json:"affected_symbols"`
+	AffectedFiles       int `json:"affected_files"`
+	GraphEdgesTraversed int `json:"graph_edges_traversed"`
+	TotalAffected       int `json:"total_affected"`
 
 	AffectedSubclasses     []BlastCaller `json:"affected_subclasses"`
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
@@ -291,6 +293,7 @@ type BlastResponse struct {
 	ProductionAffected int    `json:"production_affected"`
 	TestAffected       int    `json:"test_affected"`
 	Truncated          bool   `json:"truncated,omitempty"`
+	SnippetsTruncated  bool   `json:"snippets_truncated,omitempty"`
 	CoverageNote       string `json:"coverage_note,omitempty"`
 
 	VerifyHint   string       `json:"verify_hint,omitempty"`
@@ -308,12 +311,13 @@ type BlastTierSummary struct {
 
 // BlastCaller is the shape of a direct_callers entry.
 type BlastCaller struct {
-	Symbol      string `json:"symbol"`
-	File        string `json:"file"`
-	LineStart   int    `json:"line_start,omitempty"`
-	LineEnd     int    `json:"line_end,omitempty"`
-	Ref         string `json:"ref,omitempty"`
-	ViaTemporal bool   `json:"via_temporal,omitempty"`
+	Symbol      string    `json:"symbol"`
+	File        string    `json:"file"`
+	LineStart   int       `json:"line_start,omitempty"`
+	LineEnd     int       `json:"line_end,omitempty"`
+	Ref         string    `json:"ref,omitempty"`
+	ViaTemporal bool      `json:"via_temporal,omitempty"`
+	CallSite    *CallSite `json:"call_site,omitempty"`
 }
 
 // BlastIndirect is the shape of an indirect_callers entry. Via names
