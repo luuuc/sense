@@ -183,7 +183,7 @@ func TestRenderStatusHuman(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()}
 
-	renderStatusHuman(cio, resp)
+	renderStatusHuman(cio, resp, healthInfo{verdict: "healthy"})
 	out := stdout.String()
 
 	for _, want := range []string{
@@ -223,14 +223,14 @@ func TestRenderStatusHumanMinimal(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()}
 
-	renderStatusHuman(cio, resp)
+	renderStatusHuman(cio, resp, healthInfo{verdict: "healthy"})
 	out := stdout.String()
 
 	if !strings.Contains(out, "Last scan:   unknown") {
 		t.Errorf("expected 'unknown' for nil LastScan, got:\n%s", out)
 	}
-	if !strings.Contains(out, "Watching:    no") {
-		t.Errorf("expected 'Watching: no' for nil Watching, got:\n%s", out)
+	if strings.Contains(out, "Watching:") {
+		t.Errorf("nil Watching should be suppressed, got:\n%s", out)
 	}
 	// Should NOT contain Languages section since map is empty
 	if strings.Contains(out, "Languages:") {
@@ -252,7 +252,7 @@ func TestRenderStatusHumanDynamicLanguage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()}
 
-	renderStatusHuman(cio, resp)
+	renderStatusHuman(cio, resp, healthInfo{verdict: "healthy"})
 	out := stdout.String()
 
 	if !strings.Contains(out, "Profile: large (primary: ruby, dynamic)") {
@@ -275,7 +275,7 @@ func TestRenderStatusHumanSchemaMismatch(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()}
 
-	renderStatusHuman(cio, resp)
+	renderStatusHuman(cio, resp, healthInfo{verdict: "healthy"})
 	out := stdout.String()
 
 	if !strings.Contains(out, "Schema: v5 (mismatch") {
@@ -1069,7 +1069,7 @@ func TestRenderStatusHumanProfileNoLanguage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()}
 
-	renderStatusHuman(cio, resp)
+	renderStatusHuman(cio, resp, healthInfo{verdict: "healthy"})
 	out := stdout.String()
 
 	if !strings.Contains(out, "Profile: small") {
