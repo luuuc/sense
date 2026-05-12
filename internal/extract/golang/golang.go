@@ -59,6 +59,7 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extrac
 		source: source,
 		emit:   emit,
 		pkg:    packageName(tree.RootNode(), source),
+		pkgBindings: map[string]string{},
 	}
 	return w.walkTopLevel(tree.RootNode())
 }
@@ -70,19 +71,36 @@ func init() { extract.Register(Extractor{}) }
 type walker struct {
 	source []byte
 	emit   extract.Emitter
-	pkg    string // package name, used to prefix every qualified name
+	pkg         string            // package name, used to prefix every qualified name
+	pkgBindings map[string]string // unqualified name → qualified name for package-level consts and vars
 }
 
-// walkTopLevel iterates the direct named children of source_file and
-// dispatches by kind. Go's symbol surface is flat (no nested classes),
-// so we never descend beyond the declarations that sit at package
-// scope. Function/method bodies are not walked — nested types and
-// closures inside them are not Tier-Basic symbols.
+// walkTopLevel iterates the direct named children of source_file in
+// two passes. Pass 1 collects package-level constant names so that
+// pass 2 can emit references edges when function bodies use them.
 func (w *walker) walkTopLevel(root *sitter.Node) error {
 	if root == nil {
 		return nil
 	}
+
+	// Pass 1: collect package-level constant and variable names
+	// before processing function bodies so references resolve
+	// regardless of declaration order.
 	count := root.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		n := root.NamedChild(i)
+		if n == nil {
+			continue
+		}
+		switch n.Kind() {
+		case "const_declaration":
+			w.collectDeclNames(n, "const_spec")
+		case "var_declaration":
+			w.collectDeclNames(n, "var_spec")
+		}
+	}
+
+	// Pass 2: emit symbols and edges.
 	for i := uint(0); i < count; i++ {
 		n := root.NamedChild(i)
 		if n == nil {
@@ -92,6 +110,8 @@ func (w *walker) walkTopLevel(root *sitter.Node) error {
 		switch n.Kind() {
 		case "const_declaration":
 			err = w.handleConstDeclaration(n)
+		case "var_declaration":
+			err = w.handleVarDeclaration(n)
 		case "type_declaration":
 			err = w.handleTypeDeclaration(n)
 		case "function_declaration":
@@ -104,6 +124,41 @@ func (w *walker) walkTopLevel(root *sitter.Node) error {
 		}
 	}
 	return nil
+}
+
+// collectDeclNames populates w.pkgBindings with unqualified→qualified
+// mappings for every name in a const or var declaration.
+func (w *walker) collectDeclNames(n *sitter.Node, specKind string) {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		switch child.Kind() {
+		case specKind:
+			w.collectSpecNames(child)
+		case specKind + "_list":
+			for j := uint(0); j < child.NamedChildCount(); j++ {
+				spec := child.NamedChild(j)
+				if spec != nil && spec.Kind() == specKind {
+					w.collectSpecNames(spec)
+				}
+			}
+		}
+	}
+}
+
+func (w *walker) collectSpecNames(spec *sitter.Node) {
+	for i := uint(0); i < spec.NamedChildCount(); i++ {
+		c := spec.NamedChild(i)
+		if c == nil || c.Kind() != "identifier" {
+			continue
+		}
+		name := extract.Text(c, w.source)
+		if name != "" && name != "_" {
+			w.pkgBindings[name] = w.qualify(name)
+		}
+	}
 }
 
 // handleConstDeclaration walks const_spec children. Both the grouped
@@ -146,6 +201,39 @@ func (w *walker) emitConstSpec(spec *sitter.Node) error {
 			LineEnd:    extract.Line(spec.EndPosition()),
 		}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// handleVarDeclaration walks var_spec children and emits each
+// package-level variable as a KindConstant symbol (the model has no
+// separate variable kind; for dead code purposes they behave identically).
+func (w *walker) handleVarDeclaration(n *sitter.Node) error {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		spec := n.NamedChild(i)
+		if spec == nil || spec.Kind() != "var_spec" {
+			continue
+		}
+		for j := uint(0); j < spec.NamedChildCount(); j++ {
+			c := spec.NamedChild(j)
+			if c == nil || c.Kind() != "identifier" {
+				continue
+			}
+			name := extract.Text(c, w.source)
+			if name == "" {
+				continue
+			}
+			if err := w.emit.Symbol(extract.EmittedSymbol{
+				Name:       name,
+				Qualified:  w.qualify(name),
+				Kind:       model.KindConstant,
+				Visibility: visibility(name),
+				LineStart:  extract.Line(spec.StartPosition()),
+				LineEnd:    extract.Line(spec.EndPosition()),
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -325,10 +413,14 @@ func (w *walker) handleFunction(n *sitter.Node) error {
 	}); err != nil {
 		return err
 	}
+	body := n.ChildByFieldName("body")
 	types, locals := w.buildTypeMap(n)
-	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+	if err := extract.WalkNamedDescendants(body, "call_expression", func(c *sitter.Node) error {
 		return w.emitCall(c, qualified, types, locals)
-	})
+	}); err != nil {
+		return err
+	}
+	return w.emitConstRefs(body, qualified, locals)
 }
 
 // handleMethod emits a method with receiver-type qualification and
@@ -363,10 +455,68 @@ func (w *walker) handleMethod(n *sitter.Node) error {
 	}); err != nil {
 		return err
 	}
+	body := n.ChildByFieldName("body")
 	types, locals := w.buildTypeMap(n)
-	return extract.WalkNamedDescendants(n.ChildByFieldName("body"), "call_expression", func(c *sitter.Node) error {
+	if err := extract.WalkNamedDescendants(body, "call_expression", func(c *sitter.Node) error {
 		return w.emitCall(c, qualified, types, locals)
+	}); err != nil {
+		return err
+	}
+	return w.emitConstRefs(body, qualified, locals)
+}
+
+// emitConstRefs walks a function body for identifiers that resolve to
+// package-level constants/variables and emits references edges.
+func (w *walker) emitConstRefs(body *sitter.Node, sourceQualified string, locals map[string]bool) error {
+	if body == nil || len(w.pkgBindings) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	return extract.WalkNamedDescendants(body, "identifier", func(id *sitter.Node) error {
+		name := extract.Text(id, w.source)
+		if name == "" || locals[name] || goBuiltins[name] || seen[name] {
+			return nil
+		}
+		targetQ, ok := w.pkgBindings[name]
+		if !ok {
+			return nil
+		}
+		// Skip identifiers that are call targets.
+		if p := id.Parent(); p != nil && p.Kind() == "call_expression" {
+			if fn := p.ChildByFieldName("function"); fn != nil && fn.Id() == id.Id() {
+				return nil
+			}
+		}
+		// Skip identifiers inside selector expressions (pkg.Func, obj.Field).
+		if p := id.Parent(); p != nil && p.Kind() == "selector_expression" {
+			return nil
+		}
+		seen[name] = true
+		line := extract.Line(id.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: sourceQualified,
+			TargetQualified: targetQ,
+			Kind:            model.EdgeReferences,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		})
 	})
+}
+
+// goBuiltins is the set of Go predeclared identifiers that should
+// never be emitted as constant references.
+var goBuiltins = map[string]bool{
+	"_": true, "true": true, "false": true, "nil": true, "iota": true,
+	"append": true, "cap": true, "close": true, "complex": true,
+	"copy": true, "delete": true, "imag": true, "len": true,
+	"make": true, "max": true, "min": true, "new": true,
+	"panic": true, "print": true, "println": true, "real": true,
+	"recover": true, "clear": true,
+	"bool": true, "byte": true, "comparable": true, "complex64": true,
+	"complex128": true, "error": true, "float32": true, "float64": true,
+	"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
+	"rune": true, "string": true, "uint": true, "uint8": true, "uint16": true,
+	"uint32": true, "uint64": true, "uintptr": true, "any": true,
 }
 
 // emitCall produces an EdgeCalls edge for one call_expression. When

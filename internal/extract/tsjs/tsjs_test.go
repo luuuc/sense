@@ -1910,3 +1910,126 @@ func TestConstSymbolErrorTS(t *testing.T) {
 		t.Error("expected error on second const symbol emit")
 	}
 }
+
+func TestConstReferenceEdgeTS(t *testing.T) {
+	r := parseTS(t, `const MAX_RETRIES = 5;
+
+function process() {
+  const x = MAX_RETRIES;
+}
+`, "test.ts")
+	if findEdg(r, "process", "MAX_RETRIES", "references") == nil {
+		t.Error("missing references edge process -> MAX_RETRIES")
+	}
+}
+
+func TestConstReferenceExportedTS(t *testing.T) {
+	r := parseTS(t, `export const API_URL = "http://example.com";
+
+function fetch() {
+  console.log(API_URL);
+}
+`, "test.ts")
+	if findEdg(r, "fetch", "API_URL", "references") == nil {
+		t.Error("missing references edge for exported constant")
+	}
+}
+
+func TestConstReferenceSkipsArrowFnTS(t *testing.T) {
+	r := parseTS(t, `const helper = () => {};
+const VALUE = 42;
+
+function process() {
+  helper();
+  const x = VALUE;
+}
+`, "test.ts")
+	// helper is a function (arrow), not tracked as a constant
+	if findEdg(r, "process", "helper", "references") != nil {
+		t.Error("should not emit references edge for arrow function constant")
+	}
+	if findEdg(r, "process", "VALUE", "references") == nil {
+		t.Error("missing references edge for value constant")
+	}
+}
+
+func TestConstReferenceDedupTS(t *testing.T) {
+	r := parseTS(t, `const X = 1;
+
+function f() {
+  const a = X;
+  const b = X;
+}
+`, "test.ts")
+	count := 0
+	for _, e := range r.edges {
+		if string(e.Kind) == "references" && e.TargetQualified == "X" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 references edge to X, got %d", count)
+	}
+}
+
+func TestConstReferenceFromMethodTS(t *testing.T) {
+	r := parseTS(t, `const TIMEOUT = 30;
+
+class Server {
+  run() {
+    const t = TIMEOUT;
+  }
+}
+`, "test.ts")
+	if findEdg(r, "Server.run", "TIMEOUT", "references") == nil {
+		t.Error("missing references edge from method to constant")
+	}
+}
+
+func TestConstSkipsArrowFunctionValueTS(t *testing.T) {
+	r := parseTS(t, `const handler = () => { return 1; };
+const MAX = 100;
+
+function run() {
+  const x = MAX;
+}
+`, "test.ts")
+	if findEdg(r, "run", "handler", "references") != nil {
+		t.Error("arrow function const should not be tracked as a constant")
+	}
+	if findEdg(r, "run", "MAX", "references") == nil {
+		t.Error("missing references edge for value constant")
+	}
+}
+
+func TestConstSkipsDestructuringTS(t *testing.T) {
+	r := parseTS(t, `const { a, b } = config;
+const LIMIT = 10;
+
+function run() {
+  const x = LIMIT;
+}
+`, "test.ts")
+	if findEdg(r, "run", "LIMIT", "references") == nil {
+		t.Error("missing references edge for LIMIT constant")
+	}
+}
+
+func TestConstSkipsCallTargetTS(t *testing.T) {
+	r := parseTS(t, `const API_URL = "http://example.com";
+
+function run() {
+  fetch(API_URL);
+  const x = API_URL;
+}
+`, "test.ts")
+	edges := 0
+	for _, e := range r.edges {
+		if e.Kind == "references" && e.TargetQualified == "API_URL" {
+			edges++
+		}
+	}
+	if edges != 1 {
+		t.Errorf("expected 1 references edge (skip call target), got %d", edges)
+	}
+}

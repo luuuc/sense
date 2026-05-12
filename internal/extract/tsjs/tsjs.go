@@ -104,7 +104,9 @@ func extractAll(tree *sitter.Tree, source []byte, filePath string, emit extract.
 		emit:         emit,
 		filePath:     filePath,
 		stimulusName: inferStimulusController(filePath),
+		pkgBindings:  map[string]string{},
 	}
+	w.collectModuleConstants(tree.RootNode())
 	if err := w.walk(tree.RootNode(), nil); err != nil {
 		return err
 	}
@@ -117,7 +119,91 @@ type walker struct {
 	source       []byte
 	emit         extract.Emitter
 	filePath     string
-	stimulusName string // non-empty if this file is a Stimulus controller
+	stimulusName string            // non-empty if this file is a Stimulus controller
+	pkgBindings  map[string]string // unqualified name → qualified name for module-level constants
+}
+
+// collectModuleConstants pre-scans top-level const declarations for
+// value-type constants (not arrow functions or class expressions) so
+// function bodies can emit references edges.
+func (w *walker) collectModuleConstants(root *sitter.Node) {
+	if root == nil {
+		return
+	}
+	count := root.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		n := root.NamedChild(i)
+		if n == nil {
+			continue
+		}
+		// Unwrap export_statement to reach the declaration.
+		if n.Kind() == "export_statement" {
+			if d := n.ChildByFieldName("declaration"); d != nil {
+				n = d
+			} else {
+				continue
+			}
+		}
+		if n.Kind() != "lexical_declaration" || !isConstDeclaration(n, w.source) {
+			continue
+		}
+		for j := uint(0); j < n.NamedChildCount(); j++ {
+			decl := n.NamedChild(j)
+			if decl == nil || decl.Kind() != "variable_declarator" {
+				continue
+			}
+			nameNode := decl.ChildByFieldName("name")
+			if nameNode == nil || nameNode.Kind() != "identifier" {
+				continue
+			}
+			name := extract.Text(nameNode, w.source)
+			if name == "" {
+				continue
+			}
+			// Only track value constants, not function/class expressions.
+			if valueNode := decl.ChildByFieldName("value"); valueNode != nil {
+				switch valueNode.Kind() {
+				case "arrow_function", "function_expression", "function",
+					"generator_function", "class", "class_expression":
+					continue
+				}
+			}
+			w.pkgBindings[name] = name
+		}
+	}
+}
+
+// emitConstRefs walks a function body for identifiers that resolve to
+// module-level constants and emits references edges.
+func (w *walker) emitConstRefs(body *sitter.Node, sourceQualified string) error {
+	if body == nil || len(w.pkgBindings) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	return extract.WalkNamedDescendants(body, "identifier", func(id *sitter.Node) error {
+		name := extract.Text(id, w.source)
+		if name == "" || seen[name] {
+			return nil
+		}
+		targetQ, ok := w.pkgBindings[name]
+		if !ok {
+			return nil
+		}
+		if p := id.Parent(); p != nil && p.Kind() == "call_expression" {
+			if fn := p.ChildByFieldName("function"); fn != nil && fn.Id() == id.Id() {
+				return nil
+			}
+		}
+		seen[name] = true
+		line := extract.Line(id.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: sourceQualified,
+			TargetQualified: targetQ,
+			Kind:            model.EdgeReferences,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		})
+	})
 }
 
 func (w *walker) walk(n *sitter.Node, scope []string) error {
@@ -664,9 +750,12 @@ func (w *walker) walkBodyEdges(body *sitter.Node, sourceQualified string) error 
 	}); err != nil {
 		return err
 	}
-	return extract.WalkNamedDescendants(body, "jsx_self_closing_element", func(c *sitter.Node) error {
+	if err := extract.WalkNamedDescendants(body, "jsx_self_closing_element", func(c *sitter.Node) error {
 		return w.emitJSXComponent(c, sourceQualified)
-	})
+	}); err != nil {
+		return err
+	}
+	return w.emitConstRefs(body, sourceQualified)
 }
 
 // emitJSXComponent emits a calls edge for a PascalCase JSX element.
