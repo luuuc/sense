@@ -113,6 +113,64 @@ func TestPreCompactReturnsHubs(t *testing.T) {
 	}
 }
 
+func TestSubagentStartEmptyIndex(t *testing.T) {
+	root := t.TempDir()
+	// Create DB with schema but no symbols.
+	goFile := filepath.Join(root, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scan.Run(context.Background(), scan.Options{
+		Root:     root,
+		Output:   io.Discard,
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	var buf bytes.Buffer
+	Run("subagent-start", root, strings.NewReader("{}"), &buf)
+	if buf.String() != "{}\n" {
+		t.Errorf("expected empty response for empty index, got %q", buf.String())
+	}
+}
+
+func TestSubagentStartEdgeCountFallback(t *testing.T) {
+	root := indexedDir(t)
+	dbPath := filepath.Join(root, ".sense", "index.db")
+
+	// Open db directly, drop edges, and keep connection open
+	// so we can call handleSubagentStart bypassing schema recreation.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec("DROP TABLE IF EXISTS sense_edges"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	adapter, err := sqlite.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	// Drop edges again after adapter reopened (schema recreates it).
+	if _, err := adapter.DB().Exec("DROP TABLE sense_edges"); err != nil {
+		t.Fatalf("drop table after adapter open: %v", err)
+	}
+
+	result, err := handleSubagentStart(context.Background(), nil, adapter, root)
+	if err != nil {
+		t.Fatalf("handleSubagentStart: %v", err)
+	}
+	resp := result.(*hookResponse)
+	if !strings.Contains(resp.AdditionalContext, "0 edges") {
+		t.Errorf("expected 0 edges fallback, got %q", resp.AdditionalContext)
+	}
+}
+
 func TestSubagentStartReturnsGuidance(t *testing.T) {
 	dir := indexedDir(t)
 	var buf bytes.Buffer
@@ -122,14 +180,27 @@ func TestSubagentStartReturnsGuidance(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if !strings.Contains(resp.AdditionalContext, "Sense index") {
-		t.Errorf("context = %q, expected sense guidance", resp.AdditionalContext)
+	ctx := resp.AdditionalContext
+	if !strings.Contains(ctx, "Sense index") {
+		t.Errorf("context = %q, expected sense guidance", ctx)
 	}
-	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
+	if !strings.Contains(ctx, "ToolSearch") {
+		t.Error("expected ToolSearch command in guidance")
+	}
+	if !strings.Contains(ctx, "sense_graph") {
 		t.Error("expected sense_graph in guidance")
 	}
-	if !strings.Contains(resp.AdditionalContext, "parent agent") {
-		t.Error("expected parent agent delegation guidance")
+	if !strings.Contains(ctx, "sense_search") {
+		t.Error("expected sense_search in guidance")
+	}
+	if !strings.Contains(ctx, "sense_blast") {
+		t.Error("expected sense_blast in guidance")
+	}
+	if !strings.Contains(ctx, "edges") {
+		t.Error("expected edge count in guidance")
+	}
+	if strings.Contains(ctx, "parent agent") {
+		t.Error("should not contain old 'parent agent' delegation message")
 	}
 }
 
