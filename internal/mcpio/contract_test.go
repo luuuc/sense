@@ -254,7 +254,10 @@ func fixtureBlastUserEmailVerified() BlastResponse {
 			"test/controllers/admin/users_controller_test.rb",
 			"test/controllers/orders_controller_test.rb",
 		},
-		TotalAffected:      11,
+		AffectedSymbols:     11,
+		AffectedFiles:       10,
+		GraphEdgesTraversed: 91,
+		TotalAffected:       11,
 		ProductionAffected: 5,
 		TestAffected:       6,
 		SenseMetrics: BlastMetrics{

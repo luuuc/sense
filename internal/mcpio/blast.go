@@ -125,7 +125,9 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		Examples: examples,
 	}
 
-	resp.Note = "total_affected counts unique symbols in the blast radius — not source-level references or graph edges traversed."
+	resp.AffectedSymbols = r.TotalAffected
+	resp.GraphEdgesTraversed = r.EdgesTraversed
+	resp.Note = "affected_symbols counts unique symbols in the blast radius — not source-level references or graph edges traversed. total_affected is an alias for affected_symbols."
 
 	segmentBlastCallers(&resp)
 
@@ -134,6 +136,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 	}
 
 	uniqueFiles := countUniqueBlastFiles(resp)
+	resp.AffectedFiles = uniqueFiles
 	resp.SenseMetrics = BlastMetrics{
 		SymbolsTraversed:          1 + len(r.DirectCallers) + len(r.IndirectCallers),
 		EstimatedFileReadsAvoided: uniqueFiles,
@@ -165,8 +168,10 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 	indirectSeen := map[int64]struct{}{}
 	testsSeen := map[string]struct{}{}
 	risk := blast.RiskLow
+	totalEdges := 0
 
 	for _, r := range results {
+		totalEdges += r.EdgesTraversed
 		if riskRank(r.Risk) > riskRank(risk) {
 			risk = r.Risk
 		}
@@ -216,7 +221,9 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 
 	resp.Risk = risk
 	resp.TotalAffected = len(resp.DirectCallers) + len(resp.IndirectCallers)
-	resp.Note = "total_affected counts unique symbols in the blast radius — not source-level references or graph edges traversed."
+	resp.AffectedSymbols = resp.TotalAffected
+	resp.GraphEdgesTraversed = totalEdges
+	resp.Note = "affected_symbols counts unique symbols in the blast radius — not source-level references or graph edges traversed. total_affected is an alias for affected_symbols."
 	resp.RiskFactors = []string{
 		fmt.Sprintf("%d modified symbols; %d direct callers", len(results), len(resp.DirectCallers)),
 	}
@@ -224,6 +231,7 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 	segmentBlastCallers(&resp)
 
 	uniqueFiles := countUniqueBlastFiles(resp)
+	resp.AffectedFiles = uniqueFiles
 	resp.SenseMetrics = BlastMetrics{
 		SymbolsTraversed:          len(results) + len(resp.DirectCallers) + len(resp.IndirectCallers),
 		EstimatedFileReadsAvoided: uniqueFiles,

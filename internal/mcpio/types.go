@@ -273,7 +273,10 @@ type BlastResponse struct {
 	DirectCallers   []BlastCaller   `json:"direct_callers"`
 	IndirectCallers []BlastIndirect `json:"indirect_callers"`
 	AffectedTests   []string        `json:"affected_tests"`
-	TotalAffected   int             `json:"total_affected"`
+	AffectedSymbols      int             `json:"affected_symbols"`
+	AffectedFiles        int             `json:"affected_files"`
+	GraphEdgesTraversed  int             `json:"graph_edges_traversed"`
+	TotalAffected        int             `json:"total_affected"`
 
 	AffectedSubclasses     []BlastCaller `json:"affected_subclasses"`
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`

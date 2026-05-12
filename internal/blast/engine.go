@@ -159,6 +159,7 @@ type Result struct {
 	// a temporal edge. Keyed by symbol ID.
 	DirectTemporalIDs map[int64]bool
 
+	EdgesTraversed    int
 	SubjectHasCallees bool
 
 	// Edge-kind groups: filtered views over the same nodes that appear
@@ -236,6 +237,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 
 	truncated := false
+	edgesTraversed := 0
 	for hop := 1; hop <= opts.MaxHops; hop++ {
 		if err := ctx.Err(); err != nil {
 			return Result{}, fmt.Errorf("blast: cancelled at hop %d: %w", hop, err)
@@ -244,6 +246,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		if err != nil {
 			return Result{}, fmt.Errorf("blast: hop %d: %w", hop, err)
 		}
+		edgesTraversed += len(pairs)
 		var next []int64
 		for _, pair := range pairs {
 			if _, seen := visited[pair.source]; seen {
@@ -488,6 +491,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		IndirectCallers:        indirectCallers,
 		AffectedTests:          affectedTests,
 		TotalAffected:          totalAffectedCount,
+		EdgesTraversed:         edgesTraversed,
 		SubjectHasCallees:      hasCallees,
 		DirectTemporalIDs:      directTemporalIDs,
 		AffectedSubclasses:     subclasses,
