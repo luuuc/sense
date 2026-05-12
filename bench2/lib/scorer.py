@@ -341,26 +341,45 @@ def detect_misses(tool_calls):
 
 
 def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
-    """Evaluate all checks for one step."""
+    """Evaluate all checks for one step.
+
+    Checks tagged layer: adoption are tracked separately for the adoption score.
+    """
     checks = step.get("checks", [])
     results = []
     hits_required = 0
     hits_bonus = 0
     total_required = 0
     total_bonus = 0
+    fairness_hits_required = 0
+    fairness_hits_bonus = 0
+    fairness_total_required = 0
+    fairness_total_bonus = 0
 
     for check in checks:
         result = evaluate_check(check, transcript_text, tool_calls, repo_path)
+        result["layer"] = check.get("layer", "fairness")
         results.append(result)
 
-        if check.get("required", True):
+        is_adoption = check.get("layer") == "adoption"
+        required = check.get("required", True)
+
+        if required:
             total_required += 1
             if result["hit"]:
                 hits_required += 1
+            if not is_adoption:
+                fairness_total_required += 1
+                if result["hit"]:
+                    fairness_hits_required += 1
         else:
             total_bonus += 1
             if result["hit"]:
                 hits_bonus += 1
+            if not is_adoption:
+                fairness_total_bonus += 1
+                if result["hit"]:
+                    fairness_hits_bonus += 1
 
     step_result = {
         "name": step.get("name", "unnamed"),
@@ -377,7 +396,11 @@ def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
         (hits_required + 0.5 * hits_bonus) / max(1, total_required + 0.5 * total_bonus), 4
     )
 
-    # Extract richness from any response_richness check results in this step
+    step_result["fairness_score"] = round(
+        (fairness_hits_required + 0.5 * fairness_hits_bonus)
+        / max(1, fairness_total_required + 0.5 * fairness_total_bonus), 4
+    )
+
     richness = max(
         (c.get("unique_files", 0) for c in step_result["checks"] if c.get("type") == "response_richness"),
         default=0,
@@ -390,13 +413,26 @@ def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
 # ── Main scoring ────────────────────────────────────────────────────
 
 
+EFFICIENCY_CEILINGS = {
+    "flask": 15_000,
+    "gin": 15_000,
+    "javalin": 15_000,
+    "axum": 20_000,
+    "discourse": 30_000,
+    "nextjs": 40_000,
+}
+
+DEFAULT_EFFICIENCY_CEILING = 30_000
+
+
 def score_transcript(transcript_path, scenario, repo_path=None):
     """Score a transcript against a scenario.
 
-    Score = completeness (checklist hit rate) × efficiency (tokens, time).
-    Misses, grep counts, and MCP usage are reported as supplementary metrics
-    but do NOT penalise the score. Code intelligence tools are enablers,
-    not grep replacements.
+    Two-layer scoring:
+      fairness_score  = correctness (0.70) + efficiency (0.30)
+                        Skips checks tagged layer: adoption.
+      adoption_score  = tool_fluency (0.60) + discoverability (0.40)
+                        For code-intel-vs-code-intel comparisons only.
     """
     t = parse_transcript(transcript_path)
     full_text = read_full_transcript(transcript_path)
@@ -416,10 +452,13 @@ def score_transcript(transcript_path, scenario, repo_path=None):
     misses = detect_misses(tool_calls)
 
     completeness = sum(s["combined_score"] for s in step_results) / max(len(step_results), 1)
+    correctness = sum(s["fairness_score"] for s in step_results) / max(len(step_results), 1)
 
-    efficiency = 1.0
-    if billed_tokens > 8000:
-        efficiency = max(0.0, 1.0 - (billed_tokens / 60000))
+    repo = scenario.get("repo", "")
+    ceiling = EFFICIENCY_CEILINGS.get(repo, DEFAULT_EFFICIENCY_CEILING)
+    efficiency = max(0.0, 1.0 - (billed_tokens / ceiling)) if billed_tokens > 0 else 1.0
+
+    fairness_score = 0.70 * correctness + 0.30 * efficiency
 
     wall_time = round((t.get("duration_ms", 0) or 0) / 1000, 1)
 
@@ -451,21 +490,16 @@ def score_transcript(transcript_path, scenario, repo_path=None):
     total_richness = max((s.get("richness", 0) for s in step_results), default=0)
     discoverability = min(1.0, total_richness / 10.0)
 
-    weights = scenario.get("scoring", {}).get("weights", {})
-    w_comp = weights.get("completeness", 0.40)
-    w_eff  = weights.get("efficiency", 0.25)
-    w_flu  = weights.get("tool_fluency", 0.20)
-    w_disc = weights.get("discoverability", 0.15)
-
-    overall = (w_comp * completeness + w_eff * efficiency
-               + w_flu * tool_fluency + w_disc * discoverability)
+    adoption_score = 0.60 * tool_fluency + 0.40 * discoverability
 
     scored = {
         "scenario": scenario["name"],
         "repo": scenario["repo"],
-        "overall_score": round(overall, 4),
-        "completeness": round(completeness, 4),
+        "fairness_score": round(fairness_score, 4),
+        "adoption_score": round(adoption_score, 4),
+        "correctness": round(correctness, 4),
         "efficiency": round(efficiency, 4),
+        "completeness": round(completeness, 4),
         "tool_fluency": round(tool_fluency, 4),
         "discoverability": round(discoverability, 4),
         "steps": step_results,
@@ -483,6 +517,7 @@ def score_transcript(transcript_path, scenario, repo_path=None):
             "token_total_all": billed_tokens + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"],
             "wall_time_seconds": wall_time,
             "cost_usd": t.get("cost_usd"),
+            "efficiency_ceiling": ceiling,
         },
     }
 

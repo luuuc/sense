@@ -23,13 +23,10 @@ SCENARIO_DESCRIPTIONS = {
 
 
 METRIC_DIRECTIONS = {
-    "score": ("higher", "Overall scenario score — higher is better"),
-    "completeness": ("higher", "Checklist completion rate [60%] — higher is better"),
-    "efficiency": ("higher", "Token efficiency [40%] — higher means fewer tokens per correctness point"),
-    "rich": ("higher", "Richness — unique source files referenced across all steps"),
-    "grep": ("lower", "grep/Bash calls — lower means less raw text searching"),
-    "read": ("lower", "Read/Glob calls — lower means less manual file reading"),
-    "mcp": ("higher", "MCP tool calls — higher means code intelligence tools were used"),
+    "fairness": ("higher", "Fairness score — correctness (0.70) + efficiency (0.30), excludes tool-adoption checks"),
+    "adoption": ("higher", "Adoption score — tool fluency + discoverability, for code-intel comparisons only"),
+    "correctness": ("higher", "Checklist hit rate excluding adoption-layer checks"),
+    "efficiency": ("higher", "Token efficiency calibrated per repo size"),
     "tokens": ("lower", "Billed tokens (uncached) — lower is better (cheaper)"),
     "wall_time": ("lower", "Wall-clock time — lower is better"),
     "cost_usd": ("lower", "API cost in USD — lower is better"),
@@ -94,23 +91,17 @@ def build_per_scenario_table(results):
         for tool, r in sorted(tool_rows.items()):
             m = r.get("metrics", {})
 
-            # Session-level richness = max across steps (all share same transcript)
-            total_richness = max((s.get("richness", 0) for s in r.get("steps", [])), default=0)
-
             rows.append({
                 "tool": tool,
-                "score": r.get("overall_score"),
-                "completeness": r.get("completeness"),
+                "fairness_score": r.get("fairness_score"),
+                "adoption_score": r.get("adoption_score"),
+                "correctness": r.get("correctness"),
                 "efficiency": r.get("efficiency"),
-                "richness": total_richness,
                 "tokens": m.get("token_total_billed", m.get("token_total", 0)),
-                "grep_count": m.get("grep_count", 0),
-                "read_count": m.get("read_count", 0),
-                "mcp_count": m.get("mcp_count", 0),
                 "wall_time": m.get("wall_time_seconds"),
                 "cost_usd": m.get("cost_usd"),
             })
-        rows.sort(key=lambda r2: (r2["score"] or 0), reverse=True)
+        rows.sort(key=lambda r2: (r2["fairness_score"] or 0), reverse=True)
         tables.append({"repo": repo, "rows": rows})
     return tables
 
@@ -125,13 +116,11 @@ def build_aggregate(results):
     for tool_name in sorted(by_tool.keys()):
         runs = by_tool[tool_name]
         n = len(runs)
-        scores = [r2.get("overall_score") for r2 in runs if r2.get("overall_score") is not None]
-        completes = [r2.get("completeness") for r2 in runs if r2.get("completeness") is not None]
+        fairness = [r2.get("fairness_score") for r2 in runs if r2.get("fairness_score") is not None]
+        adoption = [r2.get("adoption_score") for r2 in runs if r2.get("adoption_score") is not None]
+        correct = [r2.get("correctness") for r2 in runs if r2.get("correctness") is not None]
         effs = [r2.get("efficiency") for r2 in runs if r2.get("efficiency") is not None]
         tokens = [r2.get("metrics", {}).get("token_total_billed", r2.get("metrics", {}).get("token_total", 0)) for r2 in runs]
-        grep_counts = [r2.get("metrics", {}).get("grep_count", 0) for r2 in runs]
-        read_counts = [r2.get("metrics", {}).get("read_count", 0) for r2 in runs]
-        mcp_counts = [r2.get("metrics", {}).get("mcp_count", 0) for r2 in runs]
         times = [r2.get("metrics", {}).get("wall_time_seconds") for r2 in runs
                  if r2.get("metrics", {}).get("wall_time_seconds") is not None]
         costs = [r2.get("metrics", {}).get("cost_usd") for r2 in runs
@@ -143,17 +132,15 @@ def build_aggregate(results):
         agg.append({
             "tool": tool_name,
             "scenarios": n,
-            "avg_score": round(avg(scores), 4) if scores else None,
-            "avg_completeness": round(avg(completes), 4) if completes else None,
+            "avg_fairness": round(avg(fairness), 4) if fairness else None,
+            "avg_adoption": round(avg(adoption), 4) if adoption else None,
+            "avg_correctness": round(avg(correct), 4) if correct else None,
             "avg_efficiency": round(avg(effs), 4) if effs else None,
             "avg_tokens": round(avg(tokens)),
-            "avg_grep": round(avg(grep_counts), 1),
-            "avg_read": round(avg(read_counts), 1),
-            "avg_mcp": round(avg(mcp_counts), 1),
             "avg_time": round(avg(times), 1) if times else None,
             "total_cost": round(sum(costs), 2) if costs else None,
         })
-    agg.sort(key=lambda r2: (r2["avg_score"] or 0), reverse=True)
+    agg.sort(key=lambda r2: (r2["avg_fairness"] or 0), reverse=True)
     return agg
 
 
@@ -203,7 +190,7 @@ def _rank_badge(i):
 
 def format_terminal(tables, aggregate, header):
     lines = []
-    lines.append(f"Scenario Evaluation — {sum(t['rows'][0]['score'] is not None for t in tables if t['rows'])} completed")
+    lines.append(f"Scenario Evaluation — {sum(t['rows'][0]['fairness_score'] is not None for t in tables if t['rows'])} completed")
     lines.append("")
 
     for table in tables:
@@ -215,23 +202,20 @@ def format_terminal(tables, aggregate, header):
         if desc:
             lines.append(f"  {desc}")
         lines.append("")
-        hdr = f"  {'Tool':<14} {'Score':>7} {'Comp':>6} {'Eff':>5} {'Rich':>5} {'Tokens':>8} {'Grep':>5} {'Read':>5} {'MCP':>4} {'Time':>7} {'Cost':>7}"
+        hdr = f"  {'Tool':<14} {'Fair':>6} {'Adopt':>6} {'Corr':>6} {'Eff':>5} {'Tokens':>8} {'Time':>7} {'Cost':>7}"
         lines.append(hdr)
-        lines.append(f"  {'-' * 88}")
+        lines.append(f"  {'-' * 68}")
 
         for row in table["rows"]:
-            sc = f"{row['score']:>7.3f}" if row["score"] is not None else "      —"
-            cm = f"{row['completeness']:>6.0%}" if row["completeness"] is not None else "     —"
+            fa = f"{row['fairness_score']:>6.3f}" if row["fairness_score"] is not None else "     —"
+            ad = f"{row['adoption_score']:>6.3f}" if row["adoption_score"] is not None else "     —"
+            cr = f"{row['correctness']:>6.0%}" if row["correctness"] is not None else "     —"
             ef = f"{row['efficiency']:>5.2f}" if row["efficiency"] is not None else "    —"
-            ri = f"{row['richness']:>5}"
             tk = f"{row['tokens']:>8,}"
-            gr = f"{row['grep_count']:>5}"
-            rd = f"{row['read_count']:>5}"
-            mc = f"{row['mcp_count']:>4}"
             wt = f"{row['wall_time']:>6.1f}s" if row["wall_time"] else "      —"
             co = f"${row['cost_usd']:>6.2f}" if row["cost_usd"] is not None else "      —"
             lines.append(
-                f"  {row['tool']:<14} {sc}  {cm} {ef} {ri} {tk} {gr} {rd} {mc} {wt} {co}"
+                f"  {row['tool']:<14} {fa}  {ad} {cr} {ef} {tk} {wt} {co}"
             )
         lines.append("")
 
@@ -239,15 +223,17 @@ def format_terminal(tables, aggregate, header):
     lines.append("  AGGREGATE (all scenarios)")
     lines.append(f"{'=' * 78}")
     lines.append("")
-    lines.append(f"  {'Tool':<14} {'Runs':>4} {'Avg Score':>9} {'Avg Comp':>8} {'Avg Tokens':>10} {'Avg Grep':>8} {'Avg MCP':>7} {'Cost':>7}")
-    lines.append(f"  {'-' * 68}")
+    lines.append(f"  {'Tool':<14} {'Runs':>4} {'Avg Fair':>8} {'Avg Adopt':>9} {'Avg Corr':>8} {'Avg Eff':>7} {'Avg Tokens':>10} {'Cost':>7}")
+    lines.append(f"  {'-' * 72}")
 
     for row in aggregate:
-        as_ = f"{row['avg_score']:>9.4f}" if row["avg_score"] else "        —"
-        ac = f"{row['avg_completeness']:>8.1%}" if row["avg_completeness"] else "       —"
+        af = f"{row['avg_fairness']:>8.4f}" if row["avg_fairness"] else "       —"
+        aa = f"{row['avg_adoption']:>9.4f}" if row["avg_adoption"] else "        —"
+        ac = f"{row['avg_correctness']:>8.1%}" if row["avg_correctness"] else "       —"
+        ae = f"{row['avg_efficiency']:>7.4f}" if row["avg_efficiency"] else "      —"
         co = f"${row['total_cost']:>6.2f}" if row["total_cost"] else "      —"
         lines.append(
-            f"  {row['tool']:<14} {row['scenarios']:>4} {as_} {ac} {row['avg_tokens']:>10,} {row['avg_grep']:>8.1f} {row['avg_mcp']:>7.1f} {co}"
+            f"  {row['tool']:<14} {row['scenarios']:>4} {af} {aa} {ac} {ae} {row['avg_tokens']:>10,} {co}"
         )
 
     lines.append("")
@@ -262,6 +248,8 @@ def format_markdown(tables, aggregate, header):
     lines.append("## Scenario Evaluation")
     lines.append("")
     lines.append(f"Results: {len(aggregate)} tools × {len(tables)} scenarios")
+    lines.append("")
+    lines.append("Two-layer scoring: **Fairness** (correctness 70% + efficiency 30%) measures answer quality without tool-adoption bias. **Adoption** (tool fluency + discoverability) is for code-intel-vs-code-intel comparisons only.")
     lines.append("")
 
     lines.append("### Reading the scores")
@@ -281,39 +269,37 @@ def format_markdown(tables, aggregate, header):
         if desc:
             lines.append(f"> {desc}")
             lines.append("")
-        lines.append("| Rank | Tool | Score | Comp | Eff | Rich | Tokens | Grep | Read | MCP | Time | Cost |")
-        lines.append("|-----:|------|------:|-----:|----:|----:|-------:|-----:|-----:|----:|-----:|-----:|")
+        lines.append("| Rank | Tool | Fairness | Adoption | Correctness | Efficiency | Tokens | Time | Cost |")
+        lines.append("|-----:|------|--------:|---------:|----------:|---------:|-------:|-----:|-----:|")
 
         for i, row in enumerate(table["rows"]):
             badge = _rank_badge(i)
-            sc = f"{row['score']:.3f}" if row["score"] is not None else "—"
-            cm = f"{row['completeness']:.0%}" if row["completeness"] is not None else "—"
+            fa = f"{row['fairness_score']:.3f}" if row["fairness_score"] is not None else "—"
+            ad = f"{row['adoption_score']:.3f}" if row["adoption_score"] is not None else "—"
+            cr = f"{row['correctness']:.0%}" if row["correctness"] is not None else "—"
             ef = f"{row['efficiency']:.2f}" if row["efficiency"] is not None else "—"
-            ri = str(row["richness"])
             tk = f"{row['tokens']:,}"
-            gr = str(row["grep_count"])
-            rd = str(row["read_count"])
-            mc = str(row["mcp_count"])
             wt = f"{row['wall_time']:.1f}s" if row["wall_time"] else "—"
             co = f"${row['cost_usd']:.2f}" if row["cost_usd"] is not None else "—"
             lines.append(
-                f"| {i+1} | {row['tool']}{badge} | {sc} | {cm} | {ef} | {ri} | {tk} | {gr} | {rd} | {mc} | {wt} | {co} |"
+                f"| {i+1} | {row['tool']}{badge} | {fa} | {ad} | {cr} | {ef} | {tk} | {wt} | {co} |"
             )
         lines.append("")
 
     lines.append("### Aggregate")
     lines.append("")
-    lines.append("| Rank | Tool | Scenarios | Avg Score | Avg Comp | Avg Eff | Avg Tokens | Avg Grep | Avg MCP | Total Cost |")
-    lines.append("|-----:|------|----------:|----------:|---------:|--------:|-----------:|---------:|--------:|-----------:|")
+    lines.append("| Rank | Tool | Scenarios | Avg Fairness | Avg Adoption | Avg Correctness | Avg Efficiency | Avg Tokens | Total Cost |")
+    lines.append("|-----:|------|----------:|------------:|-----------:|---------------:|--------------:|-----------:|-----------:|")
     for i, row in enumerate(aggregate):
         badge = _rank_badge(i)
-        as_ = f"{row['avg_score']:.4f}" if row["avg_score"] else "—"
-        ac = f"{row['avg_completeness']:.4f}" if row["avg_completeness"] else "—"
-        ae = f"{row.get('avg_efficiency', 0):.4f}" if row.get("avg_efficiency") else "—"
+        af = f"{row['avg_fairness']:.4f}" if row["avg_fairness"] else "—"
+        aa = f"{row['avg_adoption']:.4f}" if row["avg_adoption"] else "—"
+        ac = f"{row['avg_correctness']:.4f}" if row["avg_correctness"] else "—"
+        ae = f"{row['avg_efficiency']:.4f}" if row.get("avg_efficiency") else "—"
         co = f"${row['total_cost']:.2f}" if row["total_cost"] else "—"
         lines.append(
-            f"| {i+1} | {row['tool']}{badge} | {row['scenarios']} | {as_} | {ac} | {ae} |"
-            f" {row['avg_tokens']:,} | {row['avg_grep']:.1f} | {row['avg_mcp']:.1f} | {co} |"
+            f"| {i+1} | {row['tool']}{badge} | {row['scenarios']} | {af} | {aa} | {ac} | {ae} |"
+            f" {row['avg_tokens']:,} | {co} |"
         )
     lines.append("")
 

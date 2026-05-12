@@ -54,6 +54,7 @@ CHECK_REQUIRED = {
 CHECK_OPTIONAL = {
     "required": bool,
     "description": str,
+    "layer": str,
 }
 
 
@@ -106,12 +107,7 @@ def validate_scenario(data):
                         errors.append(f"{cctx}.required: expected bool")
 
     if "scoring" in data and isinstance(data["scoring"], dict):
-        scoring = data["scoring"]
-        if "weights" in scoring:
-            w = scoring["weights"]
-            total = sum(w.values())
-            if abs(total - 1.0) > 0.01:
-                errors.append(f"scoring weights sum to {total}, expected 1.0")
+        pass
 
     if errors:
         raise ValueError("\n".join(errors))
@@ -130,10 +126,8 @@ def parse(path):
 
     scoring = data.get("scoring", {})
     scoring.setdefault("weights", {
-        "completeness": 0.40,
-        "efficiency": 0.25,
-        "tool_fluency": 0.20,
-        "discoverability": 0.15,
+        "correctness": 0.70,
+        "efficiency": 0.30,
     })
     scoring.setdefault("metrics", [
         "token_input", "token_output", "wall_time", "tool_calls", "misses", "cost_usd",
