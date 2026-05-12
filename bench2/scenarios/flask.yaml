@@ -87,10 +87,12 @@ steps:
   - type: no_grep
     value: no_grep
     required: false
+    layer: adoption
     description: Used structural tools, not raw grep
   - type: mcp_tool_used
     value: sense_graph
     required: false
+    layer: adoption
     description: Used structural call graph to find wsgi_app callers
 - name: Locate test coverage for the dispatch pipeline
   prompt: 'Find the test files that cover Flask.wsgi_app and the dispatch
@@ -110,9 +112,9 @@ steps:
     required: true
     description: Main test file for basic app behavior
   - type: word
-    value: conftest.py
-    required: true
-    description: Test fixtures for app creation
+    value: test_reqctx
+    required: false
+    description: Request context test file for dispatch pipeline
   - type: response_richness
     value: '2'
     required: true
@@ -150,26 +152,18 @@ steps:
     description: Considered middleware wrapping pattern
   - type: word
     value: FlaskClient
+    required: true
+    description: Identified FlaskClient in testing.py as affected by wsgi_app signature change
+  - type: word
+    value: AppContext
     required: false
-    description: Identified FlaskClient in testing.py as affected by wsgi_app signature
-      change
+    description: Traced context push lifecycle as part of dispatch
   - type: mcp_tool_used
     value: sense_blast
     required: false
+    layer: adoption
     description: Used blast radius analysis for wsgi_app signature change impact
 scoring:
   weights:
-    completeness: 0.4
-    efficiency: 0.25
-    tool_fluency: 0.2
-    discoverability: 0.15
-  metrics:
-  - token_input_uncached
-  - token_output
-  - token_total_billed
-  - wall_time
-  - tool_calls
-  - grep_count
-  - read_count
-  - mcp_count
-  - cost_usd
+    correctness: 0.70
+    efficiency: 0.30

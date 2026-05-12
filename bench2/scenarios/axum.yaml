@@ -50,6 +50,7 @@ steps:
   - type: mcp_tool_used
     value: sense_graph
     required: false
+    layer: adoption
     description: Used structural graph query for Handler trait analysis
 - name: Trace the extractor chain
   prompt: 'Read axum-core/src/extract/mod.rs and axum/src/extract/mod.rs.
@@ -81,6 +82,7 @@ steps:
   - type: mcp_tool_used
     value: sense_search
     required: false
+    layer: adoption
     description: Used semantic search for extractor system analysis
 - name: Trace the full serve-to-response lifecycle
   prompt: 'Starting from axum::serve(), trace the complete request lifecycle
@@ -97,9 +99,9 @@ steps:
     value: call_with_state
     required: true
   - type: response_richness
-    value: '6'
+    value: '4'
     required: true
-    description: Referenced 6+ files across the full lifecycle
+    description: Referenced 4+ files across the full lifecycle
   - type: word
     value: PathRouter
     required: false
@@ -113,6 +115,7 @@ steps:
   - type: mcp_tool_used
     value: sense_search
     required: false
+    layer: adoption
     description: Used semantic search to trace serve-to-response lifecycle
 - name: Assess adding a request context layer
   prompt: 'You want every handler to be able to extract a request ID/tracing
@@ -151,17 +154,5 @@ steps:
     description: Distinguished route_layer from Router::layer for middleware scoping
 scoring:
   weights:
-    completeness: 0.4
-    efficiency: 0.25
-    tool_fluency: 0.2
-    discoverability: 0.15
-  metrics:
-  - token_input_uncached
-  - token_output
-  - token_total_billed
-  - wall_time
-  - tool_calls
-  - grep_count
-  - read_count
-  - mcp_count
-  - cost_usd
+    correctness: 0.70
+    efficiency: 0.30

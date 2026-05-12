@@ -22,9 +22,10 @@ steps:
   - type: word
     value: NextNodeServer
     required: true
-  - type: word
-    value: BaseServer
+  - type: contains
+    value: base-server
     required: true
+    description: References the base server file (class is Server, not BaseServer)
   - type: response_richness
     value: '4'
     required: true
@@ -35,18 +36,10 @@ steps:
   - type: contains
     value: Pages
     required: false
-  - type: contains
-    value: base-server.ts
-    required: true
-    description: References the base server file (class is named Server not BaseServer)
   - type: word
     value: NextCustomServer
     required: false
     description: Found the 4th server class in the hierarchy via graph traversal
-  - type: contains
-    value: base-server.ts
-    required: true
-    description: References the base server file (class is named Server not BaseServer)
 - name: Trace the SSR request lifecycle
   prompt: 'Starting from a raw HTTP request, trace the full Next.js SSR
 
@@ -80,6 +73,7 @@ steps:
   - type: no_grep
     value: no_grep
     required: false
+    layer: adoption
   - type: contains
     value: router-server
     required: false
@@ -92,6 +86,7 @@ steps:
   - type: mcp_tool_used
     value: sense_graph
     required: false
+    layer: adoption
     description: Used structural graph query for SSR lifecycle tracing
 - name: Find callers of renderToHTMLOrFlight
   prompt: 'Find ALL callers of renderToHTMLOrFlight. List each with file
@@ -120,6 +115,7 @@ steps:
   - type: mcp_tool_used
     value: sense_graph
     required: false
+    layer: adoption
     description: Used structural graph for caller analysis of renderToHTMLOrFlight
 - name: Assess where to thread a request ID
   prompt: 'You need to add an X-Request-Id header to every Next.js response,
@@ -149,25 +145,14 @@ steps:
     required: false
   - type: word
     value: NEXT_REQUEST_ID_HEADER
-    required: false
-    description: Found the existing request ID header constant via semantic search
+    required: true
+    description: Found the existing request ID header constant — changes the implementation plan
   - type: mcp_tool_used
     value: sense_search
     required: false
+    layer: adoption
     description: Used semantic search to find existing request ID infrastructure
 scoring:
   weights:
-    completeness: 0.4
-    efficiency: 0.25
-    tool_fluency: 0.2
-    discoverability: 0.15
-  metrics:
-  - token_input_uncached
-  - token_output
-  - token_total_billed
-  - wall_time
-  - tool_calls
-  - grep_count
-  - read_count
-  - mcp_count
-  - cost_usd
+    correctness: 0.70
+    efficiency: 0.30

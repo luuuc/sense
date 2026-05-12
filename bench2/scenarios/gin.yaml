@@ -32,9 +32,9 @@ steps:
     value: gin.go
     required: true
   - type: response_richness
-    value: '7'
+    value: '4'
     required: true
-    description: Referenced 5+ unique source files in dispatch trace
+    description: Referenced 4+ unique source files in dispatch trace
   - type: word
     value: context.go
     required: false
@@ -44,6 +44,7 @@ steps:
   - type: mcp_tool_used
     value: sense_graph
     required: false
+    layer: adoption
     description: Used structural graph query for dispatch chain tracing
 - name: Understand middleware flow
   prompt: "In Gin, middleware functions call `c.Next()` to pass control to\nthe next\
@@ -84,6 +85,7 @@ steps:
   - type: mcp_tool_used
     value: sense_graph
     required: false
+    layer: adoption
     description: Used structural graph query for Context.Next/Abort caller analysis
 - name: Find dead code in the gin package
   prompt: 'Find symbols (functions, types, methods) in the main gin package
@@ -109,10 +111,12 @@ steps:
     description: Referenced 3+ files in dead-code analysis
   - type: no_grep
     value: no_grep
-    required: true
+    required: false
+    layer: adoption
   - type: mcp_tool_used
     value: sense_graph
     required: false
+    layer: adoption
     description: Used structural graph query for dead code detection
   - type: contains
     value: binding
@@ -152,24 +156,17 @@ steps:
   - type: mcp_tool_used
     value: sense_blast
     required: false
+    layer: adoption
     description: Used blast radius analysis for modification impact
   - type: word
     value: Default
     required: false
     description: Named gin.Default as the automatic registration site for Recovery
+  - type: word
+    value: BasicAuthForRealm
+    required: false
+    description: Transitive Abort caller via AbortWithStatus — requires multi-hop traversal
 scoring:
   weights:
-    completeness: 0.4
-    efficiency: 0.25
-    tool_fluency: 0.2
-    discoverability: 0.15
-  metrics:
-  - token_input_uncached
-  - token_output
-  - token_total_billed
-  - wall_time
-  - tool_calls
-  - grep_count
-  - read_count
-  - mcp_count
-  - cost_usd
+    correctness: 0.70
+    efficiency: 0.30

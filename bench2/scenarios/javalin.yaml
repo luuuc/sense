@@ -35,10 +35,7 @@ steps:
   - type: mcp_tool_used
     value: sense_graph
     required: false
-    description: Used structural graph query for codebase orientation
-  - type: mcp_tool_used
-    value: sense_graph
-    required: false
+    layer: adoption
     description: Used structural graph query for codebase orientation
 - name: Trace HTTP dispatch from JavalinServlet.service
   prompt: 'Trace the service() method and follow the full dispatch chain:
@@ -62,13 +59,11 @@ steps:
   - type: no_grep
     value: no_grep
     required: false
+    layer: adoption
   - type: mcp_tool_used
     value: sense_search
     required: false
-    description: Used semantic search for dispatch chain tracing
-  - type: mcp_tool_used
-    value: sense_search
-    required: false
+    layer: adoption
     description: Used semantic search for dispatch chain tracing
 - name: Trace route registration and find test files
   prompt: 'Trace how app.get("/hello", ...) gets registered from Javalin.get()
@@ -118,20 +113,9 @@ steps:
   - type: mcp_tool_used
     value: sense_search
     required: false
+    layer: adoption
     description: Used semantic search for error handling assessment
 scoring:
   weights:
-    completeness: 0.4
-    efficiency: 0.25
-    tool_fluency: 0.2
-    discoverability: 0.15
-  metrics:
-  - token_input_uncached
-  - token_output
-  - token_total_billed
-  - wall_time
-  - tool_calls
-  - grep_count
-  - read_count
-  - mcp_count
-  - cost_usd
+    correctness: 0.70
+    efficiency: 0.30

@@ -37,6 +37,7 @@ steps:
   - type: mcp_tool_used
     value: sense_search
     required: false
+    layer: adoption
     description: Used semantic search for Guardian/authorization orientation
 - name: Trace topic creation from controller to persistence
   prompt: 'Trace the topic creation flow from TopicsController#create through
@@ -67,6 +68,7 @@ steps:
   - type: no_grep
     value: no_grep
     required: false
+    layer: adoption
   - type: word
     value: NewPostManager
     required: false
@@ -74,6 +76,7 @@ steps:
   - type: mcp_tool_used
     value: sense_search
     required: false
+    layer: adoption
     description: Used semantic search for topic creation flow tracing
 - name: Understand Guardian authorization
   prompt: 'Find how Guardian is used in the topic creation path. Where is it
@@ -105,7 +108,7 @@ steps:
     description: Named the intermediate Guardian method in the permission chain
   - type: word
     value: CurrentUserSerializer
-    required: false
+    required: true
     description: Connected Guardian permissions to frontend serialization layer
 - name: Assess impact of adding a permission check
   prompt: 'You need to add a permission: only users who have been members
@@ -134,25 +137,21 @@ steps:
   - type: mcp_tool_used
     value: sense_blast
     required: false
+    layer: adoption
     description: Used blast radius analysis for permission change impact
-  - type: word
-    value: can_edit_tags
+  - type: contains
+    value: spam_rules_spec
     required: false
-    description: Identifies can_edit_tags as a downstream caller affected by Guardian
-      changes
+    description: Warned about specific test breakage from permission change
+  - type: contains
+    value: reply_as_new_topic
+    required: false
+    description: Identified permission gap in topic reply path
+  - type: contains
+    value: queue
+    required: false
+    description: Flagged queue-vs-reject behavioral impact
 scoring:
   weights:
-    completeness: 0.4
-    efficiency: 0.25
-    tool_fluency: 0.2
-    discoverability: 0.15
-  metrics:
-  - token_input_uncached
-  - token_output
-  - token_total_billed
-  - wall_time
-  - tool_calls
-  - grep_count
-  - read_count
-  - mcp_count
-  - cost_usd
+    correctness: 0.70
+    efficiency: 0.30
