@@ -133,21 +133,24 @@ func TestSubagentStartReturnsGuidance(t *testing.T) {
 	}
 }
 
-func TestPreToolUseSymbolMatchAdvises(t *testing.T) {
+func TestPreToolUseSymbolMatchNudges(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Grep","tool_input":{"pattern":"UserService"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for known symbol grep")
+	}
 	if resp.AdditionalContext == "" {
-		t.Fatal("expected advisory context for known symbol")
+		t.Fatal("expected non-empty additionalContext for known symbol grep")
 	}
 	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
-		t.Error("expected sense_graph suggestion in advisory")
+		t.Error("expected sense_graph suggestion in additionalContext")
 	}
 }
 
@@ -188,21 +191,24 @@ func TestPreToolUseNoMatch(t *testing.T) {
 	}
 }
 
-func TestPreToolUseAgentDeny(t *testing.T) {
+func TestPreToolUseAgentNudge(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"deep-explore","prompt":"find all callers"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp denyResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if resp.Output.Decision != "deny" {
-		t.Fatalf("expected deny decision for deep-explore, got %q", resp.Output.Decision)
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for known explorer")
 	}
-	if !strings.Contains(resp.Output.Reason, "sense_graph") {
-		t.Error("expected sense_graph in deny reason")
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected non-empty additionalContext for known explorer")
+	}
+	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
+		t.Error("expected sense_graph in additionalContext")
 	}
 }
 
@@ -217,37 +223,57 @@ func TestPreToolUseAgentAllowNonExplore(t *testing.T) {
 	}
 }
 
-func TestPreToolUseGlobPassthrough(t *testing.T) {
+func TestPreToolUseGlobFilePatternNoOp(t *testing.T) {
 	dir := indexedDir(t)
 	cases := []string{
 		`{"tool_name":"Glob","tool_input":{"pattern":"src/controllers/**/*.rb"}}`,
 		`{"tool_name":"Glob","tool_input":{"pattern":"internal/hook/*.go"}}`,
-		`{"tool_name":"Glob","tool_input":{"pattern":"UserService"}}`,
 	}
 	for _, input := range cases {
 		var buf bytes.Buffer
 		Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 		if buf.String() != "{}\n" {
-			t.Errorf("Glob should always pass through, got %q for input %s", buf.String(), input)
+			t.Errorf("Glob with file pattern should be no-op, got %q for input %s", buf.String(), input)
 		}
 	}
 }
 
-func TestPreToolUseBashGrepAdvises(t *testing.T) {
+func TestPreToolUseGlobSymbolNudge(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Glob","tool_input":{"pattern":"UserService"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp nudgeResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for Glob with symbol pattern")
+	}
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected non-empty additionalContext for Glob with symbol pattern")
+	}
+}
+
+func TestPreToolUseBashGrepNudges(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Bash","tool_input":{"command":"grep -rn UserService ."}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for bash grep of known symbol")
+	}
 	if resp.AdditionalContext == "" {
-		t.Fatal("expected advisory for bash grep of known symbol")
+		t.Fatal("expected non-empty additionalContext for bash grep of known symbol")
 	}
 	if !strings.Contains(resp.AdditionalContext, "sense_graph") {
-		t.Error("expected sense_graph suggestion in advisory")
+		t.Error("expected sense_graph suggestion in additionalContext")
 	}
 }
 
@@ -262,18 +288,21 @@ func TestPreToolUseBashNonGrepNoOp(t *testing.T) {
 	}
 }
 
-func TestPreToolUseExploreAgentDeny(t *testing.T) {
+func TestPreToolUseExploreAgentNudge(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"Explore","prompt":"find implementations"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp denyResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
-	if resp.Output.Decision != "deny" {
-		t.Fatalf("expected deny for Explore agent, got %q", resp.Output.Decision)
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for Explore agent")
+	}
+	if resp.AdditionalContext == "" {
+		t.Fatal("expected non-empty additionalContext for Explore agent")
 	}
 }
 
@@ -334,33 +363,39 @@ func TestIsSymbolShaped(t *testing.T) {
 	}
 }
 
-func TestPreToolUseAgentExplorationIntentAdvise(t *testing.T) {
+func TestPreToolUseAgentExplorationIntentNudge(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"explore the codebase to understand the architecture"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for exploration-intent agent")
+	}
 	if resp.AdditionalContext == "" {
-		t.Fatal("expected advisory context for exploration-intent agent, got empty")
+		t.Fatal("expected non-empty additionalContext for exploration-intent agent")
 	}
 }
 
-func TestPreToolUseAgentDescriptionFallbackAdvise(t *testing.T) {
+func TestPreToolUseAgentDescriptionFallbackNudge(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","description":"explore the codebase structure"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for exploration-intent description")
+	}
 	if resp.AdditionalContext == "" {
-		t.Fatal("expected advisory context for exploration-intent description, got empty")
+		t.Fatal("expected non-empty additionalContext for exploration-intent description")
 	}
 }
 
@@ -375,51 +410,131 @@ func TestPreToolUseAgentNoExplorationIntentPass(t *testing.T) {
 	}
 }
 
-func TestPreToolUseConceptSearchAdvise(t *testing.T) {
+func TestPreToolUseConceptSearchNudge(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Grep","tool_input":{"pattern":"error handling middleware"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for concept search")
+	}
 	if resp.AdditionalContext == "" {
-		t.Fatal("expected advisory for concept search pattern")
+		t.Fatal("expected non-empty additionalContext for concept search")
 	}
 	if !strings.Contains(resp.AdditionalContext, "sense_search") {
-		t.Error("expected sense_search suggestion in advisory")
+		t.Error("expected sense_search suggestion in additionalContext")
 	}
 }
 
-func TestPreToolUseBashFindCodeAdvise(t *testing.T) {
+func TestPreToolUseBashFindCodeNudge(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Bash","tool_input":{"command":"find . -name \"*.go\" -type f"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for find code files")
+	}
 	if resp.AdditionalContext == "" {
-		t.Fatal("expected advisory for find code files")
+		t.Fatal("expected non-empty additionalContext for find code files")
 	}
 }
 
-func TestPreToolUseBashHeadCodeAdvise(t *testing.T) {
+func TestPreToolUseBashHeadCodeNudge(t *testing.T) {
 	dir := indexedDir(t)
 	input := `{"tool_name":"Bash","tool_input":{"command":"head -20 internal/hook/pre_tool_use.go"}}`
 	var buf bytes.Buffer
 	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
 
-	var resp hookResponse
+	var resp nudgeResponse
 	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected non-empty systemMessage for head on code file")
+	}
 	if resp.AdditionalContext == "" {
-		t.Fatal("expected advisory for head on code file")
+		t.Fatal("expected non-empty additionalContext for head on code file")
+	}
+}
+
+func TestPreToolUseUnknownToolNoOp(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Read","tool_input":{"file_path":"/tmp/foo.go"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("unknown tool should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseGlobNoMatchNoOp(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Glob","tool_input":{"pattern":"NonexistentSymbol"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("Glob with no matching symbol should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseMalformedInput(t *testing.T) {
+	dir := indexedDir(t)
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(`not json`), &buf)
+	if buf.String() != "{}\n" {
+		t.Errorf("malformed input should be no-op, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseGrepRegexField(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Grep","tool_input":{"regex":"UserService"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp nudgeResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected nudge for symbol via regex field")
+	}
+}
+
+func TestPreToolUseGrepCommandField(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Grep","tool_input":{"command":"UserService"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp nudgeResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.SystemMessage == "" {
+		t.Fatal("expected nudge for symbol via command field")
+	}
+}
+
+func TestPreToolUseGrepEmptyPatternNoOp(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Grep","tool_input":{}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+	if buf.String() != "{}\n" {
+		t.Errorf("empty grep pattern should be no-op, got %q", buf.String())
 	}
 }
 
