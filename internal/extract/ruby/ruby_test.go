@@ -3615,3 +3615,118 @@ func TestMergeMaps(t *testing.T) {
 		}
 	}
 }
+
+func TestConstReferenceEdgeRuby(t *testing.T) {
+	r := parseRuby(t, `MAX_RETRIES = 5
+
+class Service
+  def process
+    x = MAX_RETRIES
+  end
+end
+`)
+	if findEdge(r, "Service#process", "MAX_RETRIES", "references") == nil {
+		t.Error("missing references edge Service#process -> MAX_RETRIES")
+	}
+}
+
+func TestConstReferenceNestedRuby(t *testing.T) {
+	r := parseRuby(t, `class Config
+  TIMEOUT = 30
+
+  def read
+    t = TIMEOUT
+  end
+end
+`)
+	if findEdge(r, "Config#read", "Config::TIMEOUT", "references") == nil {
+		t.Error("missing references edge for nested constant")
+	}
+}
+
+func TestConstReferenceSkipsScopeResolutionRuby(t *testing.T) {
+	r := parseRuby(t, `MAX = 10
+
+class Svc
+  def run
+    x = MAX
+  end
+end
+`)
+	if findEdge(r, "Svc#run", "MAX", "references") == nil {
+		t.Error("missing references edge for direct constant use")
+	}
+}
+
+func TestConstReferenceDedupRuby(t *testing.T) {
+	r := parseRuby(t, `LIMIT = 10
+
+class Svc
+  def run
+    a = LIMIT
+    b = LIMIT
+  end
+end
+`)
+	count := 0
+	for _, e := range r.edges {
+		if string(e.Kind) == "references" && e.TargetQualified == "LIMIT" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 references edge to LIMIT, got %d", count)
+	}
+}
+
+func TestConstReferenceFromSingletonMethodRuby(t *testing.T) {
+	r := parseRuby(t, `FACTOR = 2
+
+class Calc
+  def self.double(n)
+    n * FACTOR
+  end
+end
+`)
+	if findEdge(r, "Calc.double", "FACTOR", "references") == nil {
+		t.Error("missing references edge from singleton method")
+	}
+}
+
+func TestConstReferenceSkipsUnknownRuby(t *testing.T) {
+	r := parseRuby(t, `KNOWN = 1
+
+class Svc
+  def run
+    x = KNOWN
+    y = UNKNOWN
+  end
+end
+`)
+	if findEdge(r, "Svc#run", "KNOWN", "references") == nil {
+		t.Error("missing references edge for known constant")
+	}
+	if findEdge(r, "Svc#run", "UNKNOWN", "references") != nil {
+		t.Error("should not emit references for unknown constant")
+	}
+}
+
+func TestConstReferenceSkipsSuperclassRuby(t *testing.T) {
+	r := parseRuby(t, `BASE = 1
+
+class Parent
+  def run
+    x = BASE
+  end
+end
+
+class Child < Parent
+  def work
+    y = BASE
+  end
+end
+`)
+	if findEdge(r, "Parent#run", "BASE", "references") == nil {
+		t.Error("missing references edge for BASE in Parent.run")
+	}
+}

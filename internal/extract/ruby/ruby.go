@@ -62,7 +62,9 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit
 		classInstanceVars: make(map[string]map[string]string),
 		returnTypes:       returnTypes,
 		emittedCallbacks:  make(map[string]bool),
+		pkgBindings:       make(map[string]string),
 	}
+	w.collectConstants(tree.RootNode(), nil)
 	return w.walk(tree.RootNode(), nil)
 }
 
@@ -83,11 +85,12 @@ type walker struct {
 	source            []byte
 	emit              extract.Emitter
 	filePath          string
-	routeNS           []string // namespace stack for route files (e.g. ["Admin"])
-	testScope         []string // nested RSpec block descriptions for synthetic scope
-	classInstanceVars map[string]map[string]string // @ivar type map per class
-	returnTypes       map[string]string            // method_qualified → class_name (file-level)
-	emittedCallbacks  map[string]bool              // dedup synthetic callback symbols by qualified name
+	routeNS           []string                     // namespace stack for route files (e.g. ["Admin"])
+	testScope         []string                     // nested RSpec block descriptions for synthetic scope
+	classInstanceVars map[string]map[string]string  // @ivar type map per class
+	returnTypes       map[string]string             // method_qualified → class_name (file-level)
+	emittedCallbacks  map[string]bool               // dedup synthetic callback symbols by qualified name
+	pkgBindings       map[string]string              // unqualified name → qualified name for file-level constants
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -669,7 +672,10 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	}); err != nil {
 		return err
 	}
-	return w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic)
+	if err := w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic); err != nil {
+		return err
+	}
+	return w.emitConstRefs(body, qualified)
 }
 
 // emitCall produces a calls edge for one `call` node. The target is
@@ -1353,6 +1359,84 @@ func inferSendTargetFromVariable(call *sitter.Node, source []byte) (string, floa
 		return target, ConfidenceHeuristicDispatch, true
 	}
 	return "", 0, false
+}
+
+// collectConstants recursively pre-scans for constant assignments so
+// method bodies can emit references edges. Descends into class/module
+// bodies to find nested constants (e.g. MyClass::TIMEOUT).
+func (w *walker) collectConstants(n *sitter.Node, scope []string) {
+	if n == nil {
+		return
+	}
+	count := n.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		switch child.Kind() {
+		case "assignment":
+			lhs := child.ChildByFieldName("left")
+			if lhs != nil && lhs.Kind() == "constant" {
+				name := extract.Text(lhs, w.source)
+				if name != "" {
+					qualified := name
+					if parent := strings.Join(scope, "::"); parent != "" {
+						qualified = parent + "::" + name
+					}
+					w.pkgBindings[name] = qualified
+				}
+			}
+		case "class", "module":
+			nameNode := child.ChildByFieldName("name")
+			if nameNode == nil {
+				continue
+			}
+			name := extract.Text(nameNode, w.source)
+			if name == "" {
+				continue
+			}
+			newScope := append(slices.Clone(scope), name)
+			if body := child.ChildByFieldName("body"); body != nil {
+				w.collectConstants(body, newScope)
+			}
+		}
+	}
+}
+
+// emitConstRefs walks a method body for `constant` nodes that resolve
+// to known file-level constants and emits references edges.
+func (w *walker) emitConstRefs(body *sitter.Node, sourceQualified string) error {
+	if body == nil || len(w.pkgBindings) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	return extract.WalkNamedDescendants(body, "constant", func(cn *sitter.Node) error {
+		name := extract.Text(cn, w.source)
+		if name == "" || seen[name] {
+			return nil
+		}
+		targetQ, ok := w.pkgBindings[name]
+		if !ok {
+			return nil
+		}
+		// Skip constants used as class names or scope resolution (e.g. Foo::Bar).
+		if p := cn.Parent(); p != nil {
+			switch p.Kind() {
+			case "scope_resolution", "superclass":
+				return nil
+			}
+		}
+		seen[name] = true
+		line := extract.Line(cn.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: sourceQualified,
+			TargetQualified: targetQ,
+			Kind:            model.EdgeReferences,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		})
+	})
 }
 
 // handleConstantAssignment emits a KindConstant symbol when the LHS of

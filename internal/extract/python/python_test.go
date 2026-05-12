@@ -1582,3 +1582,100 @@ func TestTypeAnnotationEdgeErrorPy(t *testing.T) {
 	}
 }
 
+func TestConstReferenceEdgePy(t *testing.T) {
+	r := parse(t, `MAX_RETRIES = 5
+
+def process():
+    x = MAX_RETRIES
+`)
+	if findEdge(r, "process", "MAX_RETRIES", "references") == nil {
+		t.Error("missing references edge process -> MAX_RETRIES")
+	}
+}
+
+func TestConstReferenceSkipsParamsPy(t *testing.T) {
+	r := parse(t, `MAX_RETRIES = 5
+
+def process(MAX_RETRIES):
+    x = MAX_RETRIES
+`)
+	if findEdge(r, "process", "MAX_RETRIES", "references") != nil {
+		t.Error("should not emit references edge when param shadows constant")
+	}
+}
+
+func TestConstReferenceSkipsCallTargetsPy(t *testing.T) {
+	r := parse(t, `API_URL = "http://example.com"
+
+def fetch():
+    if API_URL:
+        print("ok")
+`)
+	if findEdge(r, "fetch", "API_URL", "references") == nil {
+		t.Error("missing references edge for constant in condition")
+	}
+}
+
+func TestConstReferenceDedupPy(t *testing.T) {
+	r := parse(t, `LIMIT = 10
+
+def process():
+    a = LIMIT
+    b = LIMIT
+`)
+	count := 0
+	for _, e := range r.edges {
+		if string(e.Kind) == "references" && e.TargetQualified == "LIMIT" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 references edge to LIMIT, got %d", count)
+	}
+}
+
+func TestConstReferenceFromMethodPy(t *testing.T) {
+	r := parse(t, `MAX = 10
+
+class Svc:
+    def run(self):
+        x = MAX
+`)
+	if findEdge(r, "Svc.run", "MAX", "references") == nil {
+		t.Error("missing references edge from class method to module-level constant")
+	}
+}
+
+func TestConstReferenceSkipsCallTargetFnPy(t *testing.T) {
+	r := parse(t, `HANDLER = "process"
+
+def run():
+    HANDLER()
+    x = HANDLER
+`)
+	edges := 0
+	for _, e := range r.edges {
+		if e.Kind == "references" && e.TargetQualified == "HANDLER" {
+			edges++
+		}
+	}
+	if edges != 1 {
+		t.Errorf("expected 1 references edge (value read only), got %d", edges)
+	}
+}
+
+func TestCollectParamsSplatPy(t *testing.T) {
+	r := parse(t, `ARGS = "x"
+KWARGS = "y"
+
+def run(*ARGS, **KWARGS):
+    pass
+`)
+	if findEdge(r, "run", "ARGS", "references") != nil {
+		t.Error("should not emit references for *args param name")
+	}
+	if findEdge(r, "run", "KWARGS", "references") != nil {
+		t.Error("should not emit references for **kwargs param name")
+	}
+}
+

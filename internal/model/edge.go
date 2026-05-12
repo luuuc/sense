@@ -27,6 +27,7 @@ const (
 	EdgeInherits EdgeKind = "inherits"
 	EdgeIncludes EdgeKind = "includes"
 	EdgeTests    EdgeKind = "tests"
-	EdgeComposes EdgeKind = "composes"
-	EdgeTemporal EdgeKind = "temporal"
+	EdgeComposes   EdgeKind = "composes"
+	EdgeTemporal   EdgeKind = "temporal"
+	EdgeReferences EdgeKind = "references"
 )

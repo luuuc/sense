@@ -1620,3 +1620,246 @@ type (
 		t.Error("expected error on third type in group")
 	}
 }
+
+func TestConstReferenceEdge(t *testing.T) {
+	r := parse(t, `package utils
+
+const MaxRetries = 5
+
+func Process() {
+	x := MaxRetries
+	_ = x
+}
+`)
+	if findEdge(r, "utils.Process", "utils.MaxRetries", "references") == nil {
+		t.Error("missing references edge utils.Process -> utils.MaxRetries")
+	}
+}
+
+func TestConstReferenceSkipsLocals(t *testing.T) {
+	r := parse(t, `package utils
+
+const Limit = 10
+
+func Process() {
+	Limit := 99
+	_ = Limit
+}
+`)
+	if findEdge(r, "utils.Process", "utils.Limit", "references") != nil {
+		t.Error("should not emit references edge when local shadows constant")
+	}
+}
+
+func TestConstReferenceSkipsCallTargets(t *testing.T) {
+	r := parse(t, `package utils
+
+const Debug = true
+
+func Process() {
+	if Debug {
+		fmt.Println("debug")
+	}
+}
+`)
+	if findEdge(r, "utils.Process", "utils.Debug", "references") == nil {
+		t.Error("missing references edge for constant used in condition")
+	}
+	// fmt.Println is a call, not a references edge
+	if findEdge(r, "utils.Process", "fmt.Println", "references") != nil {
+		t.Error("should not emit references edge for call targets")
+	}
+}
+
+func TestConstReferenceFromMethod(t *testing.T) {
+	r := parse(t, `package svc
+
+const timeout = 30
+
+type Server struct{}
+
+func (s *Server) Run() {
+	t := timeout
+	_ = t
+}
+`)
+	if findEdge(r, "svc.Server.Run", "svc.timeout", "references") == nil {
+		t.Error("missing references edge from method to constant")
+	}
+}
+
+func TestConstReferenceDedup(t *testing.T) {
+	r := parse(t, `package svc
+
+const X = 1
+
+func F() {
+	a := X
+	b := X
+	_ = a + b
+}
+`)
+	count := 0
+	for _, e := range r.edges {
+		if string(e.Kind) == "references" && e.TargetQualified == "svc.X" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 references edge to svc.X, got %d", count)
+	}
+}
+
+func TestVarDeclarationSymbol(t *testing.T) {
+	r := parse(t, `package utils
+
+var localhostIP = "127.0.0.1"
+`)
+	s := findSymbol(r, "utils.localhostIP")
+	if s == nil {
+		t.Fatal("missing symbol for package-level var")
+	}
+	if s.Kind != "constant" {
+		t.Errorf("kind = %q, want constant", s.Kind)
+	}
+}
+
+func TestVarReferenceEdge(t *testing.T) {
+	r := parse(t, `package utils
+
+var localhostIP = "127.0.0.1"
+
+func Serve() {
+	addr := localhostIP + ":8080"
+	_ = addr
+}
+`)
+	if findEdge(r, "utils.Serve", "utils.localhostIP", "references") == nil {
+		t.Error("missing references edge for package-level var")
+	}
+}
+
+func TestConstReferenceGroupedConsts(t *testing.T) {
+	r := parse(t, `package svc
+
+const (
+	A = 1
+	B = 2
+)
+
+func F() {
+	_ = A + B
+}
+`)
+	if findEdge(r, "svc.F", "svc.A", "references") == nil {
+		t.Error("missing references edge for grouped const A")
+	}
+	if findEdge(r, "svc.F", "svc.B", "references") == nil {
+		t.Error("missing references edge for grouped const B")
+	}
+}
+
+func TestConstReferenceSkipsSelectorOperand(t *testing.T) {
+	r := parse(t, `package svc
+
+var cfg = "val"
+
+func F() {
+	_ = cfg
+	fmt.Println(cfg)
+}
+`)
+	edges := 0
+	for _, e := range r.edges {
+		if e.Kind == "references" && e.TargetQualified == "svc.cfg" {
+			edges++
+		}
+	}
+	if edges != 1 {
+		t.Errorf("expected 1 references edge (skip selector operand fmt), got %d", edges)
+	}
+}
+
+func TestConstReferenceSkipsBlankIdentifier(t *testing.T) {
+	r := parse(t, `package svc
+
+const _ = "unused"
+
+func F() {
+	_ = 42
+}
+`)
+	for _, e := range r.edges {
+		if e.Kind == "references" && e.TargetQualified == "svc._" {
+			t.Error("should not emit references edge for blank identifier")
+		}
+	}
+}
+
+func TestConstReferenceFromInit(t *testing.T) {
+	r := parse(t, `package svc
+
+const Version = "1.0"
+
+func init() {
+	_ = Version
+}
+`)
+	if findEdge(r, "svc.init", "svc.Version", "references") == nil {
+		t.Error("missing references edge from init() to constant")
+	}
+}
+
+func TestConstReferenceSkipsIotaInBody(t *testing.T) {
+	r := parse(t, `package svc
+
+func F() {
+	_ = iota
+}
+`)
+	for _, e := range r.edges {
+		if e.Kind == "references" && e.TargetQualified == "svc.iota" {
+			t.Error("should not emit references edge for iota builtin")
+		}
+	}
+}
+
+func TestConstReferenceSkipsSelectorField(t *testing.T) {
+	r := parse(t, `package svc
+
+var Timeout = 30
+
+type Config struct {
+	Timeout int
+}
+
+func F() {
+	c := Config{}
+	_ = c.Timeout
+}
+`)
+	if findEdge(r, "svc.F", "svc.Timeout", "references") != nil {
+		t.Error("should not emit references edge for struct field access via selector")
+	}
+}
+
+func TestGroupedVarDeclaration(t *testing.T) {
+	r := parse(t, `package svc
+
+var (
+	X = 1
+	Y = "hello"
+)
+
+func F() {
+	_ = X
+	_ = Y
+}
+`)
+	if findEdge(r, "svc.F", "svc.X", "references") == nil {
+		t.Error("missing references edge for grouped var X")
+	}
+	if findEdge(r, "svc.F", "svc.Y", "references") == nil {
+		t.Error("missing references edge for grouped var Y")
+	}
+}

@@ -101,7 +101,7 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 		return pickBest(matches, req.SourceFileID, req.BaseConfidence), true
 	}
 
-	if req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests {
+	if req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests || req.Kind == model.EdgeReferences {
 		// Unqualified fallback: find symbols whose trailing segment
 		// matches the target's trailing segment. Applies to bare
 		// targets ("say" ⇒ byName["say"]) as well as dotted targets
