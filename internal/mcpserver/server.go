@@ -243,6 +243,9 @@ type handlers struct {
 	defaults     profile.Defaults
 	seenSymbols  map[int64]bool
 	seenMu       sync.Mutex
+
+	symbolCountOnce sync.Once
+	symbolCountVal  int
 }
 
 // ---------------------------------------------------------------
@@ -445,6 +448,10 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 	}
 
+	if direction == model.DirectionCallees || direction == model.DirectionBoth {
+		enrichAlsoCalledBy(ctx, h.adapter, h.cachedSymbolCount(ctx), gr, &resp)
+	}
+
 	if len(resp.Edges.CalledBy) > compactEdgeKeepCount {
 		compactCallEdges(resp.Edges.CalledBy)
 	}
@@ -475,6 +482,66 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return nil, fmt.Errorf("sense_graph: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
+}
+
+const (
+	// Thresholds for also_called_by enrichment on graph callee queries.
+	// 5000: small enough that the batch caller query is fast; covers repos
+	// where reading all files is still feasible for an LLM.
+	alsoCalledBySymbolThreshold = 5000
+	// 20: suppress noisy hub symbols that everything calls.
+	alsoCalledByCallerCap = 20
+)
+
+func (h *handlers) cachedSymbolCount(ctx context.Context) int {
+	h.symbolCountOnce.Do(func() {
+		_ = h.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols`).Scan(&h.symbolCountVal)
+	})
+	return h.symbolCountVal
+}
+
+func enrichAlsoCalledBy(ctx context.Context, adapter *sqlite.Adapter, symbolCount int, gr *model.GraphResult, resp *mcpio.GraphResponse) {
+	if len(resp.Edges.Calls) == 0 {
+		return
+	}
+	if symbolCount >= alsoCalledBySymbolThreshold {
+		return
+	}
+
+	nameToID := make(map[string]int64)
+	for _, e := range gr.Root.Outbound {
+		if e.Edge.Kind == model.EdgeCalls || e.Edge.Kind == model.EdgeReferences {
+			nameToID[qualifiedOrNameRef(e.Target)] = e.Target.ID
+		}
+	}
+
+	var targetIDs []int64
+	for _, c := range resp.Edges.Calls {
+		if id, ok := nameToID[c.Symbol]; ok {
+			targetIDs = append(targetIDs, id)
+		}
+	}
+	if len(targetIDs) == 0 {
+		return
+	}
+
+	// Fetch cap+1 so we can detect overflow: if we get more than cap, suppress the callee.
+	callerMap, err := adapter.CallersOfTargets(ctx, targetIDs, gr.Root.Symbol.ID, alsoCalledByCallerCap+1)
+	if err != nil {
+		return
+	}
+
+	for i := range resp.Edges.Calls {
+		id, ok := nameToID[resp.Edges.Calls[i].Symbol]
+		if !ok {
+			continue
+		}
+		callers := callerMap[id]
+		if len(callers) == 0 || len(callers) > alsoCalledByCallerCap {
+			continue
+		}
+		resp.Edges.Calls[i].AlsoCalledBy = callers
+	}
 }
 
 func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.SymbolContext, resp *mcpio.GraphResponse, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {

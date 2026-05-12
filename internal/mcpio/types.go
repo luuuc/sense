@@ -175,13 +175,14 @@ type GraphEdges struct {
 // may have no indexed file — the documented example includes
 // `"file": null` for exactly that case.
 type CallEdgeRef struct {
-	Symbol     string     `json:"symbol"`
-	File       *string    `json:"file"`
-	LineStart  int        `json:"line_start,omitempty"`
-	LineEnd    int        `json:"line_end,omitempty"`
-	Ref        string     `json:"ref,omitempty"`
-	Confidence Confidence `json:"confidence"`
-	CallSite   *CallSite  `json:"call_site,omitempty"`
+	Symbol       string     `json:"symbol"`
+	File         *string    `json:"file"`
+	LineStart    int        `json:"line_start,omitempty"`
+	LineEnd      int        `json:"line_end,omitempty"`
+	Ref          string     `json:"ref,omitempty"`
+	Confidence   Confidence `json:"confidence"`
+	CallSite     *CallSite  `json:"call_site,omitempty"`
+	AlsoCalledBy []string   `json:"also_called_by,omitempty"`
 }
 
 // InheritEdgeRef is the shape of an inherits edge entry. The
