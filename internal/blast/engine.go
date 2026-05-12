@@ -159,6 +159,8 @@ type Result struct {
 	// a temporal edge. Keyed by symbol ID.
 	DirectTemporalIDs map[int64]bool
 
+	SubjectHasCallees bool
+
 	// Edge-kind groups: filtered views over the same nodes that appear
 	// in DirectCallers/IndirectCallers. A node appears in at most one
 	// group (the edge kind that discovered it first in BFS order).
@@ -198,6 +200,8 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	if err != nil {
 		return Result{}, fmt.Errorf("blast: load subject %d: %w", symbolIDs[0], err)
 	}
+
+	hasCallees := subjectHasCallees(ctx, db, symbolIDs)
 
 	visited := map[int64]int{}
 	predecessor := map[int64]int64{}
@@ -484,6 +488,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		IndirectCallers:        indirectCallers,
 		AffectedTests:          affectedTests,
 		TotalAffected:          totalAffectedCount,
+		SubjectHasCallees:      hasCallees,
 		DirectTemporalIDs:      directTemporalIDs,
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
@@ -501,6 +506,18 @@ type edgePair struct {
 	target     int64
 	kind       string
 	confidence float64
+}
+
+func subjectHasCallees(ctx context.Context, db *sql.DB, symbolIDs []int64) bool {
+	placeholders := strings.Repeat("?,", len(symbolIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := `SELECT 1 FROM sense_edges WHERE source_id IN (` + placeholders + `) AND kind = 'calls' LIMIT 1`
+	args := make([]any, len(symbolIDs))
+	for i, id := range symbolIDs {
+		args[i] = id
+	}
+	var one int
+	return db.QueryRowContext(ctx, q, args...).Scan(&one) == nil
 }
 
 // expandFrontier runs the BFS hop query: "which symbols reference

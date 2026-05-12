@@ -103,6 +103,7 @@ type GraphResponse struct {
 	Truncated          bool                   `json:"truncated,omitempty"`
 	TestCallerSummary  *TestCallerSummary     `json:"test_caller_summary,omitempty"`
 	CoverageNote       string                 `json:"coverage_note,omitempty"`
+	VerifyHint         string                 `json:"verify_hint,omitempty"`
 	SenseMetrics       GraphMetrics           `json:"-"`
 	Freshness          *Freshness             `json:"freshness,omitempty"`
 	NextSteps          []NextStep             `json:"next_steps"`
@@ -116,6 +117,7 @@ type DispatchInferredRef struct {
 	File       *string    `json:"file"`
 	LineStart  int        `json:"line_start,omitempty"`
 	LineEnd    int        `json:"line_end,omitempty"`
+	Ref        string     `json:"ref,omitempty"`
 	Via        string     `json:"via"`
 	Confidence Confidence `json:"confidence"`
 }
@@ -149,6 +151,7 @@ type GraphSymbol struct {
 	LineStart int    `json:"line_start"`
 	LineEnd   int    `json:"line_end"`
 	Kind      string `json:"kind"`
+	Ref       string `json:"ref"`
 }
 
 // GraphEdges groups the subject's relationships by kind. Every kind
@@ -175,6 +178,7 @@ type CallEdgeRef struct {
 	File       *string    `json:"file"`
 	LineStart  int        `json:"line_start,omitempty"`
 	LineEnd    int        `json:"line_end,omitempty"`
+	Ref        string     `json:"ref,omitempty"`
 	Confidence Confidence `json:"confidence"`
 }
 
@@ -187,6 +191,7 @@ type InheritEdgeRef struct {
 	File      *string `json:"file"`
 	LineStart int     `json:"line_start,omitempty"`
 	LineEnd   int     `json:"line_end,omitempty"`
+	Ref       string  `json:"ref,omitempty"`
 }
 
 // ComposeEdgeRef is the shape of a composes edge entry (has_many,
@@ -198,6 +203,7 @@ type ComposeEdgeRef struct {
 	File      *string `json:"file"`
 	LineStart int     `json:"line_start,omitempty"`
 	LineEnd   int     `json:"line_end,omitempty"`
+	Ref       string  `json:"ref,omitempty"`
 }
 
 // IncludeEdgeRef is the shape of an includes edge entry (Ruby
@@ -208,6 +214,7 @@ type IncludeEdgeRef struct {
 	File      *string `json:"file"`
 	LineStart int     `json:"line_start,omitempty"`
 	LineEnd   int     `json:"line_end,omitempty"`
+	Ref       string  `json:"ref,omitempty"`
 }
 
 // ImportEdgeRef is the shape of an imports edge entry (JS/TS
@@ -218,6 +225,7 @@ type ImportEdgeRef struct {
 	File      *string `json:"file"`
 	LineStart int     `json:"line_start,omitempty"`
 	LineEnd   int     `json:"line_end,omitempty"`
+	Ref       string  `json:"ref,omitempty"`
 }
 
 // TestEdgeRef points at a test file rather than a symbol: the
@@ -236,6 +244,7 @@ type TemporalEdgeRef struct {
 	File      *string    `json:"file"`
 	LineStart int        `json:"line_start,omitempty"`
 	LineEnd   int        `json:"line_end,omitempty"`
+	Ref       string     `json:"ref,omitempty"`
 	CoChanges int        `json:"co_changes"`
 	Strength  Confidence `json:"strength"`
 }
@@ -275,11 +284,13 @@ type BlastResponse struct {
 	// Tier 3 — affected test count (detail omitted to keep response focused).
 	TestsAffectedCount int `json:"tests_affected_count"`
 
+	Note               string `json:"note,omitempty"`
 	ProductionAffected int    `json:"production_affected"`
 	TestAffected       int    `json:"test_affected"`
 	Truncated          bool   `json:"truncated,omitempty"`
 	CoverageNote       string `json:"coverage_note,omitempty"`
 
+	VerifyHint   string       `json:"verify_hint,omitempty"`
 	SenseMetrics BlastMetrics `json:"-"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`
 	NextSteps    []NextStep   `json:"next_steps"`
@@ -298,6 +309,7 @@ type BlastCaller struct {
 	File        string `json:"file"`
 	LineStart   int    `json:"line_start,omitempty"`
 	LineEnd     int    `json:"line_end,omitempty"`
+	Ref         string `json:"ref,omitempty"`
 	ViaTemporal bool   `json:"via_temporal,omitempty"`
 }
 
@@ -311,6 +323,7 @@ type BlastIndirect struct {
 	Hops        int    `json:"hops"`
 	LineStart   int    `json:"line_start,omitempty"`
 	LineEnd     int    `json:"line_end,omitempty"`
+	Ref         string `json:"ref,omitempty"`
 	ViaTemporal bool   `json:"via_temporal,omitempty"`
 }
 
