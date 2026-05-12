@@ -519,3 +519,298 @@ func TestBuildTestCallerSummaryDuplicateFiles(t *testing.T) {
 		t.Errorf("Examples len = %d, want 1 (deduplicated to 1 unique file)", len(sum.Examples))
 	}
 }
+
+func TestGraphVerifyHintConstantZeroCallers(t *testing.T) {
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "NEXT_REQUEST_ID_HEADER", Qualified: "NEXT_REQUEST_ID_HEADER",
+			Kind: model.KindConstant, FileID: 1, LineStart: 5, LineEnd: 5,
+		},
+		File: model.File{Path: "lib/headers.rb"},
+		Outbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "String#freeze", FileID: 2}},
+		},
+	}
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{1: "lib/headers.rb", 2: "lib/string.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	if resp.VerifyHint == "" {
+		t.Fatal("VerifyHint should be set for constant with zero callers and outgoing calls")
+	}
+	if resp.VerifyHint == "" || len(resp.VerifyHint) < 10 {
+		t.Errorf("VerifyHint too short: %q", resp.VerifyHint)
+	}
+}
+
+func TestGraphVerifyHintFunctionZeroCallers(t *testing.T) {
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "helper", Qualified: "helper",
+			Kind: model.KindFunction, FileID: 1, LineStart: 10, LineEnd: 20,
+		},
+		File: model.File{Path: "lib/utils.go"},
+		Outbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "fmt.Println"}},
+		},
+	}
+	files := func(int64) (string, bool) { return "", false }
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	if resp.VerifyHint == "" {
+		t.Fatal("VerifyHint should be set for function with zero callers and outgoing calls")
+	}
+}
+
+func TestGraphVerifyHintNotEmittedWithCallers(t *testing.T) {
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "MY_CONST", Qualified: "MY_CONST",
+			Kind: model.KindConstant, FileID: 1, LineStart: 1, LineEnd: 1,
+		},
+		File: model.File{Path: "lib/const.rb"},
+		Outbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "String#freeze"}},
+		},
+		Inbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "Caller#use_const", FileID: 2}},
+		},
+	}
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{1: "lib/const.rb", 2: "lib/caller.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	if resp.VerifyHint != "" {
+		t.Errorf("VerifyHint should be empty when callers exist, got %q", resp.VerifyHint)
+	}
+}
+
+func TestGraphVerifyHintNotEmittedForClass(t *testing.T) {
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "User", Qualified: "User",
+			Kind: model.KindClass, FileID: 1, LineStart: 1, LineEnd: 50,
+		},
+		File: model.File{Path: "app/models/user.rb"},
+		Outbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "Order"}},
+		},
+	}
+	files := func(int64) (string, bool) { return "", false }
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	if resp.VerifyHint != "" {
+		t.Errorf("VerifyHint should be empty for class kind, got %q", resp.VerifyHint)
+	}
+}
+
+func TestCategorizeEdgesInboundIncludesImportsTests(t *testing.T) {
+	filePaths := map[int64]string{
+		1: "app/models/user.rb",
+		2: "app/concerns/soft_deletable.rb",
+		3: "src/utils.ts",
+		4: "spec/models/user_spec.rb",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "User", Qualified: "User",
+			Kind: model.KindClass, FileID: 1, LineStart: 1, LineEnd: 50,
+		},
+		File: model.File{Path: "app/models/user.rb"},
+		Inbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeIncludes}, Target: model.Symbol{Qualified: "SoftDeletable", FileID: 2, LineStart: 1}},
+			{Edge: model.Edge{Kind: model.EdgeImports}, Target: model.Symbol{Qualified: "utils", FileID: 3, LineStart: 1}},
+			{Edge: model.Edge{Kind: model.EdgeTests, Confidence: 0.8}, Target: model.Symbol{FileID: 4}},
+		},
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
+
+	if len(resp.Edges.Includes) != 1 || resp.Edges.Includes[0].Symbol != "SoftDeletable" {
+		t.Errorf("Includes = %+v, want [SoftDeletable]", resp.Edges.Includes)
+	}
+	if resp.Edges.Includes[0].Ref != "app/concerns/soft_deletable.rb:1" {
+		t.Errorf("Includes[0].Ref = %q, want %q", resp.Edges.Includes[0].Ref, "app/concerns/soft_deletable.rb:1")
+	}
+	if len(resp.Edges.Imports) != 1 || resp.Edges.Imports[0].Symbol != "utils" {
+		t.Errorf("Imports = %+v, want [utils]", resp.Edges.Imports)
+	}
+	if len(resp.Edges.Tests) != 1 || resp.Edges.Tests[0].File != "spec/models/user_spec.rb" {
+		t.Errorf("Tests = %+v, want [spec/models/user_spec.rb]", resp.Edges.Tests)
+	}
+}
+
+func TestBuildGraphResponseInboundOnlyTemporal(t *testing.T) {
+	coChanges := 7
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "A", Qualified: "A", Kind: "class", FileID: 1},
+		File:   model.File{Path: "a.rb"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeTemporal, Confidence: 0.6, Line: &coChanges},
+				Target: model.Symbol{ID: 3, Qualified: "C", FileID: 3, LineStart: 10},
+			},
+		},
+	}
+	filePaths := map[int64]string{3: "c.rb"}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	if len(resp.Edges.Temporal) != 1 {
+		t.Fatalf("Temporal = %d, want 1", len(resp.Edges.Temporal))
+	}
+	if resp.Edges.Temporal[0].Symbol != "C" {
+		t.Errorf("Temporal[0].Symbol = %q, want C", resp.Edges.Temporal[0].Symbol)
+	}
+	if resp.Edges.Temporal[0].Ref != "c.rb:10" {
+		t.Errorf("Temporal[0].Ref = %q, want c.rb:10", resp.Edges.Temporal[0].Ref)
+	}
+	if resp.Edges.Temporal[0].CoChanges != 7 {
+		t.Errorf("Temporal[0].CoChanges = %d, want 7", resp.Edges.Temporal[0].CoChanges)
+	}
+}
+
+func TestFormatRef(t *testing.T) {
+	tests := []struct {
+		file      string
+		lineStart int
+		want      string
+	}{
+		{"app/models/user.rb", 42, "app/models/user.rb:42"},
+		{"app/models/user.rb", 0, ""},
+		{"", 10, ""},
+		{"", 0, ""},
+	}
+	for _, tc := range tests {
+		got := FormatRef(tc.file, tc.lineStart)
+		if got != tc.want {
+			t.Errorf("FormatRef(%q, %d) = %q, want %q", tc.file, tc.lineStart, got, tc.want)
+		}
+	}
+}
+
+func TestFormatRefPtr(t *testing.T) {
+	f := "lib/foo.rb"
+	if got := FormatRefPtr(&f, 10); got != "lib/foo.rb:10" {
+		t.Errorf("FormatRefPtr(&%q, 10) = %q, want %q", f, got, "lib/foo.rb:10")
+	}
+	if got := FormatRefPtr(nil, 10); got != "" {
+		t.Errorf("FormatRefPtr(nil, 10) = %q, want empty", got)
+	}
+	if got := FormatRefPtr(&f, 0); got != "" {
+		t.Errorf("FormatRefPtr(&%q, 0) = %q, want empty", f, got)
+	}
+}
+
+func TestBuildGraphResponseRefField(t *testing.T) {
+	filePaths := map[int64]string{
+		1: "app/models/user.rb",
+		2: "app/services/auth.rb",
+		3: "app/concerns/soft_deletable.rb",
+		4: "app/models/order.rb",
+		5: "src/utils.ts",
+		6: "app/jobs/export_cron.rb",
+	}
+	files := func(id int64) (string, bool) {
+		p, ok := filePaths[id]
+		return p, ok
+	}
+
+	coChanges := 5
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "User", Qualified: "User",
+			Kind: model.KindClass, FileID: 1, LineStart: 10, LineEnd: 50,
+		},
+		File: model.File{Path: "app/models/user.rb"},
+		Outbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "Auth#login", FileID: 2, LineStart: 20}},
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.9}, Target: model.Symbol{Qualified: "External.api", FileID: 999}},
+			{Edge: model.Edge{Kind: model.EdgeInherits, Confidence: 1.0}, Target: model.Symbol{Qualified: "Base", FileID: 0}},
+			{Edge: model.Edge{Kind: model.EdgeComposes, Confidence: 1.0}, Target: model.Symbol{Qualified: "Order", FileID: 4, LineStart: 1}},
+			{Edge: model.Edge{Kind: model.EdgeIncludes}, Target: model.Symbol{Qualified: "SoftDeletable", FileID: 3, LineStart: 5}},
+			{Edge: model.Edge{Kind: model.EdgeImports}, Target: model.Symbol{Qualified: "utils", FileID: 5, LineStart: 1}},
+			{Edge: model.Edge{Kind: model.EdgeTemporal, Confidence: 0.7, Line: &coChanges}, Target: model.Symbol{ID: 6, Qualified: "ExportCron", FileID: 6, LineStart: 3}},
+		},
+		Inbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 1.0}, Target: model.Symbol{Qualified: "Controller#index", FileID: 2, LineStart: 55}},
+		},
+	}
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	// Focal symbol ref
+	if resp.Symbol.Ref != "app/models/user.rb:10" {
+		t.Errorf("Symbol.Ref = %q, want %q", resp.Symbol.Ref, "app/models/user.rb:10")
+	}
+
+	// Calls — with file
+	if resp.Edges.Calls[0].Ref != "app/services/auth.rb:20" {
+		t.Errorf("Calls[0].Ref = %q, want %q", resp.Edges.Calls[0].Ref, "app/services/auth.rb:20")
+	}
+	// Calls — nil file (external)
+	if resp.Edges.Calls[1].Ref != "" {
+		t.Errorf("Calls[1].Ref = %q, want empty (nil file)", resp.Edges.Calls[1].Ref)
+	}
+
+	// CalledBy
+	if resp.Edges.CalledBy[0].Ref != "app/services/auth.rb:55" {
+		t.Errorf("CalledBy[0].Ref = %q, want %q", resp.Edges.CalledBy[0].Ref, "app/services/auth.rb:55")
+	}
+
+	// Composes
+	if resp.Edges.Composes[0].Ref != "app/models/order.rb:1" {
+		t.Errorf("Composes[0].Ref = %q, want %q", resp.Edges.Composes[0].Ref, "app/models/order.rb:1")
+	}
+
+	// Includes
+	if resp.Edges.Includes[0].Ref != "app/concerns/soft_deletable.rb:5" {
+		t.Errorf("Includes[0].Ref = %q, want %q", resp.Edges.Includes[0].Ref, "app/concerns/soft_deletable.rb:5")
+	}
+
+	// Imports
+	if resp.Edges.Imports[0].Ref != "src/utils.ts:1" {
+		t.Errorf("Imports[0].Ref = %q, want %q", resp.Edges.Imports[0].Ref, "src/utils.ts:1")
+	}
+
+	// Temporal
+	if resp.Edges.Temporal[0].Ref != "app/jobs/export_cron.rb:3" {
+		t.Errorf("Temporal[0].Ref = %q, want %q", resp.Edges.Temporal[0].Ref, "app/jobs/export_cron.rb:3")
+	}
+}
+
+func TestGraphVerifyHintNotEmittedWithoutCallees(t *testing.T) {
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "ORPHAN_CONST", Qualified: "ORPHAN_CONST",
+			Kind: model.KindConstant, FileID: 1, LineStart: 1, LineEnd: 1,
+		},
+		File: model.File{Path: "lib/orphan.rb"},
+	}
+	files := func(int64) (string, bool) { return "", false }
+
+	resp := BuildGraphResponse(sc, files, BuildGraphRequest{})
+
+	if resp.VerifyHint != "" {
+		t.Errorf("VerifyHint should be empty for leaf symbol with no callees, got %q", resp.VerifyHint)
+	}
+}

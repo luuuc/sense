@@ -398,3 +398,131 @@ func TestBuildBlastResponseSegmentTestFiles(t *testing.T) {
 		t.Errorf("TestAffected = %d, want 5 (test_helper + sub_test + comp_spec + incl_spec + affected_test)", resp.TestAffected)
 	}
 }
+
+func TestBlastResponseRefField(t *testing.T) {
+	r := blast.Result{
+		Symbol:      model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:        blast.RiskLow,
+		RiskReasons: []string{"2 callers"},
+		DirectCallers: []model.Symbol{
+			{ID: 1, Qualified: "DirectCaller", FileID: 10, LineStart: 25},
+			{ID: 2, Qualified: "NoFileCaller", FileID: 999, LineStart: 10},
+		},
+		IndirectCallers: []blast.CallerHop{
+			{
+				Symbol: model.Symbol{ID: 3, Qualified: "IndirectCaller", FileID: 11, LineStart: 42},
+				Via:    model.Symbol{ID: 1, Qualified: "DirectCaller"},
+				Hops:   2,
+			},
+		},
+		AffectedTests: []string{},
+		TotalAffected: 3,
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{10: "lib/caller.rb", 11: "lib/indirect.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(r, files)
+
+	// DirectCallers — with file
+	if resp.DirectCallers[0].Ref != "lib/caller.rb:25" {
+		t.Errorf("DirectCallers[0].Ref = %q, want %q", resp.DirectCallers[0].Ref, "lib/caller.rb:25")
+	}
+	// DirectCallers — no file (lookup miss)
+	if resp.DirectCallers[1].Ref != "" {
+		t.Errorf("DirectCallers[1].Ref = %q, want empty (no file)", resp.DirectCallers[1].Ref)
+	}
+
+	// IndirectCallers
+	if resp.IndirectCallers[0].Ref != "lib/indirect.rb:42" {
+		t.Errorf("IndirectCallers[0].Ref = %q, want %q", resp.IndirectCallers[0].Ref, "lib/indirect.rb:42")
+	}
+}
+
+func TestBlastDiffResponseRefField(t *testing.T) {
+	sharedCaller := model.Symbol{ID: 42, Qualified: "Caller", FileID: 7, LineStart: 15}
+	results := []blast.Result{
+		{
+			Symbol:        model.Symbol{ID: 1, Qualified: "A"},
+			Risk:          blast.RiskLow,
+			DirectCallers: []model.Symbol{sharedCaller},
+			AffectedTests: []string{},
+		},
+	}
+
+	files := func(id int64) (string, bool) {
+		if id == 7 {
+			return "lib/caller.rb", true
+		}
+		return "", false
+	}
+
+	resp := BuildDiffBlastResponse("HEAD~1", results, files)
+
+	if len(resp.DirectCallers) != 1 {
+		t.Fatalf("DirectCallers = %d, want 1", len(resp.DirectCallers))
+	}
+	if resp.DirectCallers[0].Ref != "lib/caller.rb:15" {
+		t.Errorf("DirectCallers[0].Ref = %q, want %q", resp.DirectCallers[0].Ref, "lib/caller.rb:15")
+	}
+}
+
+func TestBlastVerifyHintZeroAffectedWithCallees(t *testing.T) {
+	r := blast.Result{
+		Symbol:            model.Symbol{ID: 1, Qualified: "Unused"},
+		Risk:              blast.RiskLow,
+		RiskReasons:       []string{"0 direct callers"},
+		DirectCallers:     []model.Symbol{},
+		IndirectCallers:   []blast.CallerHop{},
+		AffectedTests:     []string{},
+		TotalAffected:     0,
+		SubjectHasCallees: true,
+	}
+
+	resp := BuildBlastResponse(r, noFiles)
+
+	if resp.VerifyHint == "" {
+		t.Fatal("VerifyHint should be set when TotalAffected=0 and SubjectHasCallees=true")
+	}
+}
+
+func TestBlastVerifyHintNotEmittedWithCallers(t *testing.T) {
+	r := blast.Result{
+		Symbol:            model.Symbol{ID: 1, Qualified: "Used"},
+		Risk:              blast.RiskLow,
+		RiskReasons:       []string{"1 direct caller"},
+		DirectCallers:     []model.Symbol{{ID: 2, Qualified: "Caller", FileID: 10}},
+		IndirectCallers:   []blast.CallerHop{},
+		AffectedTests:     []string{},
+		TotalAffected:     1,
+		SubjectHasCallees: true,
+	}
+
+	resp := BuildBlastResponse(r, noFiles)
+
+	if resp.VerifyHint != "" {
+		t.Errorf("VerifyHint should be empty when TotalAffected > 0, got %q", resp.VerifyHint)
+	}
+}
+
+func TestBlastVerifyHintNotEmittedLeafSymbol(t *testing.T) {
+	r := blast.Result{
+		Symbol:            model.Symbol{ID: 1, Qualified: "Leaf"},
+		Risk:              blast.RiskLow,
+		RiskReasons:       []string{"0 direct callers"},
+		DirectCallers:     []model.Symbol{},
+		IndirectCallers:   []blast.CallerHop{},
+		AffectedTests:     []string{},
+		TotalAffected:     0,
+		SubjectHasCallees: false,
+	}
+
+	resp := BuildBlastResponse(r, noFiles)
+
+	if resp.VerifyHint != "" {
+		t.Errorf("VerifyHint should be empty for leaf symbol, got %q", resp.VerifyHint)
+	}
+}
