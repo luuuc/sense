@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/luuuc/sense/internal/blast"
@@ -17,7 +18,7 @@ const (
 //   - Tier 1 (breaks): full detail, capped at 200 items
 //   - Tier 2 (references): count + top 5 examples
 //   - Tier 3 (tests): count only
-func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
+func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, snippets *SnippetReader) BlastResponse {
 	resp := BlastResponse{
 		Symbol:             qualifiedOrName(r.Symbol),
 		Risk:               r.Risk,
@@ -44,6 +45,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 			LineEnd:     c.LineEnd,
 			Ref:         FormatRef(file, c.LineStart),
 			ViaTemporal: r.DirectTemporalIDs[c.ID],
+			CallSite:    snippets.ReadBlastEdgeSite(ctx, c.ID, r.DirectEdgeSites, files),
 		}
 
 		if !hasTiers || r.SymbolTiers[c.ID] == blast.TierBreaks {
@@ -125,6 +127,8 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 		Examples: examples,
 	}
 
+	resp.SnippetsTruncated = snippets.Truncated(len(r.DirectCallers))
+
 	resp.AffectedSymbols = r.TotalAffected
 	resp.GraphEdgesTraversed = r.EdgesTraversed
 	resp.Note = "affected_symbols counts unique symbols in the blast radius — not source-level references or graph edges traversed. total_affected is an alias for affected_symbols."
@@ -159,7 +163,7 @@ func BuildBlastResponse(r blast.Result, files FileLookup) BlastResponse {
 // The documented schema's BlastResponse does not define a separate
 // diff shape; reusing the same response type keeps 01-05's MCP
 // surface one tool, one response.
-func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup) BlastResponse {
+func BuildDiffBlastResponse(ctx context.Context, ref string, results []blast.Result, files FileLookup, snippets *SnippetReader) BlastResponse {
 	resp := BlastResponse{
 		Symbol: "diff:" + ref,
 	}
@@ -190,6 +194,7 @@ func BuildDiffBlastResponse(ref string, results []blast.Result, files FileLookup
 				LineStart: c.LineStart,
 				LineEnd:   c.LineEnd,
 				Ref:       FormatRef(file, c.LineStart),
+				CallSite:  snippets.ReadBlastEdgeSite(ctx, c.ID, r.DirectEdgeSites, files),
 			})
 		}
 		for _, hop := range r.IndirectCallers {

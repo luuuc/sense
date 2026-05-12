@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -223,7 +224,7 @@ func TestBuildGraphLayer(t *testing.T) {
 	files := func(int64) (string, bool) { return "", false }
 	req := BuildGraphRequest{Direction: model.DirectionBoth}
 
-	layer := BuildGraphLayer(hop, 2, files, req)
+	layer := BuildGraphLayer(context.Background(), hop, 2, files, req)
 	if layer.Depth != 2 {
 		t.Errorf("Depth = %d, want 2", layer.Depth)
 	}
@@ -266,7 +267,7 @@ func TestBuildFullGraphResponse(t *testing.T) {
 	}
 	req := BuildGraphRequest{Direction: model.DirectionBoth}
 
-	resp := BuildFullGraphResponse(gr, files, req)
+	resp := BuildFullGraphResponse(context.Background(), gr, files, req)
 	if len(resp.Layers) != 1 {
 		t.Errorf("Layers = %d, want 1", len(resp.Layers))
 	}

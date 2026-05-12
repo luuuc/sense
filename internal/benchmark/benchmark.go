@@ -239,7 +239,7 @@ func benchGraph(ctx context.Context, adapter *sqlite.Adapter, hub, mid, leaf sym
 				p, ok := paths[id]
 				return p, ok
 			}
-			_ = mcpio.BuildGraphResponse(sc, lookup, mcpio.BuildGraphRequest{})
+			_ = mcpio.BuildGraphResponse(ctx, sc, lookup, mcpio.BuildGraphRequest{})
 		}
 		durations = append(durations, time.Since(start))
 	}

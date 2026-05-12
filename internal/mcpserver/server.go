@@ -316,6 +316,9 @@ func graphTool() mcp.Tool {
 		mcp.WithString("domain",
 			mcp.Description("Filter dead code results to a path substring, e.g. 'services', 'models'. Only used when dead_code is true."),
 		),
+		mcp.WithNumber("context_lines",
+			mcp.Description("Lines of source context around each call site (default 2, 0 to suppress snippets)"),
+		),
 	)
 }
 
@@ -347,6 +350,9 @@ func blastTool() mcp.Tool {
 		),
 		mcp.WithBoolean("include_tests",
 			mcp.Description("Include affected test files in the results (default true)"),
+		),
+		mcp.WithNumber("context_lines",
+			mcp.Description("Lines of source context around each call site (default 2, 0 to suppress snippets)"),
 		),
 	)
 }
@@ -424,11 +430,13 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return p, ok
 	}
 
+	contextLines := req.GetInt("context_lines", mcpio.DefaultContextLines)
 	buildReq := mcpio.BuildGraphRequest{
 		Direction:      direction,
 		SegmentCallers: h.defaults.GraphSegmentCallers,
+		Snippets:       mcpio.NewSnippetReader(h.dir, contextLines),
 	}
-	resp := mcpio.BuildFullGraphResponse(gr, lookup, buildReq)
+	resp := mcpio.BuildFullGraphResponse(ctx, gr, lookup, buildReq)
 
 	if direction != model.DirectionCallees {
 		inferred := h.resolveDispatchCallers(ctx, &gr.Root, &resp, lookup)
@@ -814,16 +822,19 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		IncludeTests:  includeTests,
 	}
 
+	contextLines := req.GetInt("context_lines", mcpio.DefaultContextLines)
+	snippets := mcpio.NewSnippetReader(h.dir, contextLines)
+
 	var resp mcpio.BlastResponse
 
 	if diff != "" {
-		resp2, err := h.blastDiff(ctx, diff, opts)
+		resp2, err := h.blastDiff(ctx, diff, opts, snippets)
 		if err != nil {
 			return nil, err
 		}
 		resp = resp2
 	} else {
-		resp2, err := h.blastSymbol(ctx, symbol, opts)
+		resp2, err := h.blastSymbol(ctx, symbol, opts, snippets)
 		if err != nil {
 			if re, ok := err.(*resolveError); ok {
 				return re.result, nil
@@ -1046,7 +1057,7 @@ func (h *handlers) disambiguationResult(ctx context.Context, symbol string, matc
 	return mcp.NewToolResultText(string(out))
 }
 
-func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options) (mcpio.BlastResponse, error) {
+func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
 	match, err := h.resolveSymbol(ctx, "sense_blast", symbol)
 	if err != nil {
 		return mcpio.BlastResponse{}, err
@@ -1076,10 +1087,10 @@ func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Op
 		return p, ok
 	}
 
-	return mcpio.BuildBlastResponse(blastResult, lookup), nil
+	return mcpio.BuildBlastResponse(ctx, blastResult, lookup, snippets), nil
 }
 
-func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options) (mcpio.BlastResponse, error) {
+func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
 	paths, err := cli.GitDiffFiles(ctx, h.dir, ref)
 	if err != nil {
 		return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: %w", err)
@@ -1112,7 +1123,7 @@ func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options
 		return p, ok
 	}
 
-	return mcpio.BuildDiffBlastResponse(ref, results, lookup), nil
+	return mcpio.BuildDiffBlastResponse(ctx, ref, results, lookup, snippets), nil
 }
 
 // ---------------------------------------------------------------

@@ -136,7 +136,7 @@ func RunGraph(args []string, cio IO) int {
 	buildReq := mcpio.BuildGraphRequest{
 		Direction: opts.Direction,
 	}
-	resp := mcpio.BuildFullGraphResponse(gr, lookup, buildReq)
+	resp := mcpio.BuildFullGraphResponse(ctx, gr, lookup, buildReq)
 
 	if opts.JSON {
 		out, merr := mcpio.MarshalGraph(resp)
