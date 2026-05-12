@@ -38,6 +38,7 @@ func TestRunCreatesAllFiles(t *testing.T) {
 		".claude/skills/sense-explore.md",
 		".claude/skills/sense-impact.md",
 		".claude/skills/sense-conventions.md",
+		".claude/agents/deep-explore.md",
 	} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
 			t.Errorf("expected %s to exist: %v", path, err)
@@ -61,6 +62,7 @@ func TestRunIdempotent(t *testing.T) {
 	mcp1, _ := os.ReadFile(filepath.Join(root, ".mcp.json"))
 	settings1, _ := os.ReadFile(filepath.Join(root, ".claude/settings.json"))
 	claude1, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	agent1, _ := os.ReadFile(filepath.Join(root, ".claude/agents/deep-explore.md"))
 
 	buf.Reset()
 	if _, err := Run(root, &buf, claudeCodeOnly()); err != nil {
@@ -70,6 +72,7 @@ func TestRunIdempotent(t *testing.T) {
 	mcp2, _ := os.ReadFile(filepath.Join(root, ".mcp.json"))
 	settings2, _ := os.ReadFile(filepath.Join(root, ".claude/settings.json"))
 	claude2, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	agent2, _ := os.ReadFile(filepath.Join(root, ".claude/agents/deep-explore.md"))
 
 	if string(mcp1) != string(mcp2) {
 		t.Error(".mcp.json changed between runs")
@@ -79,6 +82,9 @@ func TestRunIdempotent(t *testing.T) {
 	}
 	if string(claude1) != string(claude2) {
 		t.Error("CLAUDE.md changed between runs")
+	}
+	if string(agent1) != string(agent2) {
+		t.Error(".claude/agents/deep-explore.md changed between runs")
 	}
 }
 
@@ -206,6 +212,27 @@ func TestClaudeMDAppendToExisting(t *testing.T) {
 	content := string(data)
 	if !strings.HasPrefix(content, "# My Project") {
 		t.Error("existing content was overwritten")
+	}
+	if !strings.Contains(content, markerStart) {
+		t.Error("sense section not appended")
+	}
+}
+
+func TestClaudeMDAppendToDoubleNewline(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "CLAUDE.md")
+	if err := os.WriteFile(path, []byte("# My Project\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if strings.Contains(content, "\n\n\n") {
+		t.Error("should not add extra blank lines when content already ends with double newline")
 	}
 	if !strings.Contains(content, markerStart) {
 		t.Error("sense section not appended")
@@ -652,15 +679,137 @@ func TestResolveToolsDefaultsToClaudeCode(t *testing.T) {
 	}
 }
 
-func TestSenseSectionHasSummaryAsStep1(t *testing.T) {
-	if !strings.Contains(senseSection, "1. Read `.sense/summary.md`") {
-		t.Error("senseSection must include 'Read .sense/summary.md' as step 1 in the numbered cold-start instructions")
+func TestSenseSectionContent(t *testing.T) {
+	if !strings.Contains(senseSection, "sense_graph") {
+		t.Error("senseSection must include tool table with sense_graph")
+	}
+	if !strings.Contains(senseSection, "sense_search") {
+		t.Error("senseSection must include tool table with sense_search")
+	}
+	if !strings.Contains(senseSection, "sense_blast") {
+		t.Error("senseSection must include tool table with sense_blast")
+	}
+	if !strings.Contains(senseSection, "sense_conventions") {
+		t.Error("senseSection must include tool table with sense_conventions")
+	}
+	if !strings.Contains(senseSection, "MUST NOT") {
+		t.Error("senseSection must include MUST NOT rules")
+	}
+	if strings.Contains(senseSection, "FIRST action in every conversation") {
+		t.Error("senseSection must not include cold-start protocol (now handled by SessionStart hook)")
 	}
 	if strings.Contains(senseSection, "sense_orient") || strings.Contains(senseSection, "sense.orient") {
 		t.Error("senseSection must not reference the removed orient tool")
 	}
 	if strings.Contains(mcpio.ServerInstructions, "sense.orient") {
 		t.Error("ServerInstructions must not reference the removed orient tool")
+	}
+	lines := strings.Count(senseSection, "\n")
+	if lines > 20 {
+		t.Errorf("senseSection should be ≤20 lines (cold-start protocol removed), got %d", lines)
+	}
+}
+
+func TestClaudeMDShortenedIdempotent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "CLAUDE.md")
+	if err := os.WriteFile(path, []byte("# My Project\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if c := strings.Count(content, markerStart); c != 1 {
+		t.Errorf("expected 1 marker start after 3 runs, got %d", c)
+	}
+	if c := strings.Count(content, markerEnd); c != 1 {
+		t.Errorf("expected 1 marker end after 3 runs, got %d", c)
+	}
+	if !strings.HasPrefix(content, "# My Project\n") {
+		t.Error("user content before markers was lost")
+	}
+}
+
+func TestAgentFileContent(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".claude/agents/deep-explore.md"))
+	if err != nil {
+		t.Fatalf("read agent file: %v", err)
+	}
+	content := string(data)
+
+	for _, want := range []string{
+		"name: deep-explore",
+		"ToolSearch",
+		"sense_graph",
+		"sense_search",
+		"sense_blast",
+		"sense_conventions",
+		"sense_status",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("agent file missing %q", want)
+		}
+	}
+}
+
+func TestAgentWriteErrorMkdir(t *testing.T) {
+	root := t.TempDir()
+	// Create .claude/agents as a file so MkdirAll fails.
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "agents"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeAgents(root)
+	if err == nil {
+		t.Fatal("expected error when agents exists as a file")
+	}
+}
+
+func TestAgentWriteErrorFile(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude", "agents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Create agent filename as a directory so WriteFile fails.
+	if err := os.MkdirAll(filepath.Join(dir, "deep-explore.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeAgents(root)
+	if err == nil {
+		t.Fatal("expected error when agent filename is a directory")
+	}
+}
+
+func TestClaudeCodeAgentWriteError(t *testing.T) {
+	root := t.TempDir()
+	// Create .claude/agents as a file so writeAgents MkdirAll fails
+	// inside configureClaudeCode.
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "agents"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureClaudeCode(root)
+	if err == nil {
+		t.Fatal("expected error when agents dir is blocked")
+	}
+	if !strings.Contains(err.Error(), "write .claude/agents") {
+		t.Errorf("error = %q, want mention of .claude/agents", err)
 	}
 }
 

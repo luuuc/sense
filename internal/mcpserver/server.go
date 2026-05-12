@@ -53,7 +53,7 @@ const (
 	// Response compaction thresholds (pitch 22-05).
 	compactEdgeKeepCount  = 10 // keep full line details for first N edges
 	snippetStripThreshold = 5  // strip snippets from results beyond this index
-	keySymbolsLimit       = 8  // max key symbols in conventions response
+	keySymbolsLimit       = 12 // max key symbols in conventions response
 )
 
 // RunOptions configures the MCP server.
@@ -1171,13 +1171,16 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		},
 	}
 	for _, c := range results {
+		instances := conventions.PickRepresentatives(c.Examples, instanceCap)
+		snippets := lookupInstanceSnippets(ctx, h.db, instances, 3)
 		resp.Conventions = append(resp.Conventions, mcpio.ConventionEntry{
 			Category:       string(c.Category),
 			Description:    c.Description,
 			Strength:       mcpio.Confidence(c.Strength),
-			Instances:      conventions.PickRepresentatives(c.Examples, instanceCap),
+			Instances:      instances,
 			TotalInstances: c.Instances,
 			KeySymbol:      c.KeySymbol,
+			Snippets:       snippets,
 		})
 	}
 
@@ -1244,6 +1247,35 @@ func buildKeyEntries(ctx context.Context, adapter *sqlite.Adapter, domain string
 		})
 	}
 	return entries, nil
+}
+
+func lookupInstanceSnippets(ctx context.Context, db *sql.DB, instances []string, limit int) []string {
+	if len(instances) == 0 {
+		return nil
+	}
+	n := min(len(instances), limit)
+	names := instances[:n]
+	placeholders := strings.Repeat("?,", len(names))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := `SELECT snippet FROM sense_symbols WHERE name IN (` + placeholders + `) AND snippet IS NOT NULL AND snippet != '' LIMIT ?`
+	args := make([]any, len(names)+1)
+	for i, name := range names {
+		args[i] = name
+	}
+	args[len(names)] = limit
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var s string
+		if rows.Scan(&s) == nil && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------

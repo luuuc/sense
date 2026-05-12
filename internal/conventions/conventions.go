@@ -93,6 +93,7 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	conventions = append(conventions, detectDesignPatterns(symbols, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectFrameworkIdioms(symbols, edges, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectArchitectureLayers(symbols, edges, symbolByID, filePathByID)...)
+	conventions = append(conventions, detectExternalDependencies(ctx, db, opts.Domain, fileFilter)...)
 	conventions = append(conventions, detectKeyTypes(symbols, edges, filePathByID, conventions)...)
 
 	enrichEdgeCounts(conventions, symbols, edges, filePathByID)
@@ -1360,6 +1361,49 @@ func countParents(symbols []symbolRow) int {
 		}
 	}
 	return n
+}
+
+func detectExternalDependencies(ctx context.Context, db *sql.DB, domain string, fileFilter []int64) []Convention {
+	if len(fileFilter) == 0 && domain == "" {
+		return nil
+	}
+	domainPattern := "%" + domain + "%"
+	q := `SELECT t.qualified, COUNT(DISTINCT e.source_id) AS ref_count
+	      FROM sense_edges e
+	      JOIN sense_symbols t ON t.id = e.target_id
+	      JOIN sense_files tf ON tf.id = t.file_id
+	      JOIN sense_symbols s ON s.id = e.source_id
+	      JOIN sense_files sf ON sf.id = s.file_id
+	      WHERE e.kind IN ('calls', 'composes', 'inherits', 'includes')
+	      AND sf.path LIKE ?
+	      AND NOT tf.path LIKE ?
+	      GROUP BY t.qualified
+	      HAVING ref_count >= 3
+	      ORDER BY ref_count DESC
+	      LIMIT 5`
+	rows, err := db.QueryContext(ctx, q, domainPattern, domainPattern)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Convention
+	for rows.Next() {
+		var qualified string
+		var refCount int
+		if err := rows.Scan(&qualified, &refCount); err != nil {
+			continue
+		}
+		out = append(out, Convention{
+			Category:    "external",
+			Description: fmt.Sprintf("External integration: %s referenced by %d symbols", qualified, refCount),
+			Instances:   refCount,
+			Total:       refCount,
+			Strength:    0.8,
+			Examples:    []Example{{Name: qualified}},
+		})
+	}
+	return out
 }
 
 func detectKeyTypes(symbols []symbolRow, edges []edgeRow, filePathByID map[int64]string, existing []Convention) []Convention {

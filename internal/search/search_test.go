@@ -894,15 +894,14 @@ func TestLowConfidenceVectorFloor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// With the weight floor, vector weight should be exactly 0.2 when
-	// confidence is below the low threshold.
-	if meta.VectorWeight != 0.2 {
-		t.Errorf("vector weight = %v, want 0.2 (floor)", meta.VectorWeight)
+	// With low confidence, vector weight should be 0.3 and keyword 0.7.
+	if meta.VectorWeight != 0.3 {
+		t.Errorf("vector weight = %v, want 0.3", meta.VectorWeight)
 	}
-	if meta.KeywordWeight != 0.8 {
-		t.Errorf("keyword weight = %v, want 0.8", meta.KeywordWeight)
+	if meta.KeywordWeight != 0.7 {
+		t.Errorf("keyword weight = %v, want 0.7", meta.KeywordWeight)
 	}
-	t.Logf("low confidence floor active: kw=%.2f vec=%.2f", meta.KeywordWeight, meta.VectorWeight)
+	t.Logf("low confidence weights: kw=%.2f vec=%.2f", meta.KeywordWeight, meta.VectorWeight)
 }
 
 func TestGraphEnrichmentBoostsCallees(t *testing.T) {

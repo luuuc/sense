@@ -30,6 +30,20 @@ esac
 
 echo "Detected platform: ${OS}/${ARCH}"
 
+# --- macOS version check ----------------------------------------------------
+
+if [ "$OS" = "darwin" ]; then
+  MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null || echo "0.0")"
+  MACOS_MAJOR="$(echo "$MACOS_VERSION" | cut -d. -f1)"
+  MACOS_MINOR="$(echo "$MACOS_VERSION" | cut -d. -f2)"
+
+  if [ "$MACOS_MAJOR" -lt 11 ] 2>/dev/null && [ "$MACOS_MINOR" -lt 15 ] 2>/dev/null; then
+    echo "Error: sense requires macOS 10.15 (Catalina) or later, but this system is running macOS ${MACOS_VERSION}." >&2
+    echo "Please upgrade macOS before installing sense." >&2
+    exit 1
+  fi
+fi
+
 # --- HTTP helpers ---------------------------------------------------------
 
 AUTH_HEADER=""

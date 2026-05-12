@@ -72,11 +72,30 @@ func handlePreToolUse(ctx context.Context, input json.RawMessage, adapter *sqlit
 		return handleAgent(ctx, req, adapter)
 	case "Bash":
 		return handleBash(ctx, req, adapter)
-	case "Glob":
-		return nil, nil
-	default:
+	case "Grep":
 		return handleGrep(ctx, req, adapter)
+	case "Glob":
+		return handleGlob(ctx, req, adapter)
+	default:
+		return nil, nil
 	}
+}
+
+func handleGlob(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
+	pattern := req.Input.Pattern
+	if pattern == "" || !isSymbolShaped(pattern) {
+		return nil, nil
+	}
+
+	symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
+	if err != nil || len(symbols) == 0 {
+		return nil, nil
+	}
+
+	return nudge(
+		fmt.Sprintf("Sense has %d indexed symbol(s) matching %q — consider sense_graph or sense_search instead of Glob.", len(symbols), pattern),
+		buildContext(len(symbols), pattern, "glob"),
+	), nil
 }
 
 func handleGrep(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
@@ -92,14 +111,18 @@ func handleGrep(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapte
 	symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
 	if err != nil || len(symbols) == 0 {
 		if isMultiWordPattern(pattern) {
-			return advise(fmt.Sprintf(
+			ctx := fmt.Sprintf(
 				"Consider sense_search query=%q for semantic code search. "+
-					"Load tools first: %s", pattern, toolSearchCmd)), nil
+					"Load tools first: %s", pattern, toolSearchCmd)
+			return nudge("Sense can do semantic code search — consider sense_search instead of grep.", ctx), nil
 		}
 		return nil, nil
 	}
 
-	return buildAdvice(len(symbols), pattern, "grep"), nil
+	return nudge(
+		fmt.Sprintf("Sense has %d indexed symbol(s) matching %q — consider sense_graph or sense_search instead of grep.", len(symbols), pattern),
+		buildContext(len(symbols), pattern, "grep"),
+	), nil
 }
 
 func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
@@ -130,10 +153,11 @@ func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapt
 		count, toolSearchCmd,
 	)
 
+	tip := "Sense has this project indexed — use Sense MCP tools instead of agents for codebase questions."
 	if isKnownExplorer {
-		return deny(reason), nil
+		tip = "Sense has this project indexed. Use Sense MCP tools instead of Explore/deep-explore agents."
 	}
-	return advise(reason), nil
+	return nudge(tip, reason), nil
 }
 
 func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
@@ -143,32 +167,37 @@ func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapte
 	if pattern != "" && isSymbolShaped(pattern) {
 		symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
 		if err == nil && len(symbols) > 0 {
-			return buildAdvice(len(symbols), pattern, "bash grep"), nil
+			return nudge(
+				fmt.Sprintf("Sense has %d indexed symbol(s) matching %q — consider sense_graph or sense_search instead of bash grep.", len(symbols), pattern),
+				buildContext(len(symbols), pattern, "bash grep"),
+			), nil
 		}
 		if isMultiWordPattern(pattern) {
-			return advise(fmt.Sprintf(
+			ctx := fmt.Sprintf(
 				"Consider sense_search query=%q for semantic code search. "+
-					"Load tools first: %s", pattern, toolSearchCmd)), nil
+					"Load tools first: %s", pattern, toolSearchCmd)
+			return nudge("Sense can do semantic code search — consider sense_search instead of grep.", ctx), nil
 		}
 	}
 
 	if isExplorationCommand(cmd) {
-		return advise(
-			"Sense can answer codebase understanding questions without reading individual files. "+
-				"Load tools first: "+toolSearchCmd), nil
+		ctx := "Sense can answer codebase understanding questions without reading individual files. " +
+			"Load tools first: " + toolSearchCmd
+		return nudge("Sense has this project indexed — consider Sense tools instead of reading files manually.", ctx), nil
 	}
 
 	return nil, nil
 }
 
-func buildAdvice(count int, pattern, source string) *hookResponse {
+func buildContext(count int, pattern, source string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Sense has %d indexed symbol(s) matching %q. Consider Sense MCP tools instead of %s:\n", count, pattern, source)
 	fmt.Fprintf(&sb, "- sense_graph symbol=%q for callers/callees\n", pattern)
 	fmt.Fprintf(&sb, "- sense_search query=%q for semantic matches\n", pattern)
 	fmt.Fprintf(&sb, "Load tools first: %s", toolSearchCmd)
-	return &hookResponse{AdditionalContext: sb.String()}
+	return sb.String()
 }
+
 
 func extractPattern(req preToolUseInput) string {
 	if req.Input.Pattern != "" {

@@ -16,15 +16,15 @@ func TestFusionWeightsHigh(t *testing.T) {
 
 func TestFusionWeightsMedium(t *testing.T) {
 	kw, vec := fusionWeights(0.5)
-	if kw != 0.7 || vec != 0.3 {
-		t.Errorf("fusionWeights(0.5) = (%v, %v), want (0.7, 0.3)", kw, vec)
+	if kw != 0.6 || vec != 0.4 {
+		t.Errorf("fusionWeights(0.5) = (%v, %v), want (0.6, 0.4)", kw, vec)
 	}
 }
 
 func TestFusionWeightsLow(t *testing.T) {
 	kw, vec := fusionWeights(0.2)
-	if kw != 0.8 || vec != 0.2 {
-		t.Errorf("fusionWeights(0.2) = (%v, %v), want (0.8, 0.2)", kw, vec)
+	if kw != 0.7 || vec != 0.3 {
+		t.Errorf("fusionWeights(0.2) = (%v, %v), want (0.7, 0.3)", kw, vec)
 	}
 }
 
@@ -160,5 +160,58 @@ func TestApplyGraphCentralityBoost(t *testing.T) {
 	}
 	if results[1].Score != 1.0 {
 		t.Error("symbol without callers should not be boosted")
+	}
+}
+
+func TestBoostPathMatches(t *testing.T) {
+	results := []sqlite.SearchResult{
+		{SymbolID: 1, FileID: 10, Score: 1.0},
+		{SymbolID: 2, FileID: 20, Score: 1.0},
+		{SymbolID: 3, FileID: 30, Score: 1.0},
+	}
+	paths := map[int64]string{
+		10: "internal/auth/handler.go",
+		20: "internal/search/engine.go",
+		30: "internal/auth/middleware.go",
+	}
+	boostPathMatches(results, []string{"auth"}, paths)
+
+	if results[0].Score != 1.5 {
+		t.Errorf("auth file score = %v, want 1.5", results[0].Score)
+	}
+	if results[1].Score != 1.0 {
+		t.Errorf("non-auth file score = %v, want 1.0", results[1].Score)
+	}
+	if results[2].Score != 1.5 {
+		t.Errorf("auth middleware score = %v, want 1.5", results[2].Score)
+	}
+}
+
+func TestBoostPathMatchesEmpty(_ *testing.T) {
+	boostPathMatches(nil, []string{"auth"}, nil)
+	boostPathMatches([]sqlite.SearchResult{{SymbolID: 1}}, nil, nil)
+}
+
+func TestDeduplicateResults(t *testing.T) {
+	primary := []sqlite.SearchResult{
+		{SymbolID: 1, Score: 2.0},
+		{SymbolID: 2, Score: 1.5},
+	}
+	secondary := []sqlite.SearchResult{
+		{SymbolID: 2, Score: 1.0}, // duplicate
+		{SymbolID: 3, Score: 0.5}, // new
+	}
+	merged := deduplicateResults(primary, secondary)
+	if len(merged) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(merged))
+	}
+	ids := map[int64]bool{}
+	for _, r := range merged {
+		ids[r.SymbolID] = true
+	}
+	for _, id := range []int64{1, 2, 3} {
+		if !ids[id] {
+			t.Errorf("missing symbol ID %d", id)
+		}
 	}
 }
