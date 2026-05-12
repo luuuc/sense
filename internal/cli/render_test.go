@@ -501,8 +501,10 @@ func TestRenderBlastHumanFullSections(t *testing.T) {
 				{Symbol: "RefB", File: "b.rb"},
 			},
 		},
-		AffectedTests: []string{"test/checkout_test.rb", "test/cart_test.rb"},
-		TotalAffected: 15,
+		AffectedTests:   []string{"test/checkout_test.rb", "test/cart_test.rb"},
+		AffectedSymbols: 15,
+		AffectedFiles:   8,
+		TotalAffected:   15,
 	}
 
 	var buf bytes.Buffer
@@ -529,7 +531,7 @@ func TestRenderBlastHumanFullSections(t *testing.T) {
 		"Affected tests (2):",
 		"test/checkout_test.rb",
 		"test/cart_test.rb",
-		"Total affected: 15",
+		"Affected: 15 symbols across 8 files",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q\ngot:\n%s", want, out)

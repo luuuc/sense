@@ -236,5 +236,5 @@ func RenderBlastHuman(w io.Writer, resp mcpio.BlastResponse) {
 			_, _ = fmt.Fprintf(w, "  %s\n", t)
 		}
 	}
-	_, _ = fmt.Fprintf(w, "\nTotal affected: %d\n", resp.TotalAffected)
+	_, _ = fmt.Fprintf(w, "\nAffected: %d symbols across %d files\n", resp.AffectedSymbols, resp.AffectedFiles)
 }

@@ -508,6 +508,116 @@ func TestBlastVerifyHintNotEmittedWithCallers(t *testing.T) {
 	}
 }
 
+func TestBuildBlastResponseAffectedSymbolsAndFiles(t *testing.T) {
+	r := blast.Result{
+		Symbol:      model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:        blast.RiskLow,
+		RiskReasons: []string{"3 callers"},
+		DirectCallers: []model.Symbol{
+			{ID: 1, Qualified: "CallerA", FileID: 10, LineStart: 5},
+			{ID: 2, Qualified: "CallerB", FileID: 11, LineStart: 10},
+		},
+		IndirectCallers: []blast.CallerHop{
+			{
+				Symbol: model.Symbol{ID: 3, Qualified: "IndirectC", FileID: 10, LineStart: 20},
+				Via:    model.Symbol{ID: 1, Qualified: "CallerA"},
+				Hops:   2,
+			},
+		},
+		AffectedTests:  []string{"test/subject_test.rb"},
+		TotalAffected:  3,
+		EdgesTraversed: 47,
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{10: "lib/a.rb", 11: "lib/b.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildBlastResponse(r, files)
+
+	if resp.AffectedSymbols != 3 {
+		t.Errorf("AffectedSymbols = %d, want 3", resp.AffectedSymbols)
+	}
+	if resp.AffectedSymbols != resp.TotalAffected {
+		t.Errorf("AffectedSymbols (%d) != TotalAffected (%d), should be aliases",
+			resp.AffectedSymbols, resp.TotalAffected)
+	}
+	// lib/a.rb, lib/b.rb, test/subject_test.rb = 3 unique files
+	if resp.AffectedFiles != 3 {
+		t.Errorf("AffectedFiles = %d, want 3 (2 caller files + 1 test)", resp.AffectedFiles)
+	}
+	if resp.GraphEdgesTraversed != 47 {
+		t.Errorf("GraphEdgesTraversed = %d, want 47", resp.GraphEdgesTraversed)
+	}
+}
+
+func TestBuildDiffBlastResponseAffectedSymbolsAndFiles(t *testing.T) {
+	results := []blast.Result{
+		{
+			Symbol:         model.Symbol{ID: 1, Qualified: "A"},
+			Risk:           blast.RiskLow,
+			DirectCallers:  []model.Symbol{{ID: 10, Qualified: "C1", FileID: 100}},
+			AffectedTests:  []string{"test/a_test.rb"},
+			EdgesTraversed: 20,
+		},
+		{
+			Symbol:         model.Symbol{ID: 2, Qualified: "B"},
+			Risk:           blast.RiskLow,
+			DirectCallers:  []model.Symbol{{ID: 11, Qualified: "C2", FileID: 101}},
+			AffectedTests:  []string{"test/b_test.rb"},
+			EdgesTraversed: 15,
+		},
+	}
+
+	files := func(id int64) (string, bool) {
+		m := map[int64]string{100: "lib/c1.rb", 101: "lib/c2.rb"}
+		p, ok := m[id]
+		return p, ok
+	}
+
+	resp := BuildDiffBlastResponse("HEAD~1", results, files)
+
+	if resp.AffectedSymbols != 2 {
+		t.Errorf("AffectedSymbols = %d, want 2", resp.AffectedSymbols)
+	}
+	if resp.AffectedSymbols != resp.TotalAffected {
+		t.Errorf("AffectedSymbols (%d) != TotalAffected (%d)", resp.AffectedSymbols, resp.TotalAffected)
+	}
+	// lib/c1.rb, lib/c2.rb, test/a_test.rb, test/b_test.rb = 4
+	if resp.AffectedFiles != 4 {
+		t.Errorf("AffectedFiles = %d, want 4", resp.AffectedFiles)
+	}
+	if resp.GraphEdgesTraversed != 35 {
+		t.Errorf("GraphEdgesTraversed = %d, want 35 (20+15)", resp.GraphEdgesTraversed)
+	}
+}
+
+func TestBuildBlastResponseZeroEdges(t *testing.T) {
+	r := blast.Result{
+		Symbol:         model.Symbol{ID: 1, Qualified: "Isolated"},
+		Risk:           blast.RiskLow,
+		RiskReasons:    []string{"0 direct callers"},
+		DirectCallers:  []model.Symbol{},
+		AffectedTests:  []string{},
+		TotalAffected:  0,
+		EdgesTraversed: 0,
+	}
+
+	resp := BuildBlastResponse(r, noFiles)
+
+	if resp.AffectedSymbols != 0 {
+		t.Errorf("AffectedSymbols = %d, want 0", resp.AffectedSymbols)
+	}
+	if resp.AffectedFiles != 0 {
+		t.Errorf("AffectedFiles = %d, want 0", resp.AffectedFiles)
+	}
+	if resp.GraphEdgesTraversed != 0 {
+		t.Errorf("GraphEdgesTraversed = %d, want 0", resp.GraphEdgesTraversed)
+	}
+}
+
 func TestBlastVerifyHintNotEmittedLeafSymbol(t *testing.T) {
 	r := blast.Result{
 		Symbol:            model.Symbol{ID: 1, Qualified: "Leaf"},
