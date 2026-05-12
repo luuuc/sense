@@ -310,6 +310,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		_, _ = fmt.Fprintf(warn, "warn: generate summary: %v\n", serr)
 	}
 
+	if err := idx.WriteMeta(ctx, "last_scan_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		_, _ = fmt.Fprintf(warn, "warn: write last_scan_at: %v\n", err)
+	}
+
 	if err := idx.StampSchemaVersion(ctx); err != nil {
 		return nil, err
 	}
