@@ -70,7 +70,7 @@ const (
 // classifyTier maps an edge kind to its relevance tier.
 func classifyTier(edgeKind string) Tier {
 	switch edgeKind {
-	case "calls", "temporal", "member":
+	case "calls", "temporal", "member", "references":
 		return TierBreaks
 	case "tests":
 		return TierTests
@@ -550,7 +550,7 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64) ([]edgePa
 		q := `SELECT source_id, target_id, kind, confidence FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
-		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal', 'tests')
+		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal', 'tests', 'references')
 		        AND confidence >= 0.1`
 
 		args := make([]any, 0, len(batch))

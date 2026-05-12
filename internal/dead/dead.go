@@ -117,7 +117,7 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
 	q := `SELECT COUNT(*) FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
-		WHERE s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface')`
+		WHERE s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')`
 	var args []any
 
 	if opts.Language != "" {
@@ -139,7 +139,7 @@ func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
 func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, error) {
 	edgeFilter := `SELECT 1 FROM sense_edges e
 			WHERE e.target_id = s.id
-			AND e.kind IN ('calls', 'composes', 'includes', 'inherits')`
+			AND e.kind IN ('calls', 'composes', 'includes', 'inherits', 'references')`
 	if opts.ExcludeTestRefs {
 		edgeFilter += `
 			AND NOT EXISTS (
@@ -160,7 +160,7 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 		FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
 		WHERE NOT EXISTS (` + edgeFilter + `)
-		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface')`
+		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')`
 	var args []any
 
 	if opts.Language != "" {
@@ -440,8 +440,10 @@ func isEntryPoint(s Symbol, f entryPointFilters) bool {
 	if mightBeTraitImplMethod(s, f.interfaceMethodNames, f.implementorIDs) {
 		return true
 	}
-	if _, ok := f.testsTargets[s.ID]; ok {
-		return true
+	if s.Kind != "constant" {
+		if _, ok := f.testsTargets[s.ID]; ok {
+			return true
+		}
 	}
 	return false
 }

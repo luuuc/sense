@@ -927,6 +927,246 @@ func RenderAll(rs []Renderer) {
 	}
 }
 
+func TestDeadCodeIncludesUnusedConstants(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "consts.go"), `package main
+
+const UsedConst = "yes"
+const DeadConst = "no"
+
+func main() {
+	_ = UsedConst
+}
+`)
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+	deadNames := map[string]bool{}
+	for _, s := range result.Dead {
+		deadNames[s.Qualified] = true
+	}
+	if !deadNames["main.DeadConst"] {
+		t.Error("DeadConst should be in dead code results")
+	}
+	if deadNames["main.UsedConst"] {
+		t.Error("UsedConst should NOT be in dead code results (referenced by main)")
+	}
+}
+
+func TestDeadCodeIncludesUnusedVars(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "vars.go"), `package main
+
+var usedVar = "yes"
+var deadVar = "no"
+
+func main() {
+	_ = usedVar
+}
+`)
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+	deadNames := map[string]bool{}
+	for _, s := range result.Dead {
+		deadNames[s.Qualified] = true
+	}
+	if !deadNames["main.deadVar"] {
+		t.Error("deadVar should be in dead code results")
+	}
+	if deadNames["main.usedVar"] {
+		t.Error("usedVar should NOT be in dead code results (referenced by main)")
+	}
+}
+
+func TestDeadCodeConstTestOnlyReference(t *testing.T) {
+	root := t.TempDir()
+
+	// localhostIP is used only in the test file — production-dead.
+	writeFile(t, filepath.Join(root, "utils.go"), `package utils
+
+var localhostIP = "127.0.0.1"
+var localhostIPv6 = "::1"
+var productionAddr = "0.0.0.0"
+
+func Serve() {
+	_ = productionAddr
+}
+`)
+	writeFile(t, filepath.Join(root, "utils_test.go"), `package utils
+
+import "testing"
+
+func TestServe(t *testing.T) {
+	_ = localhostIP
+	_ = localhostIPv6
+}
+`)
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// With ExcludeTestRefs=true, test-only references don't count.
+	result, err := dead.FindDead(ctx, db, dead.Options{ExcludeTestRefs: true})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+	deadNames := map[string]bool{}
+	for _, s := range result.Dead {
+		deadNames[s.Qualified] = true
+	}
+	if !deadNames["utils.localhostIP"] {
+		t.Error("localhostIP should be dead (only referenced in test file)")
+	}
+	if !deadNames["utils.localhostIPv6"] {
+		t.Error("localhostIPv6 should be dead (only referenced in test file)")
+	}
+	if deadNames["utils.productionAddr"] {
+		t.Error("productionAddr should NOT be dead (referenced by Serve)")
+	}
+
+	// Without cross-file speculative emission, localhostIP has no edges
+	// at all (the test file extractor doesn't see cross-file vars in its
+	// pkgBindings). It's dead regardless of ExcludeTestRefs.
+	resultAll, err := dead.FindDead(ctx, db, dead.Options{ExcludeTestRefs: false})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+	deadNamesAll := map[string]bool{}
+	for _, s := range resultAll.Dead {
+		deadNamesAll[s.Qualified] = true
+	}
+	if !deadNamesAll["utils.localhostIP"] {
+		t.Error("localhostIP should be dead (cross-file var, no same-file references)")
+	}
+}
+
+func TestDeadCodeGinConstants(t *testing.T) {
+	root := t.TempDir()
+
+	// Mirrors gin/utils.go: exported BindKey used in production, unexported
+	// localhostIP/localhostIPv6 used only in test files.
+	writeFile(t, filepath.Join(root, "utils.go"), `package gin
+
+const BindKey = "_gin-gonic/gin/bindkey"
+const localhostIP = "127.0.0.1"
+const localhostIPv6 = "::1"
+
+func Bind() string {
+	return BindKey
+}
+`)
+	writeFile(t, filepath.Join(root, "gin_test.go"), `package gin
+
+import "testing"
+
+func TestBind(t *testing.T) {
+	_ = localhostIP
+}
+`)
+	writeFile(t, filepath.Join(root, "context_test.go"), `package gin
+
+import "testing"
+
+func TestContext(t *testing.T) {
+	_ = localhostIP
+	_ = localhostIPv6
+}
+`)
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Verify BindKey has a same-file reference edge (from Bind()).
+	var refCount int
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM sense_edges e
+		JOIN sense_symbols t ON t.id = e.target_id
+		WHERE t.qualified = 'gin.BindKey'
+		AND e.kind = 'references'`).Scan(&refCount)
+	if err != nil {
+		t.Fatalf("query refs: %v", err)
+	}
+	if refCount == 0 {
+		t.Error("expected references edge for BindKey from Bind()")
+	}
+
+	// localhostIP and localhostIPv6 are dead — no same-file references.
+	result, err := dead.FindDead(ctx, db, dead.Options{ExcludeTestRefs: true})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+	deadNames := map[string]bool{}
+	for _, s := range result.Dead {
+		deadNames[s.Qualified] = true
+	}
+	if !deadNames["gin.localhostIP"] {
+		t.Error("localhostIP should be dead (only referenced in test files)")
+	}
+	if !deadNames["gin.localhostIPv6"] {
+		t.Error("localhostIPv6 should be dead (only referenced in test files)")
+	}
+	if deadNames["gin.BindKey"] {
+		t.Error("BindKey should NOT be dead (referenced by Bind)")
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
