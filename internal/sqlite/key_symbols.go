@@ -133,6 +133,54 @@ func (a *Adapter) TopCallers(ctx context.Context, symbolID int64, limit int) ([]
 	return results, rows.Err()
 }
 
+// CallersOfTargets returns the qualified names of callers for each target
+// symbol ID, excluding callers that match excludeSourceID (typically the
+// root symbol being queried). maxPerTarget caps results per target.
+func (a *Adapter) CallersOfTargets(ctx context.Context, targetIDs []int64, excludeSourceID int64, maxPerTarget int) (map[int64][]string, error) {
+	if len(targetIDs) == 0 {
+		return nil, nil
+	}
+	if maxPerTarget <= 0 {
+		maxPerTarget = 20
+	}
+
+	placeholders := make([]string, len(targetIDs))
+	args := make([]any, len(targetIDs))
+	for i, id := range targetIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	q := fmt.Sprintf(`SELECT e.target_id, src.qualified `+ //nolint:gosec // placeholders are literal "?" strings, not user input
+		`FROM sense_edges e
+		JOIN sense_symbols src ON src.id = e.source_id
+		WHERE e.target_id IN (%s)
+		  AND e.source_id != ?
+		  AND e.kind IN ('calls', 'references')
+		ORDER BY e.target_id, src.qualified`,
+		strings.Join(placeholders, ","))
+	args = append(args, excludeSourceID)
+
+	rows, err := a.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite CallersOfTargets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[int64][]string)
+	for rows.Next() {
+		var targetID int64
+		var qualified string
+		if err := rows.Scan(&targetID, &qualified); err != nil {
+			return nil, fmt.Errorf("sqlite CallersOfTargets scan: %w", err)
+		}
+		if len(result[targetID]) < maxPerTarget {
+			result[targetID] = append(result[targetID], qualified)
+		}
+	}
+	return result, rows.Err()
+}
+
 func lastPart(qualified string) string {
 	if i := strings.LastIndexByte(qualified, '.'); i >= 0 {
 		return qualified[i+1:]

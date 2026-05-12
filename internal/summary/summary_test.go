@@ -279,6 +279,139 @@ func main() {}
 	}
 }
 
+func TestGenerateIncludesQuickOrientation(t *testing.T) {
+	root := t.TempDir()
+
+	// main calls A, B, C — so main is an entry point (zero callers, ≥3 callees).
+	// A is called by main and by helper — A is a hub symbol (2 callers).
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func main() { A(); B(); C() }
+func A() {}
+func B() {}
+func C() {}
+func helper() { A() }
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	senseDir := filepath.Join(root, ".sense")
+	data, err := os.ReadFile(filepath.Join(senseDir, "summary.md"))
+	if err != nil {
+		t.Fatalf("summary.md not created: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "Quick Orientation") {
+		t.Error("missing Quick Orientation section")
+	}
+	// main has zero callers and calls A, B, C (≥3 callees) — should be an entry point.
+	if !strings.Contains(content, "Entry points") {
+		t.Error("Quick Orientation should contain entry points")
+	}
+	if !strings.Contains(content, "main.main") {
+		t.Error("Quick Orientation entry points should include main.main (qualified)")
+	}
+	// A has 2 callers (main + helper) — should appear in hub symbols.
+	if !strings.Contains(content, "Hub symbols") {
+		t.Error("Quick Orientation should contain hub symbols")
+	}
+}
+
+func TestGenerateQuickOrientationTestStructure(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func main() { A(); B(); C() }
+func A() {}
+func B() {}
+func C() {}
+`)
+	writeFile(t, filepath.Join(root, "main_test.go"), `package main
+
+import "testing"
+
+func TestA(t *testing.T) { A() }
+func TestB(t *testing.T) { B() }
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".sense", "summary.md"))
+	if err != nil {
+		t.Fatalf("summary.md not created: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "Test structure") {
+		t.Error("Quick Orientation should contain test structure when test files exist")
+	}
+	if !strings.Contains(content, "test file") {
+		t.Error("Test structure should mention test files")
+	}
+	if strings.Contains(content, "Key patterns") {
+		t.Error("Quick Orientation should not contain key patterns (removed)")
+	}
+}
+
+func TestGenerateQuickOrientationHubOrder(t *testing.T) {
+	root := t.TempDir()
+
+	// Create a fixture where hub ordering is clear:
+	// Hub called by 3 callers, Other called by 1.
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func Hub() {}
+func Other() {}
+func C1() { Hub() }
+func C2() { Hub() }
+func C3() { Hub(); Other() }
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".sense", "summary.md"))
+	if err != nil {
+		t.Fatalf("summary.md not created: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "Hub symbols") {
+		t.Fatal("missing Hub symbols line")
+	}
+	// Hub should appear before Other (more callers).
+	hubIdx := strings.Index(content, "`main.Hub`")
+	otherIdx := strings.Index(content, "`main.Other`")
+	if hubIdx < 0 {
+		t.Error("Hub should appear in hub symbols")
+	}
+	if otherIdx >= 0 && hubIdx > otherIdx {
+		t.Error("Hub should appear before Other (more callers)")
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -437,5 +438,122 @@ func TestTopCallers(t *testing.T) {
 	}
 	if !found["handler.HandleRequest"] && !found["router.RouterGroup"] {
 		t.Error("expected at least one of HandleRequest or RouterGroup as caller")
+	}
+}
+
+func TestCallersOfTargets(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	now := time.Now()
+	intPtr := func(v int) *int { return &v }
+
+	fid, _ := a.WriteFile(ctx, &model.File{
+		Path: "main.go", Language: "go", Hash: "aaa", Symbols: 4, IndexedAt: now,
+	})
+	aID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "A", Qualified: "pkg.A", Kind: "function", LineStart: 1, LineEnd: 5,
+	})
+	bID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "B", Qualified: "pkg.B", Kind: "function", LineStart: 10, LineEnd: 15,
+	})
+	cID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "C", Qualified: "pkg.C", Kind: "function", LineStart: 20, LineEnd: 25,
+	})
+	dID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "D", Qualified: "pkg.D", Kind: "function", LineStart: 30, LineEnd: 35,
+	})
+
+	// A calls B, C calls B, D calls B
+	if _, err := a.WriteEdge(ctx, &model.Edge{SourceID: model.Int64Ptr(aID), TargetID: bID, Kind: model.EdgeCalls, FileID: fid, Line: intPtr(2)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteEdge(ctx, &model.Edge{SourceID: model.Int64Ptr(cID), TargetID: bID, Kind: model.EdgeCalls, FileID: fid, Line: intPtr(22)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteEdge(ctx, &model.Edge{SourceID: model.Int64Ptr(dID), TargetID: bID, Kind: model.EdgeCalls, FileID: fid, Line: intPtr(32)}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.CallersOfTargets(ctx, []int64{bID}, aID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers := result[bID]
+	if len(callers) != 2 {
+		t.Fatalf("expected 2 callers (excluding A), got %d: %v", len(callers), callers)
+	}
+	callerSet := map[string]bool{}
+	for _, c := range callers {
+		callerSet[c] = true
+	}
+	if !callerSet["pkg.C"] || !callerSet["pkg.D"] {
+		t.Errorf("expected pkg.C and pkg.D, got %v", callers)
+	}
+}
+
+func TestCallersOfTargetsMaxPerTarget(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	now := time.Now()
+	intPtr := func(v int) *int { return &v }
+
+	fid, _ := a.WriteFile(ctx, &model.File{
+		Path: "main.go", Language: "go", Hash: "aaa", Symbols: 10, IndexedAt: now,
+	})
+	targetID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Target", Qualified: "pkg.Target", Kind: "function", LineStart: 1, LineEnd: 5,
+	})
+	rootID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Root", Qualified: "pkg.Root", Kind: "function", LineStart: 10, LineEnd: 15,
+	})
+
+	// Create 5 callers (excluding root).
+	for i := 0; i < 5; i++ {
+		cID, _ := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: fmt.Sprintf("C%d", i), Qualified: fmt.Sprintf("pkg.C%d", i),
+			Kind: "function", LineStart: 20 + i*10, LineEnd: 25 + i*10,
+		})
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: model.Int64Ptr(cID), TargetID: targetID, Kind: model.EdgeCalls, FileID: fid, Line: intPtr(21 + i*10),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Request maxPerTarget=2: should only get 2 of the 5 callers.
+	result, err := a.CallersOfTargets(ctx, []int64{targetID}, rootID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers := result[targetID]
+	if len(callers) != 2 {
+		t.Fatalf("expected 2 callers with maxPerTarget=2, got %d: %v", len(callers), callers)
+	}
+}
+
+func TestCallersOfTargetsEmpty(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	result, err := a.CallersOfTargets(ctx, nil, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		t.Errorf("expected nil for empty input, got %v", result)
 	}
 }
