@@ -1,63 +1,41 @@
-# Phase 3: Validation Instructions — Weight Optimization
+# Phase 3: Validate Improvements
 
-You are reviewing delta metrics to validate improvements and optimize scoring weights.
+Read LOOP-CONTEXT.md first — it defines the scoring model and convergence criteria.
 
-## Input Files
-- `results/loop-N-iter-M/post-analysis.json` — analysis after re-run
-- `results/loop-N-iter-M/regression.json` — automated regression check
-- `results/loop-N/analysis.json` — analysis before changes (baseline)
-- `../../results/{sense,baseline}/{repo}/scored.json` — current scores
+## Goal
 
-## Your Goal
+After applying improvements from Phase 2, re-score and verify the fairness_score gaps moved toward transcript quality — not away from it.
 
-1. Review whether improvements actually increased score differentiation
-2. Identify which scoring dimensions contribute most to differentiation
-3. Propose weight adjustments for the next iteration
-4. Decide whether to keep improvements or suggest further changes
+## Input
+
+- `results/iter-N/improvements.json` — what was changed
+- `../../results/{sense,baseline}/{repo}/scored.json` — scores after re-scoring
+- Previous iteration scores for comparison
 
 ## Validation Criteria
 
-**Approve improvements** if:
-- Overall quality score gap improved ≥ 5%
-- No major regressions (>10% drop on any scenario)
-- False positive rate decreased or stable
-- Token efficiency maintained
+**Accept improvements** if:
+- Per-repo fairness_score gap moved closer to qualitative gap (within 0.03)
+- No repo regressed by more than 0.05 on fairness_score
+- Correctness dimension didn't drop for either tool (checks are additive, not destructive)
 
-**Reject and recommend revert** if:
-- Overall gap decreased
-- Major regressions detected
-- False positives increased > 5%
-- MCP usage decreased
-
-## Weight Optimization
-
-Analyze which dimensions contribute most to accurate differentiation:
-
-| Dimension | What it measures | Adjust if... |
-|-----------|-----------------|-------------|
-| completeness | Keyword/check hit rate | Both tools score equally → lower weight |
-| efficiency | Token usage | Already differentiates well → keep or lower |
-| tool_fluency | MCP vs grep ratio | Key differentiator → consider raising |
-| discoverability | Files/connections surfaced | Varies by scenario → tune per-scenario |
-
-Propose weight changes in improvements.json:
-```json
-{
-  "action": "update_weights",
-  "weights": {"completeness": 0.35, "efficiency": 0.20, "tool_fluency": 0.25, "discoverability": 0.20}
-}
-```
+**Reject and revert** if:
+- Overall fairness gap moved further from transcript quality
+- Any repo regressed more than 0.05
+- New checks cause both tools to fail equally (adds noise, not signal)
 
 ## Convergence Check
 
-The loop is converging when:
-- Weight changes between iterations < 5%
-- Score gap stable within 0.02 points
-- No new anomalies found in transcripts
+The loop is converged when:
+- Fairness score gap stable within 0.02 between iterations
+- Per-repo gaps all within 0.03 of qualitative assessment
+- No new check gaps identified in transcript review
 
-If converged, the loop can stop early.
+If converged, stop the loop and report final scores.
 
 ## Output
 
-Write `improvements.json` with weight adjustments for the next iteration,
-or note "converged" if no further changes needed.
+Write validation results:
+- Per-repo: old gap → new gap → qualitative target → verdict (closer/further/stable)
+- Overall: converged / needs another iteration / revert needed
+- If reverting: restore scenario YAMLs from backups

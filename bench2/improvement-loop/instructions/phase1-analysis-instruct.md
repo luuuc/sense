@@ -1,68 +1,52 @@
-# Phase 1: Analysis Instructions — Verifiability
+# Phase 1: Transcript Analysis
 
-You are analyzing bench2 transcripts to identify quality markers and non-differentiating checks.
+Read LOOP-CONTEXT.md first — it defines the scoring model and success criteria.
 
-## Input Files
-- `results/loop-N/analysis.json` — automated pattern extraction
+## Goal
+
+Read transcripts side-by-side for all 6 repos. For each repo, assess whether the fairness_score gap matches the qualitative answer quality difference.
+
+## Input
+
+- `../../scenarios/{repo}.yaml` — current checks
 - `../../results/{sense,baseline}/{repo}/transcript.json` — raw transcripts
-- `../../results/{sense,baseline}/{repo}/scored.json` — scored results
+- `../../results/{sense,baseline}/{repo}/scored.json` — current scores
 
-## CRITICAL: Deep Transcript Analysis Required
+## Process
 
-You MUST read full transcripts before generating improvements. Never generate improvements from metadata alone (tool counts, differentiation stats, scored.json summaries). Metadata tells you WHERE to look; transcripts tell you WHAT to change.
+For each repo (all 6 — never skip any):
+1. Read both transcripts end-to-end
+2. Note: Where did Sense give a genuinely better answer? Where was it equal? Where was Baseline better?
+3. Estimate the qualitative gap (e.g., "Sense ~5% better on this repo")
+4. Compare against the fairness_score gap in scored.json
+5. If the gap is off by more than 0.03, identify which checks are inflating or deflating the score
 
-**Use parallel sub-agents** (one per repo) to read transcripts. Reading 12 transcripts sequentially is too slow and leads to shortcuts.
+## What to Look For
 
-**Per-repo checklist** (repeat for ALL 6 repos — never skip any):
-1. Read `scenarios/{repo}.yaml` — understand what each step asks and what checks exist
-2. Read `results/sense/{repo}/transcript.json` end-to-end — note every answer, tool call sequence, qualified symbols, file references
-3. Read `results/baseline/{repo}/transcript.json` end-to-end — same analysis
-4. Read `results/sense/{repo}/scored.json` and `results/baseline/{repo}/scored.json` — verify scores match transcripts
-5. Compare side-by-side: Where did sense produce better answers? Where did baseline do equally well? What specific words/phrases did each use?
+**Checks that inflate Sense's score:**
+- Checks that reward tool-specific behavior disguised as content checks
+- Checks with values that only appear in Sense transcripts due to index phrasing, not better understanding
+- Overly generous thresholds that both tools easily pass
 
-**Gate: You MUST write `analysis-notes.md` with per-repo findings for ALL repos BEFORE writing improvements.json.** Do not proceed to Phase 2 without this file.
+**Checks that deflate Baseline's score:**
+- Checks requiring exact phrasing that Baseline paraphrases differently
+- Checks for symbols Baseline found but described with different terminology
 
-Every improvement must cite specific transcript evidence.
+**Missing checks that would correct the gap:**
+- Findings unique to one approach that have no check (in either direction)
+- Caller completeness gaps — transitive callers one tool found and the other missed
+- Actionability gaps — test breakage warnings, impact completeness
 
-Failure mode to avoid: In loop-1-iter-2, metadata-based improvements caused regressions (axum gap -0.123, flask sense -0.093) because assumed qualified forms weren't reliably produced and thresholds were raised beyond what sense consistently achieves.
-
-## Your Goal
-
-For each scenario, analyze transcripts to find:
-
-1. **Non-differentiating checks**: Checks where both sense and baseline pass (or fail) equally. These are candidates for tightening or replacement.
-
-2. **False positives**: Checks that pass but shouldn't — the answer mentioned a keyword but didn't actually demonstrate understanding. Look for:
-   - Words mentioned in passing vs explained in context
-   - Symbols listed without file/line references
-   - Copy-pasted prompt words that appear in the answer trivially
-
-3. **False negatives**: Checks that fail but shouldn't — the answer demonstrated understanding but used different words. Look for:
-   - Paraphrased concepts (e.g., "the entry handler" instead of "ServeHTTP")
-   - Correct analysis with slightly different terminology
-
-4. **Verifiable markers**: Patterns in good transcripts that could become checks:
-   - Qualified symbol references: "Engine.ServeHTTP in gin.go:123"
-   - Cross-file connections: "wsgi_app calls full_dispatch_request"
-   - Verification behavior: reading source after MCP results
-
-## Decision Criteria
-
-**Approve tightening** a check if:
-- The check is non-differentiating (differentiation ≈ 0.0)
-- A more specific form exists in the sense transcript
-- The tighter form is likely to appear in 2/3+ of sense runs
-
-**Reject tightening** if:
-- The tighter form is fragile (could break on rephrasing)
-- The check is already differentiating
-- No clear verifiable alternative exists
+**Baseline-favoring checks to add:**
+- Product-level insights that Baseline's broader reading surfaces
+- Edge cases found through serendipitous file exploration
 
 ## Output
 
-Write `improvements.json` to `results/loop-N-iter-M/improvements.json` using the format in SKILL.md.
+Write `analysis-notes.md` with per-repo findings. For each repo:
+- Qualitative assessment (which approach gave a better answer, and why)
+- Estimated fair gap
+- Current fairness_score gap
+- Specific checks to add, remove, or tighten (with transcript evidence)
 
-Focus on:
-- Tightening 3-5 checks per scenario that are clearly non-differentiating
-- Adding 1-2 `response_richness` threshold increases where both tools easily pass
-- Not changing more than 30% of checks in one iteration (incremental improvement)
+This file is the gate — Phase 2 cannot proceed without it.

@@ -2,29 +2,24 @@
 set -euo pipefail
 
 # Bench2 Autonomous Improvement Loop
-# Entry point for the 3-loop × 3-iteration improvement system.
 #
-# Each loop serves a different purpose:
-#   Loop 1: Verifiability — replace keyword checks with verifiable ones
-#   Loop 2: Semantic depth — add checks that reward structural understanding
-#   Loop 3: Weight optimization — tune scoring weights for accuracy
-#
-# Within each loop, iterate 3 times: run → analyze → improve
+# Single loop with N iterations to convergence.
+# Each iteration: run → score → analyze → Claude reviews → apply → validate
 #
 # Usage:
-#   improve-loop.sh [--loop N] [--iterations N] [--model MODEL] [--repo REPOS] [--runs N]
+#   improve-loop.sh [--iterations N] [--reviewer-model MODEL] [--model MODEL] [--repo REPOS]
 #
 # Examples:
-#   improve-loop.sh                           # Full run: 3 loops × 3 iterations
-#   improve-loop.sh --loop 1 --iterations 3   # Only loop 1, 3 iterations
-#   improve-loop.sh --loop 2 --repo gin,flask # Loop 2, specific repos
+#   improve-loop.sh                                      # 3 iterations, Opus 4.7 reviewer
+#   improve-loop.sh --iterations 5 --repo gin,flask      # 5 iterations, specific repos
+#   improve-loop.sh --reviewer-model claude-sonnet-4-6    # Use Sonnet as reviewer
 
 LOOP_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCH2_DIR="$(cd "$LOOP_DIR/.." && pwd)"
+INSTRUCT_DIR="$LOOP_DIR/instructions"
 
-LOOP_START=1
-LOOP_END=3
 ITERATIONS=3
+REVIEWER_MODEL="claude-opus-4-7"
 MODEL=""
 REPO_FILTER=""
 TOOL_FILTER="sense,baseline"
@@ -33,9 +28,8 @@ DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --loop) LOOP_START="$2"; LOOP_END="$2"; shift 2 ;;
-    --loops) LOOP_END="$2"; shift 2 ;;
-    --iterations|--iterations-per-loop) ITERATIONS="$2"; shift 2 ;;
+    --iterations) ITERATIONS="$2"; shift 2 ;;
+    --reviewer-model) REVIEWER_MODEL="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --repo) REPO_FILTER="$2"; shift 2 ;;
     --tool) TOOL_FILTER="$2"; shift 2 ;;
@@ -45,22 +39,20 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: improve-loop.sh [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --loop N        Run only loop N (1, 2, or 3)"
-      echo "  --loops N       Run loops 1 through N (default: 3)"
-      echo "  --iterations N  Iterations per loop (default: 3)"
-      echo "  --model MODEL   Claude model for scenario runs (e.g. sonnet)"
-      echo "  --repo REPOS    Comma-separated repo filter"
-      echo "  --tool TOOLS    Comma-separated tool filter (default: sense,baseline)"
-      echo "  --runs N        Runs per scenario for variance (default: 1)"
-      echo "  --dry-run       Show what would run without executing"
+      echo "  --iterations N        Iterations to convergence (default: 3)"
+      echo "  --reviewer-model M    Claude model for transcript review (default: claude-opus-4-7)"
+      echo "  --model MODEL         Claude model for scenario runs"
+      echo "  --repo REPOS          Comma-separated repo filter"
+      echo "  --tool TOOLS          Comma-separated tool filter (default: sense,baseline)"
+      echo "  --runs N              Runs per scenario for variance (default: 1)"
+      echo "  --dry-run             Show what would run without executing"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
-TOTAL=$((( LOOP_END - LOOP_START + 1 ) * ITERATIONS))
-echo "Starting improvement loop: loops ${LOOP_START}-${LOOP_END} × ${ITERATIONS} iterations = ${TOTAL} total"
+echo "Starting improvement loop: $ITERATIONS iterations, reviewer=$REVIEWER_MODEL"
 echo ""
 
 PHASE_ARGS=()
@@ -69,50 +61,134 @@ PHASE_ARGS=()
 [[ -n "$TOOL_FILTER" ]] && PHASE_ARGS+=(--tool "$TOOL_FILTER")
 $DRY_RUN && PHASE_ARGS+=(--dry-run)
 
-for loop in $(seq "$LOOP_START" "$LOOP_END"); do
+for iter in $(seq 1 "$ITERATIONS"); do
   echo "========================================"
-  loop_name="Iteration"
-  case $loop in
-    1) loop_name="Verifiability" ;;
-    2) loop_name="Semantic Depth" ;;
-    3) loop_name="Weight Optimization" ;;
-  esac
-  echo "  Loop $loop: $loop_name"
+  echo "  Iteration $iter/$ITERATIONS"
   echo "========================================"
   echo ""
 
-  for iter in $(seq 1 "$ITERATIONS"); do
-    echo "--- Loop $loop, Iteration $iter/$ITERATIONS ---"
+  ITER_DIR="$LOOP_DIR/results/loop-1-iter-${iter}"
+  mkdir -p "$ITER_DIR"
 
-    # Phase 1: Run and analyze
-    bash "$LOOP_DIR/scripts/phases/phase1-run-analysis.sh" \
-      --loop "$loop" \
-      --runs "$RUNS" \
-      "${PHASE_ARGS[@]}"
+  # ── Phase 1: Run scenarios, score, analyze ──
+  echo "--- Phase 1: Run & Analyze ---"
+  bash "$LOOP_DIR/scripts/phases/phase1-run-analysis.sh" \
+    --loop 1 \
+    --runs "$RUNS" \
+    "${PHASE_ARGS[@]}"
 
-    echo ""
-    echo "Phase 1 done. Waiting for analysis..."
-    echo "  Read: $LOOP_DIR/results/loop-${loop}/analysis.json"
-    echo "  Instructions: $LOOP_DIR/instructions/phase$([ $loop -le 3 ] && echo $loop || echo 1)-analysis-instruct.md"
-    echo ""
-    echo "After analysis, write improvements.json to:"
-    echo "  $LOOP_DIR/results/loop-${loop}-iter-${iter}/improvements.json"
-    echo ""
-    echo "Then run Phase 2:"
-    echo "  bash $LOOP_DIR/scripts/phases/phase2-run-improve.sh --loop $loop --iter $iter"
-    echo ""
-    echo "Then run Phase 3:"
-    echo "  bash $LOOP_DIR/scripts/phases/phase3-run-validate.sh --loop $loop --iter $iter --runs $RUNS ${PHASE_ARGS[*]}"
-    echo ""
+  if $DRY_RUN; then
+    echo "[dry-run] Would invoke Claude reviewer and continue."
+    continue
+  fi
 
-    # In autonomous mode, phases 2 and 3 would continue here.
-    # For now, pause for human/LLM analysis between phases.
-    echo "Pausing for analysis. Re-run with next iteration when ready."
-    exit 0
-  done
-
-  echo "Loop $loop complete."
+  # ── Claude reviewer: read transcripts, generate improvements.json ──
   echo ""
+  echo "--- Transcript Review (model: $REVIEWER_MODEL) ---"
+
+  REVIEW_PROMPT="$(cat <<PROMPT
+Read the following instruction files, then analyze the bench2 transcripts and generate improvements.json.
+
+## Instructions
+
+$(cat "$INSTRUCT_DIR/LOOP-CONTEXT.md")
+
+---
+
+$(cat "$INSTRUCT_DIR/phase1-analysis-instruct.md")
+
+---
+
+$(cat "$INSTRUCT_DIR/phase2-improve-instruct.md")
+
+## Current Scores
+
+$(python3 "$BENCH2_DIR/lib/reporter.py" "$BENCH2_DIR/results" --format terminal 2>/dev/null)
+
+## Task
+
+1. Read the sense and baseline transcripts for all 6 repos in $BENCH2_DIR/results/
+2. Write analysis-notes.md to $ITER_DIR/analysis-notes.md
+3. Write improvements.json to $ITER_DIR/improvements.json
+
+Output ONLY the improvements.json content to stdout when done.
+PROMPT
+)"
+
+  claude -p "$REVIEW_PROMPT" \
+    --model "$REVIEWER_MODEL" \
+    --allowedTools "Read,Bash,Write" \
+    > "$ITER_DIR/claude-review.log" 2>&1
+
+  if [[ ! -f "$ITER_DIR/improvements.json" ]]; then
+    echo "ERROR: Reviewer did not produce improvements.json" >&2
+    echo "Check $ITER_DIR/ for partial output." >&2
+    exit 1
+  fi
+
+  echo "  Improvements generated: $ITER_DIR/improvements.json"
+
+  # ── Phase 2: Apply improvements ──
+  echo ""
+  echo "--- Phase 2: Apply Improvements ---"
+  bash "$LOOP_DIR/scripts/phases/phase2-run-improve.sh" \
+    --loop 1 \
+    --iter "$iter"
+
+  # ── Phase 3: Re-run, score, validate ──
+  echo ""
+  echo "--- Phase 3: Validate ---"
+  PHASE3_EXIT=0
+  bash "$LOOP_DIR/scripts/phases/phase3-run-validate.sh" \
+    --loop 1 \
+    --iter "$iter" \
+    --runs "$RUNS" \
+    "${PHASE_ARGS[@]}" || PHASE3_EXIT=$?
+
+  if [[ $PHASE3_EXIT -eq 2 ]]; then
+    echo ""
+    echo "  Regression detected in iteration $iter. Scenarios rolled back."
+    echo "  Stopping loop — review $ITER_DIR/regression.json before retrying."
+    exit 2
+  elif [[ $PHASE3_EXIT -ne 0 ]]; then
+    echo "ERROR: Phase 3 failed with exit code $PHASE3_EXIT" >&2
+    exit $PHASE3_EXIT
+  fi
+
+  echo ""
+  echo "Iteration $iter complete."
+  echo ""
+
+  # ── Convergence check ──
+  if [[ $iter -gt 1 ]]; then
+    PREV_DIR="$LOOP_DIR/results/loop-1-iter-$((iter - 1))"
+    if [[ -f "$PREV_DIR/post-analysis.json" && -f "$ITER_DIR/post-analysis.json" ]]; then
+      CONVERGED=$(python3 -c "
+import json, sys
+try:
+    old = json.load(open('$PREV_DIR/post-analysis.json'))
+    new = json.load(open('$ITER_DIR/post-analysis.json'))
+    old_gap = abs(old.get('sense_avg', 0) - old.get('baseline_avg', 0))
+    new_gap = abs(new.get('sense_avg', 0) - new.get('baseline_avg', 0))
+    print('true' if abs(old_gap - new_gap) < 0.02 else 'false')
+except Exception:
+    print('false')
+")
+      if [[ "$CONVERGED" == "true" ]]; then
+        echo "Converged — fairness gap stable within 0.02. Stopping."
+        break
+      fi
+    fi
+  fi
 done
 
-echo "All loops complete!"
+echo ""
+echo "========================================"
+echo "  Loop complete after $iter iterations"
+echo "========================================"
+
+# Final report
+echo ""
+python3 "$BENCH2_DIR/lib/reporter.py" "$BENCH2_DIR/results" --format terminal 2>/dev/null
+echo ""
+echo "Run 'bash bench2/report.sh --md' to regenerate report.md."
