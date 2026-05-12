@@ -1,0 +1,250 @@
+{
+  "scenario": "Next.js SSR render path tracing and request ID threading",
+  "repo": "nextjs",
+  "overall_score": 0.6798,
+  "completeness": 0.8441,
+  "efficiency": 0.7685,
+  "tool_fluency": 0.0,
+  "discoverability": 1.0,
+  "steps": [
+    {
+      "name": "Orient in the Next.js server architecture",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "NextNodeServer"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "BaseServer"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 10,
+          "unique_refs": 26,
+          "threshold": 4
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "app-render"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "Pages"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "base-server.ts"
+        },
+        {
+          "hit": false,
+          "type": "word",
+          "value": "NextCustomServer"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "base-server.ts"
+        }
+      ],
+      "hits_required": 5,
+      "total_required": 5,
+      "hits_bonus": 2,
+      "total_bonus": 3,
+      "score_required": 1.0,
+      "score_bonus": 0.6667,
+      "combined_score": 0.9231,
+      "richness": 10,
+      "tool_calls_count": 53,
+      "token_total": 1916470
+    },
+    {
+      "name": "Trace the SSR request lifecycle",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "handleRequest"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "renderToHTML"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 10,
+          "unique_refs": 26,
+          "threshold": 6
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "loadComponents"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "findPageComponents"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "render.tsx"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "router-server"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "renderToHTMLOrFlightImpl"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph"
+        }
+      ],
+      "hits_required": 3,
+      "total_required": 3,
+      "hits_bonus": 5,
+      "total_bonus": 7,
+      "score_required": 1.0,
+      "score_bonus": 0.7143,
+      "combined_score": 0.8462,
+      "richness": 10,
+      "tool_calls_count": 53,
+      "token_total": 1916470
+    },
+    {
+      "name": "Find callers of renderToHTMLOrFlight",
+      "checks": [
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "renderToHTMLOrFlight"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "app-render"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 10,
+          "unique_refs": 26,
+          "threshold": 3
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "route-modules"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 2,
+      "total_bonus": 3,
+      "score_required": 1.0,
+      "score_bonus": 0.6667,
+      "combined_score": 0.8571,
+      "richness": 10,
+      "tool_calls_count": 53,
+      "token_total": 1916470
+    },
+    {
+      "name": "Assess where to thread a request ID",
+      "checks": [
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "RequestMeta"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "handleRequest"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "5",
+          "unique_files": 10,
+          "unique_refs": 26,
+          "threshold": 5
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "cache"
+        },
+        {
+          "hit": false,
+          "type": "word",
+          "value": "NEXT_REQUEST_ID_HEADER"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 2,
+      "total_bonus": 4,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "richness": 10,
+      "tool_calls_count": 53,
+      "token_total": 1916470
+    }
+  ],
+  "misses": {
+    "total": 0,
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0 (not penalised), post-MCP misses: 0"
+  },
+  "metrics": {
+    "tool_calls": 53,
+    "grep_count": 19,
+    "read_count": 29,
+    "mcp_count": 0,
+    "token_input_uncached": 34,
+    "token_output": 13856,
+    "token_cache_read": 1846558,
+    "token_cache_write": 56022,
+    "token_total_billed": 13890,
+    "token_total_all": 1916470,
+    "wall_time_seconds": 236.8,
+    "cost_usd": 0.9728449000000001
+  }
+}

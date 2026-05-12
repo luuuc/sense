@@ -1,0 +1,1 @@
+../../bench/tools/codebase-memory-mcp.sh

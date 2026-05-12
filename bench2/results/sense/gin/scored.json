@@ -1,0 +1,257 @@
+{
+  "scenario": "Gin middleware chain tracing and recovery modification assessment",
+  "repo": "gin",
+  "overall_score": 0.8433,
+  "completeness": 0.9188,
+  "efficiency": 0.8631,
+  "tool_fluency": 1.0,
+  "discoverability": 0.4,
+  "steps": [
+    {
+      "name": "Trace HTTP dispatch from entry point",
+      "checks": [
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "Engine.ServeHTTP"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "handleHTTPRequest"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "gin.go"
+        },
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "7",
+          "unique_files": 4,
+          "unique_refs": 33,
+          "threshold": 7
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "context.go"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "tree.go"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph"
+        }
+      ],
+      "hits_required": 3,
+      "total_required": 4,
+      "hits_bonus": 3,
+      "total_bonus": 3,
+      "score_required": 0.75,
+      "score_bonus": 1.0,
+      "combined_score": 0.8182,
+      "richness": 4,
+      "tool_calls_count": 13,
+      "token_total": 175092
+    },
+    {
+      "name": "Understand middleware flow",
+      "checks": [
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "Context.Next"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "Context.Abort"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 4,
+          "unique_refs": 33,
+          "threshold": 4
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "handlers"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "recovery.go"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "logger.go"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "abortIndex"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "combineHandlers"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph"
+        }
+      ],
+      "hits_required": 3,
+      "total_required": 3,
+      "hits_bonus": 6,
+      "total_bonus": 6,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "richness": 4,
+      "tool_calls_count": 13,
+      "token_total": 175092
+    },
+    {
+      "name": "Find dead code in the gin package",
+      "checks": [
+        {
+          "hit": false,
+          "type": "word",
+          "value": "localhostIP"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "dead"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 4,
+          "unique_refs": 33,
+          "threshold": 3
+        },
+        {
+          "hit": true,
+          "type": "no_grep",
+          "value": "no_grep"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "binding"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 4,
+      "total_bonus": 5,
+      "score_required": 1.0,
+      "score_bonus": 0.8,
+      "combined_score": 0.8571,
+      "richness": 4,
+      "tool_calls_count": 13,
+      "token_total": 175092
+    },
+    {
+      "name": "Assess modifying the recovery middleware",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Recovery"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "recovery.go"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 4,
+          "unique_refs": 33,
+          "threshold": 4
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "CustomRecovery"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "CustomRecoveryWithWriter"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Default"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 5,
+      "total_bonus": 5,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "richness": 4,
+      "tool_calls_count": 13,
+      "token_total": 175092
+    }
+  ],
+  "misses": {
+    "total": 1,
+    "pre_mcp_misses": [
+      "Read(summary.md)"
+    ],
+    "post_mcp_verification_reads": [
+      "Read(gin.go)",
+      "Read(context.go)",
+      "Read(context.go)",
+      "Read(recovery.go)"
+    ],
+    "post_mcp_misses": [],
+    "has_mcp_tools": true,
+    "detail": "pre-MCP bypasses: 1, post-MCP verification reads: 4 (not penalised), post-MCP misses: 0"
+  },
+  "metrics": {
+    "tool_calls": 13,
+    "grep_count": 0,
+    "read_count": 5,
+    "mcp_count": 7,
+    "token_input_uncached": 13,
+    "token_output": 8202,
+    "token_cache_read": 134428,
+    "token_cache_write": 32449,
+    "token_total_billed": 8215,
+    "token_total_all": 175092,
+    "wall_time_seconds": 116.1,
+    "cost_usd": 0.28508115
+  }
+}

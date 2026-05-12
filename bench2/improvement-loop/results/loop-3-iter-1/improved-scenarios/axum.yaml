@@ -1,0 +1,167 @@
+name: Axum Handler trait propagation and request context layer assessment
+repo: axum
+description: 'Trace how the Axum Handler trait propagates through the Tower service
+
+  stack and extractor chain. Then assess adding a request context/ID
+
+  layer that threads through the entire request lifecycle. Tests Rust
+
+  trait analysis, Tower middleware comprehension, and layered
+
+  architecture understanding.
+
+  '
+steps:
+- name: Find all Handler trait implementations
+  prompt: 'Read axum/src/handler/mod.rs, axum/src/routing/mod.rs, and
+
+    axum/src/routing/method_routing.rs. The Handler trait is the core
+
+    abstraction that turns async functions into Tower services.
+
+    Find ALL implementations of the Handler trait.
+
+    For each, explain the type state markers (T, S), how extractors
+
+    are run, and where the user''s closure/function is actually invoked.
+
+    '
+  checks:
+  - type: word
+    value: IntoResponseHandler
+    required: true
+  - type: word
+    value: Layered
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+    description: Referenced 4+ files in Handler impl analysis
+  - type: word
+    value: all_the_tuples
+    required: false
+  - type: contains
+    value: handler/mod.rs
+    required: false
+  - type: word
+    value: HandlerCallWithExtractors
+    required: false
+    description: Found the axum-extra Handler extension trait via structural search
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    description: Used structural graph query for Handler trait analysis
+- name: Trace the extractor chain
+  prompt: 'Read axum-core/src/extract/mod.rs and axum/src/extract/mod.rs.
+
+    Explain the extractor system: FromRequestParts vs FromRequest,
+
+    how State uses FromRef, what happens on rejection, and list
+
+    at least 8 built-in extractors with their file locations.
+
+    '
+  checks:
+  - type: word
+    value: FromRequestParts
+    required: true
+  - type: word
+    value: FromRequest
+    required: true
+  - type: response_richness
+    value: '5'
+    required: true
+    description: Referenced 5+ files in extractor analysis
+  - type: word
+    value: FromRef
+    required: false
+  - type: word
+    value: Extension
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    description: Used semantic search for extractor system analysis
+- name: Trace the full serve-to-response lifecycle
+  prompt: 'Starting from axum::serve(), trace the complete request lifecycle
+
+    through all 7 layers: accept, make_service, Router.call_with_state,
+
+    PathRouter, MethodRouter, Handler::call, IntoResponse.
+
+    List key method names and source files at each layer.
+
+    '
+  checks:
+  - type: word
+    value: call_with_state
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Referenced 6+ files across the full lifecycle
+  - type: word
+    value: PathRouter
+    required: false
+  - type: word
+    value: MethodRouter
+    required: false
+  - type: word
+    value: TowerToHyperService
+    required: false
+    description: Named the Tower-to-hyper bridge type in the serve pipeline
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    description: Used semantic search to trace serve-to-response lifecycle
+- name: Assess adding a request context layer
+  prompt: 'You want every handler to be able to extract a request ID/tracing
+
+    context. What''s the least-breaking approach?
+
+    Analyse: Extension layer, Handler trait modification, new extractor
+
+    type. Name specific files, methods, and the tradeoffs.
+
+    '
+  checks:
+  - type: word
+    value: Extension
+    required: true
+  - type: word
+    value: Handler
+    required: true
+  - type: word
+    value: Router
+    required: false
+  - type: word
+    value: nest
+    required: false
+  - type: word
+    value: tower
+    required: false
+  - type: word
+    value: MatchedPath
+    required: false
+    description: Cited MatchedPath as architectural precedent for request context
+      extractors
+  - type: word
+    value: route_layer
+    required: false
+    description: Distinguished route_layer from Router::layer for middleware scoping
+scoring:
+  weights:
+    completeness: 0.35
+    efficiency: 0.2
+    tool_fluency: 0.25
+    discoverability: 0.2
+  metrics:
+  - token_input_uncached
+  - token_output
+  - token_total_billed
+  - wall_time
+  - tool_calls
+  - grep_count
+  - read_count
+  - mcp_count
+  - cost_usd

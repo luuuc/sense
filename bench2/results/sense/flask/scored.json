@@ -1,0 +1,244 @@
+{
+  "scenario": "Flask WSGI dispatch trace and debug instrumentation",
+  "repo": "flask",
+  "overall_score": 0.8066,
+  "completeness": 0.879,
+  "efficiency": 1.0,
+  "tool_fluency": 0.8,
+  "discoverability": 0.3,
+  "steps": [
+    {
+      "name": "Trace the request dispatch pipeline",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "wsgi_app"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "full_dispatch_request"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "preprocess_request"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "dispatch_request"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "finalize_request"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "make_response"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "process_response"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "2",
+          "unique_files": 3,
+          "unique_refs": 4,
+          "threshold": 2
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "app.py"
+        },
+        {
+          "hit": false,
+          "type": "contains",
+          "value": "wsgi_app calls full_dispatch_request"
+        }
+      ],
+      "hits_required": 8,
+      "total_required": 8,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.9444,
+      "richness": 3,
+      "tool_calls_count": 11,
+      "token_total": 228918
+    },
+    {
+      "name": "Find internal callers of wsgi_app",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "__call__"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "wsgi_app"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "2",
+          "unique_files": 3,
+          "unique_refs": 4,
+          "threshold": 2
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 2,
+      "total_bonus": 3,
+      "score_required": 1.0,
+      "score_bonus": 0.6667,
+      "combined_score": 0.8571,
+      "richness": 3,
+      "tool_calls_count": 11,
+      "token_total": 228918
+    },
+    {
+      "name": "Locate test coverage for the dispatch pipeline",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "test_basic.py"
+        },
+        {
+          "hit": false,
+          "type": "word",
+          "value": "conftest.py"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "2",
+          "unique_files": 3,
+          "unique_refs": 4,
+          "threshold": 2
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "test_"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 3,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "score_required": 0.6667,
+      "score_bonus": 1.0,
+      "combined_score": 0.7143,
+      "richness": 3,
+      "tool_calls_count": 11,
+      "token_total": 228918
+    },
+    {
+      "name": "Assess impact of adding a debug parameter",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "__call__"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "wsgi_app"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "2",
+          "unique_files": 3,
+          "unique_refs": 4,
+          "threshold": 2
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "subclass"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "middleware"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "FlaskClient"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 5,
+      "total_bonus": 5,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "richness": 3,
+      "tool_calls_count": 11,
+      "token_total": 228918
+    }
+  ],
+  "misses": {
+    "total": 2,
+    "pre_mcp_misses": [
+      "Read(summary.md)"
+    ],
+    "post_mcp_verification_reads": [
+      "Read(app.py)",
+      "Read(test_basic.py)",
+      "Read(test_basic.py)",
+      "Read(test_basic.py)"
+    ],
+    "post_mcp_misses": [
+      "Grep(wsgi_app)"
+    ],
+    "has_mcp_tools": true,
+    "detail": "pre-MCP bypasses: 1, post-MCP verification reads: 4 (not penalised), post-MCP misses: 1"
+  },
+  "metrics": {
+    "tool_calls": 11,
+    "grep_count": 1,
+    "read_count": 5,
+    "mcp_count": 4,
+    "token_input_uncached": 12,
+    "token_output": 4501,
+    "token_cache_read": 193759,
+    "token_cache_write": 30646,
+    "token_total_billed": 4513,
+    "token_total_all": 228918,
+    "wall_time_seconds": 74.9,
+    "cost_usd": 0.24060120000000002
+  }
+}

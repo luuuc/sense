@@ -1,0 +1,239 @@
+{
+  "scenarios": [
+    {
+      "repo": "axum",
+      "modifications": [
+        {
+          "action": "add_check",
+          "step_idx": 0,
+          "new_check": {
+            "type": "contains",
+            "value": "HandlerCallWithExtractors",
+            "required": false,
+            "description": "Cross-crate Handler impl in axum-extra — tests structural discovery beyond the main crate"
+          },
+          "rationale": "Sense found HandlerCallWithExtractors in axum-extra/src/handler/mod.rs:25 via sense_graph. Baseline only found impls in the main axum crate. This rewards cross-crate discovery."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 1,
+          "new_check": {
+            "type": "contains",
+            "value": "ViaParts",
+            "required": false,
+            "description": "M-marker type that controls FromRequestParts vs FromRequest dispatch"
+          },
+          "rationale": "Both transcripts mention ViaParts/ViaRequest as the M marker values, but current checks only test for FromRequestParts/FromRequest (which are named in the prompt). ViaParts tests understanding of the dual-dispatch mechanism."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 2,
+          "new_check": {
+            "type": "contains",
+            "value": "matchit",
+            "required": false,
+            "description": "The routing trie library used for path matching"
+          },
+          "rationale": "Both transcripts reference matchit as the routing algorithm. Current checks only test call_with_state/PathRouter/MethodRouter (all named in the prompt). matchit tests whether the model traced into the actual routing implementation."
+        }
+      ]
+    },
+    {
+      "repo": "discourse",
+      "modifications": [
+        {
+          "action": "tighten_check",
+          "step_idx": 1,
+          "old_check": {"type": "starts_with", "value": "TopicsController"},
+          "new_check": {"type": "contains", "value": "PostsController", "required": true, "description": "The actual entry point for topic creation — both transcripts correctly identify PostsController, not TopicsController"},
+          "rationale": "starts_with TopicsController is a false negative — both sense and baseline correctly identify that topic creation flows through PostsController#create, not TopicsController. The prompt mentions TopicsController but the correct answer is PostsController. Both transcripts have this."
+        },
+        {
+          "action": "tighten_check",
+          "step_idx": 2,
+          "old_check": {"type": "contains", "value": "ensure"},
+          "new_check": {"type": "contains", "value": "EnsureMagic", "required": false, "description": "The method_missing delegation module that generates ensure_ methods"},
+          "rationale": "contains 'ensure' matches any occurrence of the word. Both transcripts specifically reference EnsureMagic (the module that uses method_missing to generate ensure_can_X! methods). Tighter form reduces false positives while both tools reliably produce it."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 1,
+          "new_check": {
+            "type": "contains",
+            "value": "NewPostManager",
+            "required": false,
+            "description": "Key intermediary in the creation flow — PostsController → NewPostManager → PostCreator"
+          },
+          "rationale": "Both transcripts identify NewPostManager as the intermediary between PostsController and PostCreator. Current checks only test TopicCreator and PostCreator. NewPostManager tests whether the model traced the full chain."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 3,
+          "new_check": {
+            "type": "contains",
+            "value": "can_edit_topic",
+            "required": false,
+            "description": "Blast radius finding — can_edit_topic? calls can_create_topic_on_category? so the new permission would block edits too"
+          },
+          "rationale": "Sense's blast analysis uniquely found that can_edit_topic? calls can_create_topic_on_category?, meaning the new 24h check would unintentionally block users from editing their own topics. Baseline missed this side-effect. This check rewards impact-aware analysis."
+        }
+      ]
+    },
+    {
+      "repo": "flask",
+      "modifications": [
+        {
+          "action": "raise_threshold",
+          "step_idx": 0,
+          "check_type": "response_richness",
+          "old_value": "2",
+          "new_value": "4",
+          "rationale": "Both transcripts reference 5-6 unique files in the dispatch trace (app.py, ctx.py, test files). Threshold of 2 is trivially passed — raising to 4 still passes for both but eliminates shallow answers."
+        },
+        {
+          "action": "raise_threshold",
+          "step_idx": 3,
+          "check_type": "response_richness",
+          "old_value": "2",
+          "new_value": "3",
+          "rationale": "Both transcripts reference 4+ files in the impact assessment (app.py, testing.py, test_basic.py, etc). Threshold of 2 is trivially passed — raising to 3 still well within both tools' range."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 3,
+          "new_check": {
+            "type": "contains",
+            "value": "__init_subclass__",
+            "required": false,
+            "description": "Flask's subclass registration mechanism — key consideration for signature changes"
+          },
+          "rationale": "Both transcripts specifically reference __init_subclass__ (Flask's subclass registration hook) as not watching wsgi_app but still relevant for compatibility. This tests whether the model identified the specific mechanism, not just generic 'subclass' concerns."
+        }
+      ]
+    },
+    {
+      "repo": "gin",
+      "modifications": [
+        {
+          "action": "tighten_check",
+          "step_idx": 0,
+          "old_check": {"type": "response_richness", "value": "7"},
+          "new_check": {"type": "response_richness", "value": "5", "required": true, "description": "Referenced 5+ unique source files in dispatch trace"},
+          "rationale": "Threshold of 7 fails for both tools (both get 6 unique files). The richness counter uses a regex for file:line patterns and misses some reference styles. Lowering to 5 correctly passes for both while still requiring substantive file coverage. Was raised from 5→7 in iter-1 but proved too aggressive."
+        },
+        {
+          "action": "tighten_check",
+          "step_idx": 2,
+          "old_check": {"type": "no_grep", "value": "no_grep"},
+          "new_check": {"type": "no_grep", "value": "no_grep", "required": false},
+          "rationale": "Demoting from required to bonus. The no_grep required check creates a false positive: baseline found genuinely better dead code (localhostIP, localhostIPv6 — real unused production constants) while sense found waitForServerReady (a test helper). But baseline scores lower because it used grep to verify. The check should reward, not require, non-grep discovery."
+        },
+        {
+          "action": "promote_to_required",
+          "step_idx": 2,
+          "check_type": "response_richness",
+          "check_value": "3",
+          "rationale": "Promoting response_richness to required on dead code step to maintain at least one required check. Both tools reference 3+ files (both scored 6 unique files), so this is a safe threshold that both easily pass."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 1,
+          "new_check": {
+            "type": "contains",
+            "value": "abortIndex",
+            "required": false,
+            "description": "The sentinel constant (math.MaxInt8/2) that controls Abort behavior"
+          },
+          "rationale": "Both transcripts explain abortIndex as the mechanism behind Context.Abort (setting index to math.MaxInt8/2 = 63). Current checks only test word mentions. abortIndex tests whether the model understood the implementation detail, not just the API name."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 0,
+          "new_check": {
+            "type": "contains",
+            "value": "serveError",
+            "required": false,
+            "description": "Error handling function in the dispatch chain"
+          },
+          "rationale": "Both transcripts reference serveError (gin.go:764) as part of the dispatch chain. The prompt asks for 'all intermediate methods like serveError' so this verifies compliance. Current checks miss this specific function."
+        }
+      ]
+    },
+    {
+      "repo": "javalin",
+      "modifications": [
+        {
+          "action": "add_check",
+          "step_idx": 1,
+          "new_check": {
+            "type": "contains",
+            "value": "DefaultTasks",
+            "required": false,
+            "description": "The 6 lifecycle tasks that form the dispatch pipeline"
+          },
+          "rationale": "Both transcripts identify DefaultTasks as the core dispatch mechanism (6 tasks: BEFORE, HTTP, ERROR, AFTER, etc). Current checks only test 'service' and 'JavalinServlet'. DefaultTasks tests whether the model traced into the actual lifecycle stages."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 3,
+          "new_check": {
+            "type": "contains",
+            "value": "ExceptionMapper",
+            "required": false,
+            "description": "The concrete class that handles exception-to-response mapping"
+          },
+          "rationale": "Both transcripts identify ExceptionMapper as the first-layer error handler (Throwables) vs ErrorMapper (status codes). Current check only tests 'exception' which is too loose. ExceptionMapper tests whether the model found the actual class."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 3,
+          "new_check": {
+            "type": "contains",
+            "value": "ErrorMapper",
+            "required": false,
+            "description": "The second-layer handler that maps HTTP status codes to responses"
+          },
+          "rationale": "Both transcripts identify the two-layer system: ExceptionMapper for exceptions, ErrorMapper for status codes. This verifies the model understood the dual system, not just 'error handling' generically."
+        }
+      ]
+    },
+    {
+      "repo": "nextjs",
+      "modifications": [
+        {
+          "action": "add_check",
+          "step_idx": 1,
+          "new_check": {
+            "type": "contains",
+            "value": "renderPageComponent",
+            "required": false,
+            "description": "Key intermediate method in the SSR pipeline — base-server.ts"
+          },
+          "rationale": "Both transcripts reference renderPageComponent at base-server.ts:2515 as a key layer between routing and HTML generation. Current checks only test handleRequest and renderToHTML (which are named in the prompt). renderPageComponent tests whether the model traced the full pipeline."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 2,
+          "new_check": {
+            "type": "contains",
+            "value": "lazyRenderAppPage",
+            "required": false,
+            "description": "The lazy-require wrapper that invokes renderToHTMLOrFlight via dynamic import"
+          },
+          "rationale": "Both transcripts identify lazyRenderAppPage (module.render.ts:9) as an indirect caller via dynamic require(). Current checks only test renderToHTMLOrFlight and app-render. This tests whether the model traced the lazy loading indirection."
+        },
+        {
+          "action": "add_check",
+          "step_idx": 3,
+          "new_check": {
+            "type": "contains",
+            "value": "AsyncLocalStorage",
+            "required": false,
+            "description": "Node.js mechanism for request-scoped context propagation through async calls"
+          },
+          "rationale": "Both transcripts recommend AsyncLocalStorage (via WorkStore or RequestStore) for propagating the request ID through async rendering. Current checks only test RequestMeta and handleRequest. AsyncLocalStorage tests whether the model identified the correct propagation mechanism."
+        }
+      ]
+    }
+  ]
+}

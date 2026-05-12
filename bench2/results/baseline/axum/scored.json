@@ -1,0 +1,232 @@
+{
+  "scenario": "Axum Handler trait propagation and request context layer assessment",
+  "repo": "axum",
+  "overall_score": 0.7948,
+  "completeness": 0.8354,
+  "efficiency": 0.8424,
+  "tool_fluency": 0.5,
+  "discoverability": 1.0,
+  "steps": [
+    {
+      "name": "Find all Handler trait implementations",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "IntoResponseHandler"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Layered"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 13,
+          "unique_refs": 29,
+          "threshold": 4
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "all_the_tuples"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "handler/mod.rs"
+        },
+        {
+          "hit": false,
+          "type": "word",
+          "value": "HandlerCallWithExtractors"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph"
+        }
+      ],
+      "hits_required": 3,
+      "total_required": 3,
+      "hits_bonus": 2,
+      "total_bonus": 4,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.8,
+      "richness": 13,
+      "tool_calls_count": 25,
+      "token_total": 677355
+    },
+    {
+      "name": "Trace the extractor chain",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "FromRequestParts"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "FromRequest"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "5",
+          "unique_files": 13,
+          "unique_refs": 29,
+          "threshold": 5
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "FromRef"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Extension"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search"
+        }
+      ],
+      "hits_required": 3,
+      "total_required": 3,
+      "hits_bonus": 2,
+      "total_bonus": 3,
+      "score_required": 1.0,
+      "score_bonus": 0.6667,
+      "combined_score": 0.8889,
+      "richness": 13,
+      "tool_calls_count": 25,
+      "token_total": 677355
+    },
+    {
+      "name": "Trace the full serve-to-response lifecycle",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "call_with_state"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 13,
+          "unique_refs": 29,
+          "threshold": 6
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "PathRouter"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "MethodRouter"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "TowerToHyperService"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 3,
+      "total_bonus": 4,
+      "score_required": 1.0,
+      "score_bonus": 0.75,
+      "combined_score": 0.875,
+      "richness": 13,
+      "tool_calls_count": 25,
+      "token_total": 677355
+    },
+    {
+      "name": "Assess adding a request context layer",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Extension"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Handler"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Router"
+        },
+        {
+          "hit": false,
+          "type": "word",
+          "value": "nest"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "tower"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "MatchedPath"
+        },
+        {
+          "hit": false,
+          "type": "word",
+          "value": "route_layer"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 3,
+      "total_bonus": 5,
+      "score_required": 1.0,
+      "score_bonus": 0.6,
+      "combined_score": 0.7778,
+      "richness": 0,
+      "tool_calls_count": 25,
+      "token_total": 677355
+    }
+  ],
+  "misses": {
+    "total": 0,
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0 (not penalised), post-MCP misses: 0"
+  },
+  "metrics": {
+    "tool_calls": 25,
+    "grep_count": 0,
+    "read_count": 22,
+    "mcp_count": 0,
+    "token_input_uncached": 16,
+    "token_output": 9439,
+    "token_cache_read": 621486,
+    "token_cache_write": 46414,
+    "token_total_billed": 9455,
+    "token_total_all": 677355,
+    "wall_time_seconds": 152.9,
+    "cost_usd": 0.5030363
+  }
+}
