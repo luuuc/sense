@@ -519,10 +519,13 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     """Score a transcript against a scenario.
 
     Two-layer scoring:
-      fairness_score  = correctness (0.70) + efficiency (0.30)
-                        Skips checks tagged layer: adoption.
-      adoption_score  = tool_fluency (0.60) + discoverability (0.40)
-                        For code-intel-vs-code-intel comparisons only.
+      fairness components — keyword_coverage, citation_grounding,
+                            efficiency. llm_quality is filled in by
+                            judge.py; the combined fairness_score is
+                            computed by the reporter via fairness.compute.
+                            Skips checks tagged layer: adoption.
+      adoption_score      — tool_fluency (0.60) + discoverability (0.40)
+                            For code-intel-vs-code-intel comparisons only.
 
     repo_path     — the result_dir, used as cwd for `diff_contains` checks.
     repo_checkout — the cloned repo at run_meta.repo_commit, used by
@@ -554,7 +557,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     # is preserved as `step_avg_score` for anyone who wants it.
     fair_hits = sum(s["fairness_hits_required"] + 0.5 * s["fairness_hits_bonus"] for s in step_results)
     fair_total = sum(s["fairness_total_required"] + 0.5 * s["fairness_total_bonus"] for s in step_results)
-    correctness = (fair_hits / fair_total) if fair_total > 0 else 1.0
+    keyword_coverage = (fair_hits / fair_total) if fair_total > 0 else 1.0
     step_avg_score = sum(s["fairness_score"] for s in step_results) / max(len(step_results), 1)
 
     repo = scenario.get("repo", "")
@@ -568,8 +571,6 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     token_eff = max(0.0, 1.0 - (billed_tokens / ceiling)) if billed_tokens > 0 else 0.0
     time_eff = max(0.0, 1.0 - (wall_time / time_ceiling)) if wall_time > 0 else 0.0
     efficiency = 0.5 * token_eff + 0.5 * time_eff
-
-    fairness_score = 0.70 * correctness + 0.30 * efficiency
 
     grep_count = 0
     read_count = 0
@@ -609,18 +610,16 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
 
     adoption_score = 0.60 * tool_fluency + 0.40 * discoverability
 
-    # Citation grounding. Surfaced only; 20-04 does not fold this into
-    # fairness — that weighting decision is deferred to 20-05 once the
-    # judge layer is in place and we can see how the three signals
-    # correlate. Premature weighting would bake in a bias.
+    # Citation grounding. Folded into combined fairness via fairness.py
+    # (post-20-05). The combined score is computed by the reporter from
+    # scored.json + judged.json; scorer.py emits the components only.
     citation_grounding = ground_citations(answer_text, repo_checkout)
 
     scored = {
         "scenario": scenario["name"],
         "repo": scenario["repo"],
-        "fairness_score": round(fairness_score, 4),
         "adoption_score": round(adoption_score, 4),
-        "correctness": round(correctness, 4),
+        "keyword_coverage": round(keyword_coverage, 4),
         "step_avg_score": round(step_avg_score, 4),
         "efficiency": round(efficiency, 4),
         "completeness": round(completeness, 4),
@@ -713,9 +712,8 @@ if __name__ == "__main__":
             "repo": scenario["repo"],
             "failed": True,
             "failure_reason": run_meta.get("error"),
-            "fairness_score": 0.0,
             "adoption_score": 0.0,
-            "correctness": 0.0,
+            "keyword_coverage": 0.0,
             "step_avg_score": 0.0,
             "efficiency": 0.0,
             "completeness": 0.0,
