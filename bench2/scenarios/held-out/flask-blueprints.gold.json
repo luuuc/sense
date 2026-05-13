@@ -1,0 +1,84 @@
+{
+  "_meta": {
+    "scenario": "flask-blueprints",
+    "rubric_path": "bench2/scenarios/held-out/flask-blueprints.rubric.yaml",
+    "graded_by": "Claude Opus 4.7 (under human review by Luc B. Perussault-Diallo)",
+    "graded_at": "2026-05-13",
+    "rubric_weights": {
+      "map_quality": 0.40,
+      "specificity": 0.25,
+      "justification": 0.20,
+      "uncertainty": 0.15
+    },
+    "summary": {
+      "sense_weighted_mean": 0.86,
+      "baseline_weighted_mean": 0.879,
+      "fairness_gap_sense_minus_baseline": -0.019
+    },
+    "notes": "Flask is small + well-organised; the structural-index advantage Sense usually shows is muted because grep+Read can answer thoroughly. Baseline edges Sense by ~0.019 — consistent with the bench's premise that flask is one of the easiest repos for a grep-and-read agent."
+  },
+  "_detail": {
+    "sense": [
+      {
+        "step_idx": 0,
+        "step_name": "Map the Blueprint class surface",
+        "scores": {"map_quality": 0.95, "specificity": 0.95, "justification": 0.85, "uncertainty": 0.70},
+        "weighted": 0.8925,
+        "notes": "Names Blueprint at blueprints.py:18 and sansio/blueprints.py:119, BlueprintSetupState at :34, every routes/deferred method, the sansio split. Flags public_re_export at blueprints.py:11 — useful edge case for downstream imports."
+      },
+      {
+        "step_idx": 1,
+        "step_name": "Trace url_prefix composition through register()",
+        "scores": {"map_quality": 0.95, "specificity": 0.90, "justification": 0.80, "uncertainty": 0.60},
+        "weighted": 0.855,
+        "notes": "Traces register_blueprint → register → add_url_rule with line numbers; explains the rstrip/lstrip slash-collapse idiom and cites the parametrized test that verifies it. Slightly broader cite ranges than baseline."
+      },
+      {
+        "step_idx": 2,
+        "step_name": "Locate test coverage for blueprint registration",
+        "scores": {"map_quality": 0.90, "specificity": 0.90, "justification": 0.85, "uncertainty": 0.65},
+        "weighted": 0.8525,
+        "notes": "12 named tests with line numbers + 4 supporting files. Strong WHY-link on test_nesting_url_prefixes as 'the canonical test for the line 367-374 composition'."
+      },
+      {
+        "step_idx": 3,
+        "step_name": "Assess adding a runtime-mutable disabled flag to Blueprint",
+        "scores": {"map_quality": 0.90, "specificity": 0.85, "justification": 0.85, "uncertainty": 0.65},
+        "weighted": 0.84,
+        "notes": "Recommends registration-time gate, 3 distinct files. Adjusted from 0.85 to 0.90 on map_quality per reviewer — both recommendations are valid."
+      }
+    ],
+    "baseline": [
+      {
+        "step_idx": 0,
+        "step_name": "Map the Blueprint class surface",
+        "scores": {"map_quality": 0.95, "specificity": 0.95, "justification": 0.85, "uncertainty": 0.55},
+        "weighted": 0.87,
+        "notes": "Comparable map; explicitly cites inherited methods from Scaffold (route@:336, before_request@:460). Doesn't surface as many edge cases as sense."
+      },
+      {
+        "step_idx": 1,
+        "step_name": "Trace url_prefix composition through register()",
+        "scores": {"map_quality": 0.95, "specificity": 0.95, "justification": 0.85, "uncertainty": 0.55},
+        "weighted": 0.87,
+        "notes": "Same chain as sense, slightly tighter line ranges (:367-374), articulates override precedence ('does not propagate down to nested children except via the composition logic above')."
+      },
+      {
+        "step_idx": 2,
+        "step_name": "Locate test coverage for blueprint registration",
+        "scores": {"map_quality": 0.95, "specificity": 0.95, "justification": 0.85, "uncertainty": 0.70},
+        "weighted": 0.8925,
+        "notes": "13 named tests + recommended pytest command + 'incidental Blueprint use (no registration semantics)' annotation. Slightly more complete than sense."
+      },
+      {
+        "step_idx": 3,
+        "step_name": "Assess adding a runtime-mutable disabled flag to Blueprint",
+        "scores": {"map_quality": 0.90, "specificity": 0.90, "justification": 0.85, "uncertainty": 0.85},
+        "weighted": 0.8825,
+        "notes": "Recommends dispatch-time gate, 5 distinct files (adds Flask.dispatch_request at :966/:992). Strongest uncertainty surface on either tool: static-file rule cannot be reversed, url_for leakage, view_functions overwrite, the seven merged dicts 'filterable but not removable'."
+      }
+    ]
+  },
+  "sense": {"weighted_mean": 0.86},
+  "baseline": {"weighted_mean": 0.879}
+}

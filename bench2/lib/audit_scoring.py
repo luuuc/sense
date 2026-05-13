@@ -27,6 +27,7 @@ from judge import (  # noqa: E402
     JUDGE_MODEL,
     call_judge,
     extract_judge_json,
+    extract_usage,
     read_answer_text,
     slice_answer_for_step,
 )
@@ -151,6 +152,7 @@ def audit_step(*, step_idx, scenario_step, scored_step, answer_slice,
         max_tokens=min(4096, 200 + 120 * len(check_blocks)),
     )
     parsed = extract_judge_json(response)
+    usage = extract_usage(response)
     raw_verdicts = parsed.get("verdicts", [])
 
     by_id = {str(v.get("check_id")): v for v in raw_verdicts}
@@ -173,7 +175,7 @@ def audit_step(*, step_idx, scenario_step, scored_step, answer_slice,
                 "rationale": str(v.get("rationale", "")).strip(),
             }
         )
-    return results
+    return results, usage
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
@@ -232,12 +234,18 @@ def main(argv):
     full_answer = read_answer_text(transcript_path)
 
     all_results = []
+    usage_total = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
     for step_idx, scored_step in enumerate(scored.get("steps", [])):
         scenario_step = scenario["steps"][step_idx]
         answer_slice = slice_answer_for_step(
             full_answer, step_idx, scenario_step["name"]
         )
-        step_results = audit_step(
+        step_results, step_usage = audit_step(
             step_idx=step_idx,
             scenario_step=scenario_step,
             scored_step=scored_step,
@@ -249,6 +257,8 @@ def main(argv):
             r["repo"] = repo
             r["tool"] = tool
         all_results.extend(step_results)
+        for k in usage_total:
+            usage_total[k] += step_usage.get(k, 0)
         d = sum(1 for r in step_results if r["judge_verdict"] == "disagree")
         u = sum(1 for r in step_results if r["judge_verdict"] == "unsure")
         a = sum(1 for r in step_results if r["judge_verdict"] == "agree")
@@ -281,6 +291,7 @@ def main(argv):
         "rate_threshold": DISAGREEMENT_RATE_THRESHOLD,
         "over_threshold": rate > DISAGREEMENT_RATE_THRESHOLD,
         "disagreements": disagreements[:TOP_N_DISAGREEMENTS],
+        "usage": usage_total,
     }
 
     with open(out_path, "w") as f:

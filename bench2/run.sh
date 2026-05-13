@@ -3,17 +3,32 @@ set -euo pipefail
 
 BENCH2_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$BENCH2_DIR/.." && pwd)"
+BENCH2_PROJECT_ROOT="$PROJECT_ROOT"
 TOOLS_DIR="$BENCH2_DIR/tools"
 SCENARIOS_DIR="$BENCH2_DIR/scenarios"
 RESULTS_DIR="$BENCH2_DIR/results"
 LIB_DIR="$BENCH2_DIR/lib"
+# shellcheck disable=SC1091
+source "$LIB_DIR/load-env.sh"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 REF_DIR="$SENSE_BENCH_ROOT/_reference"
 READY_POLL_INTERVAL=5
 READY_POLL_MAX=720  # 60 minutes at 5s intervals
 SETUP_TIMEOUT=600   # 10 minutes max for initial setup
-MAX_BUDGET_USD="2.00"
-SESSION_TIMEOUT=900  # 15 minutes per Claude session (longer for multi-step)
+# Card 15 history: tried $2 → too generous, $0.75 → zeroed 5/12 sessions.
+# Landed at $1.50: above the mean observed cost ($1.10) so most healthy
+# sessions complete naturally, but still bounds runaway sessions. Partial
+# transcripts (over-budget but with answer content) are scored normally —
+# scorer.py marks them `constrained: True` and the fairness comparison
+# still works. See bench2/end-goal.md §"What the bench loses at $0.75".
+MAX_BUDGET_USD="1.50"
+# Per-session wall-time timeout = 1.0 × TIME_CEILINGS[repo] (was 2×).
+# At 1× ceiling, time_efficiency is already 0, so killing at that point
+# costs nothing in score terms and bounds the worst case tightly. No floor —
+# the ceilings are calibrated per repo. --timeout overrides.
+SESSION_TIMEOUT=""
+SESSION_TIMEOUT_FLOOR=300   # absolute floor: don't go below 5 min even for tiny repos
+SESSION_TIMEOUT_DEFAULT=480  # fallback for unknown repos (= DEFAULT_TIME_CEILING × 1)
 
 # --- Argument parsing ---
 
@@ -47,7 +62,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --dry-run Show what would run without executing Claude sessions"
       echo "  --reset   Delete existing indexes and workspaces"
       echo "  --budget  Max USD per Claude session (default: $MAX_BUDGET_USD)"
-      echo "  --timeout Max seconds per Claude session (default: $SESSION_TIMEOUT)"
+      echo "  --timeout Max seconds per Claude session (default: 2× TIME_CEILINGS[repo], floor ${SESSION_TIMEOUT_FLOOR}s)"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -66,6 +81,29 @@ matches_filter() {
 tool_repo_path() {
   local tool="$1" repo="$2"
   echo "$SENSE_BENCH_ROOT/$tool/$repo"
+}
+
+# Derive per-repo session timeout = 2 × TIME_CEILINGS[repo].
+# TIME_CEILINGS lives in lib/scorer.py — the canonical source the loop
+# will tune in ±20% steps. Bash 3.2 (macOS default) has no associative
+# arrays; the Python invocation is ~50ms vs. multi-minute claude sessions
+# so caching isn't worth the portability cost.
+compute_session_timeout() {
+  local repo="$1"
+  if [[ -n "$SESSION_TIMEOUT" ]]; then
+    echo "$SESSION_TIMEOUT"
+    return 0
+  fi
+  local secs
+  secs=$(python3 -c "
+import sys
+sys.path.insert(0, '$LIB_DIR')
+from scorer import TIME_CEILINGS, DEFAULT_TIME_CEILING
+ceil = TIME_CEILINGS.get('$repo', DEFAULT_TIME_CEILING)
+out = max($SESSION_TIMEOUT_FLOOR, ceil)
+print(out)
+" 2>/dev/null) || secs="$SESSION_TIMEOUT_DEFAULT"
+  echo "$secs"
 }
 
 ensure_tool_repo() {
@@ -392,10 +430,23 @@ for tool in "${tools[@]}"; do
         claude_args+=(--mcp-config "$workspace/.mcp.json")
       fi
 
-      log "  running Claude session..."
+      session_timeout=$(compute_session_timeout "$repo")
+      log "  running Claude session (timeout=${session_timeout}s)..."
       start_time=$(date +%s)
 
-      (cd "$rp" && run_with_timeout "$SESSION_TIMEOUT" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
+      (cd "$rp" && run_with_timeout "$session_timeout" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
+
+      # Credit-exhausted retry: the claude CLI can fall back to OAuth
+      # subscription when ANTHROPIC_API_KEY is unset. urllib direct-API
+      # callers can't — see lib/judge.py — but the CLI's auth flow is
+      # special. Try once more with the key unset; if subscription is
+      # active, the second attempt will succeed.
+      if [[ $claude_rc -ne 0 && -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        if grep -qi 'credit balance is too low\|invalid_api_key' "$result_dir/claude.log" 2>/dev/null; then
+          log "  CREDIT EXHAUSTED on API key — retrying once on subscription..."
+          (cd "$rp" && ANTHROPIC_API_KEY="" run_with_timeout "$session_timeout" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
+        fi
+      fi
       end_time=$(date +%s)
       wall_time=$((end_time - start_time))
 

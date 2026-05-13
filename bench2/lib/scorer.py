@@ -457,16 +457,20 @@ DEFAULT_EFFICIENCY_CEILING = 30_000
 # faster sessions, so time is half of efficiency. Picked at ~3-4× a healthy
 # Sense session for each repo, so a fast tool scores ~0.7 and a slow one
 # (multi-thousand-second baseline run) collapses to 0.
+# Reduced 20% from the pitch's original values after observed sessions ran
+# well inside the previous ceilings (see Card 15 e2e: mean 145s on iter-1
+# sessions, vs. flask's previous 400s ceiling). New numbers tighten the
+# efficiency signal without truncating healthy sessions.
 TIME_CEILINGS = {
-    "flask": 400,
-    "gin": 400,
-    "axum": 600,
-    "javalin": 600,
-    "discourse": 600,
-    "nextjs": 900,
+    "flask": 320,        # was 400
+    "gin": 320,          # was 400
+    "axum": 480,         # was 600
+    "javalin": 480,      # was 600
+    "discourse": 480,    # was 600
+    "nextjs": 720,       # was 900
 }
 
-DEFAULT_TIME_CEILING = 600
+DEFAULT_TIME_CEILING = 480  # was 600
 
 # Claude pricing per million tokens. Used to estimate cost on failed runs
 # whose transcript never emitted a final total_cost_usd. Update when
@@ -691,54 +695,92 @@ if __name__ == "__main__":
             run_meta = {}
 
     if run_meta.get("error"):
-        # Failed runs still cost real money — the session ran for thousands
-        # of seconds before timing out. Recover the usage from the partial
-        # transcript so total cost reflects what actually got spent. The
-        # final `result` event never fires on failure, so we sum per-message
-        # usage and price it ourselves.
+        # The session was interrupted (over-budget, wall-time timeout, or a
+        # real crash). Inspect the transcript to distinguish:
+        #   - has assistant text + final `result` event: claude exited
+        #     non-zero AFTER the model emitted a complete answer (typical
+        #     over-budget signature). Score it.
+        #   - has assistant text, no `result` event: truncated mid-stream.
+        #     Score what was emitted; patch in partial-usage metrics so
+        #     cost/efficiency reflect real spend.
+        #   - no assistant text: real crash. Keep the legacy zero behavior.
+        # Rationale: an exam done under constraint still gets graded on
+        # what was written; it doesn't get a zero for hitting the time
+        # limit. `constrained: True` carries that signal in reports and
+        # audits without poisoning the fairness score with false zeros.
         partial = parse_transcript(transcript_path)
-        partial_usage = sum_partial_usage(transcript_path)
-        partial_cost = (
-            partial["cost_usd"]
-            if partial["cost_usd"] is not None
-            else estimate_cost(partial_usage)
-        )
-        billed_tokens = partial_usage["input_tokens"] + partial_usage["output_tokens"]
-        all_tokens = (billed_tokens
-                      + partial_usage["cache_read_input_tokens"]
-                      + partial_usage["cache_creation_input_tokens"])
-        scored = {
-            "scenario": scenario["name"],
-            "repo": scenario["repo"],
-            "failed": True,
-            "failure_reason": run_meta.get("error"),
-            "adoption_score": 0.0,
-            "keyword_coverage": 0.0,
-            "step_avg_score": 0.0,
-            "efficiency": 0.0,
-            "completeness": 0.0,
-            "tool_fluency": 0.0,
-            "discoverability": 0.0,
-            "steps": [],
-            "misses": {},
-            "metrics": {
-                "tool_calls": len(partial["tool_calls"]),
-                "grep_count": 0,
-                "read_count": 0,
-                "mcp_count": 0,
-                "token_input_uncached": partial_usage["input_tokens"],
-                "token_output": partial_usage["output_tokens"],
-                "token_cache_read": partial_usage["cache_read_input_tokens"],
-                "token_cache_write": partial_usage["cache_creation_input_tokens"],
-                "token_total_billed": billed_tokens,
-                "token_total_all": all_tokens,
-                "wall_time_seconds": float(run_meta.get("wall_time_seconds") or 0),
-                "cost_usd": round(partial_cost, 4),
-                "cost_estimated": partial["cost_usd"] is None,
-                "efficiency_ceiling": EFFICIENCY_CEILINGS.get(
-                    scenario.get("repo", ""), DEFAULT_EFFICIENCY_CEILING),
-            },
-        }
+        has_answer = bool(partial["text_blocks"])
+        has_result_event = partial["cost_usd"] is not None
+
+        if not has_answer:
+            # True crash — no model output. Zero everything (legacy path).
+            partial_usage = sum_partial_usage(transcript_path)
+            partial_cost = estimate_cost(partial_usage)
+            billed_tokens = partial_usage["input_tokens"] + partial_usage["output_tokens"]
+            all_tokens = (billed_tokens
+                          + partial_usage["cache_read_input_tokens"]
+                          + partial_usage["cache_creation_input_tokens"])
+            scored = {
+                "scenario": scenario["name"],
+                "repo": scenario["repo"],
+                "failed": True,
+                "failure_reason": run_meta.get("error"),
+                "adoption_score": 0.0,
+                "keyword_coverage": 0.0,
+                "step_avg_score": 0.0,
+                "efficiency": 0.0,
+                "completeness": 0.0,
+                "tool_fluency": 0.0,
+                "discoverability": 0.0,
+                "steps": [],
+                "misses": {},
+                "metrics": {
+                    "tool_calls": len(partial["tool_calls"]),
+                    "grep_count": 0,
+                    "read_count": 0,
+                    "mcp_count": 0,
+                    "token_input_uncached": partial_usage["input_tokens"],
+                    "token_output": partial_usage["output_tokens"],
+                    "token_cache_read": partial_usage["cache_read_input_tokens"],
+                    "token_cache_write": partial_usage["cache_creation_input_tokens"],
+                    "token_total_billed": billed_tokens,
+                    "token_total_all": all_tokens,
+                    "wall_time_seconds": float(run_meta.get("wall_time_seconds") or 0),
+                    "cost_usd": round(partial_cost, 4),
+                    "cost_estimated": partial["cost_usd"] is None,
+                    "efficiency_ceiling": EFFICIENCY_CEILINGS.get(
+                        scenario.get("repo", ""), DEFAULT_EFFICIENCY_CEILING),
+                },
+            }
+        else:
+            # Score the constrained session normally.
+            scored = score_transcript(
+                transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+            )
+            scored["failed"] = False
+            scored["constrained"] = True
+            scored["constraint_reason"] = run_meta.get("error")
+            if not has_result_event:
+                # Truncated mid-stream: the result event never fired, so
+                # parse_transcript saw zero usage/cost. Recover real spend
+                # from per-message usage and patch the metrics so cost
+                # tracking and the efficiency axis don't under-report.
+                partial_usage = sum_partial_usage(transcript_path)
+                billed = partial_usage["input_tokens"] + partial_usage["output_tokens"]
+                m = scored["metrics"]
+                m["token_input_uncached"] = partial_usage["input_tokens"]
+                m["token_output"] = partial_usage["output_tokens"]
+                m["token_cache_read"] = partial_usage["cache_read_input_tokens"]
+                m["token_cache_write"] = partial_usage["cache_creation_input_tokens"]
+                m["token_total_billed"] = billed
+                m["token_total_all"] = (
+                    billed
+                    + partial_usage["cache_read_input_tokens"]
+                    + partial_usage["cache_creation_input_tokens"]
+                )
+                m["cost_usd"] = round(estimate_cost(partial_usage), 4)
+                m["cost_estimated"] = True
+                m["wall_time_seconds"] = float(run_meta.get("wall_time_seconds") or 0)
     else:
         scored = score_transcript(
             transcript_path, scenario, result_dir, repo_checkout=repo_checkout

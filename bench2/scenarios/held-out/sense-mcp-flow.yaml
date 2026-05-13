@@ -1,0 +1,162 @@
+name: Sense schema-blast — add language_confidence column to sense_files
+repo: sense
+description: 'Probe Sense'' s own indexing schema. Trace every site that
+  declares, populates, or queries `sense_files`, identify how schema
+  changes propagate without a formal migration system, then assess
+  adding a `language_confidence REAL DEFAULT 1.0` column. Dogfood
+  scenario — tests the exact schema-blast capability Sense exists to
+  provide, on Sense itself. Held-out — frozen and never edited by the
+  loop.
+
+  '
+steps:
+- name: Map the sense_files schema surface
+  prompt: "You're about to add a column to the `sense_files` table. Hand
+    the next agent every site that declares the schema: the production
+    DDL with file:line, and the test files that hard-code their own
+    `CREATE TABLE sense_files (...)` (because tests that mirror the
+    schema by hand will need to add the new column too). Then list every
+    SQL statement that SELECTs or INSERTs into sense_files in production
+    code with file:line. The follow-up agent should need only small,
+    targeted lookups — not a fresh exploration of the codebase.
+    "
+  checks:
+  - type: word
+    value: schema.sql
+    required: true
+    description: Names the canonical schema file (internal/sqlite/schema.sql)
+  - type: word
+    value: sense_files
+    required: true
+    description: References the table being modified
+  - type: word
+    value: adapter.go
+    required: true
+    description: Identifies internal/sqlite/adapter.go as the primary read/write surface
+  - type: contains
+    value: CREATE TABLE
+    required: false
+    description: Names test files with hand-mirrored CREATE TABLE statements
+  - type: response_richness
+    value: '3'
+    required: true
+    description: Referenced 3+ source files across production + tests
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+    description: Used semantic search to enumerate sense_files references
+- name: Find producers and consumers of file-language data
+  prompt: "You're about to enrich the file-language signal stored in
+    `sense_files.language`. Hand the next agent the producer side
+    (where rows are inserted with their language field set — scan
+    pipeline, language-detection logic) and the consumer side (every
+    place that reads sense_files.language: graph queries, search,
+    MCP/CLI surfaces). Cite file:line for each. The follow-up agent
+    should need only small, targeted lookups — not a fresh exploration
+    of the codebase.
+    "
+  checks:
+  - type: word
+    value: language
+    required: true
+    description: Discusses the language field
+  - type: word
+    value: scan
+    required: true
+    description: Identifies the scan pipeline as the producer
+  - type: contains
+    value: INSERT INTO sense_files
+    required: false
+    description: Cites the production INSERT statement
+  - type: word
+    value: sense_files
+    required: true
+    description: References the table
+  - type: response_richness
+    value: '3'
+    required: true
+    description: Referenced 3+ files across producer + consumer sides
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+    description: Used structural call graph to enumerate consumers
+- name: Locate the schema-migration path
+  prompt: "You're about to ship a schema change that has to work for both
+    fresh databases and ones already created by an earlier sense binary.
+    Hand the next agent how schema upgrades currently propagate: where
+    the schema gets applied at startup with file:line, whether there's a
+    formal migration runner or `CREATE TABLE IF NOT EXISTS` + lazy
+    upgrade pattern, and any existing example of a non-DDL upgrade
+    (e.g. FTS rebuild, index recreation) that demonstrates the
+    convention. The follow-up agent should need only small, targeted
+    lookups — not a fresh exploration of the codebase.
+    "
+  checks:
+  - type: contains
+    value: IF NOT EXISTS
+    required: true
+    description: Identifies that schema uses CREATE TABLE IF NOT EXISTS rather than versioned migrations
+  - type: word
+    value: schema.sql
+    required: true
+    description: Names the schema file
+  - type: contains
+    value: ALTER TABLE
+    required: false
+    description: Acknowledges that an explicit ALTER TABLE is required for existing DBs
+  - type: word
+    value: FTS
+    required: false
+    description: Cites the FTS rebuild as a precedent for in-place schema upgrade
+  - type: response_richness
+    value: '2'
+    required: true
+    description: Referenced 2+ source files in the migration-path trace
+- name: Assess adding language_confidence REAL DEFAULT 1.0
+  prompt: "You're about to add a column `language_confidence REAL DEFAULT 1.0`
+    to `sense_files`. Produce the edit map for the next agent: every
+    file and statement that needs touching with file:line, the
+    backwards-compatibility strategy for existing databases (the
+    schema is `CREATE TABLE IF NOT EXISTS` so an existing DB won't
+    pick up the new column without an ALTER TABLE), the test files
+    whose hand-mirrored schemas need updating, and any consumer that
+    would benefit from reading the new column (graph, search, MCP
+    surfaces). The follow-up agent should need only small, targeted
+    lookups — not a fresh exploration of the codebase.
+    "
+  checks:
+  - type: word
+    value: language_confidence
+    required: true
+    description: Names the new column
+  - type: word
+    value: schema.sql
+    required: true
+    description: Identifies the schema file to edit
+  - type: word
+    value: adapter.go
+    required: true
+    description: Identifies the adapter as needing INSERT-statement updates
+  - type: contains
+    value: ALTER TABLE
+    required: false
+    description: Names the explicit ALTER path for existing databases
+  - type: contains
+    value: CREATE TABLE sense_files
+    required: false
+    description: Identifies test files with hand-mirrored CREATE TABLE statements that need updating
+  - type: response_richness
+    value: '4'
+    required: true
+    description: Referenced 4+ files across schema + adapter + tests + consumers
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+    description: Used blast radius analysis for sense_files schema change
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30

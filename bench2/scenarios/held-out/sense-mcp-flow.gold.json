@@ -1,0 +1,120 @@
+{
+  "_meta": {
+    "scenario": "sense-mcp-flow",
+    "rubric_path": "bench2/scenarios/held-out/sense-mcp-flow.rubric.yaml",
+    "graded_by": "Claude Opus 4.7 (under human review by Luc B. Perussault-Diallo)",
+    "graded_at": "2026-05-13",
+    "rubric_weights": {
+      "map_quality": 0.40,
+      "specificity": 0.25,
+      "justification": 0.20,
+      "uncertainty": 0.15
+    },
+    "summary": {
+      "sense_weighted_mean": 0.892,
+      "baseline_weighted_mean": 0.882,
+      "fairness_gap_sense_minus_baseline": 0.010
+    },
+    "bias_mitigation": "GRADING-BIAS NOTE (Sense scenario only). The grader knows Sense's internals well. Score for what an AI agent making downstream edits would need from this answer, not what the grader personally knows about the codebase. If the answer doesn't say something an AI agent would need to act, it does not get credit for it even when the grader can mentally fill it in. This instruction sits at the top of the rubric and was honoured during grading — credit is given only for what the answer explicitly says.",
+    "verified_citations": {
+      "schema_ddl": {
+        "claim": "internal/sqlite/schema.sql:6-13 (both tools)",
+        "ground_truth": "schema.sql:6-13 (CREATE TABLE IF NOT EXISTS sense_files spans :6 to :13)",
+        "verdict": "both correct"
+      },
+      "test_create_tables": {
+        "claim": "8 hand-rolled CREATE TABLE locations (both tools)",
+        "ground_truth": "all 8 verified at the cited lines: adapter_test.go:119, doctor_test.go:83/153/357/393, index_test.go:30/74, profile_test.go:72",
+        "verdict": "both correct"
+      },
+      "schema_version_constant": {
+        "claim": "internal/sqlite/adapter.go:32 (both tools)",
+        "ground_truth": "const SchemaVersion = 4 at adapter.go:32",
+        "verdict": "both correct"
+      },
+      "extractor_interface_line": {
+        "sense_claimed": "(not cited; only ForExtension at :249)",
+        "baseline_claimed": "internal/extract/extractor.go:194",
+        "ground_truth": "type Extractor interface is at :191; ForExtension at :249",
+        "verdict": "baseline off by 3 (minor); sense correct on ForExtension"
+      },
+      "lookup_go_join_lines": {
+        "sense_claimed": "lookup.go:133/146/166/182/214 (JOIN lines)",
+        "baseline_claimed": "lookup.go:131/144/164/180/212 (SELECT lines)",
+        "ground_truth": "multi-line queries — both anchor at valid lines within the same SELECT blocks",
+        "verdict": "both correct (different anchor strategies)"
+      },
+      "schema_version_test_pins": {
+        "sense_claimed": "TestSchemaVersionMismatchRebuilds at adapter_test.go:109, TestStampSchemaVersion at coverage_test.go:1135",
+        "baseline_claimed": "(not cited)",
+        "ground_truth": "both verified at the cited lines",
+        "verdict": "sense correct (baseline missed both)"
+      }
+    },
+    "notes": "The dogfood case. Both tools at their most accurate — no fabricated cites on either side. Sense edges baseline by +0.010 from three small advantages: positional vs named INSERT distinction in step 1, the StampSchemaVersion crash-safety invariant in step 3, and the test-contract pins in step 4. Baseline's counter-edges: the indextest/conformance.go surface in step 2 and the ReadSymbol opt-in catch in step 4."
+  },
+  "_detail": {
+    "sense": [
+      {
+        "step_idx": 0,
+        "step_name": "Map the sense_files schema surface",
+        "scores": {"map_quality": 0.92, "specificity": 0.92, "justification": 0.85, "uncertainty": 0.75},
+        "weighted": 0.8805,
+        "notes": "21 production-read cites + all 8 hand-rolled test schemas. Pre-emptively distinguishes positional vs named INSERTs as the breaking surface for step 4."
+      },
+      {
+        "step_idx": 1,
+        "step_name": "Find producers and consumers of file-language data",
+        "scores": {"map_quality": 0.90, "specificity": 0.90, "justification": 0.85, "uncertainty": 0.80},
+        "weighted": 0.875,
+        "notes": "Traces WriteFile → parseFileCore → ex.Language(). Forward-links 'no probabilistic step today, so confidence would default to 1.0' — anticipates step 4. Flags scan/tests.go consuming via in-memory indexedFile.Language rather than re-querying — load-bearing for the next agent."
+      },
+      {
+        "step_idx": 2,
+        "step_name": "Locate the schema-migration path",
+        "scores": {"map_quality": 0.95, "specificity": 0.90, "justification": 0.92, "uncertainty": 0.80},
+        "weighted": 0.909,
+        "notes": "Names the crash-safety invariant on StampSchemaVersion — 'writes user_version only after a successful scan'. Cites both non-DDL upgrade exemplars (FTS migration + idx_sense_edges_target drop/recreate)."
+      },
+      {
+        "step_idx": 3,
+        "step_name": "Assess adding language_confidence REAL DEFAULT 1.0",
+        "scores": {"map_quality": 0.90, "specificity": 0.92, "justification": 0.92, "uncertainty": 0.85},
+        "weighted": 0.9015,
+        "notes": "6-file edit map + positional/named INSERT split + recommended SchemaVersion bump cross-referenced with FTS in-place and idx_sense_edges_target precedents. References TestSchemaVersionMismatchRebuilds (adapter_test.go:109) and TestStampSchemaVersion (coverage_test.go:1135) — the tests that pin the rebuild contract (verified). Omits ReadSymbol from the consumer-edit list."
+      }
+    ],
+    "baseline": [
+      {
+        "step_idx": 0,
+        "step_name": "Map the sense_files schema surface",
+        "scores": {"map_quality": 0.90, "specificity": 0.90, "justification": 0.85, "uncertainty": 0.65},
+        "weighted": 0.8525,
+        "notes": "~18 production-read cites — comparable coverage but slightly less complete. Doesn't pre-emptively surface positional/named INSERT split until step 4."
+      },
+      {
+        "step_idx": 1,
+        "step_name": "Find producers and consumers of file-language data",
+        "scores": {"map_quality": 0.92, "specificity": 0.92, "justification": 0.85, "uncertainty": 0.70},
+        "weighted": 0.873,
+        "notes": "Cites all 7 extractor implementations (go/python/ruby/rust/tsjs×3/erb/langspec). Catches the contract test at internal/index/indextest/conformance.go:154-155 — neither sense nor I had this. Annotates scan/tests.go as the 'test-sibling heuristic (implSibling / mirrorImpl)'."
+      },
+      {
+        "step_idx": 2,
+        "step_name": "Locate the schema-migration path",
+        "scores": {"map_quality": 0.95, "specificity": 0.92, "justification": 0.85, "uncertainty": 0.80},
+        "weighted": 0.900,
+        "notes": "Same map as sense; PRAGMA table_info('sense_files') idea for in-place migration is concrete. Doesn't articulate the crash-safety invariant explicitly."
+      },
+      {
+        "step_idx": 3,
+        "step_name": "Assess adding language_confidence REAL DEFAULT 1.0",
+        "scores": {"map_quality": 0.92, "specificity": 0.92, "justification": 0.88, "uncertainty": 0.85},
+        "weighted": 0.9015,
+        "notes": "6-file edit map; catches ReadSymbol at adapter.go:520-528 as candidate consumer to extend (sense missed). Recommends same SchemaVersion bump strategy with thinner WHY-support than sense."
+      }
+    ]
+  },
+  "sense": {"weighted_mean": 0.892},
+  "baseline": {"weighted_mean": 0.882}
+}

@@ -19,6 +19,7 @@ bump the filename when changing it.
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -32,6 +33,59 @@ JUDGE_PROMPT_VERSION = "v1"
 JUDGE_MODEL = "claude-opus-4-7"
 ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
+
+# Distinct exit code for "API credit/key/quota exhausted". Callers
+# (loop orchestrator + audit shell wrappers) treat 42 as "skip the
+# remaining API-gated phases this iteration, do not crash the loop."
+# See pitch 20-07 §"Credentials & credit fallback".
+CREDIT_EXHAUSTED_EXIT_CODE = 42
+
+
+def _credit_exhausted_signature(http_code: int, body_lower: str) -> str | None:
+    """Return a short reason string if this HTTP error means we are out
+    of credit / out of key validity / out of quota — otherwise None.
+    """
+    if http_code == 400 and "credit balance is too low" in body_lower:
+        return "400 credit balance is too low"
+    if http_code == 401 and (
+        "invalid_api_key" in body_lower or "authentication_error" in body_lower
+    ):
+        return "401 invalid_api_key"
+    if http_code == 429 and ("quota" in body_lower or "rate_limit" in body_lower and "balance" in body_lower):
+        # Generic 429 retries elsewhere; this branch fires only when the
+        # body explicitly cites quota/balance, not transient rate-limit.
+        return "429 quota exhausted"
+    return None
+
+
+def _notify_credit_exhausted(caller: str, reason: str) -> None:
+    """Loud stderr banner + best-effort macOS notification. The stamp
+    file is written by the shell wrapper (improve-loop.sh) so it can
+    survive across Python processes and persist across iterations.
+    """
+    banner = (
+        "\n"
+        "============================================================\n"
+        f"  CREDIT EXHAUSTED — bench2/{caller}\n"
+        f"  reason: {reason}\n"
+        "  loop will skip API-gated phases for the rest of this iteration\n"
+        "============================================================\n"
+    )
+    print(banner, file=sys.stderr, flush=True)
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                f'display notification "{reason}" with title "bench2 credit exhausted ({caller})"',
+            ],
+            timeout=5,
+            check=False,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        # No osascript (non-mac), or it failed — banner + exit code remain.
+        pass
 
 DEFAULT_WEIGHTS = {
     "map_quality": 0.40,
@@ -203,7 +257,15 @@ def call_judge(system_text, user_text, *, api_key, max_tokens=1024, retries=3):
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
             last_err = f"HTTP {e.code}: {err_body[:500]}"
-            # 429/5xx are worth retrying with backoff; 4xx aren't.
+            # Credit / key / quota exhaustion — distinct path. The loop
+            # must keep running on subscription for scenario sessions,
+            # so we exit 42 (not 1) and let the orchestrator decide.
+            reason = _credit_exhausted_signature(e.code, err_body.lower())
+            if reason is not None:
+                caller = os.environ.get("BENCH2_JUDGE_CALLER", "judge.py")
+                _notify_credit_exhausted(caller, reason)
+                sys.exit(CREDIT_EXHAUSTED_EXIT_CODE)
+            # 429/5xx are worth retrying with backoff; other 4xx aren't.
             if e.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
                 time.sleep(2 ** attempt)
                 continue
@@ -216,6 +278,22 @@ def call_judge(system_text, user_text, *, api_key, max_tokens=1024, retries=3):
             raise SystemExit(f"judge: API call failed: {last_err}")
 
     raise SystemExit(f"judge: API call failed after {retries} attempts: {last_err}")
+
+
+def extract_usage(api_response):
+    """Return the Anthropic Messages API usage dict (or zeros). All cost
+    accounting downstream is computed from these counts × public per-token
+    pricing — see lib/scorer.PRICE_PER_M. A token is a token regardless
+    of whether the call was actually billed via API key or subscription;
+    cost in this bench is a comparability metric, not an accounting one.
+    """
+    u = api_response.get("usage") or {}
+    return {
+        "input_tokens": u.get("input_tokens", 0) or 0,
+        "output_tokens": u.get("output_tokens", 0) or 0,
+        "cache_creation_input_tokens": u.get("cache_creation_input_tokens", 0) or 0,
+        "cache_read_input_tokens": u.get("cache_read_input_tokens", 0) or 0,
+    }
 
 
 def extract_judge_json(api_response):

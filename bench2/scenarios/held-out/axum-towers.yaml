@@ -1,0 +1,149 @@
+name: Axum Tower Layer composition and middleware insertion
+repo: axum
+description: 'Trace how Tower Layers compose through axum'' s Router, where
+  layer ordering matters (Router::layer vs route_layer), and how built-in
+  layers like Extension implement the Tower contract. Then assess adding
+  a built-in RequestId Layer. Held-out scenario — frozen and never
+  edited by the loop.
+
+  '
+steps:
+- name: Map the Tower Layer trait impls inside axum
+  prompt: "You're about to add a new built-in Layer in axum. Hand the next
+    agent every type within the axum crate that implements
+    tower::Layer<S>, with file:line, the Service it wraps, and the
+    associated Service type produced. Cover at least Extension,
+    HandleError, and any propagate-style layers in axum-core/axum. The
+    follow-up agent should need only small, targeted lookups — not a
+    fresh exploration of the crate.
+    "
+  checks:
+  - type: word
+    value: Extension
+    required: true
+    description: Names the Extension layer
+  - type: word
+    value: tower::Layer
+    required: true
+    description: References the Tower Layer trait being implemented
+  - type: word
+    value: HandleError
+    required: false
+    description: Names the HandleError layer as a second concrete example
+  - type: response_richness
+    value: '3'
+    required: true
+    description: Referenced 3+ files across Layer impls
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+    description: Used structural graph query for tower::Layer impls
+- name: Trace Router::layer vs Router::route_layer ordering semantics
+  prompt: "You're about to insert middleware in a way where ordering matters.
+    Map the difference between Router::layer and Router::route_layer for
+    the next agent: file:line for both methods, where in the routing tree
+    each one inserts its layer, and the practical consequence — which
+    one runs for unmatched-route fallback, which one short-circuits a 404
+    response. Cite axum/src/routing/mod.rs and axum/src/routing/route.rs
+    as anchors but enumerate every relevant call site. The follow-up
+    agent should need only small, targeted lookups — not a fresh
+    exploration of the crate.
+    "
+  checks:
+  - type: word
+    value: route_layer
+    required: true
+    description: Names the route_layer method
+  - type: word
+    value: layer
+    required: true
+    description: Names Router::layer
+  - type: word
+    value: fallback
+    required: false
+    description: Discusses unmatched-route / fallback ordering consequence
+  - type: contains
+    value: route_layer
+    required: false
+    description: Cites route_layer call sites or signature precisely
+  - type: response_richness
+    value: '2'
+    required: true
+    description: Referenced 2+ source files in the comparison
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+    description: Used semantic search for layer-vs-route_layer semantics
+- name: Find test coverage for layer composition and middleware ordering
+  prompt: "You're about to change layer-composition behavior. Hand the next
+    agent the integration and unit tests that exercise Router::layer,
+    Router::route_layer, and middleware ordering: file paths and the
+    specific test function names that cover the failure modes (layer
+    runs vs is skipped on 404, nested router layer propagation). The
+    follow-up agent should need only small, targeted lookups — not a
+    fresh exploration of the test tree.
+    "
+  checks:
+  - type: contains
+    value: tests
+    required: true
+    description: Identifies test directory or file paths
+  - type: word
+    value: layer
+    required: true
+    description: References middleware/layer tests
+  - type: response_richness
+    value: '2'
+    required: true
+    description: Referenced 2+ test files
+  - type: contains
+    value: 'fn test_'
+    required: false
+    description: Named specific Rust test functions
+- name: Assess adding a built-in RequestId Layer
+  prompt: "You're about to add a built-in RequestId Layer to axum that
+    generates a per-request UUID, sets it as a response header, and
+    exposes it via an extractor. Produce the edit map for the next
+    agent: every file and method that needs touching with file:line,
+    the choice between implementing it as an Extension-style layer vs
+    a bespoke Service wrapper, MatchedPath as architectural precedent
+    for a per-request extractor, and the propagation contract with
+    nested routers. The follow-up agent should need only small,
+    targeted lookups — not a fresh exploration of the crate.
+    "
+  checks:
+  - type: word
+    value: Extension
+    required: true
+    description: Considered Extension-based implementation
+  - type: word
+    value: Layer
+    required: true
+    description: Names the Layer trait being implemented
+  - type: word
+    value: MatchedPath
+    required: false
+    description: Cites MatchedPath as architectural precedent
+  - type: word
+    value: extractor
+    required: false
+    description: Discusses how RequestId would be extracted
+  - type: contains
+    value: nested
+    required: false
+    description: Considered nested router propagation
+  - type: response_richness
+    value: '3'
+    required: true
+    description: Referenced 3+ files in the impact assessment
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+    description: Used blast radius analysis for new Layer integration
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30

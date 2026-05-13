@@ -1,0 +1,134 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the codebase.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+  Grading-bias note (Sense scenario only): the grader knows Sense's
+  internals well. Grade for what an AI agent making downstream edits
+  would need from this answer, not what the grader personally knows
+  about the codebase. If the answer doesn't say something an AI agent
+  would need to act, it does not get credit for it even when the
+  grader can mentally fill it in.
+
+steps:
+  - name: Map the sense_files schema surface
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer cite internal/sqlite/schema.sql with file:line
+          for the CREATE TABLE, enumerate the test files that hard-code
+          their own CREATE TABLE sense_files (...) (adapter_test.go,
+          index_test.go, doctor_test.go, profile_test.go), and list
+          the SELECT/INSERT call sites in adapter.go? Could the agent
+          add a column without missing a mirrored schema?
+      specificity:
+        weight: 0.25
+        question: |
+          Are call sites cited as file:line `INSERT INTO sense_files`,
+          not just "in adapter.go"? Are test files named individually
+          rather than as "the test suite"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY tests mirror the schema by hand
+          (isolation from the production schema-applier) so the agent
+          knows it has to update each mirror?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag indirect callers (the FTS virtual table,
+          views, joined queries) that the agent should sanity-check?
+
+  - name: Find producers and consumers of file-language data
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer name the scan pipeline as producer with
+          file:line, cite the INSERT statement in adapter.go, and
+          enumerate consumers — graph queries that filter by language,
+          MCP/CLI surfaces (e.g. index health, doctor output) that
+          surface the field? Could the agent extend the field without
+          missing a downstream consumer?
+      specificity:
+        weight: 0.25
+        question: |
+          Are producer/consumer call sites cited at file:line, not
+          "in the scan path" or "somewhere in MCP"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY language is denormalized onto
+          sense_files (avoid joins on a hot table) so the agent
+          understands why a confidence column would live alongside it?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag derived consumers — language-aware
+          parsers, doc generation, language filters in search — that
+          may not directly query sense_files but depend on the field?
+
+  - name: Locate the schema-migration path
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer explicitly name the CREATE TABLE IF NOT EXISTS
+          pattern, note the absence of a versioned migration runner,
+          and cite a concrete precedent for in-place upgrades (the FTS
+          rebuild logic, or an explicit ALTER TABLE somewhere)? Could
+          the agent ship a column-add that survives both fresh and
+          existing databases?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the schema-application call sites cited at file:line, not
+          "at startup"? Is the FTS-rebuild precedent named at file:line
+          rather than gestured at?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY Sense uses CREATE TABLE IF NOT
+          EXISTS instead of versioned migrations (single-tenant local
+          DB, no shared writers) so the agent understands the
+          tradeoffs?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the gap — that an existing DB will NOT
+          pick up new columns without an explicit ALTER TABLE — as the
+          concrete failure mode the agent must guard against?
+
+  - name: Assess adding language_confidence REAL DEFAULT 1.0
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate every file requiring edits with
+          file:line — schema.sql, adapter.go INSERT/SELECT statements,
+          the test files with hand-mirrored CREATE TABLE statements —
+          and propose an explicit ALTER TABLE migration for existing
+          DBs? Could the agent open a PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are affected symbols and statements cited precisely
+          (adapter.go:351 INSERT INTO sense_files, schema.sql:6 CREATE
+          TABLE) rather than "the SQL files"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY language_confidence has to flow
+          through every site that touches language — to keep producer
+          and consumer in sync — not just LIST the sites?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag risks — partial scan runs leaving NULL
+          confidences, downstream queries that ORDER BY confidence
+          against the DEFAULT, MCP/CLI surfaces that may want to
+          expose the field — that the agent should think through?

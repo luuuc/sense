@@ -16,15 +16,26 @@ set -euo pipefail
 
 LOOP_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCH2_DIR="$(cd "$LOOP_DIR/.." && pwd)"
+BENCH2_PROJECT_ROOT="$(cd "$BENCH2_DIR/.." && pwd)"
 INSTRUCT_DIR="$LOOP_DIR/instructions"
+# shellcheck disable=SC1091
+source "$BENCH2_DIR/lib/load-env.sh"
 
-ITERATIONS=3
+ITERATIONS=10           # raised from 3 — convergence may need more
 REVIEWER_MODEL="claude-opus-4-7"
 MODEL=""
 REPO_FILTER=""
 TOOL_FILTER="sense,baseline"
 RUNS=1
 DRY_RUN=false
+MAX_COST_USD=10.0       # hard ceiling per pitch 20-07 §"Cost discipline" — lowered from 15
+                        # after Card 15 e2e revealed iter-1 actually costs ~$13 on full bench
+                        # (pitch's "$3 first-iter prior" was way off). $10 ceiling forces an
+                        # operator to confirm `--max-cost-usd 20` before letting the loop run end-to-end.
+FIRST_ITER_PRIOR=12.0   # iter-1 predicted cost. Empirically: 12 sessions across 6 repos cost
+                        # $13.22 on the full bench (sense+baseline). Set 12 as a slightly
+                        # under-protective prior so the predict-halt actually fires before iter 2.
+                        # Pitch's original $3 prior should be considered historical.
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,16 +46,20 @@ while [[ $# -gt 0 ]]; do
     --tool) TOOL_FILTER="$2"; shift 2 ;;
     --runs) RUNS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
+    --max-cost-usd) MAX_COST_USD="$2"; shift 2 ;;
+    --first-iter-prior) FIRST_ITER_PRIOR="$2"; shift 2 ;;
     -h|--help)
       echo "Usage: improve-loop.sh [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --iterations N        Iterations to convergence (default: 3)"
+      echo "  --iterations N        Max iterations to attempt (default: 10)"
       echo "  --reviewer-model M    Claude model for transcript review (default: claude-opus-4-7)"
       echo "  --model MODEL         Claude model for scenario runs"
       echo "  --repo REPOS          Comma-separated repo filter"
       echo "  --tool TOOLS          Comma-separated tool filter (default: sense,baseline)"
       echo "  --runs N              Runs per scenario for variance (default: 1)"
+      echo "  --max-cost-usd USD    Hard cumulative cost ceiling (default: 10)"
+      echo "  --first-iter-prior USD  Predicted cost of iter-1 used for the halt check (default: 12)"
       echo "  --dry-run             Show what would run without executing"
       exit 0
       ;;
@@ -52,8 +67,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "Starting improvement loop: $ITERATIONS iterations, reviewer=$REVIEWER_MODEL"
+echo "Starting improvement loop: $ITERATIONS iterations, reviewer=$REVIEWER_MODEL, max-cost=\$$MAX_COST_USD"
 echo ""
+
+# Halt-reason state. Each stop trigger sets HALT_REASON and breaks the
+# iter loop; after the loop we emit bench-readiness.md citing the reason.
+HALT_REASON="max_iterations"  # default if we exit the loop naturally
+
+# Track consecutive-pass streaks for the two-iter halt triggers.
+CONV_PASS_STREAK=0
+WATCHDOG_SUSPECT_STREAK=0
+
+on_sigint() {
+  echo "" >&2
+  echo "SIGINT received — halting cleanly." >&2
+  HALT_REASON="sigint"
+  # Bash doesn't propagate a custom HALT_REASON out of a trap directly,
+  # so we write a marker file the post-loop block reads.
+  echo "sigint" > "$LOOP_DIR/results/loop-1/.halt-reason" 2>/dev/null || true
+  exit 130
+}
+trap on_sigint INT
 
 PHASE_ARGS=()
 [[ -n "$MODEL" ]] && PHASE_ARGS+=(--model "$MODEL")
@@ -62,7 +96,28 @@ PHASE_ARGS=()
 $DRY_RUN && PHASE_ARGS+=(--dry-run)
 
 HISTORY_FILE="$LOOP_DIR/results/loop-1/iteration-history.jsonl"
+CREDIT_FLAG="$LOOP_DIR/results/loop-1/credit-exhausted.flag"
 mkdir -p "$LOOP_DIR/results/loop-1"
+
+# ── Held-out integrity gate (panic class) ──
+# The bench's anchor is held-out.lock. If any file under bench2/scenarios/
+# held-out/ has been modified vs the lockfile, refuse to start — every
+# downstream score is suspect until the held-out set is restored.
+# Skipped when the lockfile doesn't exist yet (pre-Card-5 state).
+if [[ -f "$BENCH2_DIR/locked/held-out.lock" ]]; then
+  python3 "$BENCH2_DIR/lib/lock_check.py" check-held-out \
+    && held_out_rc=0 || held_out_rc=$?
+  if [[ $held_out_rc -eq 2 ]]; then
+    echo "" >&2
+    echo "HELD-OUT INTEGRITY FAILURE — refusing to run." >&2
+    echo "See $BENCH2_DIR/locked/held-out.lock and bench2/end-goal.md." >&2
+    python3 "$BENCH2_DIR/lib/readiness.py" \
+      --loop-dir "$LOOP_DIR/results" \
+      --halt-reason held_out_mismatch \
+      --held-out-dir "$BENCH2_DIR/scenarios/held-out" || true
+    exit 2
+  fi
+fi
 
 # Baseline snapshot — captured once before any iteration runs so iter-1's
 # watchdog has a "before" reference point. Skipped on dry-run and when
@@ -84,6 +139,22 @@ for iter in $(seq 1 "$ITERATIONS"); do
 
   ITER_DIR="$LOOP_DIR/results/loop-1-iter-${iter}"
   mkdir -p "$ITER_DIR"
+
+  # ── Halt-before-overspend check ──
+  if ! $DRY_RUN; then
+    python3 "$BENCH2_DIR/lib/cost_tracker.py" predict \
+      --loop-dir "$LOOP_DIR/results" \
+      --max-cost-usd "$MAX_COST_USD" \
+      --first-iter-prior "$FIRST_ITER_PRIOR" \
+      && cost_rc=0 || cost_rc=$?
+    if [[ $cost_rc -eq 10 ]]; then
+      echo ""
+      echo "HALT: cost ceiling reached. Loop stops cleanly before iter $iter starts." >&2
+      break
+    elif [[ $cost_rc -ne 0 ]]; then
+      echo "WARN: cost_tracker predict rc=$cost_rc — continuing anyway." >&2
+    fi
+  fi
 
   # ── Phase 1: Run scenarios, score, analyze ──
   echo "--- Phase 1: Run & Analyze ---"
@@ -202,11 +273,58 @@ PROMPT
   # ── Phase 4: Audit (score / scenario / watchdog) ──
   echo ""
   echo "--- Phase 4: Audit ---"
-  phase4_args=(--loop 1 --iter "$iter" --tool "$TOOL_FILTER")
-  [[ -n "$REPO_FILTER" ]] && phase4_args+=(--repo "$REPO_FILTER")
-  bash "$LOOP_DIR/scripts/phases/phase4-audit.sh" "${phase4_args[@]}" || {
-    echo "  WARN: Phase 4 had errors; auditor outputs may be incomplete." >&2
-  }
+  if [[ -f "$CREDIT_FLAG" ]]; then
+    echo "  SKIP: credit-exhausted flag present at $CREDIT_FLAG" >&2
+    echo "  (delete the flag once API balance is restored; see pitch 20-07)" >&2
+  else
+    phase4_args=(--loop 1 --iter "$iter" --tool "$TOOL_FILTER")
+    [[ -n "$REPO_FILTER" ]] && phase4_args+=(--repo "$REPO_FILTER")
+    BENCH2_JUDGE_CALLER="phase4-audit" \
+      bash "$LOOP_DIR/scripts/phases/phase4-audit.sh" "${phase4_args[@]}" \
+      && p4_rc=0 || p4_rc=$?
+    if [[ $p4_rc -eq 42 ]]; then
+      printf '%s\n' \
+        "credit-exhausted at iter=$iter phase=4-audit" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > "$CREDIT_FLAG"
+      echo "  CREDIT EXHAUSTED — stamped $CREDIT_FLAG; subsequent iters will skip Phase 4." >&2
+    elif [[ $p4_rc -ne 0 ]]; then
+      echo "  WARN: Phase 4 had errors (rc=$p4_rc); auditor outputs may be incomplete." >&2
+    fi
+  fi
+
+  # ── Phase 4b: held-out re-score (criterion 4 input) ──
+  # Re-judge the 6 frozen held-out transcripts against the current
+  # rubric. Outputs iter-N/validation/held-out-scored.json which
+  # convergence.py correlates against bench2/scenarios/held-out/*.gold.json.
+  # Skipped if the credit-exhausted flag is set (it'd just be more
+  # blocked API calls).
+  if ! $DRY_RUN && [[ ! -f "$CREDIT_FLAG" ]]; then
+    echo ""
+    echo "--- Phase 4b: held-out re-score ---"
+    BENCH2_JUDGE_CALLER="heldout_rescore" \
+      python3 "$BENCH2_DIR/lib/heldout_rescore.py" \
+        --iter-dir "$ITER_DIR" \
+      && rs_rc=0 || rs_rc=$?
+    if [[ $rs_rc -eq 42 ]]; then
+      printf '%s\n' \
+        "credit-exhausted at iter=$iter phase=4b-heldout-rescore" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > "$CREDIT_FLAG"
+      echo "  CREDIT EXHAUSTED during held-out re-score — stamped $CREDIT_FLAG" >&2
+    elif [[ $rs_rc -ne 0 ]]; then
+      echo "  WARN: held-out re-score rc=$rs_rc; criterion 4 will defer this iter" >&2
+    fi
+  fi
+
+  # ── Cost accounting (always public API pricing; see end-goal.md) ──
+  if ! $DRY_RUN; then
+    python3 "$BENCH2_DIR/lib/cost_tracker.py" update \
+      --loop-dir "$LOOP_DIR/results" \
+      --iter "$iter" \
+      --bench2-results-dir "$BENCH2_DIR/results" || \
+      echo "WARN: cost_tracker update failed for iter=$iter" >&2
+  fi
 
   # ── Record iteration history ──
   python3 -c "
@@ -233,30 +351,96 @@ print(json.dumps(entry))
   echo "Iteration $iter complete ($ITER_OUTCOME)."
   echo ""
 
-  # ── Convergence check ──
+  # ── Convergence evaluator (four-criterion, per pitch 20-07) ──
+  PREV_DIR=""
   if [[ $iter -gt 1 ]]; then
     PREV_DIR="$LOOP_DIR/results/loop-1-iter-$((iter - 1))"
-    if [[ -f "$PREV_DIR/post-analysis.json" && -f "$ITER_DIR/post-analysis.json" ]]; then
-      CONVERGED=$(python3 -c "
-import json, sys
-try:
-    old = json.load(open('$PREV_DIR/post-analysis.json'))
-    new = json.load(open('$ITER_DIR/post-analysis.json'))
-    def avg_gap(d):
-        gaps = [r['current_scores']['gap'] for r in d.get('repos', {}).values()
-                if r.get('current_scores', {}).get('sense') is not None]
-        return sum(gaps) / len(gaps) if gaps else 0
-    print('true' if abs(avg_gap(old) - avg_gap(new)) < 0.02 else 'false')
-except Exception:
-    print('false')
-")
-      if [[ "$CONVERGED" == "true" ]]; then
-        echo "Converged — fairness gap stable within 0.02. Stopping."
+  fi
+
+  conv_args=(--iter-dir "$ITER_DIR" --held-out-dir "$BENCH2_DIR/scenarios/held-out")
+  [[ -n "$PREV_DIR" && -d "$PREV_DIR" ]] && conv_args+=(--prev-iter-dir "$PREV_DIR")
+  python3 "$BENCH2_DIR/lib/convergence.py" "${conv_args[@]}" \
+    && conv_rc=0 || conv_rc=$?
+
+  # delta.md gets the same inputs — keep them in sync.
+  delta_args=(--iter-dir "$ITER_DIR" --held-out-dir "$BENCH2_DIR/scenarios/held-out" \
+              --iter-label "Iter $iter")
+  [[ -n "$PREV_DIR" && -d "$PREV_DIR" ]] && delta_args+=(--prev-iter-dir "$PREV_DIR")
+  python3 "$BENCH2_DIR/lib/delta_report.py" "${delta_args[@]}" \
+    --output "$ITER_DIR/delta.md" || true
+
+  # convergence.py exits 0 iff all_pass; track the two-iter streak.
+  if [[ $conv_rc -eq 0 ]]; then
+    CONV_PASS_STREAK=$((CONV_PASS_STREAK + 1))
+  else
+    CONV_PASS_STREAK=0
+  fi
+  echo "  Convergence streak: $CONV_PASS_STREAK/2 iterations all-pass"
+
+  if [[ $CONV_PASS_STREAK -ge 2 ]]; then
+    HALT_REASON="converged"
+    echo "Converged — four criteria held for two consecutive iterations. Stopping."
+    break
+  fi
+
+  # ── Watchdog suspect streak (2 consecutive suspect verdicts → halt) ──
+  watchdog_suspect_now=$(
+    python3 -c "
+import glob, json
+files = sorted(glob.glob('$ITER_DIR/audit-watchdog.*.json'))
+suspect = False
+for p in files:
+    try:
+        d = json.load(open(p))
+    except Exception:
+        continue
+    if d.get('verdict') == 'suspect' or d.get('flagged_for_human_review'):
+        suspect = True
         break
-      fi
-    fi
+print('1' if suspect else '0')
+" 2>/dev/null)
+  if [[ "$watchdog_suspect_now" == "1" ]]; then
+    WATCHDOG_SUSPECT_STREAK=$((WATCHDOG_SUSPECT_STREAK + 1))
+  else
+    WATCHDOG_SUSPECT_STREAK=0
+  fi
+  if [[ $WATCHDOG_SUSPECT_STREAK -ge 2 ]]; then
+    HALT_REASON="watchdog_suspect"
+    echo "Watchdog flagged 2 consecutive iters as suspect — halting." >&2
+    break
+  fi
+
+  # ── Credit-exhausted: stamp set during Phase 4? Halt at iter boundary. ──
+  if [[ -f "$CREDIT_FLAG" ]]; then
+    HALT_REASON="credit_exhausted"
+    echo "credit-exhausted.flag set — halting cleanly at iter boundary." >&2
+    break
   fi
 done
+
+# Halt-reason override from SIGINT trap, if any
+if [[ -f "$LOOP_DIR/results/loop-1/.halt-reason" ]]; then
+  HALT_REASON=$(cat "$LOOP_DIR/results/loop-1/.halt-reason")
+  rm -f "$LOOP_DIR/results/loop-1/.halt-reason"
+fi
+
+# Re-check cost ceiling — if predict() would halt, the actual reason is cost.
+if [[ "$HALT_REASON" == "max_iterations" ]]; then
+  python3 "$BENCH2_DIR/lib/cost_tracker.py" predict \
+    --loop-dir "$LOOP_DIR/results" \
+    --max-cost-usd "$MAX_COST_USD" \
+    --first-iter-prior "$FIRST_ITER_PRIOR" 2>/dev/null \
+    || HALT_REASON="cost_ceiling"
+fi
+
+# Emit the readiness verdict — the loop's real deliverable.
+echo ""
+echo "--- Emitting bench-readiness.md (halt_reason=$HALT_REASON) ---"
+python3 "$BENCH2_DIR/lib/readiness.py" \
+  --loop-dir "$LOOP_DIR/results" \
+  --halt-reason "$HALT_REASON" \
+  --held-out-dir "$BENCH2_DIR/scenarios/held-out" || \
+  echo "WARN: readiness.py failed; continuing to final scoring." >&2
 
 echo ""
 echo "========================================"

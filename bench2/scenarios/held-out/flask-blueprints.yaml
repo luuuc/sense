@@ -1,0 +1,153 @@
+name: Flask Blueprint registration and URL prefix propagation
+repo: flask
+description: 'Trace how Flask Blueprints register their routes onto an app,
+  how url_prefix composes across nested blueprints, and where the test
+  coverage lives. Then assess adding a runtime-mutable `disabled` flag to
+  Blueprint. Held-out scenario — frozen and never edited by the loop.
+
+  '
+steps:
+- name: Map the Blueprint class surface
+  prompt: "You're about to extend Flask's Blueprint with new lifecycle hooks.
+    Hand the next agent the Blueprint class surface: the class definition
+    with file:line, every public method that contributes routes or
+    deferred functions (route, add_url_rule, register, before_request,
+    record), and the relationship between Blueprint and BlueprintSetupState.
+    Cover both src/flask/blueprints.py and src/flask/sansio/blueprints.py —
+    Flask split sansio out and the split matters here. The follow-up agent
+    should need only small, targeted lookups — not a fresh exploration
+    of the codebase.
+    "
+  checks:
+  - type: word
+    value: Blueprint
+    required: true
+    description: Names the Blueprint class
+  - type: word
+    value: BlueprintSetupState
+    required: true
+    description: Identifies the setup-state object that captures registration context
+  - type: word
+    value: sansio
+    required: true
+    description: Acknowledges the sansio split (src/flask/sansio/blueprints.py)
+  - type: word
+    value: deferred_functions
+    required: false
+    description: Identifies the deferred-functions queue mechanism
+  - type: response_richness
+    value: '2'
+    required: true
+    description: Referenced 2+ source files in the Blueprint surface map
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+    description: Used structural call graph to enumerate Blueprint methods
+- name: Trace url_prefix composition through register()
+  prompt: "You're about to add a new url_prefix-aware feature in Flask. Hand
+    the next agent the map of how url_prefix flows from
+    Flask.register_blueprint() through Blueprint.register() into
+    add_url_rule(): which method composes parent and child prefixes when
+    a blueprint is nested under another blueprint, where the slash-joining
+    logic lives (file:line), and how options on register_blueprint override
+    the blueprint's own url_prefix. The follow-up agent should need only
+    small, targeted lookups — not a fresh exploration of the codebase.
+    "
+  checks:
+  - type: word
+    value: register_blueprint
+    required: true
+    description: Names the Flask.register_blueprint entry point
+  - type: word
+    value: url_prefix
+    required: true
+    description: Discusses url_prefix composition
+  - type: word
+    value: add_url_rule
+    required: true
+    description: Traces flow to add_url_rule
+  - type: word
+    value: nested
+    required: false
+    description: Addresses nested blueprint behavior
+  - type: contains
+    value: register_blueprint(
+    required: false
+    description: Cites register_blueprint call sites or signature precisely
+  - type: response_richness
+    value: '2'
+    required: true
+    description: Referenced 2+ source files in the registration trace
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+    description: Used semantic search to trace url_prefix composition
+- name: Locate test coverage for blueprint registration
+  prompt: "You're about to change blueprint registration semantics. Hand the
+    next agent the test files that will need to be re-run: coverage for
+    blueprint registration, url_prefix composition, and nested blueprints
+    under tests/, with file paths and the key test function names inside
+    each. The follow-up agent should need only small, targeted lookups —
+    not a fresh exploration of the test tree.
+    "
+  checks:
+  - type: word
+    value: test_blueprints.py
+    required: true
+    description: The primary test file for Blueprint behavior
+  - type: contains
+    value: nested
+    required: false
+    description: Identified nested-blueprint test coverage
+  - type: contains
+    value: test_
+    required: false
+    description: Named specific test functions, not just files
+  - type: response_richness
+    value: '2'
+    required: true
+    description: Referenced 2+ test files
+- name: Assess adding a runtime-mutable disabled flag to Blueprint
+  prompt: "You're about to add a `disabled: bool` flag on Blueprint that,
+    when toggled at runtime, causes register_blueprint to skip applying any
+    of the blueprint's routes/handlers (or, if already registered, causes
+    its rules to be ignored on dispatch). Produce the edit map for the
+    next agent: every file and method that needs touching with file:line,
+    the tradeoff between making the flag a registration-time gate vs a
+    dispatch-time check, and the implications for already-registered
+    blueprints (since add_url_rule mutates url_map at register time). The
+    follow-up agent should need only small, targeted lookups — not a fresh
+    exploration of the codebase.
+    "
+  checks:
+  - type: word
+    value: Blueprint
+    required: true
+    description: Names the class being modified
+  - type: word
+    value: register
+    required: true
+    description: Discusses register() as the registration-time gate
+  - type: word
+    value: url_map
+    required: false
+    description: Identifies url_map as the post-registration state that complicates runtime toggling
+  - type: contains
+    value: dispatch
+    required: false
+    description: Considered the dispatch-time vs registration-time tradeoff
+  - type: response_richness
+    value: '2'
+    required: true
+    description: Referenced 2+ files in the impact assessment
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+    description: Used blast radius analysis for Blueprint change impact
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30

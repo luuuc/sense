@@ -1,0 +1,104 @@
+{
+  "_meta": {
+    "scenario": "axum-towers",
+    "rubric_path": "bench2/scenarios/held-out/axum-towers.rubric.yaml",
+    "graded_by": "Claude Opus 4.7 (under human review by Luc B. Perussault-Diallo)",
+    "graded_at": "2026-05-13",
+    "rubric_weights": {
+      "map_quality": 0.40,
+      "specificity": 0.25,
+      "justification": 0.20,
+      "uncertainty": 0.15
+    },
+    "summary": {
+      "sense_weighted_mean": 0.874,
+      "baseline_weighted_mean": 0.900,
+      "fairness_gap_sense_minus_baseline": -0.026
+    },
+    "verified_citations": {
+      "outer_middleware_still_see_whole_url": {
+        "sense_claimed": "axum/src/routing/tests/mod.rs:242",
+        "baseline_claimed": "axum/src/routing/tests/nest.rs:242",
+        "ground_truth": "axum/src/routing/tests/nest.rs:242",
+        "verdict": "sense wrong file (right line + right test name); baseline correct"
+      },
+      "middleware_that_return_early": {
+        "sense_claimed": "axum/src/routing/tests/merge.rs:373",
+        "baseline_claimed": "axum/src/routing/tests/merge.rs:372",
+        "ground_truth": "axum/src/routing/tests/merge.rs:372",
+        "verdict": "sense off-by-one; baseline correct"
+      },
+      "fallback_rs_tests": {
+        "sense_claimed": "(not mentioned)",
+        "baseline_claimed": "tests/fallback.rs:142 with_middleware_on_inner_fallback + :158 also_inherits_default_layered_fallback",
+        "ground_truth": "both exist at the cited lines — also_inherits_default_layered_fallback is the canonical test for catch_all_fallback wrapping",
+        "verdict": "sense missed both; baseline correct"
+      }
+    },
+    "notes": "Three concrete citation defects on sense's side: one wrong file, one off-by-one line, and two missed tests on the most directly-relevant test file (tests/fallback.rs). The step 3 penalty is the bulk of sense's deficit on this scenario. Step 1 leans slightly toward sense (cleaner Service-type column + flags crate-private propagation factories). Steps 2 and 4 essentially tied with baseline edging on uncertainty depth."
+  },
+  "_detail": {
+    "sense": [
+      {
+        "step_idx": 0,
+        "step_name": "Map the Tower Layer trait impls inside axum",
+        "scores": {"map_quality": 0.95, "specificity": 0.95, "justification": 0.90, "uncertainty": 0.75},
+        "weighted": 0.91,
+        "notes": "10 named impls + 2 anonymous propagate factories with file:line + Service type. Flags that StripPrefix and SetNestedPath are crate-private (pub(crate)/pub(super)) — load-bearing for an agent who'd try to reuse them. No tower_http::propagate_header analogue."
+      },
+      {
+        "step_idx": 1,
+        "step_name": "Trace Router::layer vs Router::route_layer ordering semantics",
+        "scores": {"map_quality": 0.95, "specificity": 0.95, "justification": 0.90, "uncertainty": 0.80},
+        "weighted": 0.9175,
+        "notes": "Names the one-line diff at mod.rs:307 vs :324, full dispatch chain, MethodRouter 405 nuance with contrasting tests at :1462 and :1478."
+      },
+      {
+        "step_idx": 2,
+        "step_name": "Find test coverage for layer composition and middleware ordering",
+        "scores": {"map_quality": 0.75, "specificity": 0.80, "justification": 0.85, "uncertainty": 0.70},
+        "weighted": 0.775,
+        "notes": "Three concrete defects (see _meta.verified_citations): wrong file for outer_middleware_still_see_whole_url (tests/mod.rs:242 vs actual tests/nest.rs:242), off-by-one on middleware_that_return_early (:373 vs :372), and missed tests/fallback.rs:142+158 — the latter being the canonical test for catch_all_fallback wrapping that step 2 turns on."
+      },
+      {
+        "step_idx": 3,
+        "step_name": "Assess adding a built-in RequestId Layer",
+        "scores": {"map_quality": 0.90, "specificity": 0.90, "justification": 0.90, "uncertainty": 0.85},
+        "weighted": 0.8925,
+        "notes": "Recommends bespoke Service wrapper; 7 edit-map entries; MatchedPath as architectural template; idempotent nested-router propagation; adds MissingRequestId rejection (mirrors Extension precedent). New file at axum/src/request_id.rs — works but less idiomatic than baseline's middleware/ location."
+      }
+    ],
+    "baseline": [
+      {
+        "step_idx": 0,
+        "step_name": "Map the Tower Layer trait impls inside axum",
+        "scores": {"map_quality": 0.95, "specificity": 0.90, "justification": 0.90, "uncertainty": 0.65},
+        "weighted": 0.8825,
+        "notes": "Same ~10 named impls + 2 propagate factories. Annotates MockConnectInfo + SetNestedPath as 'pattern worth copying'/'direct architectural sibling'. Doesn't flag the crate-private accessibility constraint."
+      },
+      {
+        "step_idx": 1,
+        "step_name": "Trace Router::layer vs Router::route_layer ordering semantics",
+        "scores": {"map_quality": 0.95, "specificity": 0.95, "justification": 0.90, "uncertainty": 0.85},
+        "weighted": 0.925,
+        "notes": "Identical map to sense. Flags 'no dedicated #[should_panic] test was found in routing/tests for the empty-route case' — the kind of 'not tested' surfacing that the uncertainty criterion is for."
+      },
+      {
+        "step_idx": 2,
+        "step_name": "Find test coverage for layer composition and middleware ordering",
+        "scores": {"map_quality": 0.92, "specificity": 0.90, "justification": 0.85, "uncertainty": 0.75},
+        "weighted": 0.8755,
+        "notes": "Includes tests/fallback.rs:142 + :158 (which sense missed). All other citations verified correct against the live repo."
+      },
+      {
+        "step_idx": 3,
+        "step_name": "Assess adding a built-in RequestId Layer",
+        "scores": {"map_quality": 0.92, "specificity": 0.92, "justification": 0.92, "uncertainty": 0.90},
+        "weighted": 0.917,
+        "notes": "Recommends bespoke Service wrapper at axum/src/middleware/request_id.rs (more idiomatic location). Three-template synthesis (Extension + MockConnectInfo + ResponseAxumBody). Cites OriginalUri-style idempotence at path_router.rs:333-337 — concrete mitigation for the double-application risk."
+      }
+    ]
+  },
+  "sense": {"weighted_mean": 0.874},
+  "baseline": {"weighted_mean": 0.900}
+}

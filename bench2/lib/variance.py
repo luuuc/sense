@@ -41,6 +41,11 @@ def run_judge(bench2_dir, tool, repo, run_idx):
     if result.returncode != 0:
         print(result.stdout, file=sys.stderr)
         print(result.stderr, file=sys.stderr)
+        # Propagate credit-exhausted (42) verbatim so the orchestrator
+        # can short-circuit the rest of the iteration. Any other non-zero
+        # is a hard failure.
+        if result.returncode == 42:
+            sys.exit(42)
         raise SystemExit(f"judge.py failed for {tool}/{repo} run {run_idx}")
     return out_path
 

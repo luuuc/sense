@@ -9,9 +9,12 @@ set -euo pipefail
 # miss + 47 cache hits.
 
 BENCH2_DIR="$(cd "$(dirname "$0")" && pwd)"
+BENCH2_PROJECT_ROOT="$(cd "$BENCH2_DIR/.." && pwd)"
 RESULTS_DIR="$BENCH2_DIR/results"
 SCENARIOS_DIR="$BENCH2_DIR/scenarios"
 LIB_DIR="$BENCH2_DIR/lib"
+# shellcheck disable=SC1091
+source "$LIB_DIR/load-env.sh"
 
 FILTER_TOOLS=""
 FILTER_REPOS=""

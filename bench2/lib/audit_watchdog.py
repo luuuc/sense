@@ -214,6 +214,7 @@ def cmd_audit(args):
         SYSTEM_PROMPT, user_text, api_key=api_key, max_tokens=400
     )
     parsed = extract_judge_json(response)
+    usage = response.get("usage", {}) or {}
 
     verdict = parsed.get("verdict", "neutral")
     if verdict not in {"pass", "suspect", "neutral"}:
@@ -231,6 +232,12 @@ def cmd_audit(args):
         },
         "aggregates": aggregates,
         "per_repo": rows,
+        "usage": {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+        },
     }
 
     with open(args.out, "w") as f:

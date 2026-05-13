@@ -1,0 +1,119 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the codebase.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+steps:
+  - name: Map the Tower Layer trait impls inside axum
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the concrete tower::Layer impls in
+          axum (Extension, HandleError, propagation layers) with
+          file:line and named Service-output types? Could the agent
+          model a new Layer on these without re-reading the crate?
+      specificity:
+        weight: 0.25
+        question: |
+          Are impls cited as file:line impl<S> Layer<S> for Extension,
+          not just "in extension.rs"? Are output Service types named?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each Layer wraps its Service the
+          way it does — Extension injects via request extensions,
+          HandleError converts result types — not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag macros like all_the_tuples or generic
+          bounds that obscure which trait impls exist at runtime?
+
+  - name: Trace Router::layer vs Router::route_layer ordering semantics
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer cite both methods with file:line, name the
+          insertion point in the routing tree for each, and explain
+          the practical consequence (layer runs on fallback / 404 vs
+          only on matched routes)? Could the agent pick the right one
+          for a new middleware without re-reading the router?
+      specificity:
+        weight: 0.25
+        question: |
+          Are method signatures and call sites cited at file:line, not
+          referred to as "Router's layer methods"? Is the fallback
+          behavior named explicitly rather than gestured at?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY route_layer exists separately —
+          to avoid the layer running on unmatched routes / 404 — not
+          just list the difference?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag nested-router edge cases (a layer added
+          on a parent router that contains a child router) where
+          ordering semantics get subtle?
+
+  - name: Find test coverage for layer composition and middleware ordering
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the test files and key Rust test
+          functions that cover layer composition, route_layer vs layer
+          ordering, and nested propagation, with paths? Could the
+          agent know which tests to update?
+      specificity:
+        weight: 0.25
+        question: |
+          Are test functions named (e.g. fn test_route_layer_does_not_run_on_fallback)
+          rather than "the middleware tests"? Are paths concrete?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHAT each test file covers — basic
+          layer wiring vs fallback short-circuit vs nested router
+          propagation — not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag tests that exercise layers indirectly
+          (e.g. extension extraction tests) without naming "layer" in
+          their function name?
+
+  - name: Assess adding a built-in RequestId Layer
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate every file and method that needs
+          touching with file:line, propose a concrete approach
+          (Extension-based vs bespoke Service), and cite MatchedPath as
+          the architectural precedent for a per-request extractor?
+          Could the agent open a PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are affected symbols named precisely (Router::layer, the
+          Extension extractor, the response header insertion point)
+          rather than "the middleware system"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY one approach beats the other —
+          Extension reuses an existing extractor path while a bespoke
+          Service forces more boilerplate — not just LIST options?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the nested-router propagation contract
+          and downstream tower-http RequestId compatibility as concerns
+          the agent should sanity-check?

@@ -18,7 +18,7 @@ import sys
 BENCH2_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.join(BENCH2_DIR, "lib"))
 
-from scorer import read_full_transcript, _SOURCE_FILE_RE
+from scorer import read_transcript_texts, _SOURCE_FILE_RE
 
 
 def load_scored_results(results_dir, tool, repo):
@@ -128,7 +128,11 @@ def extract_quality_signals(results_dir, tool, repo):
     if not os.path.exists(transcript_path):
         return {}
 
-    text = read_full_transcript(transcript_path)
+    # Use the audit-text view (assistant answer + tool inputs + tool results)
+    # so file refs that surface only inside tool output (grep paths, Read
+    # targets) get counted. scorer.read_transcript_texts returns
+    # (answer_text, audit_text).
+    _, text = read_transcript_texts(transcript_path)
 
     matches = _SOURCE_FILE_RE.findall(text)
     excluded_exts = {'.md', '.txt', '.json', '.yaml', '.yml', '.toml',
@@ -158,6 +162,46 @@ def extract_quality_signals(results_dir, tool, repo):
 
 def _avg_score(runs, key="fairness_score"):
     vals = [r.get(key) for r in runs if r.get(key) is not None]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def _fairness_for_run(results_dir, tool, repo, scored_run):
+    """Compute fairness_score from scored.json + judged.json via
+    fairness.compute. scored.json doesn't store the combined score
+    (the reporter / loop derives it on read), so analyze-transcripts
+    has to do the same dance to get a meaningful per-run number.
+
+    Returns the float score or None if judge data is missing.
+    """
+    from fairness import compute as fairness_compute
+
+    # Find the corresponding judged.json. scored_run carries no path —
+    # but it lives next to judged.json in the same result_dir.
+    # Convention: load_scored_results returns runs in order; result_dirs
+    # are tool/repo (single run) or tool/repo/run-N. We rebuild the path.
+    judged = None
+    for candidate in (
+        os.path.join(results_dir, tool, repo, "judged.json"),
+    ):
+        if os.path.exists(candidate):
+            with open(candidate) as f:
+                judged = json.load(f)
+            break
+    if judged is None:
+        return None
+    out = fairness_compute(scored_run, judged)
+    return out.get("score")
+
+
+def _avg_fairness(results_dir, tool, repo, scored_runs):
+    """Average fairness_score across runs for a (tool, repo). Uses
+    fairness.compute, not the legacy `fairness_score` field on
+    scored.json (which never gets populated)."""
+    vals = []
+    for run in scored_runs:
+        s = _fairness_for_run(results_dir, tool, repo, run)
+        if s is not None:
+            vals.append(s)
     return round(sum(vals) / len(vals), 4) if vals else None
 
 
@@ -228,8 +272,8 @@ def analyze(results_dir, scenarios_dir):
         for tool in tools:
             quality_signals[tool] = extract_quality_signals(results_dir, tool, repo)
 
-        sense_score = _avg_score(sense_runs)
-        baseline_score = _avg_score(baseline_runs)
+        sense_score = _avg_fairness(results_dir, "sense", repo, sense_runs)
+        baseline_score = _avg_fairness(results_dir, "baseline", repo, baseline_runs)
 
         repo_analyses[repo] = {
             "checks": checks_analysis,
