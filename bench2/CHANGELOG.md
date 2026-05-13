@@ -1,5 +1,30 @@
 # bench2 Changelog
 
+## 2026-05-13 — Citation grounding (pitch 20-04)
+
+### What
+
+Every `file.ext:line` and `file.ext:Symbol` citation in `answer_text` is now verified against the repo at `run_meta.repo_commit`. Three buckets:
+
+- **grounded** — file exists, line in range, or symbol within ±5 lines of the cited line (or anywhere in the file if no line was given).
+- **hallucinated** — file exists but the line number is beyond EOF. Hard signal.
+- **unresolved** — file missing from the repo, or symbol not near the cited line. Soft signal.
+
+Lives in `scored.json.citation_grounding`. **Not folded into fairness yet** — that weighting decision is deferred to 20-05 once the judge layer is in place.
+
+### Added
+
+- `lib/grounding.py` — extractor (reuses `_SOURCE_FILE_RE`), classifier, per-citation grounding, aggregator. 21 unit tests in `lib/test_grounding.py`.
+- `lib/reporter.py` — `Cites` column on per-scenario tables (`grounded/total!hallucinated`), `Avg Grounding` on aggregate.
+- `lib/reporter.py` — `format_hallucination_log` generates `results/citation-hallucinations.md` on every `report.sh --md`, grouped tool → scenario, linked from `report.md`.
+- `score.sh` — passes the repo checkout (`SENSE_BENCH_ROOT/$tool/$repo`) to the scorer.
+
+### Findings on the existing run
+
+Pooled grounding rates: baseline 90.3% (84/93), sense 79.7% (185/232). **Zero hallucinations** on either side. The gap is unresolved citations only — almost all of them are basename-only references (`mod.rs:208`, `base-server.ts:877`) where the assistant truncated the path. The naive grounder correctly cannot verify these; the pitch explicitly does not try to fuzzy-match across the repo.
+
+Tools <80% on this run (flagged for review): sense/discourse 73%, sense/flask 60%, sense/nextjs 25%. All three are the same pattern — path truncation in long, citation-heavy answers. Sense produces 2.5× as many citations as baseline overall, so the absolute number grounded is still much higher (185 vs 84).
+
 ## 2026-05-12 — Fair scoring overhaul
 
 ### Two-layer scoring model
