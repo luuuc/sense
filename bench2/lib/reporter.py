@@ -25,7 +25,7 @@ SCENARIO_DESCRIPTIONS = {
 METRIC_DIRECTIONS = {
     "fairness": ("higher", "Fairness score — correctness (0.70) + efficiency (0.30), excludes tool-adoption checks"),
     "adoption": ("higher", "Adoption score — tool fluency + discoverability, for code-intel comparisons only"),
-    "correctness": ("higher", "Checklist hit rate excluding adoption-layer checks"),
+    "correctness": ("higher", "True hit rate across all fairness checks (sum of hits / sum of totals; bonus weighted 0.5). A 10-check step counts ten times a 1-check step."),
     "efficiency": ("higher", "Half token efficiency + half time efficiency, each calibrated per repo"),
     "tokens": ("lower", "Billed tokens (uncached) — lower is better (cheaper)"),
     "wall_time": ("lower", "Wall-clock time — lower is better, folded into efficiency"),

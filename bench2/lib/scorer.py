@@ -98,9 +98,27 @@ def parse_transcript(path):
 # ── Full transcript text ─────────────────────────────────────────────
 
 
-def read_full_transcript(path):
-    """Read all text content from a transcript (tool outputs + assistant text)."""
-    all_text = []
+def read_transcript_texts(path):
+    """Read two views of a transcript.
+
+    answer_text: assistant text blocks only — the model's actual answer.
+                 This is what fairness checks (word/contains/phrase/
+                 response_richness) match against, so a query like
+                 Grep(pattern="TopicCreator") cannot satisfy a `contains`
+                 check for "TopicCreator" by virtue of being typed.
+
+    audit_text:  answer_text + tool inputs + parsed tool_result content.
+                 Diagnostic view, exposed in metrics for debugging but
+                 never fed to keyword checks.
+
+    Claude Code's stream-json nests tool results inside
+    `user.message.content[*].type == "tool_result"`, with `content` either
+    a string or a list of `{type:"text", text:"..."}` blocks. The previous
+    implementation looked for a top-level `tool_result` event that never
+    fires, silently hiding tool output from audit_text.
+    """
+    answer_parts = []
+    audit_parts = []
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -117,22 +135,28 @@ def read_full_transcript(path):
             if event_type == "assistant":
                 for block in event.get("message", {}).get("content", []):
                     if block.get("type") == "text":
-                        all_text.append(block.get("text", ""))
+                        text = block.get("text", "")
+                        if text:
+                            answer_parts.append(text)
+                            audit_parts.append(text)
                     elif block.get("type") == "tool_use":
-                        all_text.append(json.dumps(block.get("input", {})))
+                        audit_parts.append(json.dumps(block.get("input", {})))
 
-            elif event_type == "tool_result":
-                content = event.get("message", {}).get("content", "")
-                if isinstance(content, str):
-                    all_text.append(content)
-                elif isinstance(content, list):
-                    for c in content:
-                        if isinstance(c, dict):
-                            all_text.append(c.get("text", ""))
-                        elif isinstance(c, str):
-                            all_text.append(c)
+            elif event_type == "user":
+                for block in event.get("message", {}).get("content", []) or []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    content = block.get("content", "")
+                    if isinstance(content, str):
+                        audit_parts.append(content)
+                    elif isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict):
+                                audit_parts.append(c.get("text", ""))
+                            elif isinstance(c, str):
+                                audit_parts.append(c)
 
-    return "\n".join(all_text)
+    return "\n".join(answer_parts), "\n".join(audit_parts)
 
 
 # ── Check evaluation ─────────────────────────────────────────────────
@@ -149,7 +173,12 @@ def evaluate_check(check, transcript_text, tool_calls, repo_path=None):
     """Evaluate a single checklist item.
 
     Supported check types:
-      contains         - value appears anywhere in transcript (case-insensitive)
+      contains         - value appears anywhere in transcript (case-insensitive,
+                         no boundary — matches inside identifiers)
+      phrase           - case-insensitive substring with non-word boundaries
+                         on both sides — preferred over `contains` for short
+                         tokens that would otherwise leak into identifiers
+                         (e.g. "ensure" matching "EnsureMagic")
       word             - value appears as whole word (word boundary match)
       starts_with      - any line in transcript starts with value
       mcp_tool_used    - tool name appears in tool_calls
@@ -163,6 +192,10 @@ def evaluate_check(check, transcript_text, tool_calls, repo_path=None):
 
     if ctype == "contains" or ctype == "transcript_contains":
         return {"hit": value.lower() in transcript_text.lower(), "type": ctype, "value": value}
+
+    elif ctype == "phrase":
+        pattern = r'(?<!\w)' + re.escape(value) + r'(?!\w)'
+        return {"hit": bool(re.search(pattern, transcript_text, re.IGNORECASE)), "type": ctype, "value": value}
 
     elif ctype == "word":
         pattern = r'(?<!\w)' + re.escape(value) + r'(?!\w)'
@@ -256,18 +289,18 @@ def _check_richness(transcript_text, min_files):
 
 
 def detect_misses(tool_calls):
-    """Distinguish real MCP bypasses from post-MCP verification reads.
+    """Classify non-MCP search activity by position in the session.
 
-    Real miss = grep/Glob/find/Read BEFORE any MCP tool was used,
-    or grep/Glob/find at any point. Reading source files AFTER using
-    MCP is verification, not a bypass.
+    This block is diagnostic only — it does not feed any score. The
+    adoption layer's `tool_fluency = mcp / (mcp + grep)` is the single
+    penalty for reaching for grep/Glob, and it counts every such call
+    regardless of position. The breakdown below exists so a human
+    reading `scored.json` can see the *shape* of the session.
 
-    Returns:
-      total              - real misses (pre-MCP bypasses + post-MCP greps)
-      pre_mcp_misses     - bypasses made before first MCP call
-      post_mcp_verification_reads - Read calls after MCP (not penalised)
-      post_mcp_misses    - grep/Glob calls after MCP (still penalised)
-      detail             - human-readable summary
+    Categories:
+      pre_mcp_misses              - grep/Glob/Read of source BEFORE first MCP call
+      post_mcp_verification_reads - Read calls AFTER first MCP call
+      post_mcp_misses             - grep/Glob calls AFTER first MCP call
     """
     first_mcp_idx = None
     for i, tc in enumerate(tool_calls):
@@ -321,18 +354,16 @@ def detect_misses(tool_calls):
                 post_other.append(desc)
         # If no MCP at all, don't count anything (can't bypass what isn't available)
 
-    total_misses = len(pre_misses) + len(post_other)
-
     return {
-        "total": total_misses,
         "pre_mcp_misses": pre_misses,
         "post_mcp_verification_reads": post_reads,
         "post_mcp_misses": post_other,
         "has_mcp_tools": mcp_used,
         "detail": (
             f"pre-MCP bypasses: {len(pre_misses)}, "
-            f"post-MCP verification reads: {len(post_reads)} (not penalised), "
-            f"post-MCP misses: {len(post_other)}"
+            f"post-MCP verification reads: {len(post_reads)}, "
+            f"post-MCP misses: {len(post_other)} "
+            f"(diagnostic only — grep_count drives fluency)"
         ),
     }
 
@@ -388,6 +419,10 @@ def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
         "total_required": total_required,
         "hits_bonus": hits_bonus,
         "total_bonus": total_bonus,
+        "fairness_hits_required": fairness_hits_required,
+        "fairness_total_required": fairness_total_required,
+        "fairness_hits_bonus": fairness_hits_bonus,
+        "fairness_total_bonus": fairness_total_bonus,
         "score_required": round((hits_required / total_required), 4) if total_required > 0 else 1.0,
         "score_bonus": round((hits_bonus / total_bonus), 4) if total_bonus > 0 else 0.0,
     }
@@ -400,12 +435,6 @@ def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
         (fairness_hits_required + 0.5 * fairness_hits_bonus)
         / max(1, fairness_total_required + 0.5 * fairness_total_bonus), 4
     )
-
-    richness = max(
-        (c.get("unique_files", 0) for c in step_result["checks"] if c.get("type") == "response_richness"),
-        default=0,
-    )
-    step_result["richness"] = richness
 
     return step_result
 
@@ -496,7 +525,7 @@ def score_transcript(transcript_path, scenario, repo_path=None):
                         For code-intel-vs-code-intel comparisons only.
     """
     t = parse_transcript(transcript_path)
-    full_text = read_full_transcript(transcript_path)
+    answer_text, audit_text = read_transcript_texts(transcript_path)
 
     tool_calls = t["tool_calls"]
     usage = t["usage"]
@@ -505,15 +534,21 @@ def score_transcript(transcript_path, scenario, repo_path=None):
 
     step_results = []
     for step in scenario.get("steps", []):
-        sr = evaluate_step(step, full_text, tool_calls, repo_path)
-        sr["tool_calls_count"] = len(tool_calls)
-        sr["token_total"] = billed_tokens + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"]
+        sr = evaluate_step(step, answer_text, tool_calls, repo_path)
         step_results.append(sr)
 
     misses = detect_misses(tool_calls)
 
     completeness = sum(s["combined_score"] for s in step_results) / max(len(step_results), 1)
-    correctness = sum(s["fairness_score"] for s in step_results) / max(len(step_results), 1)
+
+    # True hit rate across all fairness checks: a 10-check step now carries
+    # ten times the weight of a 1-check step. Bonus checks weighted at 0.5
+    # to match the per-step combined_score formula. The previous step-mean
+    # is preserved as `step_avg_score` for anyone who wants it.
+    fair_hits = sum(s["fairness_hits_required"] + 0.5 * s["fairness_hits_bonus"] for s in step_results)
+    fair_total = sum(s["fairness_total_required"] + 0.5 * s["fairness_total_bonus"] for s in step_results)
+    correctness = (fair_hits / fair_total) if fair_total > 0 else 1.0
+    step_avg_score = sum(s["fairness_score"] for s in step_results) / max(len(step_results), 1)
 
     repo = scenario.get("repo", "")
     ceiling = EFFICIENCY_CEILINGS.get(repo, DEFAULT_EFFICIENCY_CEILING)
@@ -540,7 +575,10 @@ def score_transcript(transcript_path, scenario, repo_path=None):
             cmd = inp.get("command", "") or ""
         if name.startswith("mcp__"):
             mcp_count += 1
-        elif name == "Grep" or "grep" in cmd or "rg " in cmd:
+        elif name in ("Grep", "Glob") or "grep" in cmd or "rg " in cmd:
+            # Glob and Grep both count as conventional search for fluency —
+            # a tool that satisfies a "find this code" task with Glob is
+            # still bypassing the code-intel layer.
             grep_count += 1
         elif name == "Read":
             fp = ""
@@ -554,8 +592,13 @@ def score_transcript(transcript_path, scenario, repo_path=None):
     else:
         tool_fluency = 0.5
 
-    total_richness = max((s.get("richness", 0) for s in step_results), default=0)
-    discoverability = min(1.0, total_richness / 10.0)
+    # Saturate at 20 unique files rather than 10. The previous ceiling gave
+    # every reasonably-rich answer a free 1.0 — Sense surfaced 18 files in
+    # discourse and was indistinguishable from a hypothetical 11. The richer
+    # "novel files surfaced by MCP tool_result" notion is deferred to 20-06
+    # once tool_result parsing has a few iterations of wear.
+    total_richness = _check_richness(answer_text, 0).get("unique_files", 0)
+    discoverability = min(1.0, total_richness / 20.0)
 
     adoption_score = 0.60 * tool_fluency + 0.40 * discoverability
 
@@ -565,6 +608,7 @@ def score_transcript(transcript_path, scenario, repo_path=None):
         "fairness_score": round(fairness_score, 4),
         "adoption_score": round(adoption_score, 4),
         "correctness": round(correctness, 4),
+        "step_avg_score": round(step_avg_score, 4),
         "efficiency": round(efficiency, 4),
         "completeness": round(completeness, 4),
         "tool_fluency": round(tool_fluency, 4),
@@ -583,11 +627,13 @@ def score_transcript(transcript_path, scenario, repo_path=None):
             "token_total_billed": billed_tokens,
             "token_total_all": billed_tokens + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"],
             "wall_time_seconds": wall_time,
-            "cost_usd": t.get("cost_usd"),
+            "cost_usd": round(t["cost_usd"], 4) if t.get("cost_usd") is not None else None,
             "efficiency_ceiling": ceiling,
             "time_ceiling_seconds": time_ceiling,
             "token_efficiency": round(token_eff, 4),
             "time_efficiency": round(time_eff, 4),
+            "answer_chars": len(answer_text),
+            "audit_chars": len(audit_text),
         },
     }
 
@@ -651,6 +697,7 @@ if __name__ == "__main__":
             "fairness_score": 0.0,
             "adoption_score": 0.0,
             "correctness": 0.0,
+            "step_avg_score": 0.0,
             "efficiency": 0.0,
             "completeness": 0.0,
             "tool_fluency": 0.0,
