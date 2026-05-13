@@ -37,7 +37,12 @@ from typing import Any
 # --- Thresholds (mirror locked.yaml; encoded here for stdlib independence) ---
 DISAGREEMENT_THRESHOLD = 0.05            # criterion 1
 DISCRIMINATION_GAP_THRESHOLD = 0.10      # criterion 3
-DISCRIMINATION_MIN_SCENARIOS = 4         # criterion 3
+# Criterion 3 wants ≥4 of 6 scenarios above threshold on the full bench.
+# When the loop runs on a subset (e.g. `--repo flask,gin,axum`), the
+# absolute 4 is mathematically impossible. evaluate_discrimination
+# scales this proportionally: min(DISCRIMINATION_MIN_SCENARIOS, 2/3 of
+# scenarios present, rounded up).
+DISCRIMINATION_MIN_SCENARIOS = 4         # criterion 3 target on full bench
 HELD_OUT_CORRELATION_THRESHOLD = 0.85    # criterion 4
 
 
@@ -168,9 +173,26 @@ def evaluate_rank_stability(
                 {"repo": repo, "prev": prev_ranks[repo], "current": cur_ranks[repo]}
             )
 
+    if len(shared) == 0:
+        # post-analysis.json present on both sides but neither yielded
+        # any (sense, baseline) score pairs — almost always means
+        # analyze-transcripts ran before judge.sh, so current_scores
+        # are all None. Surface the cause instead of an empty reason.
+        return {
+            "pass": False,
+            "deferred": True,
+            "reason": (
+                "post-analysis present on both iters but no repo has "
+                "both sense and baseline scores — likely judge hasn't "
+                "run yet for the current iter (Phase 3/4 ordering)"
+            ),
+            "shared_repos": 0,
+            "flips": [],
+        }
+
     return {
-        "pass": len(flips) == 0 and len(shared) > 0,
-        "deferred": len(shared) == 0,
+        "pass": len(flips) == 0,
+        "deferred": False,
         "shared_repos": len(shared),
         "flips": flips,
     }
@@ -199,12 +221,23 @@ def evaluate_discrimination(iter_dir: str) -> dict[str, Any]:
         else:
             repos_below.append({"repo": repo, "gap": round(gap, 4)})
 
+    total = len(repos_above) + len(repos_below)
+    # Scale the required count when running on a subset surface:
+    # min(target, ceil(2/3 of present)). Full bench (6 repos) → 4.
+    # 3-repo subset → 2. Keeps the criterion meaningful at any surface.
+    min_required = (
+        DISCRIMINATION_MIN_SCENARIOS
+        if total >= DISCRIMINATION_MIN_SCENARIOS
+        else (total * 2 + 2) // 3  # ceil(2*total/3)
+    )
+
     return {
-        "pass": len(repos_above) >= DISCRIMINATION_MIN_SCENARIOS,
+        "pass": len(repos_above) >= min_required,
         "deferred": False,
         "scenarios_above_threshold": len(repos_above),
         "scenarios_below_threshold": len(repos_below),
-        "min_required": DISCRIMINATION_MIN_SCENARIOS,
+        "min_required": min_required,
+        "min_required_full_bench": DISCRIMINATION_MIN_SCENARIOS,
         "gap_threshold": DISCRIMINATION_GAP_THRESHOLD,
         "above": repos_above,
         "below": repos_below,

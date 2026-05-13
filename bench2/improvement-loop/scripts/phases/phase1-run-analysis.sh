@@ -55,13 +55,31 @@ score_args=()
 
 bash "$BENCH2_DIR/score.sh" "${score_args[@]}"
 
-# Step 2b: Regenerate report.md so anyone observing the loop sees fresh
+# Step 2b: Run judge so analyze-transcripts can compute real fairness
+# scores. Without this, post-analysis.json has sense=None/baseline=None
+# for every repo (the loop's earlier Phase-3 ordering bug); the
+# convergence rank-stability check then sees zero shared repos and
+# defers criterion 2 spuriously. Skipped when ANTHROPIC_API_KEY is
+# unset (subscription-only callers can't run urllib judge).
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "  Judging..."
+  judge_args=()
+  [[ -n "$REPO_FILTER" ]] && judge_args+=(--repo "$REPO_FILTER")
+  [[ -n "$TOOL_FILTER" ]] && judge_args+=(--tool "$TOOL_FILTER")
+  bash "$BENCH2_DIR/judge.sh" ${judge_args[@]+"${judge_args[@]}"} \
+    > "$ITER_DIR/phase1-judge.log" 2>&1 \
+    || echo "  WARN: judge.sh failed; analyze-transcripts will produce None fairness for affected runs"
+else
+  echo "  WARN: ANTHROPIC_API_KEY unset; skipping judge (fairness scores will be None)"
+fi
+
+# Step 2c: Regenerate report.md so anyone observing the loop sees fresh
 # numbers immediately. Without this, report.md only updates at the end of
 # improve-loop.sh — and a mid-loop crash leaves it stale for hours.
 echo "  Refreshing report.md..."
 bash "$BENCH2_DIR/report.sh" --md > /dev/null
 
-# Step 3: Analyze transcripts
+# Step 3: Analyze transcripts (uses judged.json from Step 2b for fairness)
 echo "  Analyzing transcripts..."
 python3 "$TOOLS_DIR/analyze-transcripts.py" \
   --results-dir "$BENCH2_DIR/results" \

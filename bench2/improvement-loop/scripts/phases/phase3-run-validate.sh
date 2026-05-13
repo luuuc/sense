@@ -57,11 +57,30 @@ score_args=()
 
 bash "$BENCH2_DIR/score.sh" "${score_args[@]}"
 
+# Re-judge against the new transcripts so post-analysis can compute
+# fairness. Without this, post-analysis.json has sense=None /
+# baseline=None for every repo and downstream convergence checks
+# silently defer.
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "  Judging..."
+  judge_args=()
+  [[ -n "$REPO_FILTER" ]] && judge_args+=(--repo "$REPO_FILTER")
+  [[ -n "$TOOL_FILTER" ]] && judge_args+=(--tool "$TOOL_FILTER")
+  # --force because the previous judged.json was scored against the
+  # pre-improvement scenario YAMLs; the new transcripts need fresh
+  # judgments against the post-improvement structure.
+  bash "$BENCH2_DIR/judge.sh" --force ${judge_args[@]+"${judge_args[@]}"} \
+    > "$ITER_DIR/phase3-judge.log" 2>&1 \
+    || echo "  WARN: judge.sh failed; post-analysis fairness may be incomplete"
+else
+  echo "  WARN: ANTHROPIC_API_KEY unset; skipping judge (post-analysis fairness will be None)"
+fi
+
 # Refresh report.md immediately so observers see fresh numbers even if the
 # rest of phase 3 fails or rolls back.
 bash "$BENCH2_DIR/report.sh" --md > /dev/null
 
-# Step 3: Post-run analysis
+# Step 3: Post-run analysis (uses fresh judged.json for fairness)
 echo "  Analyzing new results..."
 python3 "$TOOLS_DIR/analyze-transcripts.py" \
   --results-dir "$BENCH2_DIR/results" \

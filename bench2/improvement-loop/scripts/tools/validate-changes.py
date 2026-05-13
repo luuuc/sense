@@ -74,9 +74,17 @@ def pre_run_validate(original_dir, improved_dir, backup_dir=None):
                     1 for c in new_step.get("checks", []) if c.get("required", True)
                 )
                 if new_required_count < orig_required_count:
-                    errors.append(
+                    # Downgraded to a warning post-Card-15: `remove_check`
+                    # is a permitted_action in locked.yaml, and Phase 3's
+                    # regression check is the real safety net. Treating
+                    # required-count decrease as a hard error contradicts
+                    # the locked policy and stalls the loop on legitimate
+                    # tuning (e.g. removing a check both tools verify is
+                    # off-topic). Phase 3 will roll back if scores regress.
+                    warnings.append(
                         f"{fname}: step {si} required checks decreased "
-                        f"from {orig_required_count} to {new_required_count}"
+                        f"from {orig_required_count} to {new_required_count} "
+                        f"(allowed — Phase 3 regression check is the safety net)"
                     )
                 new_total = len(new_step.get("checks", []))
                 orig_total = len(step.get("checks", []))
