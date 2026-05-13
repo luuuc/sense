@@ -64,6 +64,18 @@ $DRY_RUN && PHASE_ARGS+=(--dry-run)
 HISTORY_FILE="$LOOP_DIR/results/loop-1/iteration-history.jsonl"
 mkdir -p "$LOOP_DIR/results/loop-1"
 
+# Baseline snapshot — captured once before any iteration runs so iter-1's
+# watchdog has a "before" reference point. Skipped on dry-run and when
+# ANTHROPIC_API_KEY is missing (the auditor stack is API-gated; the loop
+# still runs without it).
+BASELINE_SNAPSHOT="$LOOP_DIR/results/loop-1/baseline-snapshot.json"
+if ! $DRY_RUN && [[ -n "${ANTHROPIC_API_KEY:-}" && ! -f "$BASELINE_SNAPSHOT" ]]; then
+  echo "Capturing baseline snapshot for watchdog..."
+  python3 "$BENCH2_DIR/lib/audit_watchdog.py" snapshot \
+    --results-root "$BENCH2_DIR/results" \
+    --out "$BASELINE_SNAPSHOT" || true
+fi
+
 for iter in $(seq 1 "$ITERATIONS"); do
   echo "========================================"
   echo "  Iteration $iter/$ITERATIONS"
@@ -99,6 +111,25 @@ $(cat "$HISTORY_FILE")
 "
   fi
 
+  # ── Scenario-auditor hints from the prior iter (if any) ──
+  AUDIT_HINTS_SECTION=""
+  if [[ $iter -gt 1 ]]; then
+    PREV_AUDIT_DIR="$LOOP_DIR/results/loop-1-iter-$((iter - 1))"
+    AUDIT_FILES=("$PREV_AUDIT_DIR"/audit-scenarios.*.json)
+    if [[ -f "${AUDIT_FILES[0]}" ]]; then
+      AUDIT_HINTS_SECTION="## Auditor hints (from iter $((iter - 1)))
+
+The scenario auditor proposed the following check changes for the prior
+iteration's state. Treat each as a *hint*, not a command — adopt, refine,
+or reject with rationale. Always cite transcript evidence in the
+modification's \`evidence\` field, even when an auditor proposed it. The
+Phase 3 rollback safety net still protects against bad proposals.
+
+$(cat "${AUDIT_FILES[@]}" 2>/dev/null)
+"
+    fi
+  fi
+
   REVIEW_PROMPT="$(cat <<PROMPT
 Read the following instruction files, then analyze the bench2 transcripts and generate improvements.json.
 
@@ -118,7 +149,7 @@ $(cat "$INSTRUCT_DIR/phase2-improve-instruct.md")
 
 $(python3 "$BENCH2_DIR/lib/reporter.py" "$BENCH2_DIR/results" --format terminal 2>/dev/null)
 
-${HISTORY_SECTION}## Task
+${HISTORY_SECTION}${AUDIT_HINTS_SECTION}## Task
 
 1. Read the sense and baseline transcripts for all 6 repos in $BENCH2_DIR/results/
 2. Write analysis-notes.md to $ITER_DIR/analysis-notes.md
@@ -167,6 +198,15 @@ PROMPT
     echo "ERROR: Phase 3 failed with exit code $PHASE3_EXIT" >&2
     exit $PHASE3_EXIT
   fi
+
+  # ── Phase 4: Audit (score / scenario / watchdog) ──
+  echo ""
+  echo "--- Phase 4: Audit ---"
+  phase4_args=(--loop 1 --iter "$iter" --tool "$TOOL_FILTER")
+  [[ -n "$REPO_FILTER" ]] && phase4_args+=(--repo "$REPO_FILTER")
+  bash "$LOOP_DIR/scripts/phases/phase4-audit.sh" "${phase4_args[@]}" || {
+    echo "  WARN: Phase 4 had errors; auditor outputs may be incomplete." >&2
+  }
 
   # ── Record iteration history ──
   python3 -c "

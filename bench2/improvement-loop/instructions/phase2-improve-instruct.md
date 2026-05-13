@@ -11,6 +11,9 @@ Using the analysis from Phase 1 (`analysis-notes.md`), generate `improvements.js
 - `analysis-notes.md` from Phase 1 — per-repo findings with transcript evidence
 - `../../scenarios/{repo}.yaml` — current checks
 - `../../results/{sense,baseline}/{repo}/transcript.json` — for verifying evidence
+- *(optional)* Scenario-auditor hints from the prior iter — treat as
+  candidates to adopt, refine, or reject with rationale; always cite
+  transcript evidence in `evidence`, even when the auditor proposed it.
 
 ## Process
 
