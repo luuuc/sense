@@ -2,9 +2,14 @@
 set -euo pipefail
 
 BENCH2_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$BENCH2_DIR/.." && pwd)"
 RESULTS_DIR="$BENCH2_DIR/results"
 SCENARIOS_DIR="$BENCH2_DIR/scenarios"
 LIB_DIR="$BENCH2_DIR/lib"
+
+# Mirror run.sh: tool/repo checkouts live under SENSE_BENCH_ROOT.
+# Grounding (20-04) reads the checked-out repo to verify citations.
+SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 
 # --- Argument parsing ---
 
@@ -69,7 +74,7 @@ for tool_dir in "$RESULTS_DIR"/*/; do
     # Check for main result dir
     if [[ -f "$repo_dir/transcript.json" ]]; then
       log "Scoring $tool/$repo"
-      python3 "$LIB_DIR/scorer.py" "$repo_dir" "$scenario_file" "$BENCH2_DIR"
+      python3 "$LIB_DIR/scorer.py" "$repo_dir" "$scenario_file" "$BENCH2_DIR" "$SENSE_BENCH_ROOT/$tool/$repo"
       scored_count=$((scored_count + 1))
     fi
 
@@ -78,7 +83,7 @@ for tool_dir in "$RESULTS_DIR"/*/; do
       [[ -d "$run_dir" ]] || continue
       if [[ -f "$run_dir/transcript.json" ]]; then
         log "Scoring $tool/$repo/$(basename "$run_dir")"
-        python3 "$LIB_DIR/scorer.py" "$run_dir" "$scenario_file" "$BENCH2_DIR"
+        python3 "$LIB_DIR/scorer.py" "$run_dir" "$scenario_file" "$BENCH2_DIR" "$SENSE_BENCH_ROOT/$tool/$repo"
         scored_count=$((scored_count + 1))
       fi
     done

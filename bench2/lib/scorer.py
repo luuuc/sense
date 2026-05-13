@@ -515,7 +515,7 @@ def estimate_cost(usage):
     ) / 1_000_000
 
 
-def score_transcript(transcript_path, scenario, repo_path=None):
+def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=None):
     """Score a transcript against a scenario.
 
     Two-layer scoring:
@@ -523,7 +523,14 @@ def score_transcript(transcript_path, scenario, repo_path=None):
                         Skips checks tagged layer: adoption.
       adoption_score  = tool_fluency (0.60) + discoverability (0.40)
                         For code-intel-vs-code-intel comparisons only.
+
+    repo_path     — the result_dir, used as cwd for `diff_contains` checks.
+    repo_checkout — the cloned repo at run_meta.repo_commit, used by
+                    grounding to verify citations. Optional: if missing,
+                    citation_grounding reports total but skips verification.
     """
+    from grounding import ground_citations
+
     t = parse_transcript(transcript_path)
     answer_text, audit_text = read_transcript_texts(transcript_path)
 
@@ -602,6 +609,12 @@ def score_transcript(transcript_path, scenario, repo_path=None):
 
     adoption_score = 0.60 * tool_fluency + 0.40 * discoverability
 
+    # Citation grounding. Surfaced only; 20-04 does not fold this into
+    # fairness — that weighting decision is deferred to 20-05 once the
+    # judge layer is in place and we can see how the three signals
+    # correlate. Premature weighting would bake in a bias.
+    citation_grounding = ground_citations(answer_text, repo_checkout)
+
     scored = {
         "scenario": scenario["name"],
         "repo": scenario["repo"],
@@ -613,6 +626,7 @@ def score_transcript(transcript_path, scenario, repo_path=None):
         "completeness": round(completeness, 4),
         "tool_fluency": round(tool_fluency, 4),
         "discoverability": round(discoverability, 4),
+        "citation_grounding": citation_grounding,
         "steps": step_results,
         "misses": misses,
         "metrics": {
@@ -642,12 +656,17 @@ def score_transcript(transcript_path, scenario, repo_path=None):
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: scorer.py <result_dir> <scenario.yaml> <bench2_dir>", file=sys.stderr)
+        print(
+            "Usage: scorer.py <result_dir> <scenario.yaml> <bench2_dir> "
+            "[repo_checkout]",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     result_dir = sys.argv[1]
     scenario_path = sys.argv[2]
     bench2_dir = sys.argv[3]
+    repo_checkout = sys.argv[4] if len(sys.argv) > 4 else None
 
     sys.path.insert(0, os.path.join(bench2_dir, "lib"))
     from scenario import parse as parse_scenario
@@ -723,7 +742,9 @@ if __name__ == "__main__":
             },
         }
     else:
-        scored = score_transcript(transcript_path, scenario, result_dir)
+        scored = score_transcript(
+            transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+        )
 
     output_path = os.path.join(result_dir, "scored.json")
     with open(output_path, "w") as f:
