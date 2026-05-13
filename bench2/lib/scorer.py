@@ -472,6 +472,24 @@ TIME_CEILINGS = {
 
 DEFAULT_TIME_CEILING = 480  # was 600
 
+# Per-repo --max-budget-usd, in dollars. Sized at ~2× the typical observed
+# healthy session cost on each repo, so genuine cost-runaway sessions still
+# get cut but the cap stops being the primary discriminator. From Card 15
+# iter-1 Phase 1 observation (fresh cache): flask/gin ~$0.65, axum/javalin
+# ~$1.00, discourse ~$1.10, nextjs ~$1.20 typical. 2× buffer keeps
+# healthy sessions intact while bounding worst-case session spend at
+# ~$2.25 (i.e. a runaway nextjs caps at ~2× its mean).
+BUDGET_PER_REPO = {
+    "flask":     1.00,
+    "gin":       1.00,
+    "axum":      1.75,
+    "javalin":   1.75,
+    "discourse": 2.00,
+    "nextjs":    2.25,
+}
+
+DEFAULT_BUDGET_USD = 1.50  # unknown repos (e.g. held-out sense) — sits at the median.
+
 # Claude pricing per million tokens. Used to estimate cost on failed runs
 # whose transcript never emitted a final total_cost_usd. Update when
 # pricing or the default model changes — these are Opus 4.x rates.

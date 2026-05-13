@@ -28,14 +28,14 @@ REPO_FILTER=""
 TOOL_FILTER="sense,baseline"
 RUNS=1
 DRY_RUN=false
-MAX_COST_USD=10.0       # hard ceiling per pitch 20-07 §"Cost discipline" — lowered from 15
-                        # after Card 15 e2e revealed iter-1 actually costs ~$13 on full bench
-                        # (pitch's "$3 first-iter prior" was way off). $10 ceiling forces an
-                        # operator to confirm `--max-cost-usd 20` before letting the loop run end-to-end.
-FIRST_ITER_PRIOR=12.0   # iter-1 predicted cost. Empirically: 12 sessions across 6 repos cost
-                        # $13.22 on the full bench (sense+baseline). Set 12 as a slightly
-                        # under-protective prior so the predict-halt actually fires before iter 2.
-                        # Pitch's original $3 prior should be considered historical.
+MAX_COST_USD=10.0       # Conservative default — a full iter on the full bench surface
+                        # is ~$22 (sessions $9-19 + judge $3-5 + audit $6 + reviewer $2),
+                        # so the default forces the operator to opt into a real run via
+                        # `--max-cost-usd 30` or similar. Use `--repo flask` to drop the
+                        # iter cost to ~$3 for cheap smoke tests.
+FIRST_ITER_PRIOR=22.0   # Empirical: 12 sessions × per-repo budgets ($1.00-$2.25)
+                        # = ~$19.50 worst case; +judge/audit/reviewer brings iter-1 to
+                        # ~$22. Set as the prediction so predict-halt fires honestly.
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,8 +58,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --repo REPOS          Comma-separated repo filter"
       echo "  --tool TOOLS          Comma-separated tool filter (default: sense,baseline)"
       echo "  --runs N              Runs per scenario for variance (default: 1)"
-      echo "  --max-cost-usd USD    Hard cumulative cost ceiling (default: 10)"
-      echo "  --first-iter-prior USD  Predicted cost of iter-1 used for the halt check (default: 12)"
+      echo "  --max-cost-usd USD    Hard cumulative cost ceiling (default: 10 — forces conscious opt-in; real iter is ~\$22)"
+      echo "  --first-iter-prior USD  Predicted cost of iter-1 used for the halt check (default: 22)"
       echo "  --dry-run             Show what would run without executing"
       exit 0
       ;;

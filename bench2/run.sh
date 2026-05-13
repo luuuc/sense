@@ -16,12 +16,15 @@ READY_POLL_INTERVAL=5
 READY_POLL_MAX=720  # 60 minutes at 5s intervals
 SETUP_TIMEOUT=600   # 10 minutes max for initial setup
 # Card 15 history: tried $2 → too generous, $0.75 → zeroed 5/12 sessions.
-# Landed at $1.50: above the mean observed cost ($1.10) so most healthy
-# sessions complete naturally, but still bounds runaway sessions. Partial
-# transcripts (over-budget but with answer content) are scored normally —
-# scorer.py marks them `constrained: True` and the fairness comparison
-# still works. See bench2/end-goal.md §"What the bench loses at $0.75".
-MAX_BUDGET_USD="1.50"
+# Per-session budget derived per repo from BUDGET_PER_REPO[repo] in
+# lib/scorer.py (sized at ~2× observed healthy session cost). flask/gin
+# get $1.00, axum/javalin $1.75, discourse $2.00, nextjs $2.25; unknown
+# repos fall back to DEFAULT_BUDGET_USD ($1.50). The single global
+# MAX_BUDGET_USD below stays as a CLI override (--budget) but is not used
+# in the default path. Partial transcripts (over-budget but with answer
+# content) are scored normally — scorer.py marks them `constrained: True`
+# and fairness comparison still works. See bench2/end-goal.md.
+MAX_BUDGET_USD=""
 # Per-session wall-time timeout = 1.0 × TIME_CEILINGS[repo] (was 2×).
 # At 1× ceiling, time_efficiency is already 0, so killing at that point
 # costs nothing in score terms and bounds the worst case tightly. No floor —
@@ -61,8 +64,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --model   Claude model to use (e.g. sonnet, opus)"
       echo "  --dry-run Show what would run without executing Claude sessions"
       echo "  --reset   Delete existing indexes and workspaces"
-      echo "  --budget  Max USD per Claude session (default: $MAX_BUDGET_USD)"
-      echo "  --timeout Max seconds per Claude session (default: 2× TIME_CEILINGS[repo], floor ${SESSION_TIMEOUT_FLOOR}s)"
+      echo "  --budget  Max USD per Claude session (default: BUDGET_PER_REPO[repo] from lib/scorer.py)"
+      echo "  --timeout Max seconds per Claude session (default: 1× TIME_CEILINGS[repo], floor ${SESSION_TIMEOUT_FLOOR}s)"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -104,6 +107,24 @@ out = max($SESSION_TIMEOUT_FLOOR, ceil)
 print(out)
 " 2>/dev/null) || secs="$SESSION_TIMEOUT_DEFAULT"
   echo "$secs"
+}
+
+# Per-session budget cap. Defaults to BUDGET_PER_REPO[repo] from
+# lib/scorer.py; --budget overrides globally.
+compute_session_budget() {
+  local repo="$1"
+  if [[ -n "$MAX_BUDGET_USD" ]]; then
+    echo "$MAX_BUDGET_USD"
+    return 0
+  fi
+  local bud
+  bud=$(python3 -c "
+import sys
+sys.path.insert(0, '$LIB_DIR')
+from scorer import BUDGET_PER_REPO, DEFAULT_BUDGET_USD
+print(BUDGET_PER_REPO.get('$repo', DEFAULT_BUDGET_USD))
+" 2>/dev/null) || bud="1.50"
+  echo "$bud"
 }
 
 ensure_tool_repo() {
@@ -412,6 +433,7 @@ for tool in "${tools[@]}"; do
       fi
       mkdir -p "$result_dir"
 
+      session_budget=$(compute_session_budget "$repo")
       claude_args=(
         -p "$prompt"
         --verbose
@@ -419,7 +441,7 @@ for tool in "${tools[@]}"; do
         --output-format stream-json
         --permission-mode bypassPermissions
         --disallowed-tools "Agent"
-        --max-budget-usd "$MAX_BUDGET_USD"
+        --max-budget-usd "$session_budget"
       )
 
       if [[ -n "$MODEL" ]]; then
@@ -431,7 +453,7 @@ for tool in "${tools[@]}"; do
       fi
 
       session_timeout=$(compute_session_timeout "$repo")
-      log "  running Claude session (timeout=${session_timeout}s)..."
+      log "  running Claude session (budget=\$${session_budget} timeout=${session_timeout}s)..."
       start_time=$(date +%s)
 
       (cd "$rp" && run_with_timeout "$session_timeout" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
@@ -467,7 +489,7 @@ meta = {
 }
 json.dump(meta, sys.stdout, indent=2)
 print()
-" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$tool_version" "$repo_commit" "$MODEL" > "$result_dir/run_meta.json"
+" "$tool" "$repo" "$scenario_name" "$wall_time" "$session_budget" "$(timestamp)" "$tool_version" "$repo_commit" "$MODEL" > "$result_dir/run_meta.json"
 
         passed=$((passed + 1))
       else
@@ -483,7 +505,7 @@ meta = {
 }
 json.dump(meta, sys.stdout, indent=2)
 print()
-" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$claude_rc" "$MODEL" > "$result_dir/run_meta.json"
+" "$tool" "$repo" "$scenario_name" "$wall_time" "$session_budget" "$(timestamp)" "$claude_rc" "$MODEL" > "$result_dir/run_meta.json"
         failed=$((failed + 1))
       fi
     done
