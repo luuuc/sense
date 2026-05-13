@@ -15,12 +15,14 @@ description: 'Trace the Gin HTTP request dispatch from Engine.ServeHTTP through
   '
 steps:
 - name: Trace HTTP dispatch from entry point
-  prompt: "Read gin.go, routergroup.go, context.go, and tree.go. Trace the full\n\
-    HTTP request dispatch pipeline starting from Engine.ServeHTTP.\nFor every method\
-    \ in the chain, list:\n  - The Go file and the struct/type it belongs to\n  -\
-    \ What it does\n  - What it calls next\n\nThe chain is roughly: ServeHTTP → handleHTTPRequest\
-    \ → route tree\nlookup → handler execution. Include all intermediate methods like\n\
-    updateRouteTrees, serveError, redirect handlers.\n"
+  prompt: "You're about to insert a request-ID hook into gin's dispatch
+    chain. Hand the next agent the full HTTP request pipeline starting
+    from Engine.ServeHTTP: every method with file:line, the struct/type
+    it belongs to, what it does, and what it calls next. Cover the
+    intermediates (updateRouteTrees, serveError, redirect handlers). The
+    follow-up agent should need only small, targeted lookups — not a
+    fresh exploration of the package.
+    "
   checks:
   - type: contains
     value: Engine.ServeHTTP
@@ -47,13 +49,15 @@ steps:
     layer: adoption
     description: Used structural graph query for dispatch chain tracing
 - name: Understand middleware flow
-  prompt: "In Gin, middleware functions call `c.Next()` to pass control to\nthe next\
-    \ handler in the chain. Read context.go and explain:\n  - Where Context.Next and\
-    \ Context.Abort are defined\n  - How the handler chain is built (the `handlers`\
-    \ slice on Context)\n  - Where Next actually executes the next handler\n  - What\
-    \ Abort does and how it prevents further execution\n\nThen find every internal\
-    \ caller of Context.Next and Context.Abort\nin production code (not test files).\
-    \ List each with file:line.\n"
+  prompt: "You're about to write a new gin middleware. Hand the next agent
+    the map: where Context.Next and Context.Abort are defined (file:line),
+    how the handler chain is built (the `handlers` slice on Context),
+    where Next actually executes the next handler, what Abort does and
+    how it halts execution. Also list every internal caller of
+    Context.Next and Context.Abort in production code (not test files)
+    with file:line. The follow-up agent should need only small, targeted
+    lookups — not a fresh exploration of the package.
+    "
   checks:
   - type: contains
     value: Context.Next
@@ -88,15 +92,14 @@ steps:
     layer: adoption
     description: Used structural graph query for Context.Next/Abort caller analysis
 - name: Find dead code in the gin package
-  prompt: 'Find symbols (functions, types, methods) in the main gin package
-
-    (root directory, all .go files except _test.go) that are defined
-
-    but NEVER referenced anywhere else in the codebase. Focus on
-
-    unexported (lowercase) symbols.
-
-    '
+  prompt: "You're about to open a deletion PR against the gin package.
+    Hand the next agent every symbol (function, type, method) in the
+    main gin package (root directory, all .go files except _test.go)
+    that is defined but NEVER referenced anywhere else — with file:line
+    and a defensible 'no callers' claim per symbol. Focus on unexported
+    (lowercase) symbols. The follow-up agent should need only small,
+    targeted lookups — not a fresh exploration of the package.
+    "
   checks:
   - type: word
     value: localhostIP
@@ -123,19 +126,13 @@ steps:
     required: false
     description: Found dead code in sub-packages beyond the root gin directory
 - name: Assess modifying the recovery middleware
-  prompt: 'Read recovery.go. You want to modify Recovery/CustomRecovery to
-
-    inject a unique request ID into the Gin context before the handler
-
-    chain runs. What do you need to know?
-
-    Cover: call hierarchy, who calls these functions, where they''re
-
-    registered, and which signatures are public API.
-
-    Name specific functions, files, and line numbers.
-
-    '
+  prompt: "You're about to modify Recovery/CustomRecovery in gin to inject
+    a unique request ID into the context before the handler chain runs.
+    Produce the edit map: call hierarchy with file:line, who calls these
+    functions, where they're registered (including gin.Default), which
+    signatures are public API. The follow-up agent should need only
+    small, targeted lookups — not a fresh exploration of the package.
+    "
   checks:
   - type: word
     value: Recovery

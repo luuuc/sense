@@ -9,15 +9,13 @@ description: 'Trace the Next.js SSR rendering pipeline from HTTP request entry
   '
 steps:
 - name: Orient in the Next.js server architecture
-  prompt: 'Read next-server.ts, base-server.ts, and key entry points.
-
-    Give me a high-level orientation: key server classes, major
-
-    subdirectories (app-render, route-modules, response-cache),
-
-    Pages vs App Router rendering. No Explore agents.
-
-    '
+  prompt: "You're an AI coding agent about to extend Next.js's server side.
+    Hand the next agent the map: key server classes with file:line, major
+    subdirectories (app-render, route-modules, response-cache), and the
+    Pages vs App Router split with concrete files. The follow-up agent
+    should need only small, targeted lookups — not a fresh exploration
+    of the monorepo. No Explore agents.
+    "
   checks:
   - type: word
     value: NextNodeServer
@@ -41,15 +39,13 @@ steps:
     required: false
     description: Found the 4th server class in the hierarchy via graph traversal
 - name: Trace the SSR request lifecycle
-  prompt: 'Starting from a raw HTTP request, trace the full Next.js SSR
-
-    pipeline: request entry, routing, loadComponents, Pages Router
-
-    renderToHTMLImpl, App Router renderToHTMLOrFlight.
-
-    List key files and method calls at each layer.
-
-    '
+  prompt: "You're about to add a render-time hook in Next.js. Trace the
+    full SSR pipeline for the next agent so they can insert at the right
+    layer: request entry, routing, loadComponents, Pages Router
+    renderToHTMLImpl, App Router renderToHTMLOrFlight — with file:line
+    and method calls at each layer. The follow-up agent should need only
+    small, targeted lookups — not a fresh exploration of the monorepo.
+    "
   checks:
   - type: word
     value: handleRequest
@@ -89,15 +85,13 @@ steps:
     layer: adoption
     description: Used structural graph query for SSR lifecycle tracing
 - name: Find callers of renderToHTMLOrFlight
-  prompt: 'Find ALL callers of renderToHTMLOrFlight. List each with file
-
-    path, line number, enclosing function/class, and whether it''s
-
-    in app-render, route-modules, or next-server. Also identify
-
-    what exports it and from which file.
-
-    '
+  prompt: "You're about to change the signature of renderToHTMLOrFlight.
+    Hand the next agent every caller — file:line, enclosing function or
+    class, and subdirectory (app-render / route-modules / next-server) —
+    plus the export site that re-exports it. The follow-up agent should
+    need only small, targeted lookups — not a fresh exploration of the
+    monorepo.
+    "
   checks:
   - type: contains
     value: renderToHTMLOrFlight
@@ -118,17 +112,14 @@ steps:
     layer: adoption
     description: Used structural graph for caller analysis of renderToHTMLOrFlight
 - name: Assess where to thread a request ID
-  prompt: 'You need to add an X-Request-Id header to every Next.js response,
-
-    generated early in the request lifecycle and available throughout
-
-    rendering. Where? How to propagate? RequestMeta vs AsyncLocalStorage?
-
-    How does response-cache interact? Which test files need updates?
-
-    Name specific files, classes, and methods.
-
-    '
+  prompt: "You're about to add an X-Request-Id header to every Next.js
+    response, generated early in the request lifecycle and available
+    throughout rendering. Produce the edit map: where to generate, how
+    to propagate (RequestMeta vs AsyncLocalStorage), how response-cache
+    interacts, which test files need updates — with file:line for every
+    touched site. The follow-up agent should need only small, targeted
+    lookups — not a fresh exploration of the monorepo.
+    "
   checks:
   - type: contains
     value: RequestMeta

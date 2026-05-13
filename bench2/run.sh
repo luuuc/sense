@@ -3,17 +3,35 @@ set -euo pipefail
 
 BENCH2_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$BENCH2_DIR/.." && pwd)"
+BENCH2_PROJECT_ROOT="$PROJECT_ROOT"
 TOOLS_DIR="$BENCH2_DIR/tools"
 SCENARIOS_DIR="$BENCH2_DIR/scenarios"
 RESULTS_DIR="$BENCH2_DIR/results"
 LIB_DIR="$BENCH2_DIR/lib"
+# shellcheck disable=SC1091
+source "$LIB_DIR/load-env.sh"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 REF_DIR="$SENSE_BENCH_ROOT/_reference"
 READY_POLL_INTERVAL=5
 READY_POLL_MAX=720  # 60 minutes at 5s intervals
 SETUP_TIMEOUT=600   # 10 minutes max for initial setup
-MAX_BUDGET_USD="2.00"
-SESSION_TIMEOUT=900  # 15 minutes per Claude session (longer for multi-step)
+# Card 15 history: tried $2 → too generous, $0.75 → zeroed 5/12 sessions.
+# Per-session budget derived per repo from BUDGET_PER_REPO[repo] in
+# lib/scorer.py (sized at ~2× observed healthy session cost). flask/gin
+# get $1.00, axum/javalin $1.75, discourse $2.00, nextjs $2.25; unknown
+# repos fall back to DEFAULT_BUDGET_USD ($1.50). The single global
+# MAX_BUDGET_USD below stays as a CLI override (--budget) but is not used
+# in the default path. Partial transcripts (over-budget but with answer
+# content) are scored normally — scorer.py marks them `constrained: True`
+# and fairness comparison still works. See bench2/end-goal.md.
+MAX_BUDGET_USD=""
+# Per-session wall-time timeout = 1.0 × TIME_CEILINGS[repo] (was 2×).
+# At 1× ceiling, time_efficiency is already 0, so killing at that point
+# costs nothing in score terms and bounds the worst case tightly. No floor —
+# the ceilings are calibrated per repo. --timeout overrides.
+SESSION_TIMEOUT=""
+SESSION_TIMEOUT_FLOOR=300   # absolute floor: don't go below 5 min even for tiny repos
+SESSION_TIMEOUT_DEFAULT=480  # fallback for unknown repos (= DEFAULT_TIME_CEILING × 1)
 
 # --- Argument parsing ---
 
@@ -46,8 +64,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --model   Claude model to use (e.g. sonnet, opus)"
       echo "  --dry-run Show what would run without executing Claude sessions"
       echo "  --reset   Delete existing indexes and workspaces"
-      echo "  --budget  Max USD per Claude session (default: $MAX_BUDGET_USD)"
-      echo "  --timeout Max seconds per Claude session (default: $SESSION_TIMEOUT)"
+      echo "  --budget  Max USD per Claude session (default: BUDGET_PER_REPO[repo] from lib/scorer.py)"
+      echo "  --timeout Max seconds per Claude session (default: 1× TIME_CEILINGS[repo], floor ${SESSION_TIMEOUT_FLOOR}s)"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -66,6 +84,47 @@ matches_filter() {
 tool_repo_path() {
   local tool="$1" repo="$2"
   echo "$SENSE_BENCH_ROOT/$tool/$repo"
+}
+
+# Derive per-repo session timeout = 2 × TIME_CEILINGS[repo].
+# TIME_CEILINGS lives in lib/scorer.py — the canonical source the loop
+# will tune in ±20% steps. Bash 3.2 (macOS default) has no associative
+# arrays; the Python invocation is ~50ms vs. multi-minute claude sessions
+# so caching isn't worth the portability cost.
+compute_session_timeout() {
+  local repo="$1"
+  if [[ -n "$SESSION_TIMEOUT" ]]; then
+    echo "$SESSION_TIMEOUT"
+    return 0
+  fi
+  local secs
+  secs=$(python3 -c "
+import sys
+sys.path.insert(0, '$LIB_DIR')
+from scorer import TIME_CEILINGS, DEFAULT_TIME_CEILING
+ceil = TIME_CEILINGS.get('$repo', DEFAULT_TIME_CEILING)
+out = max($SESSION_TIMEOUT_FLOOR, ceil)
+print(out)
+" 2>/dev/null) || secs="$SESSION_TIMEOUT_DEFAULT"
+  echo "$secs"
+}
+
+# Per-session budget cap. Defaults to BUDGET_PER_REPO[repo] from
+# lib/scorer.py; --budget overrides globally.
+compute_session_budget() {
+  local repo="$1"
+  if [[ -n "$MAX_BUDGET_USD" ]]; then
+    echo "$MAX_BUDGET_USD"
+    return 0
+  fi
+  local bud
+  bud=$(python3 -c "
+import sys
+sys.path.insert(0, '$LIB_DIR')
+from scorer import BUDGET_PER_REPO, DEFAULT_BUDGET_USD
+print(BUDGET_PER_REPO.get('$repo', DEFAULT_BUDGET_USD))
+" 2>/dev/null) || bud="1.50"
+  echo "$bud"
 }
 
 ensure_tool_repo() {
@@ -374,6 +433,7 @@ for tool in "${tools[@]}"; do
       fi
       mkdir -p "$result_dir"
 
+      session_budget=$(compute_session_budget "$repo")
       claude_args=(
         -p "$prompt"
         --verbose
@@ -381,7 +441,7 @@ for tool in "${tools[@]}"; do
         --output-format stream-json
         --permission-mode bypassPermissions
         --disallowed-tools "Agent"
-        --max-budget-usd "$MAX_BUDGET_USD"
+        --max-budget-usd "$session_budget"
       )
 
       if [[ -n "$MODEL" ]]; then
@@ -392,10 +452,23 @@ for tool in "${tools[@]}"; do
         claude_args+=(--mcp-config "$workspace/.mcp.json")
       fi
 
-      log "  running Claude session..."
+      session_timeout=$(compute_session_timeout "$repo")
+      log "  running Claude session (budget=\$${session_budget} timeout=${session_timeout}s)..."
       start_time=$(date +%s)
 
-      (cd "$rp" && run_with_timeout "$SESSION_TIMEOUT" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
+      (cd "$rp" && run_with_timeout "$session_timeout" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
+
+      # Credit-exhausted retry: the claude CLI can fall back to OAuth
+      # subscription when ANTHROPIC_API_KEY is unset. urllib direct-API
+      # callers can't — see lib/judge.py — but the CLI's auth flow is
+      # special. Try once more with the key unset; if subscription is
+      # active, the second attempt will succeed.
+      if [[ $claude_rc -ne 0 && -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        if grep -qi 'credit balance is too low\|invalid_api_key' "$result_dir/claude.log" 2>/dev/null; then
+          log "  CREDIT EXHAUSTED on API key — retrying once on subscription..."
+          (cd "$rp" && ANTHROPIC_API_KEY="" run_with_timeout "$session_timeout" claude "${claude_args[@]}" > "$result_dir/transcript.json" 2>>"$result_dir/claude.log") && claude_rc=0 || claude_rc=$?
+        fi
+      fi
       end_time=$(date +%s)
       wall_time=$((end_time - start_time))
 
@@ -412,10 +485,11 @@ meta = {
     'wall_time_seconds': int(sys.argv[4]), 'max_budget_usd': float(sys.argv[5]),
     'timestamp': sys.argv[6], 'tool_version': sys.argv[7] or None,
     'repo_commit': sys.argv[8] or None,
+    'model': sys.argv[9] or None,
 }
 json.dump(meta, sys.stdout, indent=2)
 print()
-" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$tool_version" "$repo_commit" > "$result_dir/run_meta.json"
+" "$tool" "$repo" "$scenario_name" "$wall_time" "$session_budget" "$(timestamp)" "$tool_version" "$repo_commit" "$MODEL" > "$result_dir/run_meta.json"
 
         passed=$((passed + 1))
       else
@@ -427,10 +501,11 @@ meta = {
     'wall_time_seconds': int(sys.argv[4]), 'max_budget_usd': float(sys.argv[5]),
     'timestamp': sys.argv[6], 'error': 'claude_session_failed',
     'claude_exit_code': int(sys.argv[7]),
+    'model': sys.argv[8] or None,
 }
 json.dump(meta, sys.stdout, indent=2)
 print()
-" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$claude_rc" > "$result_dir/run_meta.json"
+" "$tool" "$repo" "$scenario_name" "$wall_time" "$session_budget" "$(timestamp)" "$claude_rc" "$MODEL" > "$result_dir/run_meta.json"
         failed=$((failed + 1))
       fi
     done

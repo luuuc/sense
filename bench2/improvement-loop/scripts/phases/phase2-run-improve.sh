@@ -32,10 +32,37 @@ fi
 
 echo "=== Phase 2: Apply Improvements (Loop $LOOP, Iter $ITER) ==="
 
-# Step 1: Generate improved scenario YAMLs
+# Step 0: Lock check — drop any improvement that targets a locked entry.
+# locked.yaml is the single source of truth for what the loop must NOT
+# touch (orchestration, judge model, prompts, held-out, fairness axes).
+# The cleaned payload replaces the raw one for downstream steps.
+CLEANED_IMPROVEMENTS="$ITER_DIR/improvements.cleaned.json"
+echo "  Lock-check..."
+python3 "$BENCH2_DIR/lib/lock_check.py" validate-improvements \
+  "$IMPROVEMENTS" \
+  --write-to "$CLEANED_IMPROVEMENTS" \
+  2> "$ITER_DIR/lock-check.log" && lc_rc=0 || lc_rc=$?
+if [[ -s "$ITER_DIR/lock-check.log" ]]; then
+  sed 's/^/    /' "$ITER_DIR/lock-check.log"
+fi
+case $lc_rc in
+  0) ;;  # all pass or cleaned payload still has scenarios
+  3)
+    if [[ ! -s "$CLEANED_IMPROVEMENTS" ]] || \
+       ! python3 -c "import json,sys; d=json.load(open('$CLEANED_IMPROVEMENTS')); sys.exit(0 if d.get('scenarios') else 1)"; then
+      echo "  All improvements rejected by lock-check. Nothing to apply." >&2
+      echo '{}' > "$ITER_DIR/changes-manifest.json"
+      exit 0
+    fi ;;
+  *)
+    echo "  ERROR: lock_check rc=$lc_rc — aborting Phase 2" >&2
+    exit "$lc_rc" ;;
+esac
+
+# Step 1: Generate improved scenario YAMLs (from the cleaned payload)
 echo "  Applying improvements..."
 python3 "$TOOLS_DIR/generate-improvements.py" \
-  --improvements "$IMPROVEMENTS" \
+  --improvements "$CLEANED_IMPROVEMENTS" \
   --scenarios-dir "$BENCH2_DIR/scenarios" \
   --output-dir "$ITER_DIR/improved-scenarios" \
   > "$ITER_DIR/changes-manifest.json"

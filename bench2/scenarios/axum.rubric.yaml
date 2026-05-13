@@ -1,0 +1,119 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the crate.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act. Axum's a trait-heavy Rust
+  framework, so map_quality means trait impl sites with file:line, not
+  prose about Tower.
+
+steps:
+  - name: Find all Handler trait implementations
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer list every Handler impl with file:line and the
+          type-state markers (T, S)? Could the agent find the right impl
+          to extend without grepping for `impl Handler` itself?
+      specificity:
+        weight: 0.25
+        question: |
+          Are impls cited at the macro/expansion level where applicable
+          (all_the_tuples!), with concrete trait bounds, not just "the
+          trait is implemented for tuples"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each impl exists — IntoResponseHandler
+          for response-only handlers, Layered for trait composition — not
+          just NAME them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag axum-extra extensions (HandlerCallWithExtractors)
+          and macro-generated impls that may not be exhaustively listed?
+
+  - name: Trace the extractor chain
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for FromRequestParts and
+          FromRequest, list 8+ built-in extractors with locations, and
+          map the rejection path? Could the agent add a new extractor
+          without re-reading the crate?
+      specificity:
+        weight: 0.25
+        question: |
+          Are extractor names exact (FromRef, Extension, State, Path,
+          Query, Json, etc.) with their source files? Are trait bound
+          differences (FromRequestParts vs FromRequest) made concrete?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY axum splits the two traits — body
+          consumption vs parts-only — and how State uses FromRef for
+          sub-state extraction?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag user-defined extractors and rejection
+          conversion subtleties that an agent might miss when wiring
+          a new extractor?
+
+  - name: Trace the full serve-to-response lifecycle
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer walk the 7 layers (accept → make_service →
+          Router.call_with_state → PathRouter → MethodRouter →
+          Handler::call → IntoResponse) with file:line at each? Could
+          the agent place a new middleware at the right layer?
+      specificity:
+        weight: 0.25
+        question: |
+          Are layer method names exact (call_with_state, not "the call
+          method")? Is the Tower-to-hyper bridge (TowerToHyperService)
+          cited where it appears?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain the role of each layer — why
+          PathRouter and MethodRouter are separated, why the bridge
+          exists, what IntoResponse buys at the boundary?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag axum-core vs axum split and any
+          alternative serve paths (axum::serve vs hyper directly) the
+          agent should verify against?
+
+  - name: Assess adding a request context layer
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give a concrete plan — Extension layer vs new
+          extractor vs Handler change — with the specific files and
+          methods to touch? Could the agent open a PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the tradeoffs grounded in actual axum surfaces (Router::layer
+          vs route_layer, MatchedPath as precedent) rather than abstract
+          middleware talk?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY one approach is least-breaking —
+          backward compat for existing handlers, ergonomics for callers —
+          not just LIST the options?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag interactions with nested routers, fallback
+          handlers, and tower middleware ordering that the agent should
+          verify before shipping?

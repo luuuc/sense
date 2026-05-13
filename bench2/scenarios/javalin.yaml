@@ -9,15 +9,13 @@ description: 'Trace the Javalin HTTP request dispatch from JavalinServlet throug
   '
 steps:
 - name: Orient in the Javalin codebase
-  prompt: 'I just cloned Javalin and need to understand its architecture.
-
-    Read key source files. Give me a high-level orientation: what it
-
-    does, key classes (Javalin, JavalinServlet, Context, Handler),
-
-    how a route gets registered and dispatched. No Explore agents.
-
-    '
+  prompt: "You're an AI coding agent about to ship work into Javalin.
+    Hand the next agent the map: what Javalin does, the key classes
+    (Javalin, JavalinServlet, Context, Handler) with file:line, and how
+    a route gets registered and dispatched. The follow-up agent should
+    need only small, targeted lookups — not a fresh exploration of the
+    codebase. No Explore agents.
+    "
   checks:
   - type: contains
     value: JavalinServlet
@@ -38,13 +36,13 @@ steps:
     layer: adoption
     description: Used structural graph query for codebase orientation
 - name: Trace HTTP dispatch from JavalinServlet.service
-  prompt: 'Trace the service() method and follow the full dispatch chain:
-
-    request parsing, router matching, before/after filters, handler
-
-    execution, response production. List every method with file paths.
-
-    '
+  prompt: "You're about to insert a request-scoped concern into Javalin's
+    dispatch chain. Trace service() and the full chain for the next
+    agent — request parsing, router matching, before/after filters,
+    handler execution, response production — with file:line at each
+    method. The follow-up agent should need only small, targeted lookups —
+    not a fresh exploration of the codebase.
+    "
   checks:
   - type: word
     value: service
@@ -66,13 +64,13 @@ steps:
     layer: adoption
     description: Used semantic search for dispatch chain tracing
 - name: Trace route registration and find test files
-  prompt: 'Trace how app.get("/hello", ...) gets registered from Javalin.get()
-
-    through to the routing table. Find test files testing HTTP dispatch
-
-    and routing. List test file paths and key test method names.
-
-    '
+  prompt: "You're about to change route registration in Javalin. Trace
+    how app.get(\"/hello\", ...) gets registered from Javalin.get()
+    through to the routing table with file:line, and list the test
+    files covering HTTP dispatch and routing with paths and key test
+    method names. The follow-up agent should need only small, targeted
+    lookups — not a fresh exploration of the codebase.
+    "
   checks:
   - type: contains
     value: route
@@ -88,17 +86,14 @@ steps:
     required: false
     description: Referenced 4+ files in route/test analysis
 - name: Assess adding a custom error handler
-  prompt: 'You need to add an error() handler that catches all unhandled
-
-    exceptions and logs request URL, method, and timestamp before
-
-    returning JSON. Where does error handling currently occur?
-
-    How are existing error handlers structured? Which files need
-
-    modification? Would before/after filters be affected?
-
-    '
+  prompt: "You're about to add an error() handler that catches all
+    unhandled exceptions and logs request URL, method, and timestamp
+    before returning JSON. Produce the edit map: where error handling
+    currently happens with file:line, how existing error handlers are
+    structured, which files need modification, whether before/after
+    filters are affected. The follow-up agent should need only small,
+    targeted lookups — not a fresh exploration of the codebase.
+    "
   checks:
   - type: contains
     value: error

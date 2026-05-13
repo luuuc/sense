@@ -98,9 +98,27 @@ def parse_transcript(path):
 # ── Full transcript text ─────────────────────────────────────────────
 
 
-def read_full_transcript(path):
-    """Read all text content from a transcript (tool outputs + assistant text)."""
-    all_text = []
+def read_transcript_texts(path):
+    """Read two views of a transcript.
+
+    answer_text: assistant text blocks only — the model's actual answer.
+                 This is what fairness checks (word/contains/phrase/
+                 response_richness) match against, so a query like
+                 Grep(pattern="TopicCreator") cannot satisfy a `contains`
+                 check for "TopicCreator" by virtue of being typed.
+
+    audit_text:  answer_text + tool inputs + parsed tool_result content.
+                 Diagnostic view, exposed in metrics for debugging but
+                 never fed to keyword checks.
+
+    Claude Code's stream-json nests tool results inside
+    `user.message.content[*].type == "tool_result"`, with `content` either
+    a string or a list of `{type:"text", text:"..."}` blocks. The previous
+    implementation looked for a top-level `tool_result` event that never
+    fires, silently hiding tool output from audit_text.
+    """
+    answer_parts = []
+    audit_parts = []
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -117,22 +135,28 @@ def read_full_transcript(path):
             if event_type == "assistant":
                 for block in event.get("message", {}).get("content", []):
                     if block.get("type") == "text":
-                        all_text.append(block.get("text", ""))
+                        text = block.get("text", "")
+                        if text:
+                            answer_parts.append(text)
+                            audit_parts.append(text)
                     elif block.get("type") == "tool_use":
-                        all_text.append(json.dumps(block.get("input", {})))
+                        audit_parts.append(json.dumps(block.get("input", {})))
 
-            elif event_type == "tool_result":
-                content = event.get("message", {}).get("content", "")
-                if isinstance(content, str):
-                    all_text.append(content)
-                elif isinstance(content, list):
-                    for c in content:
-                        if isinstance(c, dict):
-                            all_text.append(c.get("text", ""))
-                        elif isinstance(c, str):
-                            all_text.append(c)
+            elif event_type == "user":
+                for block in event.get("message", {}).get("content", []) or []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    content = block.get("content", "")
+                    if isinstance(content, str):
+                        audit_parts.append(content)
+                    elif isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict):
+                                audit_parts.append(c.get("text", ""))
+                            elif isinstance(c, str):
+                                audit_parts.append(c)
 
-    return "\n".join(all_text)
+    return "\n".join(answer_parts), "\n".join(audit_parts)
 
 
 # ── Check evaluation ─────────────────────────────────────────────────
@@ -149,7 +173,12 @@ def evaluate_check(check, transcript_text, tool_calls, repo_path=None):
     """Evaluate a single checklist item.
 
     Supported check types:
-      contains         - value appears anywhere in transcript (case-insensitive)
+      contains         - value appears anywhere in transcript (case-insensitive,
+                         no boundary — matches inside identifiers)
+      phrase           - case-insensitive substring with non-word boundaries
+                         on both sides — preferred over `contains` for short
+                         tokens that would otherwise leak into identifiers
+                         (e.g. "ensure" matching "EnsureMagic")
       word             - value appears as whole word (word boundary match)
       starts_with      - any line in transcript starts with value
       mcp_tool_used    - tool name appears in tool_calls
@@ -163,6 +192,10 @@ def evaluate_check(check, transcript_text, tool_calls, repo_path=None):
 
     if ctype == "contains" or ctype == "transcript_contains":
         return {"hit": value.lower() in transcript_text.lower(), "type": ctype, "value": value}
+
+    elif ctype == "phrase":
+        pattern = r'(?<!\w)' + re.escape(value) + r'(?!\w)'
+        return {"hit": bool(re.search(pattern, transcript_text, re.IGNORECASE)), "type": ctype, "value": value}
 
     elif ctype == "word":
         pattern = r'(?<!\w)' + re.escape(value) + r'(?!\w)'
@@ -256,18 +289,18 @@ def _check_richness(transcript_text, min_files):
 
 
 def detect_misses(tool_calls):
-    """Distinguish real MCP bypasses from post-MCP verification reads.
+    """Classify non-MCP search activity by position in the session.
 
-    Real miss = grep/Glob/find/Read BEFORE any MCP tool was used,
-    or grep/Glob/find at any point. Reading source files AFTER using
-    MCP is verification, not a bypass.
+    This block is diagnostic only — it does not feed any score. The
+    adoption layer's `tool_fluency = mcp / (mcp + grep)` is the single
+    penalty for reaching for grep/Glob, and it counts every such call
+    regardless of position. The breakdown below exists so a human
+    reading `scored.json` can see the *shape* of the session.
 
-    Returns:
-      total              - real misses (pre-MCP bypasses + post-MCP greps)
-      pre_mcp_misses     - bypasses made before first MCP call
-      post_mcp_verification_reads - Read calls after MCP (not penalised)
-      post_mcp_misses    - grep/Glob calls after MCP (still penalised)
-      detail             - human-readable summary
+    Categories:
+      pre_mcp_misses              - grep/Glob/Read of source BEFORE first MCP call
+      post_mcp_verification_reads - Read calls AFTER first MCP call
+      post_mcp_misses             - grep/Glob calls AFTER first MCP call
     """
     first_mcp_idx = None
     for i, tc in enumerate(tool_calls):
@@ -321,18 +354,16 @@ def detect_misses(tool_calls):
                 post_other.append(desc)
         # If no MCP at all, don't count anything (can't bypass what isn't available)
 
-    total_misses = len(pre_misses) + len(post_other)
-
     return {
-        "total": total_misses,
         "pre_mcp_misses": pre_misses,
         "post_mcp_verification_reads": post_reads,
         "post_mcp_misses": post_other,
         "has_mcp_tools": mcp_used,
         "detail": (
             f"pre-MCP bypasses: {len(pre_misses)}, "
-            f"post-MCP verification reads: {len(post_reads)} (not penalised), "
-            f"post-MCP misses: {len(post_other)}"
+            f"post-MCP verification reads: {len(post_reads)}, "
+            f"post-MCP misses: {len(post_other)} "
+            f"(diagnostic only — grep_count drives fluency)"
         ),
     }
 
@@ -388,6 +419,10 @@ def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
         "total_required": total_required,
         "hits_bonus": hits_bonus,
         "total_bonus": total_bonus,
+        "fairness_hits_required": fairness_hits_required,
+        "fairness_total_required": fairness_total_required,
+        "fairness_hits_bonus": fairness_hits_bonus,
+        "fairness_total_bonus": fairness_total_bonus,
         "score_required": round((hits_required / total_required), 4) if total_required > 0 else 1.0,
         "score_bonus": round((hits_bonus / total_bonus), 4) if total_bonus > 0 else 0.0,
     }
@@ -400,12 +435,6 @@ def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
         (fairness_hits_required + 0.5 * fairness_hits_bonus)
         / max(1, fairness_total_required + 0.5 * fairness_total_bonus), 4
     )
-
-    richness = max(
-        (c.get("unique_files", 0) for c in step_result["checks"] if c.get("type") == "response_richness"),
-        default=0,
-    )
-    step_result["richness"] = richness
 
     return step_result
 
@@ -428,16 +457,38 @@ DEFAULT_EFFICIENCY_CEILING = 30_000
 # faster sessions, so time is half of efficiency. Picked at ~3-4× a healthy
 # Sense session for each repo, so a fast tool scores ~0.7 and a slow one
 # (multi-thousand-second baseline run) collapses to 0.
+# Reduced 20% from the pitch's original values after observed sessions ran
+# well inside the previous ceilings (see Card 15 e2e: mean 145s on iter-1
+# sessions, vs. flask's previous 400s ceiling). New numbers tighten the
+# efficiency signal without truncating healthy sessions.
 TIME_CEILINGS = {
-    "flask": 400,
-    "gin": 400,
-    "axum": 600,
-    "javalin": 600,
-    "discourse": 600,
-    "nextjs": 900,
+    "flask": 320,        # was 400
+    "gin": 320,          # was 400
+    "axum": 480,         # was 600
+    "javalin": 480,      # was 600
+    "discourse": 480,    # was 600
+    "nextjs": 720,       # was 900
 }
 
-DEFAULT_TIME_CEILING = 600
+DEFAULT_TIME_CEILING = 480  # was 600
+
+# Per-repo --max-budget-usd, in dollars. Sized at ~2× the typical observed
+# healthy session cost on each repo, so genuine cost-runaway sessions still
+# get cut but the cap stops being the primary discriminator. From Card 15
+# iter-1 Phase 1 observation (fresh cache): flask/gin ~$0.65, axum/javalin
+# ~$1.00, discourse ~$1.10, nextjs ~$1.20 typical. 2× buffer keeps
+# healthy sessions intact while bounding worst-case session spend at
+# ~$2.25 (i.e. a runaway nextjs caps at ~2× its mean).
+BUDGET_PER_REPO = {
+    "flask":     1.00,
+    "gin":       1.00,
+    "axum":      1.75,
+    "javalin":   1.75,
+    "discourse": 2.00,
+    "nextjs":    2.25,
+}
+
+DEFAULT_BUDGET_USD = 1.50  # unknown repos (e.g. held-out sense) — sits at the median.
 
 # Claude pricing per million tokens. Used to estimate cost on failed runs
 # whose transcript never emitted a final total_cost_usd. Update when
@@ -486,17 +537,27 @@ def estimate_cost(usage):
     ) / 1_000_000
 
 
-def score_transcript(transcript_path, scenario, repo_path=None):
+def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=None):
     """Score a transcript against a scenario.
 
     Two-layer scoring:
-      fairness_score  = correctness (0.70) + efficiency (0.30)
-                        Skips checks tagged layer: adoption.
-      adoption_score  = tool_fluency (0.60) + discoverability (0.40)
-                        For code-intel-vs-code-intel comparisons only.
+      fairness components — keyword_coverage, citation_grounding,
+                            efficiency. llm_quality is filled in by
+                            judge.py; the combined fairness_score is
+                            computed by the reporter via fairness.compute.
+                            Skips checks tagged layer: adoption.
+      adoption_score      — tool_fluency (0.60) + discoverability (0.40)
+                            For code-intel-vs-code-intel comparisons only.
+
+    repo_path     — the result_dir, used as cwd for `diff_contains` checks.
+    repo_checkout — the cloned repo at run_meta.repo_commit, used by
+                    grounding to verify citations. Optional: if missing,
+                    citation_grounding reports total but skips verification.
     """
+    from grounding import ground_citations
+
     t = parse_transcript(transcript_path)
-    full_text = read_full_transcript(transcript_path)
+    answer_text, audit_text = read_transcript_texts(transcript_path)
 
     tool_calls = t["tool_calls"]
     usage = t["usage"]
@@ -505,15 +566,21 @@ def score_transcript(transcript_path, scenario, repo_path=None):
 
     step_results = []
     for step in scenario.get("steps", []):
-        sr = evaluate_step(step, full_text, tool_calls, repo_path)
-        sr["tool_calls_count"] = len(tool_calls)
-        sr["token_total"] = billed_tokens + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"]
+        sr = evaluate_step(step, answer_text, tool_calls, repo_path)
         step_results.append(sr)
 
     misses = detect_misses(tool_calls)
 
     completeness = sum(s["combined_score"] for s in step_results) / max(len(step_results), 1)
-    correctness = sum(s["fairness_score"] for s in step_results) / max(len(step_results), 1)
+
+    # True hit rate across all fairness checks: a 10-check step now carries
+    # ten times the weight of a 1-check step. Bonus checks weighted at 0.5
+    # to match the per-step combined_score formula. The previous step-mean
+    # is preserved as `step_avg_score` for anyone who wants it.
+    fair_hits = sum(s["fairness_hits_required"] + 0.5 * s["fairness_hits_bonus"] for s in step_results)
+    fair_total = sum(s["fairness_total_required"] + 0.5 * s["fairness_total_bonus"] for s in step_results)
+    keyword_coverage = (fair_hits / fair_total) if fair_total > 0 else 1.0
+    step_avg_score = sum(s["fairness_score"] for s in step_results) / max(len(step_results), 1)
 
     repo = scenario.get("repo", "")
     ceiling = EFFICIENCY_CEILINGS.get(repo, DEFAULT_EFFICIENCY_CEILING)
@@ -527,8 +594,6 @@ def score_transcript(transcript_path, scenario, repo_path=None):
     time_eff = max(0.0, 1.0 - (wall_time / time_ceiling)) if wall_time > 0 else 0.0
     efficiency = 0.5 * token_eff + 0.5 * time_eff
 
-    fairness_score = 0.70 * correctness + 0.30 * efficiency
-
     grep_count = 0
     read_count = 0
     mcp_count = 0
@@ -540,7 +605,10 @@ def score_transcript(transcript_path, scenario, repo_path=None):
             cmd = inp.get("command", "") or ""
         if name.startswith("mcp__"):
             mcp_count += 1
-        elif name == "Grep" or "grep" in cmd or "rg " in cmd:
+        elif name in ("Grep", "Glob") or "grep" in cmd or "rg " in cmd:
+            # Glob and Grep both count as conventional search for fluency —
+            # a tool that satisfies a "find this code" task with Glob is
+            # still bypassing the code-intel layer.
             grep_count += 1
         elif name == "Read":
             fp = ""
@@ -554,21 +622,32 @@ def score_transcript(transcript_path, scenario, repo_path=None):
     else:
         tool_fluency = 0.5
 
-    total_richness = max((s.get("richness", 0) for s in step_results), default=0)
-    discoverability = min(1.0, total_richness / 10.0)
+    # Saturate at 20 unique files rather than 10. The previous ceiling gave
+    # every reasonably-rich answer a free 1.0 — Sense surfaced 18 files in
+    # discourse and was indistinguishable from a hypothetical 11. The richer
+    # "novel files surfaced by MCP tool_result" notion is deferred to 20-06
+    # once tool_result parsing has a few iterations of wear.
+    total_richness = _check_richness(answer_text, 0).get("unique_files", 0)
+    discoverability = min(1.0, total_richness / 20.0)
 
     adoption_score = 0.60 * tool_fluency + 0.40 * discoverability
+
+    # Citation grounding. Folded into combined fairness via fairness.py
+    # (post-20-05). The combined score is computed by the reporter from
+    # scored.json + judged.json; scorer.py emits the components only.
+    citation_grounding = ground_citations(answer_text, repo_checkout)
 
     scored = {
         "scenario": scenario["name"],
         "repo": scenario["repo"],
-        "fairness_score": round(fairness_score, 4),
         "adoption_score": round(adoption_score, 4),
-        "correctness": round(correctness, 4),
+        "keyword_coverage": round(keyword_coverage, 4),
+        "step_avg_score": round(step_avg_score, 4),
         "efficiency": round(efficiency, 4),
         "completeness": round(completeness, 4),
         "tool_fluency": round(tool_fluency, 4),
         "discoverability": round(discoverability, 4),
+        "citation_grounding": citation_grounding,
         "steps": step_results,
         "misses": misses,
         "metrics": {
@@ -583,11 +662,13 @@ def score_transcript(transcript_path, scenario, repo_path=None):
             "token_total_billed": billed_tokens,
             "token_total_all": billed_tokens + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"],
             "wall_time_seconds": wall_time,
-            "cost_usd": t.get("cost_usd"),
+            "cost_usd": round(t["cost_usd"], 4) if t.get("cost_usd") is not None else None,
             "efficiency_ceiling": ceiling,
             "time_ceiling_seconds": time_ceiling,
             "token_efficiency": round(token_eff, 4),
             "time_efficiency": round(time_eff, 4),
+            "answer_chars": len(answer_text),
+            "audit_chars": len(audit_text),
         },
     }
 
@@ -596,12 +677,17 @@ def score_transcript(transcript_path, scenario, repo_path=None):
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: scorer.py <result_dir> <scenario.yaml> <bench2_dir>", file=sys.stderr)
+        print(
+            "Usage: scorer.py <result_dir> <scenario.yaml> <bench2_dir> "
+            "[repo_checkout]",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     result_dir = sys.argv[1]
     scenario_path = sys.argv[2]
     bench2_dir = sys.argv[3]
+    repo_checkout = sys.argv[4] if len(sys.argv) > 4 else None
 
     sys.path.insert(0, os.path.join(bench2_dir, "lib"))
     from scenario import parse as parse_scenario
@@ -627,56 +713,96 @@ if __name__ == "__main__":
             run_meta = {}
 
     if run_meta.get("error"):
-        # Failed runs still cost real money — the session ran for thousands
-        # of seconds before timing out. Recover the usage from the partial
-        # transcript so total cost reflects what actually got spent. The
-        # final `result` event never fires on failure, so we sum per-message
-        # usage and price it ourselves.
+        # The session was interrupted (over-budget, wall-time timeout, or a
+        # real crash). Inspect the transcript to distinguish:
+        #   - has assistant text + final `result` event: claude exited
+        #     non-zero AFTER the model emitted a complete answer (typical
+        #     over-budget signature). Score it.
+        #   - has assistant text, no `result` event: truncated mid-stream.
+        #     Score what was emitted; patch in partial-usage metrics so
+        #     cost/efficiency reflect real spend.
+        #   - no assistant text: real crash. Keep the legacy zero behavior.
+        # Rationale: an exam done under constraint still gets graded on
+        # what was written; it doesn't get a zero for hitting the time
+        # limit. `constrained: True` carries that signal in reports and
+        # audits without poisoning the fairness score with false zeros.
         partial = parse_transcript(transcript_path)
-        partial_usage = sum_partial_usage(transcript_path)
-        partial_cost = (
-            partial["cost_usd"]
-            if partial["cost_usd"] is not None
-            else estimate_cost(partial_usage)
-        )
-        billed_tokens = partial_usage["input_tokens"] + partial_usage["output_tokens"]
-        all_tokens = (billed_tokens
-                      + partial_usage["cache_read_input_tokens"]
-                      + partial_usage["cache_creation_input_tokens"])
-        scored = {
-            "scenario": scenario["name"],
-            "repo": scenario["repo"],
-            "failed": True,
-            "failure_reason": run_meta.get("error"),
-            "fairness_score": 0.0,
-            "adoption_score": 0.0,
-            "correctness": 0.0,
-            "efficiency": 0.0,
-            "completeness": 0.0,
-            "tool_fluency": 0.0,
-            "discoverability": 0.0,
-            "steps": [],
-            "misses": {},
-            "metrics": {
-                "tool_calls": len(partial["tool_calls"]),
-                "grep_count": 0,
-                "read_count": 0,
-                "mcp_count": 0,
-                "token_input_uncached": partial_usage["input_tokens"],
-                "token_output": partial_usage["output_tokens"],
-                "token_cache_read": partial_usage["cache_read_input_tokens"],
-                "token_cache_write": partial_usage["cache_creation_input_tokens"],
-                "token_total_billed": billed_tokens,
-                "token_total_all": all_tokens,
-                "wall_time_seconds": float(run_meta.get("wall_time_seconds") or 0),
-                "cost_usd": round(partial_cost, 4),
-                "cost_estimated": partial["cost_usd"] is None,
-                "efficiency_ceiling": EFFICIENCY_CEILINGS.get(
-                    scenario.get("repo", ""), DEFAULT_EFFICIENCY_CEILING),
-            },
-        }
+        has_answer = bool(partial["text_blocks"])
+        has_result_event = partial["cost_usd"] is not None
+
+        if not has_answer:
+            # True crash — no model output. Zero everything (legacy path).
+            partial_usage = sum_partial_usage(transcript_path)
+            partial_cost = estimate_cost(partial_usage)
+            billed_tokens = partial_usage["input_tokens"] + partial_usage["output_tokens"]
+            all_tokens = (billed_tokens
+                          + partial_usage["cache_read_input_tokens"]
+                          + partial_usage["cache_creation_input_tokens"])
+            scored = {
+                "scenario": scenario["name"],
+                "repo": scenario["repo"],
+                "failed": True,
+                "failure_reason": run_meta.get("error"),
+                "adoption_score": 0.0,
+                "keyword_coverage": 0.0,
+                "step_avg_score": 0.0,
+                "efficiency": 0.0,
+                "completeness": 0.0,
+                "tool_fluency": 0.0,
+                "discoverability": 0.0,
+                "steps": [],
+                "misses": {},
+                "metrics": {
+                    "tool_calls": len(partial["tool_calls"]),
+                    "grep_count": 0,
+                    "read_count": 0,
+                    "mcp_count": 0,
+                    "token_input_uncached": partial_usage["input_tokens"],
+                    "token_output": partial_usage["output_tokens"],
+                    "token_cache_read": partial_usage["cache_read_input_tokens"],
+                    "token_cache_write": partial_usage["cache_creation_input_tokens"],
+                    "token_total_billed": billed_tokens,
+                    "token_total_all": all_tokens,
+                    "wall_time_seconds": float(run_meta.get("wall_time_seconds") or 0),
+                    "cost_usd": round(partial_cost, 4),
+                    "cost_estimated": partial["cost_usd"] is None,
+                    "efficiency_ceiling": EFFICIENCY_CEILINGS.get(
+                        scenario.get("repo", ""), DEFAULT_EFFICIENCY_CEILING),
+                },
+            }
+        else:
+            # Score the constrained session normally.
+            scored = score_transcript(
+                transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+            )
+            scored["failed"] = False
+            scored["constrained"] = True
+            scored["constraint_reason"] = run_meta.get("error")
+            if not has_result_event:
+                # Truncated mid-stream: the result event never fired, so
+                # parse_transcript saw zero usage/cost. Recover real spend
+                # from per-message usage and patch the metrics so cost
+                # tracking and the efficiency axis don't under-report.
+                partial_usage = sum_partial_usage(transcript_path)
+                billed = partial_usage["input_tokens"] + partial_usage["output_tokens"]
+                m = scored["metrics"]
+                m["token_input_uncached"] = partial_usage["input_tokens"]
+                m["token_output"] = partial_usage["output_tokens"]
+                m["token_cache_read"] = partial_usage["cache_read_input_tokens"]
+                m["token_cache_write"] = partial_usage["cache_creation_input_tokens"]
+                m["token_total_billed"] = billed
+                m["token_total_all"] = (
+                    billed
+                    + partial_usage["cache_read_input_tokens"]
+                    + partial_usage["cache_creation_input_tokens"]
+                )
+                m["cost_usd"] = round(estimate_cost(partial_usage), 4)
+                m["cost_estimated"] = True
+                m["wall_time_seconds"] = float(run_meta.get("wall_time_seconds") or 0)
     else:
-        scored = score_transcript(transcript_path, scenario, result_dir)
+        scored = score_transcript(
+            transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+        )
 
     output_path = os.path.join(result_dir, "scored.json")
     with open(output_path, "w") as f:

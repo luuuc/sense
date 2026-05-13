@@ -1,0 +1,117 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the codebase.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the Javalin codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for the core classes (Javalin,
+          JavalinServlet, Context, Handler) and explain how routes get
+          registered and dispatched? Could the agent pick the right
+          entry point to extend with only small, targeted lookups, not
+          a fresh orientation pass?
+      specificity:
+        weight: 0.25
+        question: |
+          Are core classes cited at file:line, not just "in the io.javalin
+          package"? Is the route-registration call chain named explicitly?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY Javalin splits Javalin (config) from
+          JavalinServlet (dispatch) and what role Context plays — not
+          just NAME the classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag Kotlin-specific surfaces (extension
+          functions, companion objects) and Jetty internals that an
+          agent unfamiliar with Kotlin may misread?
+
+  - name: Trace HTTP dispatch from JavalinServlet.service
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer walk service() through router matching,
+          before/after filters, handler exec, response production with
+          file:line? Could the agent insert a request-scoped concern
+          at the right layer?
+      specificity:
+        weight: 0.25
+        question: |
+          Are method names exact (service, handleRequest, etc.) with
+          paths? Are filter phases (before, after, afterMatched) named
+          rather than collapsed into "the middleware chain"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY service() delegates the way it
+          does, what role JavalinExceptionMapper plays, and how filter
+          ordering is enforced?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag servlet-container behaviours (async,
+          chunked responses) that may alter the linear dispatch picture?
+
+  - name: Trace route registration and find test files
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace Javalin.get() → routing table with
+          file:line and list test files covering HTTP dispatch with
+          their key test methods? Could the agent know which tests to
+          run for a routing change?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the route-registration internals named (e.g. the routing
+          table type, the addHttpHandler method) rather than glossed
+          as "the router"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY routes go through a particular
+          internal API and what each test file is exercising — not just
+          LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag dynamic route registration paths,
+          plugin-contributed routes, or integration tests that touch
+          dispatch indirectly?
+
+  - name: Assess adding a custom error handler
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the files and methods to touch
+          (exception mapper, error handler registry) with file:line,
+          and clarify how before/after filters interact with error
+          paths? Could the agent open a PR from this?
+      specificity:
+        weight: 0.25
+        question: |
+          Are error-handling surfaces cited concretely (Javalin.error,
+          JavalinExceptionMapper) rather than "the error system"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHERE existing error handling happens,
+          why filters are or aren't run on error paths, and what
+          observability hooks already exist?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag servlet-level vs Javalin-level exception
+          handling and the interaction with async request lifecycles?

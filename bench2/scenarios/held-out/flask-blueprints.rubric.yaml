@@ -1,0 +1,125 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the codebase.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+steps:
+  - name: Map the Blueprint class surface
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer name the Blueprint class with file:line, the
+          BlueprintSetupState helper, and the sansio split (both
+          src/flask/blueprints.py and src/flask/sansio/blueprints.py)?
+          Could the agent hook a new lifecycle method into the right
+          file without re-reading the package?
+      specificity:
+        weight: 0.25
+        question: |
+          Are methods cited as file:line Blueprint.register, not just
+          "in blueprints.py"? Is the deferred_functions list named
+          concretely rather than gestured at as "some queue"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY Flask split sansio out — async
+          neutrality / request-context independence — so the agent
+          knows which file to edit when adding a new hook?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the inheritance relationship between the
+          sansio Blueprint and the runtime Blueprint, and any methods
+          present in only one of the two?
+
+  - name: Trace url_prefix composition through register()
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace Flask.register_blueprint → Blueprint.register
+          → add_url_rule with file:line, and explicitly cover how parent
+          and child url_prefix concatenate when nesting? Could the agent
+          insert new prefix-aware logic at the correct hop without
+          re-reading the chain?
+      specificity:
+        weight: 0.25
+        question: |
+          Are call sites cited at method-level with file:line rather
+          than "somewhere in register()"? Is the override precedence
+          between blueprint-defined url_prefix and register-time
+          kwarg url_prefix made explicit?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY composition happens via the setup
+          state rather than mutating Blueprint directly — so the agent
+          understands the reason for the indirection before editing it?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag edge cases — trailing-slash handling,
+          subdomain interaction with url_prefix, registering the same
+          blueprint twice under different prefixes?
+
+  - name: Locate test coverage for blueprint registration
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the test files and key test
+          functions covering blueprint registration and nested-prefix
+          behavior, with paths? Could the agent identify which tests
+          to update or extend?
+      specificity:
+        weight: 0.25
+        question: |
+          Are test functions named (e.g. test_nesting_url_prefixes)
+          rather than referred to as "the blueprint tests"? Are paths
+          concrete?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHAT each test file covers — basic
+          registration vs nesting vs deferred functions — not just LIST
+          them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag indirect coverage in integration tests
+          that exercise blueprints without naming them directly?
+
+  - name: Assess adding a runtime-mutable disabled flag to Blueprint
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the files and methods that need
+          editing with file:line, name the registration-time vs
+          dispatch-time tradeoff, and acknowledge that add_url_rule
+          mutates url_map at register time (so post-registration
+          toggling requires more than a flag check)? Could the agent
+          open a PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are affected symbols named precisely (Blueprint.register,
+          Flask.url_map, the dispatch path) rather than "the blueprint
+          internals"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each option has consequences —
+          register-time gating is simple but irreversible without
+          re-creating the app, dispatch-time check is reversible but
+          touches the hot path — not just LIST options?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag third-party extensions or user code that
+          may register blueprints in ways the in-repo enumeration cannot
+          cover?

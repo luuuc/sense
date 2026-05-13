@@ -11,15 +11,13 @@ description: 'Trace the Discourse topic creation flow from the HTTP controller
   '
 steps:
 - name: Orient in the Discourse codebase
-  prompt: 'I just cloned Discourse and need to understand its architecture.
-
-    Give me a high-level orientation: what it does, structure, key
-
-    abstractions (Guardians, services, serializers), and where to
-
-    start reading. Read key files when useful. No Explore agents.
-
-    '
+  prompt: "You're an AI coding agent about to ship work into Discourse.
+    Hand the next agent the map they need to act: what Discourse does,
+    its top-level structure, the key abstractions (Guardians, services,
+    serializers) with file paths, and the entry points to start reading.
+    The follow-up agent should need only small, targeted lookups — not
+    a fresh exploration of the codebase. No Explore agents.
+    "
   checks:
   - type: word
     value: Guardian
@@ -40,13 +38,14 @@ steps:
     layer: adoption
     description: Used semantic search for Guardian/authorization orientation
 - name: Trace topic creation from controller to persistence
-  prompt: 'Trace the topic creation flow from TopicsController#create through
-
-    TopicCreator and PostCreator service objects to database persistence.
-
-    For each method: file path, class, what it does, what it calls next.
-
-    '
+  prompt: "You're about to add a permission check to topic creation.
+    Produce the map your downstream edits will need: file:line for every
+    layer in the creation flow (HTTP entry through TopicCreator and
+    PostCreator service objects to database persistence), the call-order
+    between them, and any alternate entry sites that would be affected.
+    The follow-up agent should need only small, targeted lookups — not
+    a fresh exploration of the codebase.
+    "
   checks:
   - type: word
     value: TopicsController
@@ -79,15 +78,13 @@ steps:
     layer: adoption
     description: Used semantic search for topic creation flow tracing
 - name: Understand Guardian authorization
-  prompt: 'Find how Guardian is used in the topic creation path. Where is it
-
-    instantiated? Which Guardian methods are called? What permission
-
-    checks gate topic creation? Read lib/guardian.rb and guardian
-
-    concern files.
-
-    '
+  prompt: "You're about to extend Guardian with a new permission check.
+    Map the Guardian methods that gate topic creation with file:line: where
+    Guardian is instantiated, which methods are called along the path, and
+    which concern files own each check. Connect Guardian usage to
+    serializer surfaces if relevant. The follow-up agent should need only
+    small, targeted lookups — not a fresh exploration of the codebase.
+    "
   checks:
   - type: word
     value: topic_guardian
@@ -111,15 +108,14 @@ steps:
     required: true
     description: Connected Guardian permissions to frontend serialization layer
 - name: Assess impact of adding a permission check
-  prompt: 'You need to add a permission: only users who have been members
-
-    for >24 hours can create topics. Which Guardian method changes,
-
-    where inserted in the create flow, what specs need updating,
-
-    what other paths are affected? Be specific about file:line.
-
-    '
+  prompt: "You're about to add a permission: only users who have been
+    members for >24 hours can create topics. Produce the edit map:
+    which Guardian method changes, where it's invoked in the create
+    flow, which specs need updating, which alternate paths (queue, drafts,
+    plugin overrides) are affected. Use file:line throughout. The
+    follow-up agent should need only small, targeted lookups — not a
+    fresh exploration of the codebase.
+    "
   checks:
   - type: word
     value: Guardian

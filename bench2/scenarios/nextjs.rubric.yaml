@@ -1,0 +1,123 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the monorepo.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act. Next.js is a large
+  TypeScript codebase with two router systems — map_quality means naming
+  the right router and the right file:line, not generic SSR talk.
+
+steps:
+  - name: Orient in the Next.js server architecture
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for the server classes
+          (NextNodeServer, the base Server in base-server.ts,
+          NextCustomServer) and major subdirectories (app-render,
+          route-modules, response-cache)? Could the agent navigate
+          to the right server class to extend?
+      specificity:
+        weight: 0.25
+        question: |
+          Are class names exact (NextNodeServer, not "NodeServer")?
+          Is the Pages-vs-App-Router split made concrete with files
+          (render.tsx vs app-render/), not just described?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the server class hierarchy exists
+          (Edge vs Node, custom server seam) and what each subdirectory
+          is responsible for — not just NAME them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the dev-vs-prod server split, Turbopack
+          vs webpack, and other configuration branches that may change
+          which code path actually runs?
+
+  - name: Trace the SSR request lifecycle
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer walk the SSR pipeline (router-server →
+          handleRequest → loadComponents → renderToHTMLImpl /
+          renderToHTMLOrFlightImpl) with file:line at each? Could the
+          agent insert a render-time hook at the right layer?
+      specificity:
+        weight: 0.25
+        question: |
+          Are exported wrappers distinguished from inner Impl functions
+          (renderToHTMLOrFlight vs renderToHTMLOrFlightImpl)? Is the
+          outermost entry (router-server) named, not skipped?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the pipeline splits into Pages
+          vs App router, what loadComponents and findPageComponents
+          do at the boundary — not just LIST methods?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag streaming/Flight, dynamic vs static
+          paths, response-cache bypasses that may divert the linear
+          pipeline?
+
+  - name: Find callers of renderToHTMLOrFlight
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer list every caller with file:line, enclosing
+          function, and subdirectory (app-render / route-modules /
+          next-server)? Could the agent change the signature confident
+          all sites were enumerated?
+      specificity:
+        weight: 0.25
+        question: |
+          Are callers cited concretely (file:line + enclosing fn) and
+          the export point (where renderToHTMLOrFlight is re-exported
+          from) named?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each caller exists — request
+          handler vs route module wrapper vs internal re-export — not
+          just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag dynamic dispatch, route-module wiring
+          that registers callers at runtime, and edge-runtime variants
+          the agent should double-check?
+
+  - name: Assess where to thread a request ID
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer name RequestMeta, the NEXT_REQUEST_ID_HEADER
+          constant, handleRequest, and the response-cache interaction
+          with file:line? Could the agent open a PR using only this
+          map?
+      specificity:
+        weight: 0.25
+        question: |
+          Are infrastructure pieces cited concretely (NEXT_REQUEST_ID_HEADER
+          location, RequestMeta keys) rather than "the request metadata
+          system"? Are the affected tests named?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain the tradeoff between RequestMeta and
+          AsyncLocalStorage — sync vs async access patterns, cache key
+          implications — not just LIST options?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag response-cache key inclusion, edge
+          runtime constraints, and Middleware (root middleware) as
+          interaction points the agent must verify?

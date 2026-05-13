@@ -18,7 +18,8 @@ import yaml
 
 
 CHECK_TYPES = {"contains", "exact", "diff_contains", "transcript_contains",
-                "word", "starts_with", "mcp_tool_used", "no_grep", "response_richness"}
+                "word", "phrase", "starts_with", "mcp_tool_used", "no_grep",
+                "response_richness"}
 
 SCENARIO_REQUIRED = {
     "name": str,
@@ -172,73 +173,6 @@ def build_full_prompt(scenario):
         lines.append("")
 
     return "\n".join(lines)
-
-
-def compute_score_per_step(step_results, scenario):
-    """Compute per-step and overall score from check results.
-
-    step_results: list of dicts with keys:
-      - name, checks_completed, checks_total, checks_bonus_total,
-        wall_time, token_total, tool_calls, misses
-    scenario: parsed scenario dict with scoring weights.
-    """
-    weights = scenario.get("scoring", {}).get("weights", {})
-
-    per_step = []
-    for sr in step_results:
-        total_checks = sr["checks_total"] + sr.get("checks_bonus_total", 0)
-        completed = sr["checks_completed"]
-
-        step_score = completed / total_checks if total_checks > 0 else 0.0
-
-        miss_penalty = 0.0
-        if sr.get("misses", 0) > 0:
-            miss_penalty = sr["misses"] * 0.05
-
-        per_step.append({
-            "name": sr["name"],
-            "score": round(max(0.0, step_score - miss_penalty), 4),
-            "raw_score": round(step_score, 4),
-            "miss_penalty": round(miss_penalty, 4),
-            "checks_completed": sr["checks_completed"],
-            "checks_total": sr["checks_total"],
-            "wall_time": sr.get("wall_time", 0),
-            "token_total": sr.get("token_total", 0),
-            "tool_calls": sr.get("tool_calls", 0),
-            "misses": sr.get("misses", 0),
-        })
-
-    completeness = sum(s["raw_score"] for s in per_step) / len(per_step) if per_step else 0
-
-    total_misses = sum(s["misses"] for s in per_step)
-    max_steps = max(len(per_step), 1)
-    tool_fluency = 1.0 - min(1.0, total_misses / (max_steps * 2))
-
-    total_tokens = sum(s["token_total"] for s in per_step)
-    total_time = sum(s["wall_time"] for s in per_step)
-
-    efficiency = 1.0
-    if total_tokens > 5000:
-        efficiency = max(0.0, 1.0 - (total_tokens / 50000))
-
-    overall = (
-        weights.get("completeness", 0.3) * completeness
-        + weights.get("accuracy", 0.3) * completeness
-        + weights.get("efficiency", 0.2) * efficiency
-        + weights.get("tool_fluency", 0.1) * tool_fluency
-        + weights.get("discoverability", 0.1) * (1.0 - min(1.0, total_misses / max_steps))
-    )
-
-    return {
-        "steps": per_step,
-        "completeness": round(completeness, 4),
-        "tool_fluency": round(tool_fluency, 4),
-        "efficiency": round(efficiency, 4),
-        "overall": round(overall, 4),
-        "total_tokens": total_tokens,
-        "total_time": total_time,
-        "total_misses": total_misses,
-    }
 
 
 if __name__ == "__main__":
