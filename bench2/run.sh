@@ -420,7 +420,17 @@ print()
         passed=$((passed + 1))
       else
         log "  FAIL: Claude session failed after ${wall_time}s"
-        echo "{\"error\": \"claude_session_failed\"}" > "$result_dir/run_meta.json"
+        python3 -c "
+import json, sys
+meta = {
+    'tool': sys.argv[1], 'repo': sys.argv[2], 'scenario': sys.argv[3],
+    'wall_time_seconds': int(sys.argv[4]), 'max_budget_usd': float(sys.argv[5]),
+    'timestamp': sys.argv[6], 'error': 'claude_session_failed',
+    'claude_exit_code': int(sys.argv[7]),
+}
+json.dump(meta, sys.stdout, indent=2)
+print()
+" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$claude_rc" > "$result_dir/run_meta.json"
         failed=$((failed + 1))
       fi
     done

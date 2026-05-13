@@ -189,3 +189,13 @@ func BenchmarkRerankerScore(b *testing.B) {
 		}
 	}
 }
+
+// TestONNXRerankerCloseNilSession pins the defensive Close() path for
+// a reranker that never finished construction (session unset). Without
+// this guard a stale Close call would panic on r.session.Destroy.
+func TestONNXRerankerCloseNilSession(t *testing.T) {
+	r := &ONNXReranker{}
+	if err := r.Close(); err != nil {
+		t.Errorf("Close on nil-session reranker: %v", err)
+	}
+}

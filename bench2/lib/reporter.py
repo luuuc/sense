@@ -26,9 +26,9 @@ METRIC_DIRECTIONS = {
     "fairness": ("higher", "Fairness score — correctness (0.70) + efficiency (0.30), excludes tool-adoption checks"),
     "adoption": ("higher", "Adoption score — tool fluency + discoverability, for code-intel comparisons only"),
     "correctness": ("higher", "Checklist hit rate excluding adoption-layer checks"),
-    "efficiency": ("higher", "Token efficiency calibrated per repo size"),
+    "efficiency": ("higher", "Half token efficiency + half time efficiency, each calibrated per repo"),
     "tokens": ("lower", "Billed tokens (uncached) — lower is better (cheaper)"),
-    "wall_time": ("lower", "Wall-clock time — lower is better"),
+    "wall_time": ("lower", "Wall-clock time — lower is better, folded into efficiency"),
     "cost_usd": ("lower", "API cost in USD — lower is better"),
 }
 
@@ -100,6 +100,9 @@ def build_per_scenario_table(results):
                 "tokens": m.get("token_total_billed", m.get("token_total", 0)),
                 "wall_time": m.get("wall_time_seconds"),
                 "cost_usd": m.get("cost_usd"),
+                "cost_estimated": bool(m.get("cost_estimated")),
+                "failed": bool(r.get("failed")),
+                "failure_reason": r.get("failure_reason"),
             })
         rows.sort(key=lambda r2: (r2["fairness_score"] or 0), reverse=True)
         tables.append({"repo": repo, "rows": rows})
@@ -129,9 +132,11 @@ def build_aggregate(results):
         def avg(lst):
             return sum(lst) / len(lst) if lst else 0.0
 
+        failures = sum(1 for r2 in runs if r2.get("failed"))
         agg.append({
             "tool": tool_name,
             "scenarios": n,
+            "failures": failures,
             "avg_fairness": round(avg(fairness), 4) if fairness else None,
             "avg_adoption": round(avg(adoption), 4) if adoption else None,
             "avg_correctness": round(avg(correct), 4) if correct else None,
@@ -207,6 +212,13 @@ def format_terminal(tables, aggregate, header):
         lines.append(f"  {'-' * 68}")
 
         for row in table["rows"]:
+            if row.get("failed"):
+                wt = f"{row['wall_time']:>6.1f}s" if row["wall_time"] else "      —"
+                reason = row.get("failure_reason") or "failed"
+                lines.append(
+                    f"  {row['tool']:<14} FAILED                                    {wt}   ({reason})"
+                )
+                continue
             fa = f"{row['fairness_score']:>6.3f}" if row["fairness_score"] is not None else "     —"
             ad = f"{row['adoption_score']:>6.3f}" if row["adoption_score"] is not None else "     —"
             cr = f"{row['correctness']:>6.0%}" if row["correctness"] is not None else "     —"
@@ -223,17 +235,18 @@ def format_terminal(tables, aggregate, header):
     lines.append("  AGGREGATE (all scenarios)")
     lines.append(f"{'=' * 78}")
     lines.append("")
-    lines.append(f"  {'Tool':<14} {'Runs':>4} {'Avg Fair':>8} {'Avg Adopt':>9} {'Avg Corr':>8} {'Avg Eff':>7} {'Avg Tokens':>10} {'Cost':>7}")
-    lines.append(f"  {'-' * 72}")
+    lines.append(f"  {'Tool':<14} {'Runs':>4} {'Fail':>4} {'Avg Fair':>8} {'Avg Adopt':>9} {'Avg Corr':>8} {'Avg Eff':>7} {'Avg Tokens':>10} {'Avg Time':>9} {'Cost':>7}")
+    lines.append(f"  {'-' * 86}")
 
     for row in aggregate:
-        af = f"{row['avg_fairness']:>8.4f}" if row["avg_fairness"] else "       —"
-        aa = f"{row['avg_adoption']:>9.4f}" if row["avg_adoption"] else "        —"
-        ac = f"{row['avg_correctness']:>8.1%}" if row["avg_correctness"] else "       —"
-        ae = f"{row['avg_efficiency']:>7.4f}" if row["avg_efficiency"] else "      —"
+        af = f"{row['avg_fairness']:>8.4f}" if row["avg_fairness"] is not None else "       —"
+        aa = f"{row['avg_adoption']:>9.4f}" if row["avg_adoption"] is not None else "        —"
+        ac = f"{row['avg_correctness']:>8.1%}" if row["avg_correctness"] is not None else "       —"
+        ae = f"{row['avg_efficiency']:>7.4f}" if row["avg_efficiency"] is not None else "      —"
+        at = f"{row['avg_time']:>8.1f}s" if row.get("avg_time") is not None else "        —"
         co = f"${row['total_cost']:>6.2f}" if row["total_cost"] else "      —"
         lines.append(
-            f"  {row['tool']:<14} {row['scenarios']:>4} {af} {aa} {ac} {ae} {row['avg_tokens']:>10,} {co}"
+            f"  {row['tool']:<14} {row['scenarios']:>4} {row.get('failures', 0):>4} {af} {aa} {ac} {ae} {row['avg_tokens']:>10,} {at} {co}"
         )
 
     lines.append("")
@@ -249,7 +262,7 @@ def format_markdown(tables, aggregate, header):
     lines.append("")
     lines.append(f"Results: {len(aggregate)} tools × {len(tables)} scenarios")
     lines.append("")
-    lines.append("Two-layer scoring: **Fairness** (correctness 70% + efficiency 30%) measures answer quality without tool-adoption bias. **Adoption** (tool fluency + discoverability) is for code-intel-vs-code-intel comparisons only.")
+    lines.append("Two-layer scoring: **Fairness** (correctness 70% + efficiency 30%) measures answer quality without tool-adoption bias. Efficiency is half token efficiency + half time efficiency, so a slow session is penalized even if it uses few tokens. **Adoption** (tool fluency + discoverability) is for code-intel-vs-code-intel comparisons only.")
     lines.append("")
 
     lines.append("### Reading the scores")
@@ -274,6 +287,18 @@ def format_markdown(tables, aggregate, header):
 
         for i, row in enumerate(table["rows"]):
             badge = _rank_badge(i)
+            if row.get("failed"):
+                wt = f"{row['wall_time']:.1f}s" if row["wall_time"] else "—"
+                if row.get("cost_usd") is not None:
+                    co = f"~${row['cost_usd']:.2f}*" if row.get("cost_estimated") else f"${row['cost_usd']:.2f}"
+                else:
+                    co = "—"
+                reason = row.get("failure_reason") or "failed"
+                lines.append(
+                    f"| {i+1} | {row['tool']} | **FAILED** | — | — | — | — | {wt} | {co} |"
+                    f" <!-- {reason} -->"
+                )
+                continue
             fa = f"{row['fairness_score']:.3f}" if row["fairness_score"] is not None else "—"
             ad = f"{row['adoption_score']:.3f}" if row["adoption_score"] is not None else "—"
             cr = f"{row['correctness']:.0%}" if row["correctness"] is not None else "—"
@@ -288,18 +313,23 @@ def format_markdown(tables, aggregate, header):
 
     lines.append("### Aggregate")
     lines.append("")
-    lines.append("| Rank | Tool | Scenarios | Avg Fairness | Avg Adoption | Avg Correctness | Avg Efficiency | Avg Tokens | Total Cost |")
-    lines.append("|-----:|------|----------:|------------:|-----------:|---------------:|--------------:|-----------:|-----------:|")
+    lines.append("Failed runs count as fairness 0 in the average. The `Failures` column shows how many scenarios the tool could not complete. Costs marked with `*` are estimated from per-message token usage in the partial transcript, because the session never emitted a final cost event.")
+    lines.append("")
+    lines.append("| Rank | Tool | Scenarios | Failures | Avg Fairness | Avg Adoption | Avg Correctness | Avg Efficiency | Avg Tokens | Avg Time | Total Cost |")
+    lines.append("|-----:|------|----------:|--------:|------------:|-----------:|---------------:|--------------:|-----------:|--------:|-----------:|")
     for i, row in enumerate(aggregate):
         badge = _rank_badge(i)
-        af = f"{row['avg_fairness']:.4f}" if row["avg_fairness"] else "—"
-        aa = f"{row['avg_adoption']:.4f}" if row["avg_adoption"] else "—"
-        ac = f"{row['avg_correctness']:.4f}" if row["avg_correctness"] else "—"
-        ae = f"{row['avg_efficiency']:.4f}" if row.get("avg_efficiency") else "—"
+        af = f"{row['avg_fairness']:.4f}" if row["avg_fairness"] is not None else "—"
+        aa = f"{row['avg_adoption']:.4f}" if row["avg_adoption"] is not None else "—"
+        ac = f"{row['avg_correctness']:.4f}" if row["avg_correctness"] is not None else "—"
+        ae = f"{row['avg_efficiency']:.4f}" if row.get("avg_efficiency") is not None else "—"
+        at = f"{row['avg_time']:.1f}s" if row.get("avg_time") is not None else "—"
         co = f"${row['total_cost']:.2f}" if row["total_cost"] else "—"
+        fails = row.get("failures", 0)
+        fail_cell = f"**{fails}**" if fails else "0"
         lines.append(
-            f"| {i+1} | {row['tool']}{badge} | {row['scenarios']} | {af} | {aa} | {ac} | {ae} |"
-            f" {row['avg_tokens']:,} | {co} |"
+            f"| {i+1} | {row['tool']}{badge} | {row['scenarios']} | {fail_cell} | {af} | {aa} | {ac} | {ae} |"
+            f" {row['avg_tokens']:,} | {at} | {co} |"
         )
     lines.append("")
 

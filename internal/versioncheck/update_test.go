@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -300,6 +301,82 @@ func TestUpdateNewerAvailable(t *testing.T) {
 	}
 	if installVersion != "0.2.0" {
 		t.Errorf("install version = %q, want %q", installVersion, "0.2.0")
+	}
+}
+
+func TestUpdateInstallScriptFails(t *testing.T) {
+	origVersion := version.Version
+	version.Version = "0.1.0"
+	t.Cleanup(func() { version.Version = origVersion })
+
+	origIsGoInstall := isGoInstallFn
+	isGoInstallFn = func() bool { return false }
+	t.Cleanup(func() { isGoInstallFn = origIsGoInstall })
+
+	origFetch := fetchLatestTagFn
+	fetchLatestTagFn = func() (string, error) { return "0.2.0", nil }
+	t.Cleanup(func() { fetchLatestTagFn = origFetch })
+
+	origRunInstall := runInstallScriptFn
+	runInstallScriptFn = func(string, io.Writer, io.Writer) error {
+		return errors.New("install boom")
+	}
+	t.Cleanup(func() { runInstallScriptFn = origRunInstall })
+
+	var stdout, stderr bytes.Buffer
+	if code := Update(&stdout, &stderr); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("install failed: install boom")) {
+		t.Errorf("stderr missing install-failed message: %q", stderr.String())
+	}
+}
+
+func TestRunInstallScript(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		orig := installCommandFn
+		installCommandFn = func(string) *exec.Cmd { return exec.Command("true") }
+		t.Cleanup(func() { installCommandFn = orig })
+
+		var stdout, stderr bytes.Buffer
+		if err := runInstallScript("0.3.0", &stdout, &stderr); err != nil {
+			t.Errorf("runInstallScript: %v", err)
+		}
+	})
+
+	t.Run("command failure propagates", func(t *testing.T) {
+		orig := installCommandFn
+		installCommandFn = func(string) *exec.Cmd { return exec.Command("false") }
+		t.Cleanup(func() { installCommandFn = orig })
+
+		var stdout, stderr bytes.Buffer
+		if err := runInstallScript("0.3.0", &stdout, &stderr); err == nil {
+			t.Error("runInstallScript: expected error from exit-1 command")
+		}
+	})
+}
+
+func TestIsGoInstall_GopathEmptyUsesHome(t *testing.T) {
+	tmp := t.TempDir()
+	tmp, _ = filepath.EvalSymlinks(tmp)
+	binDir := filepath.Join(tmp, "go", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exePath := filepath.Join(binDir, "sense")
+	if err := os.WriteFile(exePath, []byte("fake"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := osExecutable
+	osExecutable = func() (string, error) { return exePath, nil }
+	t.Cleanup(func() { osExecutable = orig })
+
+	t.Setenv("GOPATH", "")
+	t.Setenv("HOME", tmp)
+
+	if !isGoInstall() {
+		t.Error("expected true when GOPATH unset and HOME/go/bin matches exe")
 	}
 }
 

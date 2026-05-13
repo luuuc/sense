@@ -18,6 +18,33 @@ BENCH2_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 sys.path.insert(0, os.path.join(BENCH2_DIR, "lib"))
 
 
+FORBIDDEN_FAIRNESS_TYPES = {"mcp_tool_used", "no_grep"}
+
+
+def validate_improvements(improvements):
+    """Strip forbidden check types from fairness layer. Returns (cleaned, warnings)."""
+    warnings = []
+    cleaned = {"scenarios": []}
+    for scenario_imp in improvements.get("scenarios", []):
+        cleaned_mods = []
+        for mod in scenario_imp.get("modifications", []):
+            action = mod.get("action", "")
+            if action in ("add_check", "tighten_check"):
+                new_check = mod.get("new_check", {})
+                check_type = new_check.get("type", "")
+                check_layer = new_check.get("layer", "fairness")
+                if check_type in FORBIDDEN_FAIRNESS_TYPES and check_layer != "adoption":
+                    warnings.append(
+                        f"BLOCKED {scenario_imp['repo']}: "
+                        f"{action} with type={check_type} forbidden in fairness layer"
+                    )
+                    continue
+            cleaned_mods.append(mod)
+        if cleaned_mods:
+            cleaned["scenarios"].append({**scenario_imp, "modifications": cleaned_mods})
+    return cleaned, warnings
+
+
 def apply_improvements(improvements, scenarios_dir, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     changes_manifest = {}
@@ -83,6 +110,22 @@ def apply_improvements(improvements, scenarios_dir, output_dir):
                 changes["weights_changed"] = True
                 changes["details"].append(f"weights → {mod['weights']}")
 
+            elif action == "remove_check":
+                check_type = mod["check_type"]
+                check_value = mod["check_value"]
+                step = scenario["steps"][step_idx]
+                original_len = len(step["checks"])
+                step["checks"] = [
+                    c for c in step["checks"]
+                    if not (c["type"] == check_type and c["value"] == check_value)
+                ]
+                removed = original_len - len(step["checks"])
+                if removed > 0:
+                    changes["checks_removed"] += 1
+                    changes["details"].append(
+                        f"step {step_idx}: removed {check_type}={check_value}"
+                    )
+
             elif action == "raise_threshold":
                 check_type = mod["check_type"]
                 old_value = mod["old_value"]
@@ -116,6 +159,10 @@ def main():
 
     with open(args.improvements) as f:
         improvements = json.load(f)
+
+    improvements, validation_warnings = validate_improvements(improvements)
+    for w in validation_warnings:
+        print(f"WARNING: {w}", file=sys.stderr)
 
     manifest = apply_improvements(improvements, args.scenarios_dir, args.output_dir)
 

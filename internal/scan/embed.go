@@ -22,8 +22,12 @@ const maxEmbedWorkers = 4
 
 const embedChunkSize = 512
 
+// embedPool fans out symbol batches across N embedders. The slice
+// holds the embed.Embedder interface (rather than *ONNXEmbedder)
+// so tests can substitute fakes and exercise the parallel path
+// without spinning up ONNX.
 type embedPool struct {
-	embedders []*embed.ONNXEmbedder
+	embedders []embed.Embedder
 	workers   int
 }
 
@@ -42,7 +46,7 @@ func newEmbedPool() (*embedPool, error) {
 		threadsPerWorker = 1
 	}
 
-	embedders := make([]*embed.ONNXEmbedder, workers)
+	embedders := make([]embed.Embedder, workers)
 	for i := range embedders {
 		emb, err := embed.NewBundledEmbedder(threadsPerWorker)
 		if err != nil {

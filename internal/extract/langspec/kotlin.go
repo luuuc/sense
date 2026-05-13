@@ -31,9 +31,6 @@ func init() {
 }
 
 func kotlinCallName(n *sitter.Node, source []byte) string {
-	if n.NamedChildCount() == 0 {
-		return ""
-	}
 	callee := n.NamedChild(0)
 	if callee == nil {
 		return ""

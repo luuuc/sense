@@ -156,6 +156,11 @@ def extract_quality_signals(results_dir, tool, repo):
     }
 
 
+def _avg_score(runs, key="fairness_score"):
+    vals = [r.get(key) for r in runs if r.get(key) is not None]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
 def analyze(results_dir, scenarios_dir):
     repos = discover_repos(results_dir)
     tools = discover_tools(results_dir)
@@ -223,8 +228,8 @@ def analyze(results_dir, scenarios_dir):
         for tool in tools:
             quality_signals[tool] = extract_quality_signals(results_dir, tool, repo)
 
-        sense_score = sense_runs[0].get("overall_score")
-        baseline_score = baseline_runs[0].get("overall_score")
+        sense_score = _avg_score(sense_runs)
+        baseline_score = _avg_score(baseline_runs)
 
         repo_analyses[repo] = {
             "checks": checks_analysis,

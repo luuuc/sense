@@ -61,6 +61,9 @@ PHASE_ARGS=()
 [[ -n "$TOOL_FILTER" ]] && PHASE_ARGS+=(--tool "$TOOL_FILTER")
 $DRY_RUN && PHASE_ARGS+=(--dry-run)
 
+HISTORY_FILE="$LOOP_DIR/results/loop-1/iteration-history.jsonl"
+mkdir -p "$LOOP_DIR/results/loop-1"
+
 for iter in $(seq 1 "$ITERATIONS"); do
   echo "========================================"
   echo "  Iteration $iter/$ITERATIONS"
@@ -86,6 +89,16 @@ for iter in $(seq 1 "$ITERATIONS"); do
   echo ""
   echo "--- Transcript Review (model: $REVIEWER_MODEL) ---"
 
+  HISTORY_SECTION=""
+  if [[ -f "$HISTORY_FILE" && -s "$HISTORY_FILE" ]]; then
+    HISTORY_SECTION="## Previous Iterations
+
+The following iterations have already been attempted. Do NOT re-propose changes that caused regressions or were rolled back. Learn from what worked and what failed.
+
+$(cat "$HISTORY_FILE")
+"
+  fi
+
   REVIEW_PROMPT="$(cat <<PROMPT
 Read the following instruction files, then analyze the bench2 transcripts and generate improvements.json.
 
@@ -105,7 +118,7 @@ $(cat "$INSTRUCT_DIR/phase2-improve-instruct.md")
 
 $(python3 "$BENCH2_DIR/lib/reporter.py" "$BENCH2_DIR/results" --format terminal 2>/dev/null)
 
-## Task
+${HISTORY_SECTION}## Task
 
 1. Read the sense and baseline transcripts for all 6 repos in $BENCH2_DIR/results/
 2. Write analysis-notes.md to $ITER_DIR/analysis-notes.md
@@ -145,18 +158,39 @@ PROMPT
     --runs "$RUNS" \
     "${PHASE_ARGS[@]}" || PHASE3_EXIT=$?
 
+  ITER_OUTCOME="applied"
   if [[ $PHASE3_EXIT -eq 2 ]]; then
+    ITER_OUTCOME="rolled_back"
     echo ""
     echo "  Regression detected in iteration $iter. Scenarios rolled back."
-    echo "  Stopping loop — review $ITER_DIR/regression.json before retrying."
-    exit 2
   elif [[ $PHASE3_EXIT -ne 0 ]]; then
     echo "ERROR: Phase 3 failed with exit code $PHASE3_EXIT" >&2
     exit $PHASE3_EXIT
   fi
 
+  # ── Record iteration history ──
+  python3 -c "
+import json, os
+iter_dir = '$ITER_DIR'
+entry = {'iteration': $iter, 'outcome': '$ITER_OUTCOME'}
+imp_path = os.path.join(iter_dir, 'improvements.json')
+if os.path.exists(imp_path):
+    with open(imp_path) as f:
+        entry['improvements'] = json.load(f)
+post_path = os.path.join(iter_dir, 'post-analysis.json')
+if os.path.exists(post_path):
+    with open(post_path) as f:
+        post = json.load(f)
+    entry['scores_after'] = {r: d['current_scores'] for r, d in post.get('repos', {}).items()}
+reg_path = os.path.join(iter_dir, 'regression.json')
+if os.path.exists(reg_path):
+    with open(reg_path) as f:
+        entry['regression_check'] = json.load(f)
+print(json.dumps(entry))
+" >> "$HISTORY_FILE"
+
   echo ""
-  echo "Iteration $iter complete."
+  echo "Iteration $iter complete ($ITER_OUTCOME)."
   echo ""
 
   # ── Convergence check ──
@@ -168,9 +202,11 @@ import json, sys
 try:
     old = json.load(open('$PREV_DIR/post-analysis.json'))
     new = json.load(open('$ITER_DIR/post-analysis.json'))
-    old_gap = abs(old.get('sense_avg', 0) - old.get('baseline_avg', 0))
-    new_gap = abs(new.get('sense_avg', 0) - new.get('baseline_avg', 0))
-    print('true' if abs(old_gap - new_gap) < 0.02 else 'false')
+    def avg_gap(d):
+        gaps = [r['current_scores']['gap'] for r in d.get('repos', {}).values()
+                if r.get('current_scores', {}).get('sense') is not None]
+        return sum(gaps) / len(gaps) if gaps else 0
+    print('true' if abs(avg_gap(old) - avg_gap(new)) < 0.02 else 'false')
 except Exception:
     print('false')
 ")
@@ -187,8 +223,30 @@ echo "========================================"
 echo "  Loop complete after $iter iterations"
 echo "========================================"
 
-# Final report
+# Final score + reports
 echo ""
-python3 "$BENCH2_DIR/lib/reporter.py" "$BENCH2_DIR/results" --format terminal 2>/dev/null
+echo "--- Scoring final results ---"
+bash "$BENCH2_DIR/score.sh"
 echo ""
-echo "Run 'bash bench2/report.sh --md' to regenerate report.md."
+bash "$BENCH2_DIR/report.sh" --md
+echo ""
+bash "$BENCH2_DIR/report.sh" --json
+echo ""
+bash "$BENCH2_DIR/report.sh"
+
+# Freshness guard: report.md must be at least as new as the newest
+# scored.json. A stale report after a successful loop means report.sh ran
+# but failed silently — surface it loudly instead of letting the next loop
+# inherit yesterday's numbers.
+REPORT_MD="$BENCH2_DIR/results/report.md"
+if [[ ! -f "$REPORT_MD" ]]; then
+  echo "ERROR: $REPORT_MD was not generated" >&2
+  exit 1
+fi
+NEWEST_SCORE=$(find "$BENCH2_DIR/results" -name 'scored.json' -type f -print0 \
+  | xargs -0 stat -f '%m' 2>/dev/null | sort -nr | head -1)
+REPORT_MTIME=$(stat -f '%m' "$REPORT_MD" 2>/dev/null)
+if [[ -n "$NEWEST_SCORE" && -n "$REPORT_MTIME" && "$REPORT_MTIME" -lt "$NEWEST_SCORE" ]]; then
+  echo "ERROR: report.md is older than the newest scored.json — report.sh did not refresh it." >&2
+  exit 1
+fi

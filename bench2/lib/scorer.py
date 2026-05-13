@@ -424,6 +424,67 @@ EFFICIENCY_CEILINGS = {
 
 DEFAULT_EFFICIENCY_CEILING = 30_000
 
+# Wall-time ceilings, in seconds — the "code map" advantage shows up as
+# faster sessions, so time is half of efficiency. Picked at ~3-4× a healthy
+# Sense session for each repo, so a fast tool scores ~0.7 and a slow one
+# (multi-thousand-second baseline run) collapses to 0.
+TIME_CEILINGS = {
+    "flask": 400,
+    "gin": 400,
+    "axum": 600,
+    "javalin": 600,
+    "discourse": 600,
+    "nextjs": 900,
+}
+
+DEFAULT_TIME_CEILING = 600
+
+# Claude pricing per million tokens. Used to estimate cost on failed runs
+# whose transcript never emitted a final total_cost_usd. Update when
+# pricing or the default model changes — these are Opus 4.x rates.
+PRICE_PER_M = {
+    "input": 15.00,
+    "output": 75.00,
+    "cache_read": 1.50,
+    "cache_write": 18.75,
+}
+
+
+def sum_partial_usage(transcript_path):
+    """Sum token usage across all assistant messages.
+
+    A successful session reports cumulative usage in the final `result`
+    event, but a session that timed out or crashed never emits that event.
+    For failed runs we have to add up the per-message usage instead so the
+    cost of partial work is still reflected.
+    """
+    usage = {"input_tokens": 0, "output_tokens": 0,
+             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    with open(transcript_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event = obj.get("event", obj)
+            msg = event.get("message") or {}
+            mu = msg.get("usage") or {}
+            for k in usage:
+                usage[k] += mu.get(k, 0) or 0
+    return usage
+
+
+def estimate_cost(usage):
+    return (
+        usage.get("input_tokens", 0) * PRICE_PER_M["input"]
+        + usage.get("output_tokens", 0) * PRICE_PER_M["output"]
+        + usage.get("cache_read_input_tokens", 0) * PRICE_PER_M["cache_read"]
+        + usage.get("cache_creation_input_tokens", 0) * PRICE_PER_M["cache_write"]
+    ) / 1_000_000
+
 
 def score_transcript(transcript_path, scenario, repo_path=None):
     """Score a transcript against a scenario.
@@ -456,11 +517,17 @@ def score_transcript(transcript_path, scenario, repo_path=None):
 
     repo = scenario.get("repo", "")
     ceiling = EFFICIENCY_CEILINGS.get(repo, DEFAULT_EFFICIENCY_CEILING)
-    efficiency = max(0.0, 1.0 - (billed_tokens / ceiling)) if billed_tokens > 0 else 1.0
-
-    fairness_score = 0.70 * correctness + 0.30 * efficiency
+    time_ceiling = TIME_CEILINGS.get(repo, DEFAULT_TIME_CEILING)
 
     wall_time = round((t.get("duration_ms", 0) or 0) / 1000, 1)
+
+    # Zero tokens or zero wall-time means no measurable work — treat each as
+    # a zero in its half of efficiency, not as perfect efficiency.
+    token_eff = max(0.0, 1.0 - (billed_tokens / ceiling)) if billed_tokens > 0 else 0.0
+    time_eff = max(0.0, 1.0 - (wall_time / time_ceiling)) if wall_time > 0 else 0.0
+    efficiency = 0.5 * token_eff + 0.5 * time_eff
+
+    fairness_score = 0.70 * correctness + 0.30 * efficiency
 
     grep_count = 0
     read_count = 0
@@ -518,6 +585,9 @@ def score_transcript(transcript_path, scenario, repo_path=None):
             "wall_time_seconds": wall_time,
             "cost_usd": t.get("cost_usd"),
             "efficiency_ceiling": ceiling,
+            "time_ceiling_seconds": time_ceiling,
+            "token_efficiency": round(token_eff, 4),
+            "time_efficiency": round(time_eff, 4),
         },
     }
 
@@ -543,7 +613,70 @@ if __name__ == "__main__":
         print(json.dumps({"error": "transcript.json not found"}))
         sys.exit(1)
 
-    scored = score_transcript(transcript_path, scenario, result_dir)
+    # A failed Claude session leaves a partial transcript that would
+    # otherwise be scored as a low-effort answer. Treat it as a hard zero
+    # so the failure surfaces in the report instead of getting credit for
+    # any keywords that happened to leak into the partial output.
+    meta_path = os.path.join(result_dir, "run_meta.json")
+    run_meta = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path) as f:
+                run_meta = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            run_meta = {}
+
+    if run_meta.get("error"):
+        # Failed runs still cost real money — the session ran for thousands
+        # of seconds before timing out. Recover the usage from the partial
+        # transcript so total cost reflects what actually got spent. The
+        # final `result` event never fires on failure, so we sum per-message
+        # usage and price it ourselves.
+        partial = parse_transcript(transcript_path)
+        partial_usage = sum_partial_usage(transcript_path)
+        partial_cost = (
+            partial["cost_usd"]
+            if partial["cost_usd"] is not None
+            else estimate_cost(partial_usage)
+        )
+        billed_tokens = partial_usage["input_tokens"] + partial_usage["output_tokens"]
+        all_tokens = (billed_tokens
+                      + partial_usage["cache_read_input_tokens"]
+                      + partial_usage["cache_creation_input_tokens"])
+        scored = {
+            "scenario": scenario["name"],
+            "repo": scenario["repo"],
+            "failed": True,
+            "failure_reason": run_meta.get("error"),
+            "fairness_score": 0.0,
+            "adoption_score": 0.0,
+            "correctness": 0.0,
+            "efficiency": 0.0,
+            "completeness": 0.0,
+            "tool_fluency": 0.0,
+            "discoverability": 0.0,
+            "steps": [],
+            "misses": {},
+            "metrics": {
+                "tool_calls": len(partial["tool_calls"]),
+                "grep_count": 0,
+                "read_count": 0,
+                "mcp_count": 0,
+                "token_input_uncached": partial_usage["input_tokens"],
+                "token_output": partial_usage["output_tokens"],
+                "token_cache_read": partial_usage["cache_read_input_tokens"],
+                "token_cache_write": partial_usage["cache_creation_input_tokens"],
+                "token_total_billed": billed_tokens,
+                "token_total_all": all_tokens,
+                "wall_time_seconds": float(run_meta.get("wall_time_seconds") or 0),
+                "cost_usd": round(partial_cost, 4),
+                "cost_estimated": partial["cost_usd"] is None,
+                "efficiency_ceiling": EFFICIENCY_CEILINGS.get(
+                    scenario.get("repo", ""), DEFAULT_EFFICIENCY_CEILING),
+            },
+        }
+    else:
+        scored = score_transcript(transcript_path, scenario, result_dir)
 
     output_path = os.path.join(result_dir, "scored.json")
     with open(output_path, "w") as f:

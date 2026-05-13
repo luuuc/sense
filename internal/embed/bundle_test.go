@@ -147,6 +147,18 @@ func TestORTCacheDirDefault(t *testing.T) {
 	}
 }
 
+func TestORTCacheDirHomeDirFails(t *testing.T) {
+	// Force os.UserHomeDir to fail by unsetting both HOME and USERPROFILE.
+	// SENSE_CACHE_DIR must also be empty so we hit the fallback path.
+	t.Setenv("SENSE_CACHE_DIR", "")
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+
+	if _, err := ortCacheDir(); err == nil {
+		t.Fatal("ortCacheDir: expected error when HOME unavailable")
+	}
+}
+
 func TestEnsureORTLibMkdirFails(t *testing.T) {
 	if len(ortLibData) == 0 {
 		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")

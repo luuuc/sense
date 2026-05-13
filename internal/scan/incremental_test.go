@@ -214,5 +214,48 @@ func TestRunIncrementalNilDefaults(t *testing.T) {
 	}
 }
 
+// TestRunIncrementalEmbeddingsEnabledNoChanges enters the EmbeddingsEnabled
+// branch with an unchanged file (same hash → no changedFileIDs), proving
+// that embedSymbols short-circuits cleanly and the flag-gated code path is
+// exercised without spinning up ONNX.
+func TestRunIncrementalEmbeddingsEnabledNoChanges(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc Hello() {}\n")
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("initial scan: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	matcher, err := ignore.Build(root, nil)
+	if err != nil {
+		t.Fatalf("build matcher: %v", err)
+	}
+
+	res, err := scan.RunIncremental(ctx, scan.IncrementalOptions{
+		Root:              root,
+		Idx:               adapter,
+		Matcher:           matcher,
+		MaxFileSizeKB:     512,
+		EmbeddingsEnabled: true,
+		Output:            io.Discard,
+		Warnings:          &bytes.Buffer{},
+		Changed:           []string{"a.go"},
+	})
+	if err != nil {
+		t.Fatalf("RunIncremental: %v", err)
+	}
+	if res.Embedded != 0 {
+		t.Errorf("Embedded = %d, want 0 (no changedFileIDs)", res.Embedded)
+	}
+}
+
 // Suppress unused import warnings — sql is used via adapter.DB().
 var _ = sql.ErrNoRows
