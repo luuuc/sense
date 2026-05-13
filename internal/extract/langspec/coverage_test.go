@@ -3,6 +3,8 @@ package langspec
 import (
 	"testing"
 
+	sitter "github.com/tree-sitter/go-tree-sitter"
+
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/grammars"
 	"github.com/luuuc/sense/internal/model"
@@ -191,6 +193,32 @@ fun main() {
 	}
 	if !foundPrintln {
 		t.Errorf("expected call to println, got %v", callTargets)
+	}
+}
+
+// TestKotlin_CallNameFn_EmptyNode pins the defensive return-"" branch:
+// a node with no named children should produce an empty string rather
+// than panic. We feed it a leaf node (integer literal) walked out of a
+// parsed expression — it has zero named children, mirroring a malformed
+// call_expression in the wild.
+func TestKotlin_CallNameFn_EmptyNode(t *testing.T) {
+	src := `val x = 42`
+	tree := parse(t, grammars.Kotlin(), src)
+	root := tree.RootNode()
+
+	var findLeaf func(n *sitter.Node) *sitter.Node
+	findLeaf = func(n *sitter.Node) *sitter.Node {
+		if n.NamedChildCount() == 0 {
+			return n
+		}
+		return findLeaf(n.NamedChild(0))
+	}
+	leaf := findLeaf(root)
+	if leaf == nil {
+		t.Fatal("no leaf node found in parsed tree")
+	}
+	if got := kotlinCallName(leaf, []byte(src)); got != "" {
+		t.Errorf("kotlinCallName on leaf = %q, want empty string", got)
 	}
 }
 
