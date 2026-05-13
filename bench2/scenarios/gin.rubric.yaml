@@ -1,0 +1,117 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the codebase.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+steps:
+  - name: Trace HTTP dispatch from entry point
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for every method in the dispatch
+          chain (Engine.ServeHTTP → handleHTTPRequest → tree lookup →
+          handler exec), in order? Could the agent insert a request-ID
+          hook at the right layer without re-tracing?
+      specificity:
+        weight: 0.25
+        question: |
+          Are receivers named (Engine.ServeHTTP, not just ServeHTTP)?
+          Are intermediate methods (updateRouteTrees, serveError) cited
+          where they belong?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the radix tree exists, why
+          handleHTTPRequest is split from ServeHTTP, what role the
+          methodTrees array plays?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag redirect paths, NoRoute/NoMethod fallbacks,
+          and HEAD-vs-GET subtleties that branch the linear chain?
+
+  - name: Understand middleware flow
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for Context.Next, Context.Abort,
+          the handlers slice, abortIndex, combineHandlers? Could the
+          agent write a new middleware without re-reading context.go?
+      specificity:
+        weight: 0.25
+        question: |
+          Are callers of Next/Abort listed with file:line? Is the
+          internal constant abortIndex named explicitly when describing
+          how Abort halts execution?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain HOW Next walks the handler chain (index
+          increment + loop), WHY Abort sets index to math.MaxInt8, and
+          how combineHandlers stitches group middleware in?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag panic recovery, goroutine-safety, or
+          handler-chain-mutation patterns that could surprise a new
+          middleware author?
+
+  - name: Find dead code in the gin package
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer list candidate dead symbols (localhostIP,
+          unused helpers) with file:line and a defensible "no callers"
+          claim? Could the agent open a deletion PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are dead symbols cited at exact file:line, not just by name?
+          Is the package scope (root vs subpackages like binding/) made
+          explicit when relevant?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each candidate is dead — no
+          callers in source, not part of public API surface — rather
+          than just LISTING names?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag reflection-based callers, test-only
+          symbols, and public-API-but-unused-internally cases that an
+          automatic deletion would break?
+
+  - name: Assess modifying the recovery middleware
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for Recovery, CustomRecovery,
+          CustomRecoveryWithWriter, and their registration sites
+          (gin.Default)? Could the agent inject request-ID logic without
+          re-reading recovery.go?
+      specificity:
+        weight: 0.25
+        question: |
+          Are call hierarchies cited concretely — who calls Recovery,
+          where it's registered, which signatures are public API — with
+          file:line, not generalities?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY there are three flavours (Recovery,
+          CustomRecovery, CustomRecoveryWithWriter), what each is for,
+          and which is the right surface to extend?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag transitive Abort callers (BasicAuthForRealm),
+          panic-in-middleware ordering, and public API stability for the
+          agent to verify?

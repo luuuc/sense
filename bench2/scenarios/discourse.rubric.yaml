@@ -1,0 +1,133 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same
+# four criteria (map_quality, specificity, justification, uncertainty) with
+# the canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for
+# criteria it bears on — map_quality (did this save downstream exploration?)
+# and uncertainty (was confidence calibrated against effort?).
+
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the codebase.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the Discourse codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map of Discourse's
+          architecture: where controllers live, where service objects
+          (TopicCreator, PostCreator) live, where Guardians live, where
+          serializers live? Could the agent pick an entry point to start
+          editing with only small, targeted lookups, not a fresh
+          orientation pass?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (app/controllers/..., lib/guardian.rb)
+          rather than vague mentions ("the controller layer")? Are the
+          named abstractions (Guardian, Service, Serializer) tied to actual
+          file or class references?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each named abstraction exists in
+          Discourse — what role Guardians play, why service objects exist
+          alongside ActiveRecord — not just NAME them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is uncertain about plugin systems, multisite,
+          or other Discourse-specific complexity, does it flag the
+          uncertainty so the agent doesn't act blindly?
+
+  - name: Trace topic creation from controller to persistence
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line targets for every layer in the
+          creation flow, in the order they execute (HTTP entry →
+          NewPostManager → TopicCreator → PostCreator → DB)? Could the
+          agent insert a permission check at the right layer without
+          re-exploring?
+      specificity:
+        weight: 0.25
+        question: |
+          Are citations file:line or file:symbol (not just file mentions)?
+          Are method signatures and key arguments named (e.g.
+          TopicCreator.create vs "the create method")?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each layer exists and what it adds
+          (NewPostManager routing, TopicCreator orchestration, PostCreator
+          for the OP), not just NAME each class?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag uncertainty around plugin overrides,
+          callbacks, or alternate entry points (queues, drafts) that
+          could bypass the main flow?
+
+  - name: Understand Guardian authorization
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer point at the Guardian methods that gate topic
+          creation (can_create_topic?, can_create_topic_on_category?,
+          topic_guardian module) with file:line, and connect Guardian
+          usage in TopicCreator/PostsController to serializer surfaces?
+      specificity:
+        weight: 0.25
+        question: |
+          Are Guardian method names exact (snake_case, with ? suffix
+          where applicable)? Are concern files cited rather than the
+          monolithic guardian.rb alone?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain the Guardian pattern's role —
+          centralised permission checks vs scattered if-current_user-can —
+          and why Discourse separates per-domain concerns?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where plugins commonly extend Guardian
+          (DiscoursePluginRegistry, prepended modules) and that the
+          observed checks may not be exhaustive?
+
+  - name: Assess impact of adding a permission check
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the call sites and specs that will
+          break or need updating (PostsController#create, TopicCreator,
+          related Guardian specs, plugin specs), with file:line? Could
+          the agent open a PR using only this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the affected specs named concretely (spec/.../topic_creator_spec.rb)
+          rather than generic ("the specs")? Are the alternate paths
+          (reply_as_new_topic, queue-vs-reject, drafts) named?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each affected site matters — the
+          behavioural difference between rejecting and queuing, why
+          plugin paths matter — not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what it could not enumerate
+          (plugin extensions, dynamic dispatch, jobs that retry topic
+          creation) so the agent knows to verify before shipping?

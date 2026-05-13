@@ -1,0 +1,114 @@
+audience: |
+  An AI coding agent that will use this answer to perform downstream
+  edits (refactors, new endpoints, bug fixes) with only small, targeted
+  follow-up lookups — not a fresh exploration of the codebase.
+  Score for that audience — not a human reader, not a docs page. A perfect
+  answer leaves the agent ready to edit; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+steps:
+  - name: Trace the request dispatch pipeline
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for every method in the chain
+          (wsgi_app → full_dispatch_request → preprocess_request →
+          dispatch_request → finalize_request → make_response →
+          process_response), in order? Could the agent insert a hook
+          at the right step without re-reading app.py?
+      specificity:
+        weight: 0.25
+        question: |
+          Are citations at method-level (app.py:LINE Flask.wsgi_app),
+          not just "in app.py"? Is the call-order made explicit between
+          each pair?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each method exists — request
+          context push, URL preprocessor pass, after_request stack
+          unwinding — not just NAME them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag blueprints, error-handler branches, or
+          extension hooks that can alter the linear chain?
+
+  - name: Find internal callers of wsgi_app
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer list every internal caller (Flask.__call__,
+          test helpers in src/) with file:line and enclosing function?
+          Could the agent change the signature confident no internal
+          site was missed?
+      specificity:
+        weight: 0.25
+        question: |
+          Are callers cited as file:line, not just file? Is __call__
+          named explicitly as the WSGI entry indirection?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY __call__ delegates to wsgi_app —
+          subclassing seam for middleware — not just NAME the caller?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag uncertainty about callers in tests or
+          extensions, and acknowledge that the list excludes test/
+          per the prompt?
+
+  - name: Locate test coverage for the dispatch pipeline
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the test files and key test functions
+          covering the pipeline (test_basic.py, test_reqctx.py, etc.)
+          with paths? Could the agent know which specs to update when
+          changing dispatch?
+      specificity:
+        weight: 0.25
+        question: |
+          Are test functions named (test_main_app, test_request_context)
+          rather than "the dispatch tests"? Are paths concrete?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHAT each test file covers — basic app
+          vs request context vs blueprints — not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag indirect coverage (integration tests
+          touching wsgi_app without naming it) the agent should sanity-check?
+
+  - name: Assess impact of adding a debug parameter
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate every file and symbol affected by
+          the signature change (__call__, FlaskClient in testing.py,
+          subclass surfaces) with file:line? Could the agent open a PR
+          from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are affected symbols named precisely (FlaskClient.open,
+          Flask.__call__) rather than "the testing module"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site matters — middleware
+          wrapping pattern, subclass overrides, testing client's
+          parallel signature — not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag user-defined subclasses and extensions
+          (third-party) that the agent cannot enumerate from this repo
+          alone?
