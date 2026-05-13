@@ -37,6 +37,11 @@ Exit codes:
   3  index missing (run 'sense scan' first)
 `
 
+type healthInfo struct {
+	verdict string // "healthy", "degraded", "unhealthy"
+	detail  string // worst issue, e.g. "3 stale files"
+}
+
 // RunStatus prints index health and embedding coverage.
 func RunStatus(args []string, cio IO) int {
 	fs := flag.NewFlagSet("sense status", flag.ContinueOnError)
@@ -51,7 +56,7 @@ func RunStatus(args []string, cio IO) int {
 	}
 
 	ctx := context.Background()
-	resp, exitCode := buildCLIStatusResponse(ctx, cio)
+	resp, health, exitCode := buildCLIStatusResponse(ctx, cio)
 	if exitCode != ExitSuccess {
 		return exitCode
 	}
@@ -66,12 +71,13 @@ func RunStatus(args []string, cio IO) int {
 		return ExitSuccess
 	}
 
-	renderStatusHuman(cio, resp)
+	renderStatusHuman(cio, resp, health)
 	return ExitSuccess
 }
 
-func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, int) {
+func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, healthInfo, int) {
 	var resp mcpio.StatusResponse
+	var health healthInfo
 
 	senseDir := filepath.Join(cio.Dir, ".sense")
 	if env := os.Getenv("SENSE_DIR"); env != "" {
@@ -81,13 +87,13 @@ func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, 
 
 	if _, err := os.Stat(dbPath); err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense: no index found. Run 'sense scan' to build one.")
-		return resp, ExitIndexMissing
+		return resp, health, ExitIndexMissing
 	}
 
 	info, err := os.Stat(dbPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(cio.Stderr, "sense status: %v\n", err)
-		return resp, ExitGeneralError
+		return resp, health, ExitGeneralError
 	}
 
 	relPath, _ := filepath.Rel(cio.Dir, dbPath)
@@ -100,7 +106,7 @@ func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(cio.Stderr, "sense status: %v\n", err)
-		return resp, ExitGeneralError
+		return resp, health, ExitGeneralError
 	}
 	defer func() { _ = db.Close() }()
 
@@ -127,7 +133,50 @@ func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, 
 		}
 	}
 
-	return resp, ExitSuccess
+	health = computeHealth(ctx, db, cio.Dir, resp)
+
+	return resp, health, ExitSuccess
+}
+
+func computeHealth(ctx context.Context, db *sql.DB, dir string, resp mcpio.StatusResponse) healthInfo {
+	h := healthInfo{verdict: "healthy"}
+
+	if resp.Version != nil && !resp.Version.SchemaCurrent {
+		h.verdict = "unhealthy"
+		h.detail = "schema mismatch — run 'sense scan --force'"
+		return h
+	}
+
+	if countOrphanedEdges(ctx, db) > 0 {
+		h.verdict = "unhealthy"
+		h.detail = "orphaned edges — run 'sense scan --force'"
+		return h
+	}
+
+	if resp.Version != nil && !resp.Version.EmbeddingModelCurrent {
+		h.verdict = "unhealthy"
+		h.detail = "embedding model mismatch — run 'sense scan --force'"
+		return h
+	}
+
+	if EmbeddingsEnabled(dir) && resp.Index.Symbols > 0 {
+		pct := resp.Index.Embeddings * 100 / resp.Index.Symbols
+		if pct < 90 {
+			h.verdict = "degraded"
+			h.detail = fmt.Sprintf("embeddings incomplete (%d%%)", pct)
+		}
+	}
+
+	if resp.Freshness.StaleFilesSeen != nil && *resp.Freshness.StaleFilesSeen > 0 {
+		if h.verdict == "healthy" {
+			h.verdict = "degraded"
+		}
+		if h.detail == "" {
+			h.detail = fmt.Sprintf("%d stale files", *resp.Freshness.StaleFilesSeen)
+		}
+	}
+
+	return h
 }
 
 func queryLangBreakdown(ctx context.Context, db *sql.DB) map[string]mcpio.StatusLanguage {
@@ -159,26 +208,50 @@ func queryLangBreakdown(ctx context.Context, db *sql.DB) map[string]mcpio.Status
 func computeCLIFreshness(ctx context.Context, db *sql.DB, dir string) mcpio.Freshness {
 	var f mcpio.Freshness
 
-	var lastScanStr sql.NullString
-	_ = db.QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`).Scan(&lastScanStr)
-	if !lastScanStr.Valid {
-		return f
+	lastScanMeta := readMeta(ctx, db, "last_scan_at")
+
+	var lastUpdateStr sql.NullString
+	_ = db.QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`).Scan(&lastUpdateStr)
+
+	if lastScanMeta != "" {
+		if ts, err := time.Parse(time.RFC3339, lastScanMeta); err == nil {
+			fmtStr := ts.UTC().Format(time.RFC3339)
+			age := int64(time.Since(ts).Seconds())
+			f.LastScan = &fmtStr
+			f.IndexAgeSeconds = &age
+		}
 	}
 
-	lastScan, err := time.Parse(time.RFC3339Nano, lastScanStr.String)
-	if err != nil {
-		return f
+	if lastUpdateStr.Valid {
+		if ts, err := time.Parse(time.RFC3339Nano, lastUpdateStr.String); err == nil {
+			if f.LastScan == nil {
+				fmtStr := ts.UTC().Format(time.RFC3339)
+				age := int64(time.Since(ts).Seconds())
+				f.LastScan = &fmtStr
+				f.IndexAgeSeconds = &age
+			} else {
+				scanAge := *f.IndexAgeSeconds
+				updateAge := int64(time.Since(ts).Seconds())
+				if abs(scanAge-updateAge) > 60 {
+					fmtStr := ts.UTC().Format(time.RFC3339)
+					f.LastUpdate = &fmtStr
+					f.IndexUpdateAgeSeconds = &updateAge
+				}
+			}
+		}
 	}
-
-	lastScanFmt := lastScan.UTC().Format(time.RFC3339)
-	ageSeconds := int64(time.Since(lastScan).Seconds())
-	f.LastScan = &lastScanFmt
-	f.IndexAgeSeconds = &ageSeconds
 
 	staleCount := countStaleFilesCLI(ctx, db, dir)
 	f.StaleFilesSeen = &staleCount
 
 	return f
+}
+
+func abs(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func countStaleFilesCLI(ctx context.Context, db *sql.DB, dir string) int {
@@ -239,7 +312,7 @@ func readMeta(ctx context.Context, db *sql.DB, key string) string {
 	return value
 }
 
-func renderStatusHuman(cio IO, resp mcpio.StatusResponse) {
+func renderStatusHuman(cio IO, resp mcpio.StatusResponse, health healthInfo) {
 	w := cio.Stdout
 
 	_, _ = fmt.Fprintf(w, "Index: %s", resp.Index.Path)
@@ -247,6 +320,12 @@ func renderStatusHuman(cio IO, resp mcpio.StatusResponse) {
 		_, _ = fmt.Fprintf(w, " (%s)", formatBytes(resp.Index.SizeBytes))
 	}
 	_, _ = fmt.Fprintln(w)
+
+	if health.detail != "" {
+		_, _ = fmt.Fprintf(w, "Health: %s (%s)\n", health.verdict, health.detail)
+	} else {
+		_, _ = fmt.Fprintf(w, "Health: %s\n", health.verdict)
+	}
 
 	coveragePct := resp.Index.Coverage * 100
 	_, _ = fmt.Fprintf(w, "  Files:      %-6d  Coverage: %.1f%%\n", resp.Index.Files, coveragePct)
@@ -291,17 +370,14 @@ func renderStatusHuman(cio IO, resp mcpio.StatusResponse) {
 	} else {
 		_, _ = fmt.Fprintf(w, "  Last scan:   unknown\n")
 	}
-	if resp.Freshness.StaleFilesSeen != nil {
+	if resp.Freshness.LastUpdate != nil {
+		_, _ = fmt.Fprintf(w, "  Last update: %s\n", formatAge(resp.Freshness.IndexUpdateAgeSeconds))
+	}
+	if resp.Freshness.StaleFilesSeen != nil && *resp.Freshness.StaleFilesSeen > 0 {
 		_, _ = fmt.Fprintf(w, "  Stale files: %d\n", *resp.Freshness.StaleFilesSeen)
 	}
-	watching := false
-	if resp.Freshness.Watching != nil {
-		watching = *resp.Freshness.Watching
-	}
-	if watching {
+	if resp.Freshness.Watching != nil && *resp.Freshness.Watching {
 		_, _ = fmt.Fprintf(w, "  Watching:    yes\n")
-	} else {
-		_, _ = fmt.Fprintf(w, "  Watching:    no\n")
 	}
 
 	if resp.Version != nil {

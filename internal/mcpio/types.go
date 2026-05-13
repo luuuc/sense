@@ -360,6 +360,8 @@ type BlastMetrics struct {
 type Freshness struct {
 	LastScan              *string `json:"last_scan,omitempty"`
 	IndexAgeSeconds       *int64  `json:"index_age_seconds,omitempty"`
+	LastUpdate            *string `json:"last_update,omitempty"`
+	IndexUpdateAgeSeconds *int64  `json:"index_update_age_seconds,omitempty"`
 	StaleFilesSeen        *int    `json:"stale_files_seen,omitempty"`
 	MaxFileMtimeSinceScan *string `json:"max_file_mtime_since_scan,omitempty"`
 	Watching              *bool   `json:"watching,omitempty"`
