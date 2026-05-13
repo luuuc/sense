@@ -44,6 +44,17 @@ def pre_run_validate(original_dir, improved_dir, backup_dir=None):
         if abs(total - 1.0) > 0.01:
             errors.append(f"{fname}: weights sum to {total}, expected 1.0")
 
+        FORBIDDEN_FAIRNESS_TYPES = {"mcp_tool_used", "no_grep"}
+        for si, step in enumerate(data.get("steps", [])):
+            for ci, check in enumerate(step.get("checks", [])):
+                ctype = check.get("type", "")
+                layer = check.get("layer", "fairness")
+                if ctype in FORBIDDEN_FAIRNESS_TYPES and layer != "adoption":
+                    errors.append(
+                        f"{fname}: step {si} check {ci}: "
+                        f"type '{ctype}' forbidden in fairness layer"
+                    )
+
         if os.path.exists(original_path):
             try:
                 with open(original_path) as f:
@@ -94,7 +105,39 @@ def pre_run_validate(original_dir, improved_dir, backup_dir=None):
     }
 
 
-def post_run_regression(old_scores_path, new_scores_dir, gap_tolerance=0.05, abs_tolerance=0.15, changed_repos=None):
+def _load_score(results_dir, tool, repo, score_key="fairness_score"):
+    """Load score, averaging across run-N/ subdirs if they exist."""
+    base = os.path.join(results_dir, tool, repo)
+    scores = []
+    if os.path.isdir(base):
+        for entry in sorted(os.listdir(base)):
+            if entry.startswith("run-"):
+                scored = os.path.join(base, entry, "scored.json")
+                if os.path.exists(scored):
+                    with open(scored) as f:
+                        val = json.load(f).get(score_key)
+                    if val is not None:
+                        scores.append(val)
+    if not scores:
+        scored = os.path.join(base, "scored.json")
+        if os.path.exists(scored):
+            with open(scored) as f:
+                val = json.load(f).get(score_key)
+            if val is not None:
+                scores.append(val)
+    if not scores:
+        return None, 0
+    return round(sum(scores) / len(scores), 4), len(scores)
+
+
+def post_run_regression(old_scores_path, new_scores_dir, gap_tolerance=0.05, abs_tolerance=0.15, changed_repos=None, num_runs=1):
+    if num_runs == 1:
+        gap_tolerance = max(gap_tolerance, 0.08)
+        abs_tolerance = max(abs_tolerance, 0.20)
+    elif num_runs >= 3:
+        gap_tolerance = min(gap_tolerance, 0.03)
+        abs_tolerance = min(abs_tolerance, 0.10)
+
     with open(old_scores_path) as f:
         old_analysis = json.load(f)
 
@@ -108,16 +151,12 @@ def post_run_regression(old_scores_path, new_scores_dir, gap_tolerance=0.05, abs
             continue
         old_gap = old_sense - old_baseline
 
-        new_sense_path = os.path.join(new_scores_dir, "sense", repo, "scored.json")
-        new_baseline_path = os.path.join(new_scores_dir, "baseline", repo, "scored.json")
+        new_sense, sense_runs = _load_score(new_scores_dir, "sense", repo)
+        new_baseline, baseline_runs = _load_score(new_scores_dir, "baseline", repo)
 
-        if not os.path.exists(new_sense_path) or not os.path.exists(new_baseline_path):
+        if new_sense is None or new_baseline is None:
             continue
 
-        with open(new_sense_path) as f:
-            new_sense = json.load(f).get("overall_score", 0)
-        with open(new_baseline_path) as f:
-            new_baseline = json.load(f).get("overall_score", 0)
         new_gap = new_sense - new_baseline
 
         comparisons[repo] = {
@@ -165,11 +204,12 @@ def main():
     parser.add_argument("--new-scores", default=None, help="Path to results/ dir after re-run")
     parser.add_argument("--output", default=None)
     parser.add_argument("--changed-repos", default=None, help="Comma-separated list of repos that were changed (only these are checked for regressions)")
+    parser.add_argument("--runs", type=int, default=1, help="Number of runs per scenario (adjusts regression thresholds)")
     args = parser.parse_args()
 
     if args.new_scores and args.old_scores:
         changed = set(args.changed_repos.split(",")) if args.changed_repos else None
-        result = post_run_regression(args.old_scores, args.new_scores, changed_repos=changed)
+        result = post_run_regression(args.old_scores, args.new_scores, changed_repos=changed, num_runs=args.runs)
     else:
         result = pre_run_validate(args.original_dir, args.improved_dir, args.backup_dir)
 

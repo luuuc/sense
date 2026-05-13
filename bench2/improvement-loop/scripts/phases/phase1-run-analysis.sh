@@ -55,6 +55,12 @@ score_args=()
 
 bash "$BENCH2_DIR/score.sh" "${score_args[@]}"
 
+# Step 2b: Regenerate report.md so anyone observing the loop sees fresh
+# numbers immediately. Without this, report.md only updates at the end of
+# improve-loop.sh — and a mid-loop crash leaves it stale for hours.
+echo "  Refreshing report.md..."
+bash "$BENCH2_DIR/report.sh" --md > /dev/null
+
 # Step 3: Analyze transcripts
 echo "  Analyzing transcripts..."
 python3 "$TOOLS_DIR/analyze-transcripts.py" \

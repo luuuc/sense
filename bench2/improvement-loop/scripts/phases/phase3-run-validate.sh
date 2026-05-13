@@ -57,6 +57,10 @@ score_args=()
 
 bash "$BENCH2_DIR/score.sh" "${score_args[@]}"
 
+# Refresh report.md immediately so observers see fresh numbers even if the
+# rest of phase 3 fails or rolls back.
+bash "$BENCH2_DIR/report.sh" --md > /dev/null
+
 # Step 3: Post-run analysis
 echo "  Analyzing new results..."
 python3 "$TOOLS_DIR/analyze-transcripts.py" \
@@ -85,6 +89,7 @@ validate_args=(
   --output "$ITER_DIR/regression.json"
 )
 [[ -n "$CHANGED_REPOS" ]] && validate_args+=(--changed-repos "$CHANGED_REPOS")
+validate_args+=(--runs "$RUNS")
 
 python3 "$TOOLS_DIR/validate-changes.py" "${validate_args[@]}"
 
@@ -94,6 +99,7 @@ if [[ "$REGRESSED" == "True" ]]; then
   echo "  REGRESSION DETECTED. Rolling back..."
   cp "$ITER_DIR/backups"/*.yaml "$BENCH2_DIR/scenarios/"
   bash "$BENCH2_DIR/score.sh" ${score_args[@]+"${score_args[@]}"}
+  bash "$BENCH2_DIR/report.sh" --md > /dev/null
   echo ""
   echo "  Scenarios rolled back. See $ITER_DIR/regression.json for details."
   exit 2
