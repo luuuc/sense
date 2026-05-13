@@ -321,6 +321,48 @@ func TestRunSetupErrors(t *testing.T) {
 	}
 }
 
+func TestRunSetupAutoDetect(t *testing.T) {
+	cio, stdout, _ := newTestIO()
+	cio.Dir = t.TempDir()
+
+	if code := RunSetup(nil, cio); code != ExitSuccess {
+		t.Fatalf("RunSetup: exit code = %d, want %d", code, ExitSuccess)
+	}
+	// Auto-detect mode must print detection output and the setup summary.
+	if !strings.Contains(stdout.String(), "Configuring") {
+		t.Errorf("stdout missing setup summary, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunSetupExplicitTool(t *testing.T) {
+	cio, stdout, _ := newTestIO()
+	cio.Dir = t.TempDir()
+
+	if code := RunSetup([]string{"--tools", "cursor"}, cio); code != ExitSuccess {
+		t.Fatalf("RunSetup: exit code = %d, want %d", code, ExitSuccess)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Cursor") {
+		t.Errorf("stdout missing Cursor configuration, got:\n%s", out)
+	}
+	// Detection output is suppressed when --tools is explicit.
+	if strings.Contains(out, "Detected tools:") {
+		t.Errorf("explicit --tools should skip detection output, got:\n%s", out)
+	}
+}
+
+func TestRunSetupRunFails(t *testing.T) {
+	cio, _, stderr := newTestIO()
+	cio.Dir = "/nonexistent/sense-setup-test-path"
+
+	if code := RunSetup([]string{"--tools", "claude-code"}, cio); code != ExitGeneralError {
+		t.Fatalf("RunSetup: exit code = %d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "sense setup:") {
+		t.Errorf("stderr missing prefix, got: %q", stderr.String())
+	}
+}
+
 func TestDefaultIO(t *testing.T) {
 	cio := DefaultIO()
 	if cio.Stdout == nil {
