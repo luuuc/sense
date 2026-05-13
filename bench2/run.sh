@@ -412,10 +412,11 @@ meta = {
     'wall_time_seconds': int(sys.argv[4]), 'max_budget_usd': float(sys.argv[5]),
     'timestamp': sys.argv[6], 'tool_version': sys.argv[7] or None,
     'repo_commit': sys.argv[8] or None,
+    'model': sys.argv[9] or None,
 }
 json.dump(meta, sys.stdout, indent=2)
 print()
-" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$tool_version" "$repo_commit" > "$result_dir/run_meta.json"
+" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$tool_version" "$repo_commit" "$MODEL" > "$result_dir/run_meta.json"
 
         passed=$((passed + 1))
       else
@@ -427,10 +428,11 @@ meta = {
     'wall_time_seconds': int(sys.argv[4]), 'max_budget_usd': float(sys.argv[5]),
     'timestamp': sys.argv[6], 'error': 'claude_session_failed',
     'claude_exit_code': int(sys.argv[7]),
+    'model': sys.argv[8] or None,
 }
 json.dump(meta, sys.stdout, indent=2)
 print()
-" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$claude_rc" > "$result_dir/run_meta.json"
+" "$tool" "$repo" "$scenario_name" "$wall_time" "$MAX_BUDGET_USD" "$(timestamp)" "$claude_rc" "$MODEL" > "$result_dir/run_meta.json"
         failed=$((failed + 1))
       fi
     done
