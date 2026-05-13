@@ -17,6 +17,7 @@ var (
 	fetchLatestTagFn   = fetchLatestTag
 	isGoInstallFn      = isGoInstall
 	runInstallScriptFn = runInstallScript
+	installCommandFn   = installCommand
 )
 
 const installScriptURL = "https://raw.githubusercontent.com/" + repo + "/main/install.sh"
@@ -58,7 +59,7 @@ func Update(stdout, stderr io.Writer) int {
 }
 
 func runInstallScript(ver string, stdout, stderr io.Writer) error {
-	cmd := installCommand(ver)
+	cmd := installCommandFn(ver)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
