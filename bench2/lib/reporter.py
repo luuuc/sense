@@ -30,6 +30,7 @@ METRIC_DIRECTIONS = {
     "tokens": ("lower", "Billed tokens (uncached) — lower is better (cheaper)"),
     "wall_time": ("lower", "Wall-clock time — lower is better, folded into efficiency"),
     "cost_usd": ("lower", "API cost in USD — lower is better"),
+    "cites": ("higher", "Citations grounded against the repo checkout: `grounded/total`. A trailing **!N** marks line numbers beyond EOF — outright fabrication. Not yet folded into fairness (deferred to 20-05)."),
 }
 
 
@@ -91,6 +92,7 @@ def build_per_scenario_table(results):
         for tool, r in sorted(tool_rows.items()):
             m = r.get("metrics", {})
 
+            cg = r.get("citation_grounding") or {}
             rows.append({
                 "tool": tool,
                 "fairness_score": r.get("fairness_score"),
@@ -103,6 +105,9 @@ def build_per_scenario_table(results):
                 "cost_estimated": bool(m.get("cost_estimated")),
                 "failed": bool(r.get("failed")),
                 "failure_reason": r.get("failure_reason"),
+                "cites_grounded": cg.get("grounded"),
+                "cites_total": cg.get("total"),
+                "cites_hallucinated": cg.get("hallucinated", 0),
             })
         rows.sort(key=lambda r2: (r2["fairness_score"] or 0), reverse=True)
         tables.append({"repo": repo, "rows": rows})
@@ -129,6 +134,14 @@ def build_aggregate(results):
         costs = [r2.get("metrics", {}).get("cost_usd") for r2 in runs
                  if r2.get("metrics", {}).get("cost_usd") is not None]
 
+        # Sum citation counts so the aggregate rate is the true pooled
+        # rate (grounded/total across all scenarios), not the mean of
+        # per-scenario rates. A scenario with 0/0 citations contributes
+        # nothing — it doesn't drag the average down to "0%".
+        total_cites = sum((r2.get("citation_grounding") or {}).get("total", 0) for r2 in runs)
+        grounded_cites = sum((r2.get("citation_grounding") or {}).get("grounded", 0) for r2 in runs)
+        hallucinated_cites = sum((r2.get("citation_grounding") or {}).get("hallucinated", 0) for r2 in runs)
+
         def avg(lst):
             return sum(lst) / len(lst) if lst else 0.0
 
@@ -144,6 +157,10 @@ def build_aggregate(results):
             "avg_tokens": round(avg(tokens)),
             "avg_time": round(avg(times), 1) if times else None,
             "total_cost": round(sum(costs), 2) if costs else None,
+            "cites_grounded": grounded_cites,
+            "cites_total": total_cites,
+            "cites_hallucinated": hallucinated_cites,
+            "avg_grounding": round(grounded_cites / total_cites, 4) if total_cites > 0 else None,
         })
     agg.sort(key=lambda r2: (r2["avg_fairness"] or 0), reverse=True)
     return agg
@@ -180,6 +197,37 @@ def build_step_detail(results):
     return detail
 
 
+def _fmt_cites_md(row):
+    total = row.get("cites_total")
+    if not total:
+        return "—"
+    grounded = row.get("cites_grounded") or 0
+    halluc = row.get("cites_hallucinated") or 0
+    s = f"{grounded}/{total}"
+    if halluc:
+        s += f" (**!{halluc}**)"
+    return s
+
+
+def _fmt_cites(row, width=7):
+    """Format the per-scenario Cites cell.
+
+    `grounded/total`, with a trailing `!N` if N citations were
+    out-of-range line numbers (the hard "made up" signal). 0/0 prints
+    as a dash — the answer simply had no structured citations to check,
+    which is informational not bad.
+    """
+    total = row.get("cites_total")
+    if not total:
+        return f"{'—':>{width}}"
+    grounded = row.get("cites_grounded") or 0
+    halluc = row.get("cites_hallucinated") or 0
+    s = f"{grounded}/{total}"
+    if halluc:
+        s += f"!{halluc}"
+    return f"{s:>{width}}"
+
+
 def _rank_badge(i):
     if i == 0:
         return " :1st_place_medal:"
@@ -207,9 +255,9 @@ def format_terminal(tables, aggregate, header):
         if desc:
             lines.append(f"  {desc}")
         lines.append("")
-        hdr = f"  {'Tool':<14} {'Fair':>6} {'Adopt':>6} {'Corr':>6} {'Eff':>5} {'Tokens':>8} {'Time':>7} {'Cost':>7}"
+        hdr = f"  {'Tool':<14} {'Fair':>6} {'Adopt':>6} {'Corr':>6} {'Eff':>5} {'Tokens':>8} {'Time':>7} {'Cost':>7} {'Cites':>7}"
         lines.append(hdr)
-        lines.append(f"  {'-' * 68}")
+        lines.append(f"  {'-' * 76}")
 
         for row in table["rows"]:
             if row.get("failed"):
@@ -226,8 +274,9 @@ def format_terminal(tables, aggregate, header):
             tk = f"{row['tokens']:>8,}"
             wt = f"{row['wall_time']:>6.1f}s" if row["wall_time"] else "      —"
             co = f"${row['cost_usd']:>6.2f}" if row["cost_usd"] is not None else "      —"
+            ci = _fmt_cites(row, width=7)
             lines.append(
-                f"  {row['tool']:<14} {fa}  {ad} {cr} {ef} {tk} {wt} {co}"
+                f"  {row['tool']:<14} {fa}  {ad} {cr} {ef} {tk} {wt} {co} {ci}"
             )
         lines.append("")
 
@@ -235,8 +284,8 @@ def format_terminal(tables, aggregate, header):
     lines.append("  AGGREGATE (all scenarios)")
     lines.append(f"{'=' * 78}")
     lines.append("")
-    lines.append(f"  {'Tool':<14} {'Runs':>4} {'Fail':>4} {'Avg Fair':>8} {'Avg Adopt':>9} {'Avg Corr':>8} {'Avg Eff':>7} {'Avg Tokens':>10} {'Avg Time':>9} {'Cost':>7}")
-    lines.append(f"  {'-' * 86}")
+    lines.append(f"  {'Tool':<14} {'Runs':>4} {'Fail':>4} {'Avg Fair':>8} {'Avg Adopt':>9} {'Avg Corr':>8} {'Avg Eff':>7} {'Avg Tokens':>10} {'Avg Time':>9} {'Cost':>7} {'Cites':>9}")
+    lines.append(f"  {'-' * 96}")
 
     for row in aggregate:
         af = f"{row['avg_fairness']:>8.4f}" if row["avg_fairness"] is not None else "       —"
@@ -245,8 +294,9 @@ def format_terminal(tables, aggregate, header):
         ae = f"{row['avg_efficiency']:>7.4f}" if row["avg_efficiency"] is not None else "      —"
         at = f"{row['avg_time']:>8.1f}s" if row.get("avg_time") is not None else "        —"
         co = f"${row['total_cost']:>6.2f}" if row["total_cost"] else "      —"
+        ag = f"{row['avg_grounding']:>9.1%}" if row.get("avg_grounding") is not None else "        —"
         lines.append(
-            f"  {row['tool']:<14} {row['scenarios']:>4} {row.get('failures', 0):>4} {af} {aa} {ac} {ae} {row['avg_tokens']:>10,} {at} {co}"
+            f"  {row['tool']:<14} {row['scenarios']:>4} {row.get('failures', 0):>4} {af} {aa} {ac} {ae} {row['avg_tokens']:>10,} {at} {co} {ag}"
         )
 
     lines.append("")
@@ -263,6 +313,8 @@ def format_markdown(tables, aggregate, header):
     lines.append(f"Results: {len(aggregate)} tools × {len(tables)} scenarios")
     lines.append("")
     lines.append("Two-layer scoring: **Fairness** (correctness 70% + efficiency 30%) measures answer quality without tool-adoption bias. Efficiency is half token efficiency + half time efficiency, so a slow session is penalized even if it uses few tokens. **Adoption** (tool fluency + discoverability) is for code-intel-vs-code-intel comparisons only.")
+    lines.append("")
+    lines.append("**Citations** are `file.ext:line` or `file.ext:Symbol` references the assistant printed in its answer. The scorer checks each one against the repo at `run_meta.repo_commit`. A `0/0` Cites cell means the answer had no structured citations to verify — neither penalized nor rewarded; prose-only claims are out of scope here (the judge layer in 20-05 covers them). The full list of ungrounded citations lives in [`citation-hallucinations.md`](citation-hallucinations.md).")
     lines.append("")
 
     lines.append("### Reading the scores")
@@ -282,8 +334,8 @@ def format_markdown(tables, aggregate, header):
         if desc:
             lines.append(f"> {desc}")
             lines.append("")
-        lines.append("| Rank | Tool | Fairness | Adoption | Correctness | Efficiency | Tokens | Time | Cost |")
-        lines.append("|-----:|------|--------:|---------:|----------:|---------:|-------:|-----:|-----:|")
+        lines.append("| Rank | Tool | Fairness | Adoption | Correctness | Efficiency | Tokens | Time | Cost | Cites |")
+        lines.append("|-----:|------|--------:|---------:|----------:|---------:|-------:|-----:|-----:|------:|")
 
         for i, row in enumerate(table["rows"]):
             badge = _rank_badge(i)
@@ -295,7 +347,7 @@ def format_markdown(tables, aggregate, header):
                     co = "—"
                 reason = row.get("failure_reason") or "failed"
                 lines.append(
-                    f"| {i+1} | {row['tool']} | **FAILED** | — | — | — | — | {wt} | {co} |"
+                    f"| {i+1} | {row['tool']} | **FAILED** | — | — | — | — | {wt} | {co} | — |"
                     f" <!-- {reason} -->"
                 )
                 continue
@@ -306,8 +358,9 @@ def format_markdown(tables, aggregate, header):
             tk = f"{row['tokens']:,}"
             wt = f"{row['wall_time']:.1f}s" if row["wall_time"] else "—"
             co = f"${row['cost_usd']:.2f}" if row["cost_usd"] is not None else "—"
+            ci = _fmt_cites_md(row)
             lines.append(
-                f"| {i+1} | {row['tool']}{badge} | {fa} | {ad} | {cr} | {ef} | {tk} | {wt} | {co} |"
+                f"| {i+1} | {row['tool']}{badge} | {fa} | {ad} | {cr} | {ef} | {tk} | {wt} | {co} | {ci} |"
             )
         lines.append("")
 
@@ -315,8 +368,8 @@ def format_markdown(tables, aggregate, header):
     lines.append("")
     lines.append("Failed runs count as fairness 0 in the average. The `Failures` column shows how many scenarios the tool could not complete. Costs marked with `*` are estimated from per-message token usage in the partial transcript, because the session never emitted a final cost event.")
     lines.append("")
-    lines.append("| Rank | Tool | Scenarios | Failures | Avg Fairness | Avg Adoption | Avg Correctness | Avg Efficiency | Avg Tokens | Avg Time | Total Cost |")
-    lines.append("|-----:|------|----------:|--------:|------------:|-----------:|---------------:|--------------:|-----------:|--------:|-----------:|")
+    lines.append("| Rank | Tool | Scenarios | Failures | Avg Fairness | Avg Adoption | Avg Correctness | Avg Efficiency | Avg Tokens | Avg Time | Total Cost | Avg Grounding |")
+    lines.append("|-----:|------|----------:|--------:|------------:|-----------:|---------------:|--------------:|-----------:|--------:|-----------:|--------------:|")
     for i, row in enumerate(aggregate):
         badge = _rank_badge(i)
         af = f"{row['avg_fairness']:.4f}" if row["avg_fairness"] is not None else "—"
@@ -325,11 +378,17 @@ def format_markdown(tables, aggregate, header):
         ae = f"{row['avg_efficiency']:.4f}" if row.get("avg_efficiency") is not None else "—"
         at = f"{row['avg_time']:.1f}s" if row.get("avg_time") is not None else "—"
         co = f"${row['total_cost']:.2f}" if row["total_cost"] else "—"
+        if row.get("avg_grounding") is not None:
+            ag = f"{row['avg_grounding']:.1%} ({row.get('cites_grounded', 0)}/{row.get('cites_total', 0)})"
+            if row.get("cites_hallucinated"):
+                ag += f" **!{row['cites_hallucinated']}**"
+        else:
+            ag = "—"
         fails = row.get("failures", 0)
         fail_cell = f"**{fails}**" if fails else "0"
         lines.append(
             f"| {i+1} | {row['tool']}{badge} | {row['scenarios']} | {fail_cell} | {af} | {aa} | {ac} | {ae} |"
-            f" {row['avg_tokens']:,} | {at} | {co} |"
+            f" {row['avg_tokens']:,} | {at} | {co} | {ag} |"
         )
     lines.append("")
 
@@ -338,6 +397,67 @@ def format_markdown(tables, aggregate, header):
 
 def format_json(tables, aggregate, header):
     return json.dumps({"tables": tables, "aggregate": aggregate}, indent=2)
+
+
+# ── Citation hallucination log ───────────────────────────────────────
+
+
+def format_hallucination_log(results):
+    """Render `citation-hallucinations.md` from scored results.
+
+    Grouped tool → scenario. Hallucinated (out-of-range line numbers)
+    is the smoking gun, listed first. Unresolved (missing file or
+    symbol not near cited line) is softer and listed second.
+    """
+    lines = ["# Citation hallucinations", ""]
+    lines.append(
+        "Citations the assistant printed that did not resolve against the "
+        "repo checked out at `run_meta.repo_commit`. "
+        "**Hallucinated** = line number beyond EOF (made-up number). "
+        "**Unresolved** = file not in repo, or symbol not within ±5 lines "
+        "of the cited line."
+    )
+    lines.append("")
+    lines.append("Not yet folded into the fairness score — see pitch 20-04.")
+    lines.append("")
+
+    by_tool = {}
+    for r in results:
+        by_tool.setdefault(r["tool"], []).append(r)
+
+    for tool in sorted(by_tool):
+        lines.append(f"## {tool}")
+        lines.append("")
+        any_problems = False
+        for r in sorted(by_tool[tool], key=lambda r2: r2.get("repo_key", "")):
+            cg = r.get("citation_grounding") or {}
+            details = cg.get("details", [])
+            halluc = [d for d in details if d.get("status") == "hallucinated"]
+            unres = [d for d in details if d.get("status") == "unresolved"]
+            if not (halluc or unres):
+                continue
+            any_problems = True
+            repo = r.get("repo_key", r.get("repo", "?"))
+            grounded = cg.get("grounded", 0)
+            total = cg.get("total", 0)
+            lines.append(f"### {tool}/{repo}  — {grounded}/{total} grounded")
+            lines.append("")
+            if halluc:
+                lines.append("**Hallucinated**")
+                for d in halluc:
+                    lines.append(f"- `{d['file']}:{d['locator']}` — {d['reason']}")
+                lines.append("")
+            if unres:
+                lines.append("**Unresolved**")
+                for d in unres:
+                    lines.append(f"- `{d['file']}:{d['locator']}` — {d['reason']}")
+                lines.append("")
+
+        if not any_problems:
+            lines.append("_No ungrounded citations._")
+            lines.append("")
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
@@ -369,6 +489,14 @@ if __name__ == "__main__":
         with open(md_path, "w") as f:
             f.write(output)
         print(f"Written to {md_path}", file=sys.stderr)
+
+        # Hallucination log lives next to report.md and is regenerated
+        # on every markdown run so it never drifts from the scored data.
+        halluc_output = format_hallucination_log(results)
+        halluc_path = os.path.join(results_dir, "citation-hallucinations.md")
+        with open(halluc_path, "w") as f:
+            f.write(halluc_output)
+        print(f"Written to {halluc_path}", file=sys.stderr)
     elif fmt == "json":
         output = format_json(tables, aggregate, header)
         print(output)
