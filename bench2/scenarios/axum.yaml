@@ -13,19 +13,15 @@ description: 'Trace how the Axum Handler trait propagates through the Tower serv
   '
 steps:
 - name: Find all Handler trait implementations
-  prompt: 'Read axum/src/handler/mod.rs, axum/src/routing/mod.rs, and
-
-    axum/src/routing/method_routing.rs. The Handler trait is the core
-
-    abstraction that turns async functions into Tower services.
-
-    Find ALL implementations of the Handler trait.
-
-    For each, explain the type state markers (T, S), how extractors
-
-    are run, and where the user''s closure/function is actually invoked.
-
-    '
+  prompt: "You're about to add a new Handler variant in axum.
+    Hand the next agent every Handler impl with file:line, the type-state
+    markers (T, S), how extractors run inside each impl, and where the
+    user's closure is actually invoked. Read axum/src/handler/mod.rs,
+    axum/src/routing/mod.rs, axum/src/routing/method_routing.rs as
+    starting points but enumerate every impl, not just those three files.
+    The follow-up agent should need only small, targeted lookups — not
+    a fresh exploration of the crate.
+    "
   checks:
   - type: word
     value: IntoResponseHandler
@@ -53,15 +49,14 @@ steps:
     layer: adoption
     description: Used structural graph query for Handler trait analysis
 - name: Trace the extractor chain
-  prompt: 'Read axum-core/src/extract/mod.rs and axum/src/extract/mod.rs.
-
-    Explain the extractor system: FromRequestParts vs FromRequest,
-
-    how State uses FromRef, what happens on rejection, and list
-
-    at least 8 built-in extractors with their file locations.
-
-    '
+  prompt: "You're about to write a new extractor in axum.
+    Map the extractor system for the next agent: FromRequestParts vs
+    FromRequest with file:line, how State uses FromRef, what happens on
+    rejection (and how the rejection type is plumbed back), and at least
+    8 built-in extractors with their file locations. The follow-up agent
+    should need only small, targeted lookups — not a fresh exploration
+    of the crate.
+    "
   checks:
   - type: word
     value: FromRequestParts
@@ -85,15 +80,14 @@ steps:
     layer: adoption
     description: Used semantic search for extractor system analysis
 - name: Trace the full serve-to-response lifecycle
-  prompt: 'Starting from axum::serve(), trace the complete request lifecycle
-
-    through all 7 layers: accept, make_service, Router.call_with_state,
-
-    PathRouter, MethodRouter, Handler::call, IntoResponse.
-
-    List key method names and source files at each layer.
-
-    '
+  prompt: "You're about to add request-scoped middleware in axum.
+    Trace the full request lifecycle for the next agent so they can
+    insert at the correct layer: from axum::serve() through accept,
+    make_service, Router.call_with_state, PathRouter, MethodRouter,
+    Handler::call, IntoResponse — all 7 layers. List key method names
+    and source files at each layer. The follow-up agent should need only
+    small, targeted lookups — not a fresh exploration of the crate.
+    "
   checks:
   - type: word
     value: call_with_state
@@ -118,15 +112,14 @@ steps:
     layer: adoption
     description: Used semantic search to trace serve-to-response lifecycle
 - name: Assess adding a request context layer
-  prompt: 'You want every handler to be able to extract a request ID/tracing
-
-    context. What''s the least-breaking approach?
-
-    Analyse: Extension layer, Handler trait modification, new extractor
-
-    type. Name specific files, methods, and the tradeoffs.
-
-    '
+  prompt: "You're about to add a request ID/tracing context every handler
+    can extract in axum. Produce the edit map: pick the least-breaking
+    approach (Extension layer, Handler trait modification, new extractor
+    type) with file:line for each touched site, name the tradeoffs in
+    terms of axum's actual surfaces (Router::layer vs route_layer,
+    MatchedPath precedent). The follow-up agent should need only small,
+    targeted lookups — not a fresh exploration of the crate.
+    "
   checks:
   - type: word
     value: Extension
