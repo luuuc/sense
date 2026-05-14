@@ -1,40 +1,45 @@
 #!/usr/bin/env python3
-"""Score a Claude transcript against ground truth.
+"""Scenario scorer: score a Claude transcript against a scenario's checklist.
 
-Usage: scorer.py <result_dir> <bench_dir>
+Usage: scorer.py <result_dir> <scenario.yaml> <bench_dir>
 
-Reads transcript.json (stream-json JSONL), task config, and ground truth.
-Writes scored.json into the same result_dir.
+Reads transcript.json (stream-json JSONL), the scenario YAML, parses the
+transcript to extract tool calls, assistant text, and file modifications.
+Matches each step's checklist items against the transcript.
+
+Writes scored.json into the result_dir.
 """
 
 import json
 import os
 import re
+import subprocess
 import sys
 
 
-def parse_transcript(path):
-    """Parse a stream-json JSONL transcript.
+# ── Transcript parsing ──────────────────────────────────────────────
 
-    Handles two formats:
-    - Message-level: events with type "assistant"/"user"/"system"/"result"
-      (Claude CLI stream-json default)
-    - Streaming: events with type "content_block_start"/"delta"/"stop"
-      (raw API streaming)
+
+def parse_transcript(path):
+    """Parse a stream-json JSONL transcript into structured data.
+
+    Returns: {
+      tool_calls: [{name, input}],
+      text_blocks: [str],
+      usage: {input_tokens, output_tokens, cache_read_input_tokens,
+              cache_creation_input_tokens},
+      cost_usd: float | None,
+      duration_ms: int | None,
+      session_id: str | None,
+    }
     """
     tool_calls = []
-    text_chunks = []
+    text_blocks = []
     usage = {"input_tokens": 0, "output_tokens": 0,
              "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
     cost_usd = None
     duration_ms = None
-    num_turns = 0
     session_id = None
-
-    current_tool_name = None
-    current_tool_input_parts = []
-    in_text_block = False
-    current_text_parts = []
 
     with open(path) as f:
         for line in f:
@@ -52,7 +57,6 @@ def parse_transcript(path):
             event = obj.get("event", obj)
             event_type = event.get("type", "")
 
-            # --- Message-level format (Claude CLI) ---
             if event_type == "assistant":
                 msg = event.get("message", event)
                 for block in msg.get("content", []):
@@ -64,690 +68,746 @@ def parse_transcript(path):
                     elif block.get("type") == "text":
                         text = block.get("text", "")
                         if text:
-                            text_chunks.append(text)
+                            text_blocks.append(text)
 
-            # --- Streaming format (raw API) ---
-            elif event_type == "message_start":
-                msg = event.get("message", {})
-                msg_usage = msg.get("usage", {})
-                usage["input_tokens"] += msg_usage.get("input_tokens", 0)
-
-            elif event_type == "content_block_start":
-                block = event.get("content_block", {})
-                if block.get("type") == "tool_use":
-                    current_tool_name = block.get("name", "unknown")
-                    current_tool_input_parts = []
-                elif block.get("type") == "text":
-                    in_text_block = True
-                    current_text_parts = []
-
-            elif event_type == "content_block_delta":
-                delta = event.get("delta", {})
-                if delta.get("type") == "input_json_delta":
-                    current_tool_input_parts.append(delta.get("partial_json", ""))
-                elif delta.get("type") == "text_delta":
-                    current_text_parts.append(delta.get("text", ""))
-
-            elif event_type == "content_block_stop":
-                if current_tool_name:
-                    raw_input = "".join(current_tool_input_parts)
-                    try:
-                        tool_input = json.loads(raw_input) if raw_input else {}
-                    except json.JSONDecodeError:
-                        tool_input = {"_raw": raw_input}
-                    tool_calls.append({
-                        "name": current_tool_name,
-                        "input": tool_input,
-                    })
-                    current_tool_name = None
-                    current_tool_input_parts = []
-                if in_text_block:
-                    text_chunks.append("".join(current_text_parts))
-                    in_text_block = False
-                    current_text_parts = []
-
-            elif event_type == "message_delta":
-                delta_usage = event.get("usage", {})
-                usage["output_tokens"] += delta_usage.get("output_tokens", 0)
-
-            # --- Result event (both formats) ---
+            # Result event: cost, duration, usage at top-level of obj
             if obj.get("type") == "result":
                 cost_usd = obj.get("total_cost_usd", cost_usd)
                 duration_ms = obj.get("duration_ms", duration_ms)
-                num_turns = obj.get("num_turns", num_turns)
-                if obj.get("result") and not text_chunks:
-                    text_chunks.append(obj["result"])
                 result_usage = obj.get("usage", {})
-                if result_usage.get("input_tokens"):
-                    usage["input_tokens"] = result_usage["input_tokens"]
-                if result_usage.get("output_tokens"):
-                    usage["output_tokens"] = result_usage["output_tokens"]
-                if result_usage.get("cache_read_input_tokens"):
-                    usage["cache_read_input_tokens"] = result_usage[
-                        "cache_read_input_tokens"
-                    ]
-                if result_usage.get("cache_creation_input_tokens"):
-                    usage["cache_creation_input_tokens"] = result_usage[
-                        "cache_creation_input_tokens"
-                    ]
-
-    final_text = text_chunks[-1] if text_chunks else ""
+                if isinstance(result_usage, dict):
+                    if result_usage.get("input_tokens"):
+                        usage["input_tokens"] = result_usage["input_tokens"]
+                    if result_usage.get("output_tokens"):
+                        usage["output_tokens"] = result_usage["output_tokens"]
+                    if result_usage.get("cache_read_input_tokens"):
+                        usage["cache_read_input_tokens"] = result_usage["cache_read_input_tokens"]
+                    if result_usage.get("cache_creation_input_tokens"):
+                        usage["cache_creation_input_tokens"] = result_usage["cache_creation_input_tokens"]
 
     return {
         "tool_calls": tool_calls,
-        "final_text": final_text,
+        "text_blocks": text_blocks,
         "usage": usage,
         "cost_usd": cost_usd,
         "duration_ms": duration_ms,
-        "num_turns": num_turns,
         "session_id": session_id,
     }
 
 
-def classify_tool_calls(tool_calls):
-    """Classify tool calls into MCP vs built-in."""
-    mcp_tools = {}
-    builtin_tools = {}
-
-    for tc in tool_calls:
-        name = tc["name"]
-        if name.startswith("mcp__"):
-            mcp_tools[name] = mcp_tools.get(name, 0) + 1
-        else:
-            builtin_tools[name] = builtin_tools.get(name, 0) + 1
-
-    return {
-        "total": len(tool_calls),
-        "mcp_calls": sum(mcp_tools.values()),
-        "builtin_calls": sum(builtin_tools.values()),
-        "mcp_tools": mcp_tools,
-        "builtin_tools": builtin_tools,
-    }
+# ── Full transcript text ─────────────────────────────────────────────
 
 
-def extract_json_from_text(text):
-    """Try to extract a JSON object from Claude's response text."""
-    text = text.strip()
+def read_transcript_texts(path):
+    """Read two views of a transcript.
 
-    try:
-        return json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        pass
+    answer_text: assistant text blocks only — the model's actual answer.
+                 This is what fairness checks (word/contains/phrase/
+                 response_richness) match against, so a query like
+                 Grep(pattern="TopicCreator") cannot satisfy a `contains`
+                 check for "TopicCreator" by virtue of being typed.
 
-    m = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if m:
+    audit_text:  answer_text + tool inputs + parsed tool_result content.
+                 Diagnostic view, exposed in metrics for debugging but
+                 never fed to keyword checks.
+
+    Claude Code's stream-json nests tool results inside
+    `user.message.content[*].type == "tool_result"`, with `content` either
+    a string or a list of `{type:"text", text:"..."}` blocks. The previous
+    implementation looked for a top-level `tool_result` event that never
+    fires, silently hiding tool output from audit_text.
+    """
+    answer_parts = []
+    audit_parts = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            event = obj.get("event", obj)
+            event_type = event.get("type", "")
+
+            if event_type == "assistant":
+                for block in event.get("message", {}).get("content", []):
+                    if block.get("type") == "text":
+                        text = block.get("text", "")
+                        if text:
+                            answer_parts.append(text)
+                            audit_parts.append(text)
+                    elif block.get("type") == "tool_use":
+                        audit_parts.append(json.dumps(block.get("input", {})))
+
+            elif event_type == "user":
+                for block in event.get("message", {}).get("content", []) or []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    content = block.get("content", "")
+                    if isinstance(content, str):
+                        audit_parts.append(content)
+                    elif isinstance(content, list):
+                        for c in content:
+                            if isinstance(c, dict):
+                                audit_parts.append(c.get("text", ""))
+                            elif isinstance(c, str):
+                                audit_parts.append(c)
+
+    return "\n".join(answer_parts), "\n".join(audit_parts)
+
+
+# ── Check evaluation ─────────────────────────────────────────────────
+
+TOOL_USED_PATTERNS = [
+    r"sense_graph", r"sense_search", r"sense_blast", r"sense_conventions",
+    r"mcp__sense", r"sense_sense",
+]
+
+FALLBACK_NAMES = {"Grep", "grep", "rg", "Glob", "glob", "find", "Agent"}
+
+
+def evaluate_check(check, transcript_text, tool_calls, repo_path=None):
+    """Evaluate a single checklist item.
+
+    Supported check types:
+      contains         - value appears anywhere in transcript (case-insensitive,
+                         no boundary — matches inside identifiers)
+      phrase           - case-insensitive substring with non-word boundaries
+                         on both sides — preferred over `contains` for short
+                         tokens that would otherwise leak into identifiers
+                         (e.g. "ensure" matching "EnsureMagic")
+      word             - value appears as whole word (word boundary match)
+      starts_with      - any line in transcript starts with value
+      mcp_tool_used    - tool name appears in tool_calls
+      no_grep          - grep was NEVER used in the session
+      exact            - value appears verbatim
+      transcript_contains - like contains, aliased
+      diff_contains    - value appears in git diff output
+    """
+    ctype = check["type"]
+    value = check["value"]
+
+    if ctype == "contains" or ctype == "transcript_contains":
+        return {"hit": value.lower() in transcript_text.lower(), "type": ctype, "value": value}
+
+    elif ctype == "phrase":
+        pattern = r'(?<!\w)' + re.escape(value) + r'(?!\w)'
+        return {"hit": bool(re.search(pattern, transcript_text, re.IGNORECASE)), "type": ctype, "value": value}
+
+    elif ctype == "word":
+        pattern = r'(?<!\w)' + re.escape(value) + r'(?!\w)'
+        return {"hit": bool(re.search(pattern, transcript_text, re.IGNORECASE)), "type": ctype, "value": value}
+
+    elif ctype == "starts_with":
+        hit = any(
+            line.strip().lower().startswith(value.lower())
+            for line in transcript_text.splitlines()
+        )
+        return {"hit": hit, "type": ctype, "value": value}
+
+    elif ctype == "mcp_tool_used":
+        hit = any(value in tc.get("name", "") for tc in tool_calls)
+        return {"hit": hit, "type": ctype, "value": value}
+
+    elif ctype == "no_grep":
+        grep_used = any(
+            tc["name"] in FALLBACK_NAMES
+            or "grep" in (tc.get("input", {}).get("command", "") if isinstance(tc.get("input"), dict) else "")
+            or "rg " in (tc.get("input", {}).get("command", "") if isinstance(tc.get("input"), dict) else "")
+            for tc in tool_calls
+        )
+        return {"hit": not grep_used, "type": ctype, "value": value}
+
+    elif ctype == "exact":
+        return {"hit": value in transcript_text, "type": ctype, "value": value}
+
+    elif ctype == "diff_contains" and repo_path:
         try:
-            return json.loads(m.group(1).strip())
-        except (json.JSONDecodeError, ValueError):
-            pass
+            raw = subprocess.run(
+                ["git", "diff", "--unified=0"],
+                capture_output=True, text=True, cwd=repo_path, timeout=10,
+            )
+            diff_text = raw.stdout + raw.stderr
+            hit = value in diff_text
+            return {"hit": hit, "type": ctype, "value": value, "diff": diff_text[:2000]}
+        except Exception:
+            return {"hit": False, "type": ctype, "value": value, "error": "git diff failed"}
 
-    return None
+    elif ctype == "response_richness":
+        return _check_richness(transcript_text, int(value))
 
-
-def _strip_go_package(file_path, symbol):
-    """Strip Go package prefix from a symbol.
-
-    Uses the directory name to identify the package. For root-level
-    files (no directory), strips any leading lowercase identifier
-    prefix (handles single-package repos like gin).
-    """
-    if "/" in file_path:
-        dir_name = file_path.rsplit("/", 1)[0].rsplit("/", 1)[-1]
-    else:
-        dir_name = ""
-
-    if dir_name:
-        prefix = dir_name + "."
-        if symbol.startswith(prefix):
-            return symbol[len(prefix):]
-        if file_path.endswith("_test.go"):
-            test_prefix = dir_name + "_test."
-            if symbol.startswith(test_prefix):
-                return symbol[len(test_prefix):]
-    else:
-        m = re.match(r"^([a-z][a-z0-9_]*)\.(.*)", symbol)
-        if m:
-            return m.group(2)
-
-    return symbol
+    return {"hit": False, "type": ctype, "value": value}
 
 
-def _strip_bare_go_package(symbol):
-    """Strip Go package prefix from a bare symbol (no file path).
+# ── Response richness ────────────────────────────────────────────────
 
-    Only strips 'pkg.' when followed by an uppercase letter, which
-    distinguishes package.Type from type.method in Go naming.
-    E.g. 'gin.Engine' -> 'Engine' but 'node.getValue' stays.
-    """
-    m = re.match(r"^([a-z][a-z0-9_]*)\.([A-Z].*)", symbol)
-    if m:
-        return m.group(2)
-    return symbol
-
-
-def _strip_class_qualifier(symbol):
-    """Strip PascalCase class qualifier from a symbol.
-
-    Handles TypeScript/Ruby/Python patterns where the class name
-    prefixes the method: 'Server.renderToHTML' -> 'renderToHTML',
-    'Flask.wsgi_app' -> 'wsgi_app'. Only strips when the prefix
-    starts with uppercase (to distinguish from Go package prefixes
-    which are handled by _strip_bare_go_package).
-    """
-    m = re.match(r"^([A-Z][A-Za-z0-9_]*)\.(.+)$", symbol)
-    if m:
-        return m.group(2)
-    m = re.match(r"^([A-Z][A-Za-z0-9_]*)#(.+)$", symbol)
-    if m:
-        return m.group(2)
-    return symbol
-
-
-_PYTHON_MODULE_RE = re.compile(r"^(?:[a-z][a-z0-9_]*\.){2,}(.+)$")
-
-
-def _strip_python_module_prefix(symbol):
-    m = _PYTHON_MODULE_RE.match(symbol)
-    if m:
-        return m.group(1)
-    return symbol
-
-
-def _strip_rust_module_path(symbol):
-    """Strip Rust module path from a symbol.
-
-    Handles patterns like:
-    - axum::handler::Handler -> Handler
-    - crate::routing::Router -> Router
-    - self::service::Service -> Service
-    """
-    if "::" in symbol:
-        return symbol.rsplit("::", 1)[-1]
-    return symbol
-
-
-def _strip_dotted_prefix(symbol):
-    """Strip dotted module/namespace prefix to get bare symbol name.
-
-    Handles patterns like:
-    - server.response-cache.web.WebResponseCache -> WebResponseCache
-    - io.javalin.Javalin -> Javalin
-    - flask.app.Flask -> Flask
-    """
-    if "." in symbol:
-        return symbol.rsplit(".", 1)[-1]
-    return symbol
-
-
-_FILE_EXT_RE = re.compile(
-    r"\.(ts|tsx|js|jsx|rb|py|go|rs|java|kt|scala|php|c|cpp|cs|h|hpp|swift|vue|svelte|ex|exs)$",
-    re.IGNORECASE,
+_SOURCE_FILE_RE = re.compile(
+    r'([\w/\-_.]+\.(?:py|go|rs|java|kt|rb|ts|tsx|js|jsx|c|h|cpp|hpp|swift|scala|cs|vue|svelte|ex|exs))'
+    r'\s*[:>]\s*(\d+|[\w.#:]+)'
 )
 
 
-def _looks_like_path(s):
-    return "/" in s or bool(_FILE_EXT_RE.search(s))
+def _check_richness(transcript_text, min_files):
+    """Count unique source files referenced in structured output.
 
+    Matches patterns like:
+      app.py:1566
+      context.go:Context.Next
+      lib/post_creator.rb:PostCreator#create
+      axum-core/src/extract/mod.rs:FromRequest
+      base-server.ts:handleRequest
 
-def _extract_class_prefix(normalized):
-    symbol = normalized.rsplit(":", 1)[-1] if ":" in normalized else normalized
-    if "::" in symbol:
-        symbol = symbol.split("::")[-1]
-    m = re.match(r"^([^.#]+)[.#]", symbol)
-    return m.group(1) if m else None
-
-
-def normalize_caller(entry):
-    """Normalize a caller/affected entry for comparison.
-
-    Ground truth uses 'file:symbol' format. Claude may respond with
-    'file:line symbol' or 'file:line:symbol' or other variations.
-    Normalize to 'file:symbol' for comparison, stripping Go package
-    prefixes so that 'pkg.Func' matches bare 'Func'.
-
-    Also handles bare symbols (no file path) for semantic-search and
-    dead-code tasks by stripping 'pkg.' when followed by uppercase.
+    Excludes .md, .txt, .json, .yaml, .yml, .toml, .lock, .html files.
     """
-    entry = entry.strip()
+    matches = _SOURCE_FILE_RE.findall(transcript_text)
+    excluded_exts = {'.md', '.txt', '.json', '.yaml', '.yml', '.toml',
+                     '.lock', '.html', '.css', '.scss', '.less',
+                     '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico'}
+    unique_files = set()
+    unique_refs = set()
+    for filepath, ref in matches:
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext not in excluded_exts:
+            unique_files.add(filepath)
+            unique_refs.add(f"{filepath}:{ref}")
 
-    # Rust module paths (axum::handler::Handler) — treat as bare symbol
-    if "::" in entry and "/" not in entry and not _FILE_EXT_RE.search(entry.split("::")[0]):
-        return _strip_rust_module_path(entry)
-
-    parts = entry.split()
-    if len(parts) >= 2:
-        file_part = parts[0].split(":")[0]
-        symbol_part = parts[-1]
-    elif ":" in entry:
-        segments = entry.split(":")
-        file_part = segments[0]
-        symbol_part = segments[-1]
-        if len(segments) >= 2 and segments[1].isdigit():
-            symbol_part = segments[-1] if len(segments) > 2 else ""
-        elif not _looks_like_path(segments[0]) and _looks_like_path(":".join(segments[1:])):
-            return _strip_rust_module_path(_strip_python_module_prefix(_strip_bare_go_package(segments[0])))
-    else:
-        return _strip_rust_module_path(_strip_python_module_prefix(_strip_bare_go_package(entry)))
-
-    symbol_part = symbol_part.rstrip(")]}").lstrip("([")
-
-    if not symbol_part:
-        return entry
-
-    if file_part.endswith(".go"):
-        symbol_part = _strip_go_package(file_part, symbol_part)
-
-    if "::" in symbol_part:
-        symbol_part = symbol_part.split("::")[-1]
-
-    symbol_part = _strip_python_module_prefix(symbol_part)
-
-    return file_part + ":" + symbol_part
-
-
-def score_set_match(response_json, ground_truth, match_key):
-    """Compare response set against ground-truth set, compute F1."""
-    found_raw = response_json.get(match_key, []) if response_json else []
-    expected_raw = ground_truth.get(match_key, [])
-
-    if not isinstance(found_raw, list):
-        found_raw = []
-    if not isinstance(expected_raw, list):
-        expected_raw = []
-
-    found = {normalize_caller(e) for e in found_raw}
-    expected = {normalize_caller(e) for e in expected_raw}
-
-    tp = found & expected
-    fp = found - expected
-    fn = expected - found
-
-    partial_matches = []
-    remaining_fp = set(fp)
-    remaining_fn = set(fn)
-
-    # N:1 partial matching: multiple tool entries can match the same GT entry.
-    # Each partial match gives 0.5 credit, capped at 1.0 per GT entry.
-    gt_partial_credit = {}  # fn_entry -> accumulated credit (capped at 1.0)
-
-    def _try_partial(fp_entry, fn_entry):
-        fp_file = fp_entry.rsplit(":", 1)[0] if ":" in fp_entry else None
-        fn_file = fn_entry.rsplit(":", 1)[0] if ":" in fn_entry else None
-        fp_bare = fp_entry.rsplit(":", 1)[-1] if ":" in fp_entry else fp_entry
-        fn_bare = fn_entry.rsplit(":", 1)[-1] if ":" in fn_entry else fn_entry
-
-        cls = _extract_class_prefix(fp_entry)
-        fp_stripped = _strip_class_qualifier(fp_bare)
-        fn_symbol = fn_bare
-        if cls and (cls == fn_entry or cls == fn_symbol):
-            return True
-        if fp_stripped != fp_bare and (fp_stripped == fn_entry or fp_stripped == fn_symbol):
-            return True
-
-        fn_cls = _extract_class_prefix(fn_entry)
-        fn_stripped = _strip_class_qualifier(fn_bare)
-        fp_symbol = fp_bare
-        if fn_cls and (fn_cls == fp_entry or fn_cls == fp_symbol):
-            return True
-        if fn_stripped != fn_bare and (fn_stripped == fp_entry or fn_stripped == fp_symbol):
-            return True
-
-        if (fp_stripped != fp_bare and fn_stripped != fn_bare
-                and fp_stripped == fn_stripped
-                and "#" not in fp_bare and "#" not in fn_bare):
-            if fp_file and fn_file:
-                return fp_file == fn_file
-            return True
-
-        fp_last = _strip_dotted_prefix(fp_bare)
-        fn_last = _strip_dotted_prefix(fn_bare)
-        if fp_last != fp_bare and fp_last == fn_bare:
-            return True
-        if fn_last != fn_bare and fn_last == fp_bare:
-            return True
-        if (fp_last != fp_bare and fn_last != fn_bare
-                and fp_last == fn_last):
-            return True
-
-        return False
-
-    for fp_entry in sorted(fp):
-        for fn_entry in sorted(remaining_fn):
-            if _try_partial(fp_entry, fn_entry):
-                partial_matches.append({"found": fp_entry, "expected": fn_entry})
-                remaining_fp.discard(fp_entry)
-                gt_partial_credit[fn_entry] = min(
-                    1.0, gt_partial_credit.get(fn_entry, 0.0) + 0.5
-                )
-                if gt_partial_credit[fn_entry] >= 1.0:
-                    remaining_fn.discard(fn_entry)
-                break
-
-    # Entries with any partial credit are not false negatives
-    remaining_fn -= set(gt_partial_credit.keys())
-
-    total_partial_credit = sum(gt_partial_credit.values())
-    weighted_tp = len(tp) + total_partial_credit
-
-    precision = weighted_tp / len(found) if found else 0.0
-    recall = weighted_tp / len(expected) if expected else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
-
+    hit = len(unique_files) >= min_files
     return {
-        "type": "set_match",
-        "precision": round(precision, 4),
-        "recall": round(recall, 4),
-        "f1": round(f1, 4),
-        "found_count": len(found),
-        "expected_count": len(expected),
-        "true_positives": sorted(tp),
-        "false_positives": sorted(remaining_fp),
-        "false_negatives": sorted(remaining_fn),
-        "partial_matches": partial_matches,
+        "hit": hit,
+        "type": "response_richness",
+        "value": str(min_files),
+        "unique_files": len(unique_files),
+        "unique_refs": len(unique_refs),
+        "threshold": min_files,
     }
 
 
-TOOL_CAPABILITIES = {
-    "sense": {"search", "graph", "blast", "conventions"},
-    "grepai": {"search", "graph"},
-    "codebase-memory-mcp": {"graph", "search"},
-    "gitnexus": {"search", "graph", "blast"},
-    "tokensave": {"search", "graph", "blast"},
-    "roam": {"graph", "search"},
-    "baseline": set(),
-}
-
-SEARCH_COMMANDS = re.compile(r"\b(grep|ag|rg|ack)\b")
+# ── Miss detection ───────────────────────────────────────────────────
 
 
-def _recent_mcp_call(tool_calls, index, capability, window=3):
-    """Check whether an MCP call for the given capability occurred
-    within the preceding `window` calls — indicating a fallback/
-    verification rather than a true miss."""
-    start = max(0, index - window)
-    for tc in tool_calls[start:index]:
-        name = tc["name"]
-        if not name.startswith("mcp__"):
-            continue
-        lower = name.lower()
-        if capability == "search" and "search" in lower:
-            return True
-        if capability == "graph" and "graph" in lower:
-            return True
-        if capability == "blast" and "blast" in lower:
-            return True
-        if capability == "conventions" and "convention" in lower:
-            return True
-    return False
+def detect_misses(tool_calls):
+    """Classify non-MCP search activity by position in the session.
 
+    This block is diagnostic only — it does not feed any score. The
+    adoption layer's `tool_fluency = mcp / (mcp + grep)` is the single
+    penalty for reaching for grep/Glob, and it counts every such call
+    regardless of position. The breakdown below exists so a human
+    reading `scored.json` can see the *shape* of the session.
 
-def detect_misses(tool_calls, tool_name):
-    """Detect when Claude bypassed available MCP tools.
-
-    A "miss" is when an MCP capability was registered but Claude used
-    a slower built-in path instead: grep when search was available,
-    multi-file Read when graph was available, or Agent when any
-    capability was available.
-
-    Sequence-aware: if an MCP tool was called within the preceding 3
-    tool calls, the built-in call is classified as a verification/
-    fallback rather than a miss.
+    Categories:
+      pre_mcp_misses              - grep/Glob/Read of source BEFORE first MCP call
+      post_mcp_verification_reads - Read calls AFTER first MCP call
+      post_mcp_misses             - grep/Glob calls AFTER first MCP call
     """
-    if tool_name not in TOOL_CAPABILITIES:
-        return {"total": 0, "misses": [], "by_type": {}, "unconfigured": True}
-    capabilities = TOOL_CAPABILITIES[tool_name]
-    if not capabilities:
-        return {"total": 0, "misses": [], "by_type": {}}
+    first_mcp_idx = None
+    for i, tc in enumerate(tool_calls):
+        name = tc.get("name", "")
+        if any(re.search(p, name) for p in TOOL_USED_PATTERNS):
+            first_mcp_idx = i
+            break
 
-    misses = []
-    verifications = []
-    read_count = 0
-    mcp_called = any(tc["name"].startswith("mcp__") for tc in tool_calls)
+    mcp_used = first_mcp_idx is not None
+
+    pre_misses = []
+    post_reads = []
+    post_other = []
 
     for i, tc in enumerate(tool_calls):
-        name = tc["name"]
-        tool_input = tc.get("input", {})
+        name = tc.get("name", "")
+        inp = tc.get("input", {})
+        cmd = ""
+        if isinstance(inp, dict):
+            cmd = inp.get("command", "") or inp.get("cmd", "") or ""
 
-        if "search" in capabilities and name == "Bash":
-            cmd = tool_input.get("command", "")
-            if SEARCH_COMMANDS.search(cmd):
-                entry = {
-                    "type": "search_miss",
-                    "tool_used": "Bash",
-                    "detail": cmd[:120],
-                }
-                if _recent_mcp_call(tool_calls, i, "search"):
-                    entry["classification"] = "verification"
-                    verifications.append(entry)
-                else:
-                    entry["classification"] = "miss"
-                    misses.append(entry)
+        is_read_source = False
+        if name == "Read" and isinstance(inp, dict):
+            fp = inp.get("filePath", "") or inp.get("file_path", "")
+            is_read_source = bool(fp) and ".summary.md" not in fp
 
-        if "search" in capabilities and name == "Grep":
-            entry = {
-                "type": "search_miss",
-                "tool_used": "Grep",
-                "detail": tool_input.get("pattern", "")[:120],
-            }
-            if _recent_mcp_call(tool_calls, i, "search"):
-                entry["classification"] = "verification"
-                verifications.append(entry)
+        is_grep = name in FALLBACK_NAMES or "grep" in cmd or "rg " in cmd
+        is_glob = name == "Glob"
+        is_fallback = is_grep or is_glob or is_read_source
+
+        if not is_fallback:
+            continue
+
+        desc = name
+        if is_grep:
+            txt = cmd[:60] if cmd else str(inp.get("pattern", ""))[:40]
+            desc = f"{name}({txt})" if txt else name
+        elif is_read_source:
+            fp = ""
+            if isinstance(inp, dict):
+                fp = inp.get("filePath", "") or inp.get("file_path", "")
+            base = os.path.basename(fp) if fp else "?"
+            desc = f"Read({base})"
+
+        if mcp_used and is_read_source and first_mcp_idx is not None and i > first_mcp_idx:
+            post_reads.append(desc)
+        elif mcp_used and is_fallback:
+            if first_mcp_idx is None or i < first_mcp_idx:
+                pre_misses.append(desc)
             else:
-                entry["classification"] = "miss"
-                misses.append(entry)
+                post_other.append(desc)
+        # If no MCP at all, don't count anything (can't bypass what isn't available)
 
-        if "search" in capabilities and name == "Glob":
-            entry = {
-                "type": "search_miss",
-                "tool_used": "Glob",
-                "detail": tool_input.get("pattern", "")[:120],
-            }
-            if _recent_mcp_call(tool_calls, i, "search"):
-                entry["classification"] = "verification"
-                verifications.append(entry)
-            else:
-                entry["classification"] = "miss"
-                misses.append(entry)
+    return {
+        "pre_mcp_misses": pre_misses,
+        "post_mcp_verification_reads": post_reads,
+        "post_mcp_misses": post_other,
+        "has_mcp_tools": mcp_used,
+        "detail": (
+            f"pre-MCP bypasses: {len(pre_misses)}, "
+            f"post-MCP verification reads: {len(post_reads)}, "
+            f"post-MCP misses: {len(post_other)} "
+            f"(diagnostic only — grep_count drives fluency)"
+        ),
+    }
 
-        if name == "Agent":
-            entry = {
-                "type": "agent_miss",
-                "tool_used": "Agent",
-                "detail": tool_input.get("description", "")[:120],
-            }
-            if mcp_called:
-                entry["classification"] = "verification"
-                verifications.append(entry)
-            else:
-                entry["classification"] = "miss"
-                misses.append(entry)
 
-        if name == "Read":
-            read_count += 1
+# ── Step evaluation ─────────────────────────────────────────────────
 
-    if "graph" in capabilities and read_count >= 5:
-        has_graph_call = any(
-            tc["name"].startswith("mcp__") and "graph" in tc["name"].lower()
-            for tc in tool_calls
-        )
-        entry = {
-            "type": "graph_miss",
-            "tool_used": "Read",
-            "detail": f"{read_count} file reads",
-        }
-        if has_graph_call:
-            entry["classification"] = "verification"
-            verifications.append(entry)
+
+def evaluate_step(step, transcript_text, tool_calls, repo_path=None):
+    """Evaluate all checks for one step.
+
+    Checks tagged layer: adoption are tracked separately for the adoption score.
+    """
+    checks = step.get("checks", [])
+    results = []
+    hits_required = 0
+    hits_bonus = 0
+    total_required = 0
+    total_bonus = 0
+    fairness_hits_required = 0
+    fairness_hits_bonus = 0
+    fairness_total_required = 0
+    fairness_total_bonus = 0
+
+    for check in checks:
+        result = evaluate_check(check, transcript_text, tool_calls, repo_path)
+        result["layer"] = check.get("layer", "fairness")
+        results.append(result)
+
+        is_adoption = check.get("layer") == "adoption"
+        required = check.get("required", True)
+
+        if required:
+            total_required += 1
+            if result["hit"]:
+                hits_required += 1
+            if not is_adoption:
+                fairness_total_required += 1
+                if result["hit"]:
+                    fairness_hits_required += 1
         else:
-            entry["classification"] = "miss"
-            misses.append(entry)
+            total_bonus += 1
+            if result["hit"]:
+                hits_bonus += 1
+            if not is_adoption:
+                fairness_total_bonus += 1
+                if result["hit"]:
+                    fairness_hits_bonus += 1
 
-    by_type = {}
-    for m in misses:
-        by_type[m["type"]] = by_type.get(m["type"], 0) + 1
-
-    return {
-        "total": len(misses),
-        "misses": misses,
-        "verifications": verifications,
-        "by_type": by_type,
+    step_result = {
+        "name": step.get("name", "unnamed"),
+        "checks": results,
+        "hits_required": hits_required,
+        "total_required": total_required,
+        "hits_bonus": hits_bonus,
+        "total_bonus": total_bonus,
+        "fairness_hits_required": fairness_hits_required,
+        "fairness_total_required": fairness_total_required,
+        "fairness_hits_bonus": fairness_hits_bonus,
+        "fairness_total_bonus": fairness_total_bonus,
+        "score_required": round((hits_required / total_required), 4) if total_required > 0 else 1.0,
+        "score_bonus": round((hits_bonus / total_bonus), 4) if total_bonus > 0 else 0.0,
     }
 
+    step_result["combined_score"] = round(
+        (hits_required + 0.5 * hits_bonus) / max(1, total_required + 0.5 * total_bonus), 4
+    )
 
-def _keyword_matches(keyword, text_lower):
-    """Check if a keyword matches text -- exact match first, then word proximity."""
-    if keyword.lower() in text_lower:
-        return True
-    # Word proximity: all significant words within a 200-char window
-    words = [w for w in keyword.lower().split() if len(w) > 3]
-    if len(words) < 2:
-        return False  # single significant word -- exact match only
-    # Sliding window check
-    window = 200
-    for i in range(max(1, len(text_lower) - window + 1)):
-        chunk = text_lower[i:i + window]
-        if all(w in chunk for w in words):
-            return True
-    return False
+    step_result["fairness_score"] = round(
+        (fairness_hits_required + 0.5 * fairness_hits_bonus)
+        / max(1, fairness_total_required + 0.5 * fairness_total_bonus), 4
+    )
+
+    return step_result
 
 
-def score_keyword_presence(text, ground_truth, match_key):
-    """Score qualitative response by keyword presence."""
-    keywords = ground_truth.get(match_key, [])
-    if not isinstance(keywords, list):
-        keywords = []
-
-    text_lower = text.lower()
-    found = [k for k in keywords if _keyword_matches(k, text_lower)]
-    missing = [k for k in keywords if not _keyword_matches(k, text_lower)]
-    score = len(found) / len(keywords) if keywords else 0.0
-
-    return {
-        "type": "keyword_presence",
-        "score": round(score, 4),
-        "found_count": len(found),
-        "expected_count": len(keywords),
-        "found_keywords": found,
-        "missing_keywords": missing,
-    }
+# ── Main scoring ────────────────────────────────────────────────────
 
 
-def score_result(result_dir, bench_dir, tool=None, repo=None, task=None):
-    """Score a single benchmark result."""
-    if not all([tool, repo, task]):
-        path_parts = os.path.normpath(result_dir).split(os.sep)
-        task = task or path_parts[-1]
-        repo = repo or path_parts[-2]
-        tool = tool or path_parts[-3]
+EFFICIENCY_CEILINGS = {
+    "flask": 15_000,
+    "gin": 15_000,
+    "javalin": 15_000,
+    "axum": 20_000,
+    "discourse": 30_000,
+    "nextjs": 40_000,
+}
 
-    transcript_path = os.path.join(result_dir, "transcript.json")
-    if not os.path.exists(transcript_path):
-        return {"error": "no transcript", "tool": tool, "repo": repo, "task": task}
+DEFAULT_EFFICIENCY_CEILING = 30_000
 
-    run_meta_path = os.path.join(result_dir, "run_meta.json")
-    run_meta = {}
-    if os.path.exists(run_meta_path):
-        with open(run_meta_path) as f:
-            run_meta = json.load(f)
+# Wall-time ceilings, in seconds — the "code map" advantage shows up as
+# faster sessions, so time is half of efficiency. Picked at ~3-4× a healthy
+# Sense session for each repo, so a fast tool scores ~0.7 and a slow one
+# (multi-thousand-second baseline run) collapses to 0.
+# Reduced 20% from the pitch's original values after observed sessions ran
+# well inside the previous ceilings (see Card 15 e2e: mean 145s on iter-1
+# sessions, vs. flask's previous 400s ceiling). New numbers tighten the
+# efficiency signal without truncating healthy sessions.
+TIME_CEILINGS = {
+    "flask": 320,        # was 400
+    "gin": 320,          # was 400
+    "axum": 480,         # was 600
+    "javalin": 480,      # was 600
+    "discourse": 480,    # was 600
+    "nextjs": 720,       # was 900
+}
 
-    index_meta_path = os.path.join(result_dir, "index_meta.json")
-    index_meta = {}
-    if os.path.exists(index_meta_path):
-        with open(index_meta_path) as f:
-            index_meta = json.load(f)
+DEFAULT_TIME_CEILING = 480  # was 600
 
-    transcript = parse_transcript(transcript_path)
-    tool_stats = classify_tool_calls(transcript["tool_calls"])
+# Per-repo --max-budget-usd, in dollars. Sized at ~2× the typical observed
+# healthy session cost on each repo, so genuine cost-runaway sessions still
+# get cut but the cap stops being the primary discriminator. From Card 15
+# iter-1 Phase 1 observation (fresh cache): flask/gin ~$0.65, axum/javalin
+# ~$1.00, discourse ~$1.10, nextjs ~$1.20 typical. 2× buffer keeps
+# healthy sessions intact while bounding worst-case session spend at
+# ~$2.25 (i.e. a runaway nextjs caps at ~2× its mean).
+BUDGET_PER_REPO = {
+    "flask":     1.00,
+    "gin":       1.00,
+    "axum":      1.75,
+    "javalin":   1.75,
+    "discourse": 2.00,
+    "nextjs":    2.25,
+}
 
-    task_yaml_path = os.path.join(bench_dir, "tasks", task + ".yaml")
-    lib_dir = os.path.join(bench_dir, "lib")
-    sys.path.insert(0, lib_dir)
-    from parse_task import parse_task
-    task_config = parse_task(task_yaml_path)
+DEFAULT_BUDGET_USD = 1.50  # unknown repos (e.g. held-out sense) — sits at the median.
 
-    scoring_config = task_config.get("scoring", {})
-    scoring_type = scoring_config.get("type", "")
-    match_key = scoring_config.get("match_key", "")
+# Claude pricing per million tokens. Used to estimate cost on failed runs
+# whose transcript never emitted a final total_cost_usd. Update when
+# pricing or the default model changes — these are Opus 4.x rates.
+PRICE_PER_M = {
+    "input": 15.00,
+    "output": 75.00,
+    "cache_read": 1.50,
+    "cache_write": 18.75,
+}
 
-    gt_file = task_config.get("repos", {}).get(repo, {}).get("ground_truth_file", "")
-    gt_path = os.path.join(bench_dir, gt_file) if gt_file else ""
 
-    ground_truth = {}
-    gt_status = "missing"
-    if gt_path and os.path.exists(gt_path):
-        with open(gt_path) as f:
-            ground_truth = json.load(f)
-        gt_status = ground_truth.get("status", "unknown")
+def sum_partial_usage(transcript_path):
+    """Sum token usage across all assistant messages.
 
-    if scoring_type == "set_match" and gt_status != "stub":
-        response_json = extract_json_from_text(transcript["final_text"])
-        correctness = score_set_match(response_json, ground_truth, match_key)
-        if response_json is None:
-            correctness["parse_error"] = True
-    elif scoring_type == "qualitative" and gt_status != "stub":
-        correctness = score_keyword_presence(
-            transcript["final_text"], ground_truth, match_key
-        )
+    A successful session reports cumulative usage in the final `result`
+    event, but a session that timed out or crashed never emits that event.
+    For failed runs we have to add up the per-message usage instead so the
+    cost of partial work is still reflected.
+    """
+    usage = {"input_tokens": 0, "output_tokens": 0,
+             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    with open(transcript_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event = obj.get("event", obj)
+            msg = event.get("message") or {}
+            mu = msg.get("usage") or {}
+            for k in usage:
+                usage[k] += mu.get(k, 0) or 0
+    return usage
+
+
+def estimate_cost(usage):
+    return (
+        usage.get("input_tokens", 0) * PRICE_PER_M["input"]
+        + usage.get("output_tokens", 0) * PRICE_PER_M["output"]
+        + usage.get("cache_read_input_tokens", 0) * PRICE_PER_M["cache_read"]
+        + usage.get("cache_creation_input_tokens", 0) * PRICE_PER_M["cache_write"]
+    ) / 1_000_000
+
+
+def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=None):
+    """Score a transcript against a scenario.
+
+    Two-layer scoring:
+      fairness components — keyword_coverage, citation_grounding,
+                            efficiency. llm_quality is filled in by
+                            judge.py; the combined fairness_score is
+                            computed by the reporter via fairness.compute.
+                            Skips checks tagged layer: adoption.
+      adoption_score      — tool_fluency (0.60) + discoverability (0.40)
+                            For code-intel-vs-code-intel comparisons only.
+
+    repo_path     — the result_dir, used as cwd for `diff_contains` checks.
+    repo_checkout — the cloned repo at run_meta.repo_commit, used by
+                    grounding to verify citations. Optional: if missing,
+                    citation_grounding reports total but skips verification.
+    """
+    from grounding import ground_citations
+
+    t = parse_transcript(transcript_path)
+    answer_text, audit_text = read_transcript_texts(transcript_path)
+
+    tool_calls = t["tool_calls"]
+    usage = t["usage"]
+
+    billed_tokens = usage["input_tokens"] + usage["output_tokens"]
+
+    step_results = []
+    for step in scenario.get("steps", []):
+        sr = evaluate_step(step, answer_text, tool_calls, repo_path)
+        step_results.append(sr)
+
+    misses = detect_misses(tool_calls)
+
+    completeness = sum(s["combined_score"] for s in step_results) / max(len(step_results), 1)
+
+    # True hit rate across all fairness checks: a 10-check step now carries
+    # ten times the weight of a 1-check step. Bonus checks weighted at 0.5
+    # to match the per-step combined_score formula. The previous step-mean
+    # is preserved as `step_avg_score` for anyone who wants it.
+    fair_hits = sum(s["fairness_hits_required"] + 0.5 * s["fairness_hits_bonus"] for s in step_results)
+    fair_total = sum(s["fairness_total_required"] + 0.5 * s["fairness_total_bonus"] for s in step_results)
+    keyword_coverage = (fair_hits / fair_total) if fair_total > 0 else 1.0
+    step_avg_score = sum(s["fairness_score"] for s in step_results) / max(len(step_results), 1)
+
+    repo = scenario.get("repo", "")
+    ceiling = EFFICIENCY_CEILINGS.get(repo, DEFAULT_EFFICIENCY_CEILING)
+    time_ceiling = TIME_CEILINGS.get(repo, DEFAULT_TIME_CEILING)
+
+    wall_time = round((t.get("duration_ms", 0) or 0) / 1000, 1)
+
+    # Zero tokens or zero wall-time means no measurable work — treat each as
+    # a zero in its half of efficiency, not as perfect efficiency.
+    token_eff = max(0.0, 1.0 - (billed_tokens / ceiling)) if billed_tokens > 0 else 0.0
+    time_eff = max(0.0, 1.0 - (wall_time / time_ceiling)) if wall_time > 0 else 0.0
+    efficiency = 0.5 * token_eff + 0.5 * time_eff
+
+    grep_count = 0
+    read_count = 0
+    mcp_count = 0
+    for tc in tool_calls:
+        name = tc.get("name", "")
+        inp = tc.get("input", {})
+        cmd = ""
+        if isinstance(inp, dict):
+            cmd = inp.get("command", "") or ""
+        if name.startswith("mcp__"):
+            mcp_count += 1
+        elif name in ("Grep", "Glob") or "grep" in cmd or "rg " in cmd:
+            # Glob and Grep both count as conventional search for fluency —
+            # a tool that satisfies a "find this code" task with Glob is
+            # still bypassing the code-intel layer.
+            grep_count += 1
+        elif name == "Read":
+            fp = ""
+            if isinstance(inp, dict):
+                fp = inp.get("filePath", "") or inp.get("file_path", "")
+            if ".summary.md" not in fp:
+                read_count += 1
+
+    if mcp_count + grep_count > 0:
+        tool_fluency = mcp_count / (mcp_count + grep_count)
     else:
-        correctness = {"type": "skipped", "reason": f"gt_status={gt_status}"}
+        tool_fluency = 0.5
 
-    wall_time = run_meta.get("wall_time_seconds")
-    if wall_time is None and transcript["duration_ms"] is not None:
-        wall_time = transcript["duration_ms"] / 1000.0
+    # Saturate at 20 unique files rather than 10. The previous ceiling gave
+    # every reasonably-rich answer a free 1.0 — Sense surfaced 18 files in
+    # discourse and was indistinguishable from a hypothetical 11. The richer
+    # "novel files surfaced by MCP tool_result" notion is deferred to 20-06
+    # once tool_result parsing has a few iterations of wear.
+    total_richness = _check_richness(answer_text, 0).get("unique_files", 0)
+    discoverability = min(1.0, total_richness / 20.0)
 
-    miss_result = detect_misses(transcript["tool_calls"], tool)
+    adoption_score = 0.60 * tool_fluency + 0.40 * discoverability
+
+    # Citation grounding. Folded into combined fairness via fairness.py
+    # (post-20-05). The combined score is computed by the reporter from
+    # scored.json + judged.json; scorer.py emits the components only.
+    citation_grounding = ground_citations(answer_text, repo_checkout)
 
     scored = {
-        "tool": tool,
-        "repo": repo,
-        "task": task,
+        "scenario": scenario["name"],
+        "repo": scenario["repo"],
+        "adoption_score": round(adoption_score, 4),
+        "keyword_coverage": round(keyword_coverage, 4),
+        "step_avg_score": round(step_avg_score, 4),
+        "efficiency": round(efficiency, 4),
+        "completeness": round(completeness, 4),
+        "tool_fluency": round(tool_fluency, 4),
+        "discoverability": round(discoverability, 4),
+        "citation_grounding": citation_grounding,
+        "steps": step_results,
+        "misses": misses,
         "metrics": {
-            "tool_calls": tool_stats["total"],
-            "mcp_calls": tool_stats["mcp_calls"],
-            "builtin_calls": tool_stats["builtin_calls"],
-            "tool_call_types": {
-                **tool_stats["mcp_tools"],
-                **tool_stats["builtin_tools"],
-            },
-            "token_input": transcript["usage"]["input_tokens"],
-            "token_output": transcript["usage"]["output_tokens"],
-            "cache_read_input_tokens": transcript["usage"][
-                "cache_read_input_tokens"
-            ],
-            "cache_creation_input_tokens": transcript["usage"][
-                "cache_creation_input_tokens"
-            ],
-            "token_total": (
-                transcript["usage"]["input_tokens"]
-                + transcript["usage"]["cache_read_input_tokens"]
-                + transcript["usage"]["cache_creation_input_tokens"]
-                + transcript["usage"]["output_tokens"]
-            ),
-            "cost_usd": transcript["cost_usd"],
+            "tool_calls": len(tool_calls),
+            "grep_count": grep_count,
+            "read_count": read_count,
+            "mcp_count": mcp_count,
+            "token_input_uncached": usage["input_tokens"],
+            "token_output": usage["output_tokens"],
+            "token_cache_read": usage["cache_read_input_tokens"],
+            "token_cache_write": usage["cache_creation_input_tokens"],
+            "token_total_billed": billed_tokens,
+            "token_total_all": billed_tokens + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"],
             "wall_time_seconds": wall_time,
-            "duration_ms": transcript["duration_ms"],
-            "num_turns": transcript["num_turns"],
-            "index_completeness": index_meta,
+            "cost_usd": round(t["cost_usd"], 4) if t.get("cost_usd") is not None else None,
+            "efficiency_ceiling": ceiling,
+            "time_ceiling_seconds": time_ceiling,
+            "token_efficiency": round(token_eff, 4),
+            "time_efficiency": round(time_eff, 4),
+            "answer_chars": len(answer_text),
+            "audit_chars": len(audit_text),
         },
-        "correctness": correctness,
-        "misses": miss_result,
-        "ground_truth_status": gt_status,
     }
 
     return scored
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: scorer.py <result_dir> <bench_dir> [<tool> <repo> <task>]",
-              file=sys.stderr)
+    if len(sys.argv) < 4:
+        print(
+            "Usage: scorer.py <result_dir> <scenario.yaml> <bench_dir> "
+            "[repo_checkout]",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     result_dir = sys.argv[1]
-    bench_dir = sys.argv[2]
-    tool = sys.argv[3] if len(sys.argv) > 3 else None
-    repo = sys.argv[4] if len(sys.argv) > 4 else None
-    task = sys.argv[5] if len(sys.argv) > 5 else None
+    scenario_path = sys.argv[2]
+    bench_dir = sys.argv[3]
+    repo_checkout = sys.argv[4] if len(sys.argv) > 4 else None
 
-    scored = score_result(result_dir, bench_dir, tool=tool, repo=repo, task=task)
+    sys.path.insert(0, os.path.join(bench_dir, "lib"))
+    from scenario import parse as parse_scenario
+
+    scenario = parse_scenario(scenario_path)
+
+    transcript_path = os.path.join(result_dir, "transcript.json")
+    if not os.path.exists(transcript_path):
+        print(json.dumps({"error": "transcript.json not found"}))
+        sys.exit(1)
+
+    # A failed Claude session leaves a partial transcript that would
+    # otherwise be scored as a low-effort answer. Treat it as a hard zero
+    # so the failure surfaces in the report instead of getting credit for
+    # any keywords that happened to leak into the partial output.
+    meta_path = os.path.join(result_dir, "run_meta.json")
+    run_meta = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path) as f:
+                run_meta = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            run_meta = {}
+
+    if run_meta.get("error"):
+        # The session was interrupted (over-budget, wall-time timeout, or a
+        # real crash). Inspect the transcript to distinguish:
+        #   - has assistant text + final `result` event: claude exited
+        #     non-zero AFTER the model emitted a complete answer (typical
+        #     over-budget signature). Score it.
+        #   - has assistant text, no `result` event: truncated mid-stream.
+        #     Score what was emitted; patch in partial-usage metrics so
+        #     cost/efficiency reflect real spend.
+        #   - no assistant text: real crash. Keep the legacy zero behavior.
+        # Rationale: an exam done under constraint still gets graded on
+        # what was written; it doesn't get a zero for hitting the time
+        # limit. `constrained: True` carries that signal in reports and
+        # audits without poisoning the fairness score with false zeros.
+        partial = parse_transcript(transcript_path)
+        has_answer = bool(partial["text_blocks"])
+        has_result_event = partial["cost_usd"] is not None
+
+        if not has_answer:
+            # True crash — no model output. Zero everything (legacy path).
+            partial_usage = sum_partial_usage(transcript_path)
+            partial_cost = estimate_cost(partial_usage)
+            billed_tokens = partial_usage["input_tokens"] + partial_usage["output_tokens"]
+            all_tokens = (billed_tokens
+                          + partial_usage["cache_read_input_tokens"]
+                          + partial_usage["cache_creation_input_tokens"])
+            scored = {
+                "scenario": scenario["name"],
+                "repo": scenario["repo"],
+                "failed": True,
+                "failure_reason": run_meta.get("error"),
+                "adoption_score": 0.0,
+                "keyword_coverage": 0.0,
+                "step_avg_score": 0.0,
+                "efficiency": 0.0,
+                "completeness": 0.0,
+                "tool_fluency": 0.0,
+                "discoverability": 0.0,
+                "steps": [],
+                "misses": {},
+                "metrics": {
+                    "tool_calls": len(partial["tool_calls"]),
+                    "grep_count": 0,
+                    "read_count": 0,
+                    "mcp_count": 0,
+                    "token_input_uncached": partial_usage["input_tokens"],
+                    "token_output": partial_usage["output_tokens"],
+                    "token_cache_read": partial_usage["cache_read_input_tokens"],
+                    "token_cache_write": partial_usage["cache_creation_input_tokens"],
+                    "token_total_billed": billed_tokens,
+                    "token_total_all": all_tokens,
+                    "wall_time_seconds": float(run_meta.get("wall_time_seconds") or 0),
+                    "cost_usd": round(partial_cost, 4),
+                    "cost_estimated": partial["cost_usd"] is None,
+                    "efficiency_ceiling": EFFICIENCY_CEILINGS.get(
+                        scenario.get("repo", ""), DEFAULT_EFFICIENCY_CEILING),
+                },
+            }
+        else:
+            # Score the constrained session normally.
+            scored = score_transcript(
+                transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+            )
+            scored["failed"] = False
+            scored["constrained"] = True
+            scored["constraint_reason"] = run_meta.get("error")
+            if not has_result_event:
+                # Truncated mid-stream: the result event never fired, so
+                # parse_transcript saw zero usage/cost. Recover real spend
+                # from per-message usage and patch the metrics so cost
+                # tracking and the efficiency axis don't under-report.
+                partial_usage = sum_partial_usage(transcript_path)
+                billed = partial_usage["input_tokens"] + partial_usage["output_tokens"]
+                m = scored["metrics"]
+                m["token_input_uncached"] = partial_usage["input_tokens"]
+                m["token_output"] = partial_usage["output_tokens"]
+                m["token_cache_read"] = partial_usage["cache_read_input_tokens"]
+                m["token_cache_write"] = partial_usage["cache_creation_input_tokens"]
+                m["token_total_billed"] = billed
+                m["token_total_all"] = (
+                    billed
+                    + partial_usage["cache_read_input_tokens"]
+                    + partial_usage["cache_creation_input_tokens"]
+                )
+                m["cost_usd"] = round(estimate_cost(partial_usage), 4)
+                m["cost_estimated"] = True
+                m["wall_time_seconds"] = float(run_meta.get("wall_time_seconds") or 0)
+    else:
+        scored = score_transcript(
+            transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+        )
+
+    output_path = os.path.join(result_dir, "scored.json")
+    with open(output_path, "w") as f:
+        json.dump(scored, f, indent=2)
+        f.write("\n")
+
+    print(f"Scored: {scenario['name']} → {output_path}", file=sys.stderr)
     print(json.dumps(scored, indent=2))

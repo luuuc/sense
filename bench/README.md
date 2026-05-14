@@ -1,322 +1,294 @@
-# Competitive Evaluation Harness
+# Scenario-Based Evaluation (bench)
 
-Runs the same codebase-understanding tasks with Sense, competitors, and a bare baseline, then measures what actually happens: correctness, token usage, tool calls, misses, and wall time.
+Multi-step benchmark that scores code-intelligence tools by how well
+they help an **AI agent** work through realistic exploration, analysis,
+and modification tasks. Six end-to-end scenarios per tool, each judged
+on answer quality (LLM judge), citation grounding, keyword coverage,
+and efficiency.
 
-## What it measures
+## Overview
 
-| Metric | Best | Description |
-|--------|------|-------------|
-| **Correctness** | Higher | F1 (precision/recall) for structural tasks, keyword presence for qualitative tasks |
-| **Token usage** | Lower | Input + output tokens consumed per session |
-| **Token savings** | Higher | Reduction vs. baseline (no tool) |
-| **Tool calls** | Lower | Total calls — fewer means more efficient |
-| **Misses** | Lower | Times Claude had an MCP tool but used grep/Read/Agent instead |
-| **Wall time** | Lower | Seconds from prompt to final answer |
-| **Scan time** | Lower | Seconds to index a repo (measured once per tool per repo) |
-| **Cost** | Lower | USD spent on Claude API per session |
+6 scenarios (one per repo), 4 steps each, run in a single Claude
+session per `(tool, scenario)` pair. Two-layer scoring:
 
-Misses are the novel metric. A tool with zero misses has perfect discoverability — Claude always reaches for it. A tool with frequent misses has a discoverability problem regardless of accuracy.
+- **Fairness** — for sense vs baseline. The headline number.
+- **Adoption** — for code-intel vs code-intel comparisons only
+  (sense vs roam vs greptile). Reported alongside but never folded
+  into fairness.
 
-## Tasks
+Full formula and component definitions: see [`SCORING.md`](./SCORING.md).
+End-goal and bench-readiness criteria: see [`end-goal.md`](./end-goal.md).
 
-| Task | Type | What it tests |
-|------|------|---------------|
-| **callers** | set_match (F1) | Find all callers of a symbol. Tests structural code navigation. |
-| **blast-radius** | set_match (F1) | What breaks if a symbol changes. Tests impact analysis. |
-| **dead-code** | set_match (F1) | Find unused symbols. Tests reachability analysis. |
-| **semantic-search** | set_match (F1) | Find code by concept. Tests semantic understanding. |
-| **grep-task** | set_match (F1) | Find exact text matches. Tests raw search (grep baseline). |
-| **data-flow** | set_match (F1) | Trace data from entry to storage. Tests architectural tracing. |
-| **test-file** | set_match (F1) | Find the test file for a source file. Tests convention awareness. |
-| **orient** | qualitative | Orient in an unfamiliar codebase. Tests high-level understanding. |
-| **conventions** | qualitative | Identify patterns in a code domain. Tests architectural understanding. |
-| **refactor** | qualitative | Assess risks before refactoring. Tests dependency awareness. |
+## Fairness formula (summary)
+
+```
+fairness = 0.10·keyword_coverage + 0.55·llm_quality
+         + 0.15·citation_grounding + 0.20·efficiency
+```
+
+- `llm_quality` (55%) is the headline — Claude Opus 4.7 judges each
+  step against a per-scenario rubric.
+- `citation_grounding` (15%) verifies every `file:line` reference in
+  the answer against the repo at `run_meta.repo_commit`.
+- `efficiency` (20%) is half tokens, half wall-time, calibrated
+  per-repo.
+- `keyword_coverage` (10%) is a smoke test, not the headline.
+
+The four axes are locked in [`locked/locked.yaml`](./locked/locked.yaml).
+
+## The 6 scenarios
+
+| Repo | Scenario | What it tests |
+|------|----------|---------------|
+| **flask** | WSGI dispatch trace + debug parameter | Call graph traversal, test-file mapping, modification impact |
+| **gin** | Middleware chain trace + request ID | Go dispatch tracing, middleware flow, dead code detection |
+| **axum** | Handler trait propagation + request ID layer | Rust trait analysis, Tower middleware, layered architecture |
+| **discourse** | Topic creation flow + authorization | Rails service-object tracing, Guardian auth, spec locating |
+| **javalin** | Servlet dispatch + error handler | Java framework tracing, routing table, handler registration |
+| **nextjs** | SSR render path + request ID threading | TypeScript monorepo navigation, multi-layer rendering pipeline |
+
+Three additional **held-out** scenarios live under
+`scenarios/held-out/` — `flask-blueprints`, `axum-towers`,
+`sense-mcp-flow` — with hand-graded `gold.json` reference scores.
+The improvement loop never edits these; they anchor convergence
+against human judgment.
+
+## Directory layout
+
+```
+bench/
+├── scenarios/                # One YAML + rubric YAML per repo
+│   └── held-out/             # Frozen scenarios + gold grades + lockfile-pinned transcripts
+├── locked/                   # locked.yaml (what the loop can't touch) + held-out.lock
+├── lib/
+│   ├── scorer.py             # Per-step check evaluation, efficiency, ceilings
+│   ├── fairness.py           # Combined fairness formula (the source of truth)
+│   ├── grounding.py          # file:line citation extraction + verification
+│   ├── judge.py              # LLM-as-judge per step
+│   ├── judge_prompt.v1.md    # Locked judge prompt
+│   ├── reporter.py           # Comparison tables + aggregate
+│   ├── audit_scoring.py      # Score-auditor (per-step quality re-check)
+│   ├── audit_scenarios.py    # Scenario auditor (proposes check additions/edits)
+│   ├── audit_watchdog.py     # Anti-Goodhart watchdog (flags suspect iterations)
+│   ├── convergence.py        # 4-criteria stop evaluator
+│   ├── delta_report.py       # Per-iteration delta.md
+│   ├── readiness.py          # bench-readiness.md verdict
+│   ├── cost_tracker.py       # Public-API-priced cost accounting
+│   ├── heldout_rescore.py    # Re-judges frozen held-out transcripts each iter
+│   ├── lock_check.py         # Validates improvements.json against locked.yaml
+│   ├── meta_report.py        # Per-iteration meta narrative
+│   ├── variance.py           # Judge-variance baseline tool
+│   ├── scenario.py           # Parse/validate scenario YAML
+│   └── load-env.sh           # .env → ANTHROPIC_API_KEY mapping
+├── bench.sh                  # One-shot wrapper: run → score → judge → report (md + json)
+├── run.sh                    # Runner: tool × scenario → transcript.json
+├── score.sh                  # Batch score all transcripts
+├── judge.sh                  # Run LLM judge over all scored.json
+├── report.sh                 # Comparison report (terminal / md / json)
+├── freeze-heldout.sh         # One-time held-out transcript freezer
+├── improvement-loop/         # Convergence-aware self-tuning loop (see below)
+└── results/                  # Scored output + report.md
+```
+
+## Usage
+
+### TL;DR — run a full bench
+
+```bash
+source bench/.venv/bin/activate
+bash bench/bench.sh        # run + score + judge + report (md + json)
+```
+
+Total ~$8-19 and ~20 min for a fresh full run. With no flags: all
+6 scenarios × both tools = 12 sessions. Forwards `--tool` / `--repo`
+filters to the run/score/judge stages.
+
+Under the hood, `bench.sh` chains four idempotent scripts you can
+also invoke individually:
+
+| Script | Cost | Time | What |
+|---|---|---|---|
+| `run.sh` | ~$5-13 | ~15 min | Runs Claude sessions, writes `transcript.json` |
+| `score.sh` | free | seconds | Computes `keyword_coverage`, `citation_grounding`, `efficiency`, `adoption_score` → `scored.json` |
+| `judge.sh` | ~$3-6 | ~3 min | Opus 4.7 judges each step against the rubric → `judged.json` |
+| `report.sh --md` / `--json` | free | seconds | Combines into `results/report.{md,json}` |
+
+`score.sh` and `judge.sh` are idempotent — re-running is cheap. To
+re-score against changed scenarios without burning a session, skip
+`run.sh`.
+
+### 1. Run scenarios
+
+```bash
+source bench/.venv/bin/activate
+
+bash bench/run.sh --dry-run                  # See what would execute
+bash bench/run.sh --tool sense --repo flask  # Single scenario
+bash bench/run.sh                             # All scenarios, all tools
+```
+
+Per-session budgets and timeouts are derived per repo from
+`BUDGET_PER_REPO` and `TIME_CEILINGS` in `lib/scorer.py`. Override
+globally with `--budget USD` or `--timeout SECS`.
+
+### 2. Score transcripts
+
+```bash
+bash bench/score.sh                          # Score all
+bash bench/score.sh --tool sense --repo flask
+```
+
+Writes `scored.json` next to each `transcript.json`. Idempotent —
+re-running is cheap.
+
+### 3. Run the LLM judge
+
+```bash
+bash bench/judge.sh                          # Judge all
+bash bench/judge.sh --tool sense --repo flask
+bash bench/judge.sh --force                  # Re-judge even if up-to-date
+```
+
+Writes `judged.json` next to each `scored.json`. Skips when
+`judged.json` is newer than its `transcript.json` unless `--force`.
+Requires `BENCHMARK_ANTHROPIC_API_KEY` in `.env` (see `lib/load-env.sh`).
+Without judge output, the report renders fairness as `—`.
+
+### 4. Generate report
+
+```bash
+bash bench/report.sh                         # Terminal table
+bash bench/report.sh --md                    # Markdown → results/report.md
+bash bench/report.sh --json                  # JSON → results/report.json
+```
+
+### 5. Improvement loop (optional, expensive)
+
+The loop refines scenarios within bounded scope, stops when it has
+converged or hit a budget, and never edits orchestration code, judge
+prompts, or held-out gold grades. Boundaries are enforced by
+[`locked/locked.yaml`](./locked/locked.yaml).
+
+**What an iteration does:**
+
+1. Held-out integrity gate — refuses to start if any held-out file's
+   SHA256 in `locked/held-out.lock` has drifted.
+2. Cost predict-halt — if cumulative + estimated next-iter cost
+   exceeds `--max-cost-usd`, halt cleanly.
+3. **Phase 1** — re-run scenarios → score → judge → analyze transcripts.
+4. **Reviewer** — Claude reads all 12 transcripts side-by-side, writes
+   `improvements.json` with evidence-cited check edits.
+5. **Phase 2** — `lock_check.py validate-improvements` strips any
+   modification targeting a locked entry, then applies what's left.
+6. **Phase 3** — re-score the touched scenarios; rollback on regression.
+7. **Phase 4** — score-auditor + scenario-auditor + watchdog;
+   re-judge the held-out set against the current rubric.
+8. Convergence eval (4 criteria) → `delta.md` + `bench-readiness.md`.
+
+**Halt conditions:** all 4 convergence criteria pass for 2 consecutive
+iters / cost ceiling hit / max iters / watchdog suspect 2× in a row /
+held-out lockfile mismatch (panic) / SIGINT.
+
+**Cost:** ~$15-22/iter on the full 6-repo bench (sessions $5-13 +
+judge $3-6 + audit $6-7). The default `--max-cost-usd 10` is
+intentionally conservative — a full iter won't fit, so the loop
+halts at the predict-check before spending. To actually run, raise
+the ceiling above your iteration budget (rule of thumb:
+`ceiling ≥ first_iter_prior + N · 22`). `loop-N/cost.json` records
+actuals.
+
+```bash
+# Default: 10 iters, $10 ceiling — halts before iter 1 on a full bench (intentional opt-in)
+bash bench/improvement-loop/improve-loop.sh
+
+# One full-bench iter (~$22)
+bash bench/improvement-loop/improve-loop.sh --max-cost-usd 25 --iterations 1
+
+# Two iters
+bash bench/improvement-loop/improve-loop.sh --max-cost-usd 50 --iterations 2
+
+# Subset run (cheap, ~$11/iter)
+bash bench/improvement-loop/improve-loop.sh --repo flask,gin,axum --max-cost-usd 15 --first-iter-prior 11
+
+# Dry run
+bash bench/improvement-loop/improve-loop.sh --dry-run
+```
+
+**Per-iteration outputs** under `improvement-loop/results/loop-N-iter-M/`:
+
+| File | What |
+|---|---|
+| `analysis-notes.md` | Reviewer's per-repo qualitative read |
+| `improvements.json` | Proposed check edits |
+| `improvements.cleaned.json` | After `lock_check` strips locked-entry targets |
+| `improved-scenarios/` | Resulting scenario YAMLs |
+| `backups/` | Pre-iter scenario YAMLs (rollback source) |
+| `regression.json` | Phase 3 regression detection result |
+| `audit-scoring.{tool}.{repo}.json` | Per-step audit of the score-auditor's grades |
+| `audit-scenarios.{repo}.json` | Scenario-auditor proposals |
+| `audit-watchdog.json` | Anti-Goodhart verdict |
+| `validation/held-out-scored.json` | Re-judged held-out scores |
+| `convergence.json` | 4-criteria pass/fail with distance summary |
+| `delta.md` | Human-readable iteration summary (always print this) |
+| `meta-report.md` | Higher-level narrative across phases |
+
+**Loop-level outputs** under `improvement-loop/results/loop-N/`:
+
+| File | What |
+|---|---|
+| `cost.json` | Per-iter + cumulative spend (public API pricing) |
+| `iteration-history.jsonl` | One line per iter: outcome + improvements + post-scores |
+| `baseline-snapshot.json` | Watchdog reference for delta detection |
+
+**Final output** at `results/bench-readiness.md`: one-page verdict
+(READY / NOT READY / PANIC / INDETERMINATE) with halt reason and
+distance-from-convergence block.
+
+## Scenario format
+
+```yaml
+name: Flask WSGI dispatch trace and debug instrumentation
+repo: flask
+description: |
+  Trace the Flask WSGI request dispatch pipeline end-to-end, locate
+  the test coverage for the core dispatch, then assess what would
+  break if you added a debug parameter to wsgi_app.
+
+steps:
+  - name: Trace the request dispatch pipeline
+    prompt: |
+      You're about to insert a request-scoped hook into Flask's
+      dispatch pipeline. Hand the next agent the map: starting from
+      Flask.wsgi_app, list every method called in order through to
+      finalize_request, each with file:line, one-line behaviour,
+      and what it calls next.
+    checks:
+      - type: word
+        value: wsgi_app
+        required: true
+        description: Core dispatch entry point
+      - type: contains
+        value: app.py:1625
+        required: false
+        description: Cited the precise line where __call__ invokes wsgi_app
+      - type: mcp_tool_used
+        value: sense_graph
+        required: false
+        layer: adoption          # Excluded from fairness
+        description: Used graph for caller analysis
+```
+
+Check types: `contains`, `phrase`, `word`, `starts_with`, `exact`,
+`mcp_tool_used`, `no_grep`, `diff_contains`, `response_richness`.
+Full descriptions in [`SCORING.md`](./SCORING.md).
+
+Each scenario also has a `<repo>.rubric.yaml` driving the LLM judge
+(four weighted criteria per step — typically `map_quality`,
+`specificity`, `justification`, `uncertainty`).
 
 ## Prerequisites
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- Python 3.9+ (for task parsing and scoring)
-- `bc` (for cost estimates in dry-run)
-
-```bash
-python3 -m venv bench/.venv
-source bench/.venv/bin/activate
-pip install -r bench/requirements.txt
-```
-
-Activate the venv (`source bench/.venv/bin/activate`) in each new shell before running bench scripts.
-
-### Per-tool dependencies
-
-| Tool | Version | Install | Extra dependencies |
-|------|---------|---------|-------------------|
-| sense | (dynamic) | `curl -fsSL https://sense.sh/install \| sh` | None |
-| grepai | 0.35.0 | `brew install grepai` | Ollama + `nomic-embed-text` model running |
-| codebase-memory-mcp | 0.6.0 | `curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh \| bash` | None |
-| gitnexus | (latest) | `npm install -g gitnexus` | Node.js 18+ |
-| tokensave | 4.3.2 | `brew install aovestdipaperino/tap/tokensave` | None |
-| roam | 12.2.0 | Installed to venv by script | Python 3.9+ |
-| baseline | — | — | None |
-
-Python tools (roam) get dedicated virtualenvs created by their setup scripts — no system install needed.
-
-## Repo layout
-
-Benchmark repos live **outside** the Sense project tree in a sibling directory to avoid config contamination and cross-tool index leakage:
-
-```
-sense/                              # this project
-├── bench/
-│   ├── run.sh, scan.sh, ...        # scripts
-│   ├── tasks/                      # task definitions
-│   ├── ground-truth/               # expected answers
-│   ├── PINNED_COMMITS.json         # repo pins + remotes
-│   └── results/                    # scored output (gitignored)
-│
-../sense-benchmark/                  # sibling dir (auto-created by bootstrap)
-├── _reference/                      # ground-truth generation copies
-│   ├── flask/
-│   ├── discourse/
-│   └── ...
-├── sense/                           # per-tool repo copies
-│   ├── flask/
-│   └── ...
-├── baseline/
-├── grepai/
-└── ...
-```
-
-The sibling path is configurable via `SENSE_BENCH_ROOT` (defaults to `../sense-benchmark` relative to the Sense project root). Each tool gets its own repo copy so indexes (`.sense/`, `.grepai/`, etc.) are structurally isolated.
-
-## Quick start: clean run
-
-This is the full workflow from clone to scored report. Each step is idempotent — safe to re-run.
-
-```bash
-# 1. Activate the bench venv
-source bench/.venv/bin/activate
-
-# 2. Bootstrap reference repos at pinned commits
-bash bench/bootstrap-repos.sh
-
-# 3. Generate ground truth from scratch (for set_match tasks)
-bash bench/gen-ground-truth.sh
-
-# 4. Dry run to see the full matrix
-bash bench/run.sh --dry-run
-
-# 5. Run with fresh indexes and N=3 for variance
-bash bench/run.sh --reset --runs 3
-
-# 6. Score all transcripts
-bash bench/score.sh
-
-# 7. Generate report (also auto-runs after scoring)
-bash bench/report.sh --md
-```
-
-Per-tool repo copies are created automatically by `run.sh` and `scan.sh` (via `git clone --reference` from `_reference/`). You only need to run `bootstrap-repos.sh` once.
-
-### Partial run (subset of tools/repos/tasks)
-
-```bash
-# Single tool + repo + task
-bash bench/run.sh --tool sense --repo flask --task callers
-
-# Compare two tools across all tasks
-bash bench/run.sh --tool sense,baseline --repo flask
-
-# Multiple filters
-bash bench/run.sh --tool sense,grepai,baseline --repo flask,gin --task callers,blast-radius
-```
-
-## Script reference
-
-### `bootstrap-repos.sh` — Clone reference repos
-
-```
-Usage: bootstrap-repos.sh [--repo r1,r2]
-```
-
-Clones benchmark repos into `$SENSE_BENCH_ROOT/_reference/` at the commits pinned in `PINNED_COMMITS.json`. Run once after cloning the Sense project, or after adding a new repo to `PINNED_COMMITS.json`.
-
-### `run.sh` — Run Claude sessions
-
-```
-Usage: run.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2] [--runs N]
-              [--dry-run] [--reset] [--verify-isolation] [--budget USD] [--timeout SECS]
-
-Options:
-  --tool    Comma-separated tool filter (e.g. sense,baseline)
-  --repo    Comma-separated repo filter (e.g. flask,gin)
-  --task    Comma-separated task filter (e.g. callers,blast-radius)
-  --runs    Number of runs per combination for variance estimation (default: 1)
-  --dry-run Show what would run without executing Claude sessions
-  --reset   Delete existing indexes and workspaces to measure fresh scan time
-  --verify-isolation  Scan existing transcripts for Sense MCP contamination
-  --budget  Max USD per Claude session (default: 1.00)
-  --timeout Max seconds per Claude session (default: 600)
-```
-
-The `--reset` flag deletes tool-specific index directories (`.sense/`, `.grepai/`, `.gitnexus/`, `.roam/`, `.tokensave/`, `.cbm-cache/`) and workspaces, forcing a full re-index. This is required to capture accurate scan timing in `index_meta_setup.json`.
-
-The `--runs N` flag runs each tool/repo/task combination N times, storing results in `run-1/`, `run-2/`, etc. subdirectories. Use N=3 or N=5 for statistical significance.
-
-### `scan.sh` — Index repos (with optional cold-start timing)
-
-```
-Usage: scan.sh [--tool t1,t2] [--repo r1,r2] [--force] [--report]
-```
-
-Indexes all tool x repo pairs without running Claude sessions. Skips already-indexed repos unless `--force` is passed, which deletes existing indexes first for cold-start timing. Polls `--check-ready` for tools with deferred embeddings (e.g. grepai) so the reported time includes the full index build. Writes `index_meta_setup.json` to the same result locations `run.sh` uses, so `report.sh` picks up the updated timing.
-
-### `score.sh` — Score transcripts
-
-```
-Usage: score.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2]
-```
-
-Scores each transcript against ground truth. Writes `scored.json` next to each `transcript.json`. Automatically regenerates `results/report.md` after scoring.
-
-### `rescore-all.sh` — Batch re-score all transcripts
-
-No arguments. Finds every `transcript.json` under `results/` and re-scores it against current ground truth. Useful after updating ground-truth files or the scorer itself.
-
-### `report.sh` — Generate report
-
-```
-Usage: report.sh [--format terminal|markdown|json] [--json] [--md]
-```
-
-Generates comparison tables. The markdown report includes: metric legend, per-task tables ranked by score, token savings section, efficiency section, per-task best-tool rankings, aggregate, and global ranking.
-
-### `quick.sh` — Fast single run or smoke profile
-
-```
-Usage: quick.sh [single|smoke] [options]
-
-Modes:
-  single REPO TASK TOOL   Run one combination (default: gin conventions sense)
-  smoke [--tool t1,t2]    Run smoke profile: 3 repos × 3 tasks × all tools
-```
-
-Two modes:
-
-- **`single`** (default) — Run, score, and print one tool × repo × task combination. Good for iterating on a single task.
-- **`smoke`** — Run the smoke profile: **gin** (Go/small), **flask** (Python/medium), **nextjs** (TS/large) across the 3 `set_match` tasks (callers, blast-radius, dead-code). Covers 3 languages, 3 repo sizes, and the 3 most discriminating tasks. Prints a summary table at the end.
-
-The smoke profile reduces the full matrix from 490 runs to 63 (~87% less cost and time) while preserving the axes that differentiate tools: language diversity, repo scale, and GT difficulty. Use `--tool` to narrow further (e.g. `quick.sh smoke --tool sense,baseline` = 6 runs).
-
-```bash
-# One-off: test sense on gin/callers
-bash bench/quick.sh single gin callers sense
-
-# Smoke: all tools, 63 runs, summary table
-bash bench/quick.sh smoke
-
-# Smoke: two tools only, 6 runs
-bash bench/quick.sh smoke --tool sense,baseline
-```
-
-### `gen-ground-truth.sh` — Generate ground truth
-
-```
-Usage: gen-ground-truth.sh [--repo r1,r2] [--task t1,t2]
-```
-
-Generates ground truth from grep/static analysis (not from Sense) to avoid circular validation bias. Reads repos from `$SENSE_BENCH_ROOT/_reference/`. Supports callers, blast-radius, dead-code, semantic-search, data-flow, grep-task, and test-file tasks. Qualitative tasks (orient, conventions, refactor) require manual keyword curation.
-
-## Results directory
-
-```
-bench/results/
-  <tool>/
-    <repo>/
-      <task>/
-        transcript.json     — Claude session output (stream-json JSONL)
-        scored.json         — Scored metrics and correctness
-        run_meta.json       — Wall time, tool version, repo commit, timestamp
-        index_meta.json     — Tool index state at run time
-        index_meta_setup.json — Scan/index timing and embedding info
-        setup.log           — Tool setup stderr
-        claude.log          — Claude session stderr
-        run-1/              — Multi-run subdirectory (when --runs N > 1)
-        run-2/
-  report.md                 — Markdown comparison table
-  report.json               — Machine-readable report
-
-../sense-benchmark/<tool>/<repo>/
-  .workspace/               — Persistent workspace (venvs, MCP configs, CLAUDE.md)
-```
-
-## Adding a task
-
-Create `tasks/<name>.yaml`:
-
-```yaml
-name: my-task
-description: What this task tests
-variables: [symbol]
-prompt_template: |
-  Find all callers of `{symbol}`. Respond with JSON: { "callers": [...] }
-
-repos:
-  flask:
-    symbol: "Flask.route"
-    ground_truth_file: ground-truth/flask/my-task.json
-  gin:
-    symbol: "Engine.ServeHTTP"
-    ground_truth_file: ground-truth/gin/my-task.json
-
-scoring:
-  correctness:
-    type: set_match       # or: qualitative
-    match_key: callers    # JSON key to compare
-    partial_credit: true
-  metrics:
-    - tool_calls
-    - token_input
-    - token_output
-    - wall_time
-    - misses
-    - index_completeness
-```
-
-Create matching ground-truth JSON files with a `status` field (`verified`, `initial`, or `stub`).
-
-## Adding a tool
-
-Create `tools/<name>.sh` implementing three modes per [tools/protocol.md](tools/protocol.md):
-
-1. **Setup**: `tools/<name>.sh <repo_path> <workspace_path>` — install, index, write `.mcp.json` and `CLAUDE.md` to workspace
-2. **Ready**: `tools/<name>.sh --check-ready <repo_path> <workspace_path>` — exit 0 (ready), 1 (building), or 2 (broken)
-3. **Write config**: `tools/<name>.sh --write-config <repo_path> <workspace_path>` — write `.mcp.json` and `CLAUDE.md` only (no indexing)
-
-Add the tool's capabilities to `TOOL_CAPABILITIES` in `lib/scorer.py` for miss detection.
-
-## Scoring types
-
-**`set_match`** — For structural tasks (callers, blast-radius, dead-code, semantic-search, grep-task, data-flow, test-file). Compares response JSON array against ground-truth set. Computes precision, recall, and F1. Supports partial credit for `file:symbol` matches.
-
-**`qualitative`** (`keyword_presence`) — For conceptual tasks (orient, conventions, refactor). Checks which ground-truth keywords appear in the response text via exact substring match or word-proximity matching (all significant words within a 200-char window). Score = fraction found.
-
-## Ground truth
-
-Ground-truth files have three tiers:
-
-- **`verified`** — Generated from independent sources (grep, static analysis) on pinned repo commits. High confidence.
-- **`initial`** — Derived from tool output or manual inspection. Medium confidence — may carry circular bias.
-- **`stub`** — Empty placeholder. Scoring is skipped.
-
-Use `gen-ground-truth.sh` to generate `verified` ground truth from grep/static analysis for set_match tasks. Qualitative tasks (orient, conventions, refactor) require manual keyword curation.
-
-## Candidate tools for future evaluation
-
-| Tool | Stars | Language | MCP tools | License | Install | Notes |
-|------|------:|----------|----------:|---------|---------|-------|
-| **graphify** | 39.5k | Python | 7 | MIT | `pip install graphifyy` | Multimodal knowledge graph (code + docs + video). Leiden community detection, HTML visualization. |
-| **gortex** | 24 | Go | 50 | PolyForm SB | `curl -fsSL https://get.gortex.dev \| sh` | 92 languages, hybrid BM25+vector search, LSP-enriched graphs. Global cache dir. |
-| **CodeGraphContext** | 3.1k | Python | native | MIT | `pip install codegraphcontext` | Graph-DB backend (KuzuDB). Different architecture from tree-sitter-only tools. |
-| **mcp-language-server** | 1.5k | Go | LSP bridge | BSD-3 | Go binary | Wraps any LSP server (gopls, pyright, rust-analyzer) via MCP. Compiler-grade accuracy. |
-| **Repowise** | 1.3k | Python | 7 | AGPL | `pip install repowise` | Multi-layer: graph + git history + docs. Unique `get_why()` decision archaeology. |
-| **jCodeMunch** | 1.7k | Python | native | — | pip | Token-efficient symbol retrieval. Direct tokensave competitor. |
+- Python 3.9+ with PyYAML (`pip install pyyaml`)
+- Repos bootstrapped under `../sense-benchmark/_reference/`
+- `.env` at repo root with `BENCHMARK_ANTHROPIC_API_KEY=…`. `lib/load-env.sh` maps it to `ANTHROPIC_API_KEY` for child processes. Judge + audit are direct-API; `claude` CLI scenario sessions fall back to OAuth subscription on credit exhaustion (one retry with the key unset).

@@ -5,8 +5,6 @@ BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 RESULTS_DIR="$BENCH_DIR/results"
 LIB_DIR="$BENCH_DIR/lib"
 
-# --- Argument parsing ---
-
 FORMAT="terminal"
 
 while [[ $# -gt 0 ]]; do
@@ -17,7 +15,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Usage: report.sh [--format terminal|markdown|json] [--json] [--md]"
       echo ""
-      echo "Generates comparison report from scored results."
+      echo "Generates comparison report from scored scenario results."
       echo ""
       echo "Outputs:"
       echo "  terminal (default)  — formatted table to stdout"
@@ -28,8 +26,6 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
-
-# --- Generate report ---
 
 output=$(python3 "$LIB_DIR/reporter.py" "$RESULTS_DIR" --format "$FORMAT")
 echo "$output"

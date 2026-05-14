@@ -2,105 +2,127 @@
 set -euo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 RESULTS_DIR="$BENCH_DIR/results"
+SCENARIOS_DIR="$BENCH_DIR/scenarios"
 LIB_DIR="$BENCH_DIR/lib"
+
+# Mirror run.sh: tool/repo checkouts live under SENSE_BENCH_ROOT.
+# Grounding (20-04) reads the checked-out repo to verify citations.
+SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 
 # --- Argument parsing ---
 
 FILTER_TOOLS=""
 FILTER_REPOS=""
-FILTER_TASKS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tool)  FILTER_TOOLS="$2"; shift 2 ;;
-    --repo)  FILTER_REPOS="$2"; shift 2 ;;
-    --task)  FILTER_TASKS="$2"; shift 2 ;;
+    --tool) FILTER_TOOLS="$2"; shift 2 ;;
+    --repo) FILTER_REPOS="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: score.sh [--tool t1,t2] [--repo r1,r2] [--task t1,t2]"
+      echo "Usage: score.sh [--tool t1,t2] [--repo r1,r2]"
       echo ""
-      echo "Scores benchmark transcripts against ground truth."
-      echo "Reads from results/<tool>/<repo>/<task>/transcript.json"
-      echo "Writes to results/<tool>/<repo>/<task>/scored.json"
+      echo "Scores all transcripts against their scenario checklists."
+      echo "Writes scored.json next to each transcript.json."
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
-# --- Helpers ---
-
 matches_filter() {
-  local value="$1"
-  local filter="$2"
+  local value="$1" filter="$2"
   [[ -z "$filter" ]] && return 0
   echo "$filter" | tr ',' '\n' | grep -qx "$value"
 }
 
-timestamp() {
-  date +%Y-%m-%dT%H:%M:%S
+# Stale cells (scored.json missing or older than transcript.json) are always
+# re-scored, even when --tool/--repo filters would exclude them — otherwise a
+# partial rerun leaves report.md mixing fresh transcripts with old scores.
+is_stale() {
+  local dir="$1"
+  [[ -f "$dir/transcript.json" ]] || return 1
+  [[ -f "$dir/scored.json" ]] || return 0
+  [[ "$dir/transcript.json" -nt "$dir/scored.json" ]]
 }
 
 log() {
-  echo "[$(timestamp)] $*" >&2
+  echo "[score] $*" >&2
 }
 
-# --- Discover results ---
+# --- Find scenario for a repo ---
+find_scenario() {
+  local repo="$1"
+  for sf in "$SCENARIOS_DIR"/*.yaml; do
+    local r
+    r=$(python3 -c "import yaml; print(yaml.safe_load(open('$sf'))['repo'])" 2>/dev/null || echo "")
+    [[ "$r" == "$repo" ]] && echo "$sf" && return
+  done
+  echo ""
+}
 
-scored=0
-errors=0
-skipped=0
+scored_count=0
+skipped_count=0
+
+stale_count=0
 
 for tool_dir in "$RESULTS_DIR"/*/; do
   [[ -d "$tool_dir" ]] || continue
   tool=$(basename "$tool_dir")
-  matches_filter "$tool" "$FILTER_TOOLS" || continue
 
-  for repo_dir in "$tool_dir"/*/; do
+  for repo_dir in "$tool_dir"*/; do
     [[ -d "$repo_dir" ]] || continue
     repo=$(basename "$repo_dir")
-    matches_filter "$repo" "$FILTER_REPOS" || continue
 
-    for task_dir in "$repo_dir"/*/; do
-      [[ -d "$task_dir" ]] || continue
-      task=$(basename "$task_dir")
-      matches_filter "$task" "$FILTER_TASKS" || continue
+    in_filter=true
+    matches_filter "$tool" "$FILTER_TOOLS" && matches_filter "$repo" "$FILTER_REPOS" || in_filter=false
 
-      # Score transcript in the task dir (single-run) or in run-N subdirs (multi-run)
-      score_dir() {
-        local dir="$1" label="$2"
-        local transcript="$dir/transcript.json"
-        if [[ ! -f "$transcript" ]]; then
-          skipped=$((skipped + 1))
-          return
-        fi
-        log "Scoring: $label"
-        if python3 "$LIB_DIR/scorer.py" "$dir" "$BENCH_DIR" "$tool" "$repo" "$task" > "$dir/scored.json" 2>"$dir/score.log"; then
-          scored=$((scored + 1))
+    scenario_file=$(find_scenario "$repo")
+    if [[ -z "$scenario_file" ]]; then
+      $in_filter && log "SKIP: no scenario for repo $repo"
+      continue
+    fi
+
+    # Main result dir
+    if [[ -f "$repo_dir/transcript.json" ]]; then
+      stale=false
+      is_stale "$repo_dir" && stale=true
+      if $in_filter || $stale; then
+        if $stale && ! $in_filter; then
+          log "Scoring $tool/$repo (stale — outside filter)"
+          stale_count=$((stale_count + 1))
         else
-          log "  ERROR: scoring failed (see $dir/score.log)"
-          errors=$((errors + 1))
+          log "Scoring $tool/$repo"
         fi
-      }
-
-      if [[ -f "$task_dir/transcript.json" ]]; then
-        score_dir "$task_dir" "tool=$tool repo=$repo task=$task"
+        python3 "$LIB_DIR/scorer.py" "$repo_dir" "$scenario_file" "$BENCH_DIR" "$SENSE_BENCH_ROOT/$tool/$repo"
+        scored_count=$((scored_count + 1))
       fi
-      for run_dir in "$task_dir"/run-*/; do
-        [[ -d "$run_dir" ]] || continue
-        run_id=$(basename "$run_dir")
-        score_dir "$run_dir" "tool=$tool repo=$repo task=$task $run_id"
-      done
+    fi
+
+    # run-N subdirs
+    for run_dir in "$repo_dir"/run-*/; do
+      [[ -d "$run_dir" ]] || continue
+      [[ -f "$run_dir/transcript.json" ]] || continue
+      stale=false
+      is_stale "$run_dir" && stale=true
+      if $in_filter || $stale; then
+        if $stale && ! $in_filter; then
+          log "Scoring $tool/$repo/$(basename "$run_dir") (stale — outside filter)"
+          stale_count=$((stale_count + 1))
+        else
+          log "Scoring $tool/$repo/$(basename "$run_dir")"
+        fi
+        python3 "$LIB_DIR/scorer.py" "$run_dir" "$scenario_file" "$BENCH_DIR" "$SENSE_BENCH_ROOT/$tool/$repo"
+        scored_count=$((scored_count + 1))
+      fi
     done
   done
 done
 
 log ""
-log "=== Scoring complete ==="
-log "  Scored: $scored | Errors: $errors | Skipped (no transcript): $skipped"
-
-# Regenerate the report if any transcripts were scored
-if [[ $scored -gt 0 ]]; then
-  log "Regenerating results/report.md ..."
-  "$BENCH_DIR/report.sh" --md
+if [[ $stale_count -gt 0 ]]; then
+  log "Scoring complete: $scored_count scored ($stale_count stale cells outside filter re-scored)"
+else
+  log "Scoring complete: $scored_count scored"
 fi
