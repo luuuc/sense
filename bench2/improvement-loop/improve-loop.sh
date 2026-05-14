@@ -138,9 +138,11 @@ for iter in $(seq 1 "$ITERATIONS"); do
   echo ""
 
   ITER_DIR="$LOOP_DIR/results/loop-1-iter-${iter}"
-  mkdir -p "$ITER_DIR"
 
   # ── Halt-before-overspend check ──
+  # IMPORTANT: do this BEFORE `mkdir $ITER_DIR`. Otherwise an empty iter
+  # directory gets created and readiness.py picks it as the "latest iter"
+  # with no data inside, masking the real last iter's results.
   if ! $DRY_RUN; then
     python3 "$BENCH2_DIR/lib/cost_tracker.py" predict \
       --loop-dir "$LOOP_DIR/results" \
@@ -155,6 +157,8 @@ for iter in $(seq 1 "$ITERATIONS"); do
       echo "WARN: cost_tracker predict rc=$cost_rc — continuing anyway." >&2
     fi
   fi
+
+  mkdir -p "$ITER_DIR"
 
   # ── Phase 1: Run scenarios, score, analyze ──
   echo "--- Phase 1: Run & Analyze ---"
