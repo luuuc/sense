@@ -1,0 +1,124 @@
+{
+  "scenario": "Axum Handler trait propagation and request context layer assessment",
+  "repo": "axum",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "axum.rubric.yaml"
+  },
+  "scenario_quality": 0.8775,
+  "steps": [
+    {
+      "step": "Find all Handler trait implementations",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Lists all 5 Handler impls with precise file:line ranges (handler/mod.rs:208-219, 221-260, 270-280, 317-350, method_routing.rs:1355-1364), type-state markers (T, S) explicit, and pinpoints user closure invocation lines (217, 255, 278). Agent could pick the right impl to extend without grepping."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Cites macro expansion explicitly: 'expanded by all_the_tuples! at line 262 (1..=16 trailing args)' with concrete trait bounds 'leading Ti: FromRequestParts<S> and Tlast: FromRequest<S, M>'. Layered bound 'L::Service::Error must be Infallible' is concrete."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains WHY each impl exists: IntoResponseHandler 'Powers Router::route(\"/\", get(\"hello\"))', Layered's role in wrapping with tower, MethodRouter-as-Handler enabling nested handler use. Could go slightly deeper on the coherence-marker rationale but covers the key purposes."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Claims 'No other impl Handler exists in the crate (verified by grep over axum/src)' \u2014 good exhaustiveness claim, and flags macro-generated impls. However, does not mention axum-extra's HandlerCallWithExtractors extension, which the rubric specifically asks about."
+        }
+      },
+      "step_quality": 0.8775,
+      "usage": {
+        "input_tokens": 1300,
+        "output_tokens": 569,
+        "cache_creation_input_tokens": 2906,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Trace the extractor chain",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Provides file:line for both traits, 15+ built-in extractors with locations, the FromRef path, and the rejection short-circuit site at handler/mod.rs:242-253. An agent could write a new extractor with only small lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Exact names and lines (e.g., `State` at state.rs:300-317, `ViaParts`/`ViaRequest` marker at mod.rs:31-37, blanket bridge at mod.rs:91-105). Trait-bound differences are concrete with the `M` marker and the parts/body split."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains why the two traits split (parts composable/multiple vs body-consuming/last) and how FromRef enables substate via blanket `T: FromRef<T> for T: Clone`. Could say a touch more on why rejection is `IntoResponse`-bounded, but the Result blanket opt-in is called out."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Mentions `#[derive(FromRef)]` in axum-macros and the Result opt-in as a rejection alternative, but doesn't explicitly flag user-defined extractors, axum-extra extensions, or rejection-conversion subtleties (e.g., `From` chains) the agent should verify."
+        }
+      },
+      "step_quality": 0.8775,
+      "usage": {
+        "input_tokens": 2013,
+        "output_tokens": 501,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2906
+      }
+    },
+    {
+      "step": "Trace the full serve-to-response lifecycle",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "All 7 layers are walked with specific file:line citations (serve/mod.rs:103, into_make_service.rs:35, routing/mod.rs:599-618, path_router.rs:325-372, method_routing.rs:1167-1222, handler/service.rs:146-176, handler/mod.rs:255). The middleware insertion guidance with Router::layer vs route_layer vs Handler::layer makes it directly actionable."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Exact method names appear (call_with_state, oneshot_inner_owned, set_matched_path_for_request, TowerToHyperService::new at :596, serve_connection_with_upgrades at :613). Tower-to-hyper bridge is cited concretely, not generically."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Explains roles at several layers (PathRouter inserts OriginalUri/matched path, MethodRouter dispatches via method match macro, IntoResponse converts at boundary), and contrasts layer/route_layer/Handler::layer with reasons. Could say more on WHY PathRouter and MethodRouter are split and why the hyper bridge exists."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Does not flag axum-core vs axum split, alternative serve paths (hyper directly), or things to verify like middleware ordering interactions. Some hedging on layer timing ('before extractors, after path matching only if...') but no explicit uncertainty markers."
+        }
+      },
+      "step_quality": 0.8275,
+      "usage": {
+        "input_tokens": 1557,
+        "output_tokens": 565,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2906
+      }
+    },
+    {
+      "step": "Assess adding a request context layer",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Concrete edit map with new file path, exact precedent file:lines (matched_path.rs:67-82, extension.rs:140, path_router.rs:332-347), and an explicit no-touch list. The agent can open a PR directly from this."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Tradeoffs are grounded in actual axum surfaces: `Router::layer` at routing/mod.rs:296 vs `route_layer` at :313, MatchedPath precedent at path_router.rs:347, and Handler impl sites enumerated by file:line for the rejected alternative."
+        },
+        "justification": {
+          "score": 0.95,
+          "rationale": "Explains WHY the Extension approach is least-breaking (no trait/S change, mirrors MatchedPath/OriginalUri), why Handler modification is rejected (ripples through 5 impls + downstream crates), and why extractor-only is fragile (middleware above handler wouldn't see value)."
+        },
+        "uncertainty": {
+          "score": 0.8,
+          "rationale": "Flags layer ordering with TraceLayer, type-erasure rejection risk with mitigation via OptionalFromRequestParts, and the fallback vs route_layer interaction. Less explicit about nested routers (Router::nest) interactions, but covers most verification points."
+        }
+      },
+      "step_quality": 0.9275,
+      "usage": {
+        "input_tokens": 5706,
+        "output_tokens": 487,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2906
+      }
+    }
+  ]
+}

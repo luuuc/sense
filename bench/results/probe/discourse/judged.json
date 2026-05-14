@@ -1,0 +1,124 @@
+{
+  "scenario": "Discourse topic creation flow and authorization tracing",
+  "repo": "discourse",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "discourse.rubric.yaml"
+  },
+  "scenario_quality": 0.9019,
+  "steps": [
+    {
+      "step": "Orient in the Discourse codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The answer provides an excellent map: top-level layout (app/controllers, app/models, app/services, app/serializers, lib/), key abstractions (Guardian, services, serializers, NewPostManager) all with file paths, and concrete entry points with line numbers (posts_controller.rb:183, new_post_manager.rb:228, topic_creator.rb:56). An agent could pick an entry point immediately."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Citations are highly concrete with file:line references (lib/guardian.rb:21-35 for mixins, app/controllers/application_controller.rb:484-491 for guardian instantiation, app/serializers/current_user_serializer.rb:140-141). Abstractions are tied to real files and line numbers, not vague mentions."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "The answer explains Guardian's role (\"single object answering can_*? / ensure_*! questions\") and notes services are a \"newer pattern that wraps contracts/policies/steps/transactions\" while topic creation still uses lib/*_creator.rb. Could go deeper on why serializers carry guardian flags, but the rationale for each abstraction is present."
+        },
+        "uncertainty": {
+          "score": 0.7,
+          "rationale": "Flags plugin override risk (\"Plugins shipping Guardian overrides... re-check after the change\"), notes PostCreator's guardian is a fresh one not the request's, and calls out skip_guardian/skip_validations bypass paths. Does not explicitly flag multisite concerns, but plugin-extension uncertainty is well-handled."
+        }
+      },
+      "step_quality": 0.8725,
+      "usage": {
+        "input_tokens": 8586,
+        "output_tokens": 602,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3039
+      }
+    },
+    {
+      "step": "Trace topic creation from controller to persistence",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The answer provides file:line targets for every layer in execution order (PostsController#create:183 \u2192 NewPostManager#perform:228 \u2192 perform_create_post:321 \u2192 PostCreator#create:198 \u2192 create_topic:501 \u2192 TopicCreator#create:56 \u2192 setup_topic_params:138-178 with ensure_can_create!:164-166 \u2192 save_topic:268-272), plus alternate entry sites. An agent could insert a permission check at the right layer with minimal further lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Citations are consistently file:line with named methods and signatures (e.g., 'PostCreator.new(@user, @args)', 'TopicCreator.new(@user, guardian, opts)', 'ensure_can_create!(Topic, category)'). Alternate paths name specific files like lib/email/receiver.rb, lib/system_message.rb:76, reviewable_queued_post.rb:106."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains why each layer exists: NewPostManager 'wraps PostCreator with handlers (spam blocking, queueing for review)', TopicCreator orchestrates topic setup before PostCreator handles the OP, and notes the guardian propagation difference (fresh Guardian.new(@user) vs request guardian). Could go slightly deeper on PostCreator's specific role separate from TopicCreator."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Flags multiple alternate/bypass paths: skip_guardian/skip_validations on reviewable approval, plugin modifier :posts_controller_create_user that can substitute users, email ingestion bypass, plugin Guardian prepends. Note about PostCreator's guardian not being the request's guardian is a useful explicit caveat."
+        }
+      },
+      "step_quality": 0.915,
+      "usage": {
+        "input_tokens": 8593,
+        "output_tokens": 662,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3039
+      }
+    },
+    {
+      "step": "Understand Guardian authorization",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The answer maps Guardian instantiation (application_controller.rb:484-491, post_creator.rb:92-94, new_post_manager.rb:293), the full method chain (can_create?, ensure_can_create!, can_create_topic?, can_create_topic_on_category?, can_create_post_in_topic?), and connects to serializer surfaces (current_user_serializer:140-141, category_list, topic_list, topic_view_details). An agent could insert a check without re-exploring."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Method names are exact with ? suffix and snake_case; concern files are cited individually (lib/guardian/topic_guardian.rb:45, lib/guardian/post_guardian.rb:144,415, lib/guardian/ensure_magic.rb:5-18) rather than only guardian.rb."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Explains EnsureMagic's reflection trick, why TopicCreator funnels through can_create_topic? (central predicate covering UI + validation + persistence), and why not to put checks in controller or can_create_post?. Could be slightly more explicit on the 'centralised vs scattered' rationale but the reasoning is clear."
+        },
+        "uncertainty": {
+          "score": 0.75,
+          "rationale": "Flags plugin Guardian overrides ('search for `prepend Guardian`'), the skip_guardian/skip_validations bypass in approvals, and the fresh-vs-request guardian distinction in PostCreator. Could more explicitly mention DiscoursePluginRegistry as the plugin extension surface for Guardian, but uncertainty is well-acknowledged."
+        }
+      },
+      "step_quality": 0.89,
+      "usage": {
+        "input_tokens": 8585,
+        "output_tokens": 615,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3039
+      }
+    },
+    {
+      "step": "Assess impact of adding a permission check",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Comprehensive edit map: primary change site (lib/guardian/topic_guardian.rb:45-51), invocation points with file:line (topic_creator.rb:164-166, post_creator.rb:142-144, new_post_manager.rb:298-300), alternate paths (ReviewableQueuedPost approval, PMs, email ingestion, plugin modifier), and specs to update. Agent could open a PR with this."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Specs named concretely (spec/lib/guardian/topic_guardian_spec.rb, spec/lib/topic_creator_spec.rb, spec/requests/posts_controller_spec.rb) and alternate paths cited with file:line (reviewable_queued_post.rb:94-117, posts_controller.rb:188-193). A few system spec references are slightly hand-wavy ('and similar') but most citations are concrete."
+        },
+        "justification": {
+          "score": 0.95,
+          "rationale": "Explains WHY the change belongs in can_create_topic? ('central predicate... UI gating, validation, and persistence guard'), why NOT in controller or can_create_post?, and the behavioural difference between rejecting vs queuing (skip_validations bypass at line 164). Each alternate path includes reasoning about its impact."
+        },
+        "uncertainty": {
+          "score": 0.9,
+          "rationale": "Flags plugin Guardian overrides ('search for `prepend Guardian`... super && ... could undo the check'), narrative-bot uncertainty ('Verify...'), PM policy intent ('Confirm intent with stakeholders'), and email ingestion audit. Calls out skip_guardian bypass explicitly so agent knows to verify."
+        }
+      },
+      "step_quality": 0.93,
+      "usage": {
+        "input_tokens": 8594,
+        "output_tokens": 632,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3039
+      }
+    }
+  ]
+}

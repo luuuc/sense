@@ -1,0 +1,124 @@
+{
+  "scenario": "Gin middleware chain tracing and recovery modification assessment",
+  "repo": "gin",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "gin.rubric.yaml"
+  },
+  "scenario_quality": 0.8025,
+  "steps": [
+    {
+      "step": "Trace HTTP dispatch from entry point",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The step1 block lists Engine.ServeHTTP (gin.go:662-675), updateRouteTrees (517-521), reset, handleHTTPRequest (690-760), node.getValue (tree.go:418), redirectTrailingSlash/redirectFixedPath/redirectRequest, and serveError (764-779) with file:line and call relationships \u2014 an agent could insert a request-ID hook without re-tracing. Missing explicit mention of the handler exec loop location (c.Next at 722 is in step2), but the chain is complete."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Receivers are named (*Engine, *node, *Context). Intermediates updateRouteTrees, serveError, and both redirect handlers are cited at their lines, and dependent calls like cleanPath, sanitizePathChars, findCaseInsensitivePath are referenced."
+        },
+        "justification": {
+          "score": 0.55,
+          "rationale": "Each method has a one-line purpose (e.g. 'core dispatcher', 'one-shot via sync.Once'), but the answer doesn't really explain WHY handleHTTPRequest is split from ServeHTTP, the role of methodTrees, or the rationale for the radix tree design."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Redirect paths (tsr, fixed) and 404/405 fallbacks via serveError are flagged as branches, but HEAD-vs-GET subtleties and explicit NoRoute/NoMethod handler-chain swap aren't called out as caveats for the hook author."
+        }
+      },
+      "step_quality": 0.765,
+      "usage": {
+        "input_tokens": 4764,
+        "output_tokens": 588,
+        "cache_creation_input_tokens": 2886,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Understand middleware flow",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Provides file:line for Context.Next (context.go:188-196), Abort (context.go:207-209), abortIndex (context.go:57), handlers field, IsAborted, Copy, and combineHandlers (routergroup.go:243). Agent could write a new middleware without re-reading context.go."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Lists all production callers of Next and Abort with file:line and enclosing function (e.g., 'recovery.go:90, CustomRecoveryWithWriter closure'). abortIndex constant is named explicitly with its value math.MaxInt8>>1."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains Next's increment + loop mechanism and that Abort sets index past abortIndex so the loop skips. Notes Abort 'does NOT return from the current handler \u2014 caller must return explicitly'. Light on combineHandlers stitching details but adequate."
+        },
+        "uncertainty": {
+          "score": 0.55,
+          "rationale": "Flags the Abort-doesn't-return gotcha and that Copy propagates abortIndex/Keys for goroutines. Does not explicitly call out panic-recovery interaction with the chain or handler-slice mutation safety."
+        }
+      },
+      "step_quality": 0.87,
+      "usage": {
+        "input_tokens": 4766,
+        "output_tokens": 467,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2886
+      }
+    },
+    {
+      "step": "Find dead code in the gin package",
+      "scores": {
+        "map_quality": {
+          "score": 0.5,
+          "rationale": "The answer's `verified_dead_unexported_at_root` list is empty \u2014 it concludes no unexported symbols are dead. While this is a defensible claim with rationale, it doesn't give the agent a deletion list to act on. However, it does save the agent from chasing false positives by explicitly listing them with file:line."
+        },
+        "specificity": {
+          "score": 0.7,
+          "rationale": "False-positive symbols are cited with exact file:line (e.g., `abortIndex` at context.go:57 with use sites at context.go:131,200,208 and routergroup.go:243). Exported constants are listed with file:line. Scope (root package) is made explicit."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Strong justification: explains WHY flagged symbols are alive (cites caller locations), WHY exported constants must not be deleted (external API consumers invisible to static analysis), and WHY `waitForServerReady` is test-only-but-keep."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Explicitly flags test-only callers (`waitForServerReady`), public-API-but-unused-internally cases with a `do_not_delete_warning`, and the limitation that static analysis can't see external consumers \u2014 exactly the surprise classes the rubric asks for."
+        }
+      },
+      "step_quality": 0.6625,
+      "usage": {
+        "input_tokens": 4757,
+        "output_tokens": 480,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2886
+      }
+    },
+    {
+      "step": "Assess modifying the recovery middleware",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "All four public entry points are cited with file:line (recovery.go:35-37, 40-42, 45-50, 53-92), registration in gin.Default at gin.go:236-241, and the precise injection point (before c.Next() at recovery.go:90). The agent can edit without reopening the file."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Signatures are reproduced with receivers/types, callers listed concretely (benchmarks_test.go:20,34; recovery_test.go:189,224; gin.go:236). Minor gap: RecoveryFunc cited without exact line, and external Use(Recovery()) callers are noted only generally."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Explains why three flavors exist as a funnel (Recovery \u2192 RecoveryWithWriter \u2192 CustomRecoveryWithWriter) and why CustomRecoveryWithWriter is the right single edit surface ('All four public entry points funnel through' it). Clear API-stability rationale."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Flags gin.New()-without-Recovery case, overwrite risk vs existing request-ID middleware, and Copy() preserving Keys. Misses explicit mention of BasicAuthForRealm/Abort ordering, but covers panic-in-middleware ordering implicitly via 'registered first via gin.Default'."
+        }
+      },
+      "step_quality": 0.9125,
+      "usage": {
+        "input_tokens": 4736,
+        "output_tokens": 526,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2886
+      }
+    }
+  ]
+}

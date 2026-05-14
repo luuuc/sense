@@ -1,0 +1,124 @@
+{
+  "scenario": "Flask WSGI dispatch trace and debug instrumentation",
+  "repo": "flask",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "flask.rubric.yaml"
+  },
+  "scenario_quality": 0.83,
+  "steps": [
+    {
+      "step": "Trace the request dispatch pipeline",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "All seven required methods are listed in order with file:line (wsgi_app:1566, full_dispatch_request:992, preprocess_request:1366, dispatch_request:966, finalize_request:1021, make_response:1224, process_response:1394) plus __call__ as bonus. Agent can insert a hook without re-reading app.py."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every entry has method-level citation like 'src/flask/app.py:1566' with symbol name, and the 'calls_next' field makes ordering between pairs explicit."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Each method has a one-line behaviour explaining purpose (ctx push/pop, before_request chain, after_request reverse unwinding, session save). Slightly terse on WHY (e.g., doesn't deeply explain request_context lifecycle rationale) but sufficient for an agent."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Blueprint chain is mentioned in preprocess_request/process_response, and error-handler branches (handle_exception, handle_user_exception) are noted in calls_next. However, extension hooks (teardown_request, signals beyond request_started/finished) and the from_error_handler branch could be flagged more explicitly."
+        }
+      },
+      "step_quality": 0.8675,
+      "usage": {
+        "input_tokens": 3232,
+        "output_tokens": 491,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2782
+      }
+    },
+    {
+      "step": "Find internal callers of wsgi_app",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "Identifies the sole internal caller Flask.__call__ at src/flask/app.py:1625 with enclosing function and line, and explicitly notes other hits are docstrings. Agent can update the signature in one pass, though no independent verification method is shown."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Cites 'src/flask/app.py:1625' inside 'Flask.__call__ (defined at src/flask/app.py:1618)' \u2014 method-level precision. __call__ is named explicitly as the WSGI delegation point."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Step 4 section explains __call__ delegates so 'middleware can wrap wsgi_app in place', covering the subclassing/middleware seam. The step-2 entry itself is terse ('Only real internal caller') but the reasoning is present elsewhere in the answer."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Notes docstring false-positives and the sansio base has no override, which is good. However, it doesn't explicitly flag uncertainty about extensions or acknowledge the test/ exclusion per the prompt scope."
+        }
+      },
+      "step_quality": 0.8275,
+      "usage": {
+        "input_tokens": 3159,
+        "output_tokens": 445,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2782
+      }
+    },
+    {
+      "step": "Locate test coverage for the dispatch pipeline",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "Enumerates five test files (test_basic.py, test_helpers.py, test_async.py, test_views.py, test_reqctx.py) with concrete paths and key test functions with line numbers. Missing test_blueprints.py and test_appctx.py which likely have dispatch coverage, but agent has a strong starting list."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Test functions are named explicitly (test_request_dispatching, test_after_request_processing, test_async_before_after_request) with line numbers, not vague references. Paths are concrete."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "Brief annotations explain coverage for some files (test_reqctx.py 'exercise ctx push/pop driven from wsgi_app', test_views.py 'exercise dispatch_request through the View base'), but test_basic.py and test_helpers.py just list tests without explaining what aspect of dispatch each covers."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Does not flag indirect coverage or note that blueprint tests / app context tests might touch dispatch without naming it. No caveats about completeness of the test enumeration."
+        }
+      },
+      "step_quality": 0.7775,
+      "usage": {
+        "input_tokens": 3168,
+        "output_tokens": 456,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2782
+      }
+    },
+    {
+      "step": "Assess impact of adding a debug parameter",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The answer enumerates the two primary edit sites (wsgi_app at 1566, __call__ at 1618/1625) with file:line, identifies the sansio base as not needing changes, and lists tests to rerun. Missing explicit mention of FlaskClient/testing.py surfaces, but the agent has a clear edit list."
+        },
+        "specificity": {
+          "score": 0.85,
+          "rationale": "Symbols cited precisely as 'Flask.wsgi_app (src/flask/app.py:1566)' and 'Flask.__call__ (src/flask/app.py:1618)' with body line 1625. However FlaskClient.open is not named \u2014 the testing client is only referenced as 'Werkzeug test client'."
+        },
+        "justification": {
+          "score": 0.95,
+          "rationale": "Strong reasoning: explains WHY __call__ doesn't strictly need updating (WSGI servers pass only environ/start_response), WHY middleware wrapping defeats kwargs ('A pure kwarg is unreachable through external middleware'), and WHY subclasses silently drop _trace."
+        },
+        "uncertainty": {
+          "score": 0.7,
+          "rationale": "Flags subclass override concerns and middleware-wrapping limits clearly. Does not explicitly call out third-party extensions or user subclasses outside the repo as unenumerable, though the subclass concern is acknowledged generically."
+        }
+      },
+      "step_quality": 0.8475,
+      "usage": {
+        "input_tokens": 3186,
+        "output_tokens": 516,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2782
+      }
+    }
+  ]
+}

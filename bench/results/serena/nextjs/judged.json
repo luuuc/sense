@@ -1,0 +1,124 @@
+{
+  "scenario": "Next.js SSR render path tracing and request ID threading",
+  "repo": "nextjs",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "nextjs.rubric.yaml"
+  },
+  "scenario_quality": 0.8488,
+  "steps": [
+    {
+      "step": "Orient in the Next.js server architecture",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Names the abstract Server (base-server.ts:297), NextNodeServer (next-server.ts:175), RouteModule subclasses with file:line, and all three subdirectories (app-render, route-modules, response-cache) with concrete contents. Missing only NextCustomServer/edge-server explicit mention, but otherwise the agent has a navigable map."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Exact class names (NextNodeServer, AppPageRouteModule, PagesRouteModule), and Pages-vs-App split is made concrete with render.tsx:457/1631 vs app-render/app-render.tsx:3077, plus the selection point at next-server.ts:634."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Explains what each subdirectory does (response-cache as Batcher+LRUCache, route-modules as abstraction with module.ts/compiled/render bridge) and the dispatch logic for Pages vs App. Light on WHY the server hierarchy exists (Edge vs Node, custom-server seam not really discussed)."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Mentions web.ts edge variant for response-cache and dev-only debug-channel reuse, but does not flag the dev-vs-prod server split, Turbopack vs webpack, or which code paths differ in production builds."
+        }
+      },
+      "step_quality": 0.8075,
+      "usage": {
+        "input_tokens": 6299,
+        "output_tokens": 519,
+        "cache_creation_input_tokens": 2995,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Trace the SSR request lifecycle",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The 9-step lifecycle walks router-server.ts:371 \u2192 BaseServer.handleRequest:877 \u2192 handleRequestImpl:968 \u2192 renderToResponse:2556 \u2192 renderPageComponent:2515 \u2192 findPageComponents \u2192 renderToResponseWithComponents:1974 \u2192 loadComponents (load-components.ts:160/355) \u2192 renderHTML:604/renderHTMLImpl:616 \u2192 lazyRenderAppPage/lazyRenderPagesPage \u2192 renderToHTMLOrFlight:3077 / renderToHTMLImpl:457, with file:line at every layer. An agent could insert a hook at the right layer with minimal follow-up."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Distinguishes renderToHTMLOrFlight (:3077) from renderToHTMLOrFlightImpl (:2568), renderToHTML (:1631) from renderToHTMLImpl (:457), and names the outermost router-server entry. Lazy bridges (module.render.ts) and the selection point at next-server.ts:634 are called out concretely."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains the Pages-vs-App split with the `isAppPath` selection point, what loadComponents produces (LoadComponentsReturnType with ComponentMod/routeModule/App/Document), and the role of handleResponse/responseCache at the route-module boundary. Could go slightly deeper on why renderHTMLImpl is a thin dispatcher, but rationales are present, not just listings."
+        },
+        "uncertainty": {
+          "score": 0.8,
+          "rationale": "Flags streaming/Flight (renderToStream/prerenderToStream), PPR/postponedState, response-cache bypass via handleResponse, and dev-only x-nextjs-request-id reuse. Could more explicitly call out static vs dynamic divergence and edge runtime, but the major branches are noted."
+        }
+      },
+      "step_quality": 0.9075,
+      "usage": {
+        "input_tokens": 6317,
+        "output_tokens": 703,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2995
+      }
+    },
+    {
+      "step": "Find callers of renderToHTMLOrFlight",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "Lists three concrete sites with file:line and enclosing function (module.ts:160 AppPageRouteModule.render, module.render.ts:9 lazyRenderAppPage bridge, app-render.tsx:3077 definition) plus the re-export at module.ts:210 and module.compiled.d.ts. However, it misses potential callers like app-route module or any next-server.ts direct invocation paths, and the 'caller' at app-render.tsx:3158 is the definition calling its own Impl, which is conflated with external callers."
+        },
+        "specificity": {
+          "score": 0.85,
+          "rationale": "Citations are concrete with file:line and enclosing function/class (e.g., 'AppPageRouteModule.render(req,res,context)' at module.ts:160, import at module.ts:9). The export site is explicitly named: 'export const renderToHTMLOrFlight: AppPageRender' at app-render.tsx:3077 and re-export at module.ts:210."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Each caller has a 'notes' field explaining its role \u2014 module.ts forwards context fields, module.render.ts is the lazy require bridge from next-server, module.compiled.d.ts is the type contract for the bundled compiled module. Could go deeper on why the compiled-bundle indirection exists, but the why-of-each-site is reasonably covered."
+        },
+        "uncertainty": {
+          "score": 0.7,
+          "rationale": "Flags dynamic dispatch via require('./module.compiled') and notes that a signature change must update module.ts, module.render.ts, module.compiled.d.ts, and AppPageRender type. Does not explicitly flag edge-runtime variants or whether there are test-only or vendored callers the agent should double-check."
+        }
+      },
+      "step_quality": 0.7675,
+      "usage": {
+        "input_tokens": 6296,
+        "output_tokens": 646,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2995
+      }
+    },
+    {
+      "step": "Assess where to thread a request ID",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Names RequestMeta (request-meta.ts:51/348/384), NEXT_REQUEST_ID_HEADER (app-router-headers.ts:49), handleRequest/handleRequestImpl (base-server.ts:877/968), and response-cache interaction (route-module.ts:1102, response-cache/index.ts) with file:line. Agent has a clear edit map across generation, propagation, and cache."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Cites the existing constant location, RequestMeta accessor lines, and concrete edit sites including app-render.tsx:417/:2693. Test files named concretely (test/e2e/app-dir/app, ppr-full, cache-handler-*) though some are directory-level rather than file-level."
+        },
+        "justification": {
+          "score": 1.0,
+          "rationale": "Explicitly contrasts RequestMeta vs ALS with three reasons (req-threading, ALS only used for OTEL, work storage created later) and explains the cache-key implication \u2014 'request ID must NOT be part of cacheKey, otherwise every request would miss' \u2014 with two strategies to avoid leaking cached IDs."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Flags response-cache key inclusion as a hazard, PPR/postponedState path, dev x-nextjs-request-id reuse, and middleware rewrite/redirect survival. Doesn't explicitly call out edge runtime constraints, though middleware is covered."
+        }
+      },
+      "step_quality": 0.9125,
+      "usage": {
+        "input_tokens": 6318,
+        "output_tokens": 555,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 2995
+      }
+    }
+  ]
+}
