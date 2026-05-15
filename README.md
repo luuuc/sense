@@ -6,7 +6,7 @@
 
 ![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (5 tool calls, 109K tokens, 48s)](docs/comparison.svg)
 
-Sense is not a tool you use. It's a tool your AI uses. You install a binary, add one line to your MCP config, and your AI gets the structural understanding of your codebase that a senior engineer carries in their head. You notice it in the absence of frustration. Faster answers, fewer wrong turns, code that matches your conventions.
+Sense is an MCP server your AI uses, not a tool you use. You install a binary, add one line to your MCP config, and your AI gets the structural understanding of your codebase that a senior engineer carries in their head. Works with Claude Code, Cursor, Codex CLI, and any MCP client. You notice it in the absence of frustration. Faster answers, fewer wrong turns, code that matches your conventions.
 
 One binary, one index, four tools for your AI. No SaaS account, no API key, no cloud dependency.
 
@@ -15,7 +15,7 @@ One binary, one index, four tools for your AI. No SaaS account, no API key, no c
 ## What changes
 
 Measured across 7 real-world codebases ([Discourse](https://github.com/discourse/discourse), [Flask](https://github.com/pallets/flask), [Next.js](https://github.com/vercel/next.js/), [Axum](https://github.com/tokio-rs/axum), [Gin](https://github.com/gin-gonic/gin), [Javalin](https://github.com/javalin/javalin), and a private e-commerce repo).
-Full methodology and raw data: [`bench/`](bench/).
+Full methodology and raw data: [`bench/`](bench/). Head-to-head leaderboard against Serena, Probe, GitNexus, GrepAI, and 3 other code-search MCPs: [`docs/bench-leaderboard.svg`](docs/bench-leaderboard.svg).
 
 | Metric | Claude Code (Opus 4.6) | Claude Code (Opus 4.6) + Sense | Change |
 |---|---|---|---|
