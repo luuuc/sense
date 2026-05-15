@@ -1,0 +1,65 @@
+{
+  "manifest_version": "0.3",
+  "name": "sense",
+  "display_name": "Sense",
+  "version": "@VERSION@",
+  "description": "MCP server that gives AI coding agents structural understanding of your codebase — symbol graph, blast radius, semantic search, and auto-detected project conventions.",
+  "long_description": "Sense is a local-only MCP server for AI coding agents (Claude Code, Cursor, Codex CLI, and any MCP client). It parses your codebase with tree-sitter, builds a symbol graph plus embeddings, and exposes four tools without sending anything to the cloud. Run `sense scan` in any project, then point your AI at the MCP server.\n\nMeasured across 7 real-world codebases (Discourse, Flask, Next.js, Axum, Gin, Javalin, and a private e-commerce repo), Claude Code with Sense uses 47% fewer tool calls and 32% fewer tokens at the same correctness as the baseline.",
+  "author": {
+    "name": "Luc B. Perussault-Diallo",
+    "url": "https://luuuc.github.io/sense/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luuuc/sense"
+  },
+  "homepage": "https://luuuc.github.io/sense/",
+  "documentation": "https://github.com/luuuc/sense/blob/main/README.md",
+  "support": "https://github.com/luuuc/sense/issues",
+  "license": "Other",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "code-search",
+    "code-intelligence",
+    "claude-code",
+    "cursor",
+    "codex",
+    "semantic-search",
+    "tree-sitter",
+    "symbol-graph",
+    "blast-radius",
+    "codebase-understanding",
+    "ai-coding-agent",
+    "local-first"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/sense",
+    "mcp_config": {
+      "command": "${__dirname}/server/sense",
+      "args": ["mcp"]
+    }
+  },
+  "tools": [
+    {
+      "name": "sense_graph",
+      "description": "Symbol relationships — callers, callees, inheritance, tests, dead code"
+    },
+    {
+      "name": "sense_search",
+      "description": "Hybrid semantic + keyword search with text fallback"
+    },
+    {
+      "name": "sense_blast",
+      "description": "Blast radius, affected code, affected tests, risk score"
+    },
+    {
+      "name": "sense_conventions",
+      "description": "Auto-detected project conventions"
+    }
+  ],
+  "compatibility": {
+    "platforms": ["@PLATFORM@"]
+  }
+}

@@ -44,3 +44,27 @@ jobs:
             release --clean --release-notes release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build MCPB bundles
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" dist
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p mcpb-dist
+          for combo in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+            goos="${combo%_*}"
+            goarch="${combo#*_}"
+            archive="dist/sense_${VERSION}_${goos}_${goarch}.tar.gz"
+            if [ ! -f "$archive" ]; then
+              echo "missing archive: $archive" >&2
+              ls -la dist/ >&2
+              exit 1
+            fi
+            ./scripts/build-mcpb.sh "$archive" "$VERSION" "$goos" "$goarch" mcpb-dist
+          done
+          ls -la mcpb-dist/
+
+      - name: Upload MCPB bundles to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" mcpb-dist/*.mcpb --clobber
