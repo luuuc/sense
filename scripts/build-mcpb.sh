@@ -55,6 +55,7 @@ sed -e "s|@VERSION@|$version|g" \
     "$template" > "$workdir/bundle/manifest.json"
 
 mkdir -p "$outdir"
+outdir="$(cd "$outdir" && pwd)"
 bundle="$outdir/sense_${version}_${os}_${arch}.mcpb"
 rm -f "$bundle"
 
