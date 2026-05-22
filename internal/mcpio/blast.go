@@ -139,6 +139,10 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 		resp.VerifyHint = "This symbol has outgoing calls but zero incoming callers in the index. This is unusual — verify with grep before concluding it's unused."
 	}
 
+	if subjectFile, ok := files(r.Symbol.FileID); ok {
+		resp.IndexCaveat = IndexCaveat(subjectFile)
+	}
+
 	uniqueFiles := countUniqueBlastFiles(resp)
 	resp.AffectedFiles = uniqueFiles
 	resp.SenseMetrics = BlastMetrics{
