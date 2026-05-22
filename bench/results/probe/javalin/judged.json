@@ -6,34 +6,34 @@
     "prompt_version": "v1",
     "rubric_path": "javalin.rubric.yaml"
   },
-  "scenario_quality": 0.8638,
+  "scenario_quality": 0.8819,
   "steps": [
     {
       "step": "Orient in the Javalin codebase",
       "scores": {
         "map_quality": {
           "score": 0.95,
-          "rationale": "Provides file:line for Javalin, JavalinServlet, Context, Handler, plus the routing internals (InternalRouter, PathMatcher, RoutesConfig). The route registration and dispatch summaries give a clear pipeline an agent can extend with only targeted lookups."
+          "rationale": "Provides file:line for all four core classes (Javalin.java:21, JavalinServlet.kt:31, Context.kt:58, Handler.java:19) plus the supporting cast (InternalRouter, PathMatcher, RoutesConfig), and ends with an explicit one-line registration chain. An agent could pick the right extension point with only tiny follow-ups."
         },
         "specificity": {
           "score": 0.95,
-          "rationale": "Concrete file:line citations throughout (e.g. 'JavalinServlet.kt:31', 'JavalinDefaultRoutingApi.kt:104'), and the registration call chain is named explicitly: get \u2192 addHttpHandler \u2192 addEndpoint \u2192 RoutesConfig.addEndpoint \u2192 InternalRouter.addHttpEndpoint \u2192 PathMatcher.add."
+          "rationale": "Every class is cited at file:line with secondary anchors (e.g., 'create at :64', 'addHttpEndpoint :42'), and the route-registration call chain is named explicitly through `get \u2192 addHttpHandler \u2192 addEndpoint \u2192 RoutesConfig.addEndpoint \u2192 InternalRouter.addHttpEndpoint \u2192 PathMatcher.add`."
         },
         "justification": {
           "score": 0.7,
-          "rationale": "Explains the task pipeline phases and Context role at a high level, but doesn't explicitly justify WHY Javalin splits Javalin (config facade) from JavalinServlet (dispatch) \u2014 the separation is implied rather than stated."
+          "rationale": "Explains the Javalin/JavalinConfig/JavalinState split ('public-facing wrapper around JavalinState') and Context's role ('request/response API surface for handlers'), but stops short of explaining why dispatch is separated into JavalinServlet vs. InternalRouter beyond naming them."
         },
         "uncertainty": {
           "score": 0.4,
-          "rationale": "Does not flag Kotlin-specific surfaces (extension functions, companion objects, SAM conversions) or Jetty internals that could trip up an agent unfamiliar with Kotlin, despite mentioning Jetty and Kotlin in passing."
+          "rationale": "Implicitly flags Kotlin vs Java by citing .kt and .java extensions on each entry, but does not call out Kotlin-specific surfaces (default-method interface, companion objects, extension functions) or Jetty internals an agent unfamiliar with Kotlin could misread."
         }
       },
       "step_quality": 0.8175,
       "usage": {
-        "input_tokens": 6830,
-        "output_tokens": 511,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2808
+        "input_tokens": 6,
+        "output_tokens": 562,
+        "cache_creation_input_tokens": 15143,
+        "cache_read_input_tokens": 15724
       }
     },
     {
@@ -41,27 +41,27 @@
       "scores": {
         "map_quality": {
           "score": 0.95,
-          "rationale": "The step2_dispatch_trace block walks service() \u2192 handle() \u2192 task assembly \u2192 router matching \u2192 before/before_matched \u2192 HTTP \u2192 after_matched/after \u2192 error \u2192 exception \u2192 writeResponseAndLog, each with file:line (JavalinServlet.kt:37, 43, 56, 106, 116; DefaultTasks.kt:16/22/44/75/84/88). An agent could pick the right insertion point (e.g. add a TaskInitializer or filter phase) with only small lookups."
+          "rationale": "Walks service() \u2192 handle() \u2192 lifecycle stages (BEFORE/BEFORE_MATCHED/HTTP/AFTER_MATCHED/ERROR/AFTER) \u2192 handleSync drain \u2192 writeResponseAndLog with file:line at each hop. An agent inserting a request-scoped concern knows exactly which stage and file to extend."
         },
         "specificity": {
           "score": 0.95,
-          "rationale": "Exact method names cited (service, handle, handleSync, handleTask, handleUserFuture, writeResponseAndLog, findFirstHttpHandlerEntry, ETagGenerator.tryWriteEtagAndClose) with paths and line numbers; filter phases BEFORE/BEFORE_MATCHED/AFTER_MATCHED/AFTER/ERROR are named distinctly rather than collapsed."
+          "rationale": "Cites JavalinServlet.kt:37/41/66/106/116/80/96, DefaultTasks.kt:16/22/44/75/84/88/94, JavalinState.kt:83, ExceptionMapper.kt:34/55/60, ErrorMapper.kt:23 \u2014 filter phases are explicitly named rather than collapsed into 'middleware'."
         },
         "justification": {
-          "score": 0.8,
-          "rationale": "Explains how exceptions are caught in handleTask and re-queued as a first-priority task, how filter ordering is enforced via skipOnExceptionAndRedirect, and the role of ExceptionMapper vs ErrorMapper. Slightly less on WHY service() delegates to handle()/handleSync (the sync vs async split is shown but not explicitly motivated)."
+          "score": 0.85,
+          "rationale": "Explains why handleSync runs each task through handleTask (exception capture), why some tasks are skipOnExceptionAndRedirect, the role of ExceptionMapper/ErrorMapper fallbacks, and why responseWritten guards double-write. Slightly thin on why dispatch is split into TaskInitializers vs inline code."
         },
         "uncertainty": {
-          "score": 0.6,
-          "rationale": "Flags the async path via ctx.future and startAsyncAndAddDefaultTimeoutListeners, including timeout handling. Does not explicitly call out chunked/streamed response caveats or that servlet-container async may break the linear picture for after filters."
+          "score": 0.7,
+          "rationale": "Flags async path via userFutureSupplier and the timeout-race rationale for responseWritten, which covers servlet-container async. Doesn't explicitly mention chunked responses or Jetty-specific quirks an agent might trip on."
         }
       },
-      "step_quality": 0.8675,
+      "step_quality": 0.8925,
       "usage": {
-        "input_tokens": 6825,
-        "output_tokens": 645,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2808
+        "input_tokens": 6,
+        "output_tokens": 562,
+        "cache_creation_input_tokens": 15434,
+        "cache_read_input_tokens": 15724
       }
     },
     {
@@ -69,27 +69,27 @@
       "scores": {
         "map_quality": {
           "score": 0.95,
-          "rationale": "The answer provides a complete file:line trace from JavalinDefaultRoutingApi.get \u2192 addHttpHandler \u2192 Endpoint.create \u2192 RoutesConfig.addEndpoint \u2192 InternalRouter.addHttpEndpoint \u2192 PathMatcher.add, plus an extensive list of test files with concrete test method names. The agent can pick the exact tests to run for routing changes with no re-exploration."
+          "rationale": "Provides a complete 7-step trace from RoutesConfig.get through PathMatcher.add with file:line at each hop, plus a categorized list of test files with method names. An agent could pick the right insertion point and know which tests to run with only small lookups."
         },
         "specificity": {
           "score": 0.95,
-          "rationale": "Internals are named precisely: PathMatcher.add (PathMatcher.kt:20), InternalRouter.addHttpEndpoint (InternalRouter.kt:42), ParsedEndpoint, HandlerAddedEvent via EventManager. Test methods are quoted verbatim (e.g. `basic hello world works`, `HEAD returns 200 if GET is mapped`)."
+          "rationale": "Routing internals are named concretely: `addHttpHandler`, `addEndpoint`, `InternalRouter.addHttpEndpoint:42`, `PathMatcher.add:20` storing under `handlerEntries[GET]`, plus `ParsedEndpoint`/`PathParser`. Not glossed as 'the router'."
         },
         "justification": {
           "score": 0.8,
-          "rationale": "Explains why routes flow through Endpoint/ParsedEndpoint and PathMatcher (per-HandlerType list with regex, duplicate rejection, HandlerAddedEvent firing). Test file purposes are described (e.g. 405 vs 404 dispatch logic, async future dispatch path), though a few entries are just one-liners without exercise detail."
+          "rationale": "Explains WHY several layers exist (RoutesConfig delegates to InternalRouter, PathMatcher rejects duplicates, ApiBuilder forwards via thread-local) and what each test cluster exercises (filters, error mapper, path edges). Could go deeper on why ParsedEndpoint vs raw Endpoint."
         },
         "uncertainty": {
-          "score": 0.6,
-          "rationale": "Flags ApiBuilder DSL path and custom HandlerType registration, and notes the TestUtil helper. However, doesn't explicitly call out plugin-contributed routes or integration tests touching dispatch indirectly as uncertainty areas."
+          "score": 0.7,
+          "rationale": "Flags the ApiBuilder DSL alternative path and async dispatch (`TestFuture` / `handleUserFuture`), and calls out path-matcher edge cases. Doesn't explicitly flag plugin-contributed routes or dynamic registration timing as caveats."
         }
       },
-      "step_quality": 0.8675,
+      "step_quality": 0.8825,
       "usage": {
-        "input_tokens": 6819,
-        "output_tokens": 595,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2808
+        "input_tokens": 6,
+        "output_tokens": 524,
+        "cache_creation_input_tokens": 15559,
+        "cache_read_input_tokens": 15724
       }
     },
     {
@@ -97,27 +97,27 @@
       "scores": {
         "map_quality": {
           "score": 0.95,
-          "rationale": "Comprehensive edit map: ErrorMapper.kt:13, DefaultTasks.kt:84, ExceptionMapper.kt:26, JavalinServlet.kt:106, registration DSL at JavalinDefaultRoutingApi.kt:51-72 and RoutesConfig.kt bridges, plus explicit before/after filter interaction. Agent could open a PR directly with the user-side call example and test mirror guidance."
+          "rationale": "Enumerates every relevant surface with file:line \u2014 ErrorMapper.kt:13/23, ExceptionMapper.kt:34/46/55/60, JavalinServlet.kt:106, InternalRouter.kt:85/100, RoutesConfig.error:30/exception:26 \u2014 and explicitly states no library files need modification, with the user-side insertion site named. Filter interactions are mapped stage-by-stage (BEFORE/AFTER/ERROR) with skipOnExceptionAndRedirect lines cited; agent could open a PR directly."
         },
         "specificity": {
           "score": 0.95,
-          "rationale": "Cites concrete surfaces (ErrorMapper, ExceptionMapper, JavalinDefaultRoutingApi.error/exception, RoutesConfig.error/exception, InternalRouter.addHttpErrorHandler/addHttpExceptionHandler) with file:line, not generic 'the error system'."
+          "rationale": "Concrete citations like `ExceptionMapper.kt:29` for HttpResponseException auto-registration, `Util.findByClass(handlers, exception.javaClass)` at `:48`, and `JavaLangErrorHandler` at `:63` \u2014 not vague references to 'the error system'. Both `Javalin.error` and `JavalinExceptionMapper` equivalents are cited with line numbers."
         },
         "justification": {
-          "score": 0.9,
-          "rationale": "Explains where error vs exception handling differ, clarifies that error() is status-based while exception() catches Throwables, notes filter skipOnExceptionAndRedirect semantics, and cites test confirming exception\u2192error ordering. Strong reasoning, not just naming."
+          "score": 0.95,
+          "rationale": "Explains WHY error() is wrong (fires post-status, content-type filtered, runs in ERROR stage after exceptions are already swallowed) vs WHY exception() is right (catches thrown exceptions via handleTask bridge), and details how filter ordering is enforced via skipOnExceptionAndRedirect flags. Calls out observability hook at uncaughtException:55."
         },
         "uncertainty": {
-          "score": 0.7,
-          "rationale": "Flags overwrite risk from after/after_matched filters and clarifies error() vs exception() ambiguity in the prompt. Misses explicit servlet-level vs Javalin-level exception handling distinction and async lifecycle (handleUserFuture) interaction with exception mapping, though async is mentioned in step2."
+          "score": 0.85,
+          "rationale": "Flags Exception vs Throwable distinction, async future path via handleUserFuture:89, and warns that a registered error(500,\u2026) would overwrite the JSON body after the exception handler. Could more explicitly flag servlet-level vs Javalin-level exception handling boundary, but async lifecycle interaction is well covered."
         }
       },
-      "step_quality": 0.9025,
+      "step_quality": 0.935,
       "usage": {
-        "input_tokens": 6833,
-        "output_tokens": 571,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2808
+        "input_tokens": 6,
+        "output_tokens": 678,
+        "cache_creation_input_tokens": 21610,
+        "cache_read_input_tokens": 15724
       }
     }
   ]
