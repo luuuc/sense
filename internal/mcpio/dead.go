@@ -31,7 +31,12 @@ func BuildDeadCodeResponse(symbols []dead.Symbol, totalSymbols int) DeadCodeResp
 		DeadSymbols:  entries,
 		TotalSymbols: totalSymbols,
 		DeadCount:    len(symbols),
-		Note:         "Symbols with zero incoming edges. May include false positives from dynamic dispatch or reflection.",
+		Note: "Symbols with zero incoming edges. Verify each candidate against these indexer blind spots before deleting: " +
+			"(1) method-on-field dispatch (e.g. c.engine.X invoking a method through a struct field), " +
+			"(2) function-value passing (handlers stored as fields, passed as args, or set via init()), " +
+			"(3) runtime registration (DI containers, plugin registries, reflection-based loaders, ServiceLoader), " +
+			"(4) interface/trait satisfaction via blank identifier (var _ Iface = (*T)(nil)), and " +
+			"(5) exported symbols consumed by downstream packages outside the indexed tree.",
 		SenseMetrics: DeadCodeMetrics{
 			SymbolsAnalyzed:           totalSymbols,
 			EstimatedFileReadsAvoided: filesAvoided,

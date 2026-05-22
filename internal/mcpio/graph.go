@@ -131,6 +131,7 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 	}
 
 	resp.VerifyHint = graphVerifyHint(resp)
+	resp.IndexCaveat = graphIndexCaveat(resp)
 
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) + len(testCallers) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
@@ -434,6 +435,23 @@ func FormatRefPtr(file *string, lineStart int) string {
 		return ""
 	}
 	return FormatRef(*file, lineStart)
+}
+
+// graphIndexCaveat emits a language-specific list of relationship classes
+// the index may miss. Suppressed for trivial responses (no relationships
+// found) — there's nothing to caveat — and when the symbol has no file
+// (external/unknown). The hint is otherwise unconditional: even a complete-
+// looking caller list can omit dynamic dispatch the agent must verify.
+func graphIndexCaveat(resp GraphResponse) string {
+	if resp.Symbol.File == "" {
+		return ""
+	}
+	hasEdges := len(resp.Edges.Calls)+len(resp.Edges.CalledBy)+len(resp.Edges.Inherits)+
+		len(resp.Edges.Composes)+len(resp.Edges.Includes)+len(resp.Edges.Imports) > 0
+	if !hasEdges {
+		return ""
+	}
+	return IndexCaveat(resp.Symbol.File)
 }
 
 func graphVerifyHint(resp GraphResponse) string {

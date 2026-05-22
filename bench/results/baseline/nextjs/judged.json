@@ -6,118 +6,118 @@
     "prompt_version": "v1",
     "rubric_path": "nextjs.rubric.yaml"
   },
-  "scenario_quality": 0.8025,
+  "scenario_quality": 0.8944,
   "steps": [
     {
       "step": "Orient in the Next.js server architecture",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "Gives file:line for Server (base-server.ts:316), NextNodeServer (next-server.ts:175), route modules, and names app-render/route-modules/response-cache subdirs with paths. Missing explicit NextCustomServer pointer, but the agent has more than enough to navigate."
+          "score": 0.95,
+          "rationale": "Names Server (base-server.ts:316), NextNodeServer (next-server.ts:175), RouteModule, AppPageRouteModule, PagesRouteModule, ResponseCache, and the major subdirs (app-render/, route-modules/, response-cache/, async-storage/, web/) with file:line. The Pages-vs-App dispatch point at next-server.ts:616 plus concrete render.tsx vs app-render.tsx paths gives the agent a direct map to extend; NextCustomServer is not explicitly named, a minor gap."
         },
         "specificity": {
           "score": 0.95,
-          "rationale": "Exact class names (NextNodeServer, AppPageRouteModule, PagesRouteModule) and the Pages-vs-App split is made concrete with render.tsx:457 vs app-render/app-render.tsx:3077 plus the compiled loaders."
+          "rationale": "Exact class names (NextNodeServer, AppPageRouteModule, RouteModule), file:line pairs throughout, and concrete file split (render.tsx:457/1622 vs app-render/app-render.tsx:3077/2568). Re-export sites and method line numbers are precise."
         },
         "justification": {
-          "score": 0.55,
-          "rationale": "Subdirectories get brief purpose notes (e.g., 'RSC + App Router rendering'), but the answer doesn't really explain WHY the server class hierarchy exists (Edge vs Node base abstraction, custom server seam) \u2014 mostly naming with light annotation."
+          "score": 0.8,
+          "rationale": "Explains the role of each class (\"Base class. Owns handleRequest...\", \"Per-route bundle interface\", \"Wraps incremental cache + in-memory LRU\") and what each subdirectory is responsible for. Light on the Edge-vs-Node rationale for the class hierarchy specifically \u2014 web-server is named but its motivation isn't drawn out."
         },
         "uncertainty": {
-          "score": 0.3,
-          "rationale": "Mentions Edge runtime in passing in later sections but Step 1 itself doesn't flag dev-vs-prod server split, Turbopack vs webpack, or branching that changes which code path runs."
+          "score": 0.5,
+          "rationale": "Mentions the edge runtime (web-server.ts) and the static-export path as separate code paths, and notes the App-vs-Pages dispatch branch \u2014 useful flags. But no explicit call-out of dev-vs-prod server split, Turbopack vs webpack, or minimal-mode/standalone variants the agent should double-check."
         }
       },
-      "step_quality": 0.7525,
+      "step_quality": 0.8525,
       "usage": {
-        "input_tokens": 4508,
-        "output_tokens": 467,
-        "cache_creation_input_tokens": 2995,
-        "cache_read_input_tokens": 0
+        "input_tokens": 6,
+        "output_tokens": 636,
+        "cache_creation_input_tokens": 22030,
+        "cache_read_input_tokens": 15724
       }
     },
     {
       "step": "Trace the SSR request lifecycle",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "The step2_ssr_lifecycle array walks the full pipeline with file:line at each layer: handleRequest (base-server.ts:877), handleRequestImpl (:968), routing/dispatch (:787), run/pipe (:1742/1760), renderImpl (:1896), findPageComponents \u2192 loadComponents (next-server.ts:855 \u2192 load-components.ts:355), renderHTMLImpl branching (:616/634/658), and both terminal renderers. An agent could insert a render-time hook directly using this map."
+          "score": 0.95,
+          "rationale": "Walks the full SSR pipeline with file:line at every layer: handleRequest (base-server.ts:877), handleRequestImpl (:968), run/pipe/render, renderToResponseImpl (:2579), renderToResponseWithComponents (:1974/2026), renderHTMLImpl (next-server.ts:616), and both renderers (app-render.tsx:3077, render.tsx:1622/457). An agent could insert a render-time hook at the right layer immediately."
         },
         "specificity": {
           "score": 0.95,
-          "rationale": "Distinguishes renderToHTMLOrFlight (:3077) from renderToHTMLOrFlightImpl (:2568), renderToHTML from renderToHTMLImpl, and names the lazy loaders (lazyRenderAppPage, lazyRenderPagesPage). Concrete class.method.line format throughout."
+          "rationale": "Exported wrappers and inner Impls are explicitly distinguished (renderToHTMLOrFlight :3077 vs renderToHTMLOrFlightImpl :2568; renderToHTML :1622 vs renderToHTMLImpl :457), the outermost handleRequest entry is named, and lazyRenderAppPage/lazyRenderPagesPage shims are cited."
         },
         "justification": {
-          "score": 0.75,
-          "rationale": "Notes WHY layers exist (OTEL wrapping, workAsyncStorage.run around App render, attachRequestMeta as the seam, branch at renderHTMLImpl for Pages vs App), though the role of loadComponents/findPageComponents at the boundary is named but not deeply explained."
+          "score": 0.85,
+          "rationale": "Explains why the pipeline splits at renderHTMLImpl (enabledDirectories.app && renderOpts.isAppPath), what findPageComponents/loadComponents do at the boundary, and why pipeImpl is 'the single place response body is flushed'. Could go slightly deeper on the cache/render boundary rationale."
         },
         "uncertainty": {
-          "score": 0.4,
-          "rationale": "Mentions Edge server extends BaseServer and workAsyncStorage for App rendering, but does not explicitly flag streaming/Flight divergence, dynamic vs static paths, or response-cache bypasses that divert the linear pipeline \u2014 these only appear later in step4."
+          "score": 0.6,
+          "rationale": "Flags RSC vs full HTML render branching in renderToHTMLOrFlightImpl and the response-cache interaction, plus the edge web-server parity. However, it does not explicitly call out streaming/Flight nuances, dynamic vs static prerender divergence, or response-cache bypass conditions that may divert the linear pipeline."
         }
       },
-      "step_quality": 0.8075,
+      "step_quality": 0.8775,
       "usage": {
-        "input_tokens": 4526,
-        "output_tokens": 600,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2995
+        "input_tokens": 6,
+        "output_tokens": 638,
+        "cache_creation_input_tokens": 22048,
+        "cache_read_input_tokens": 15724
       }
     },
     {
       "step": "Find callers of renderToHTMLOrFlight",
       "scores": {
         "map_quality": {
-          "score": 0.85,
-          "rationale": "Lists 7 call/export sites with file:line, enclosing function, and subdir tags (app-render, route-modules/app-page, server, export/routes). Covers definition, internal Impl dispatch, route module .render method, re-export, lazy loader, NextNodeServer.renderHTMLImpl, and build-time export \u2014 broad enough that the agent can confidently change the signature."
+          "score": 0.95,
+          "rationale": "Enumerates every caller with file:line, enclosing function, and subdir tag \u2014 module.ts:160 (AppPageRouteModule.render), module.render.ts:7-11 (lazyRenderAppPage), next-server.ts:635 (renderHTMLImpl), export/routes/app-page.ts:78 (exportAppPage), plus the self-reference at app-render.tsx:3158. Agent could change the signature confident sites are enumerated."
         },
         "specificity": {
-          "score": 0.85,
-          "rationale": "Concrete file:line + enclosing fn for each caller; distinguishes the definition (:3077) from the inner dispatch (:3158 to renderToHTMLOrFlightImpl) and names the re-export site `export { renderToHTMLOrFlight, vendored }` at module.ts:210 plus lazyRenderAppPage in module.render.ts."
+          "score": 0.95,
+          "rationale": "Callers cited with file:line + enclosing function; export sites named concretely (module.ts:9 import / :210 export, module.compiled.js:1-33 dispatcher). Even the AppPageRender type alias at :3066 and the Impl arg list at :2568 are pinned."
         },
         "justification": {
-          "score": 0.75,
-          "rationale": "Annotations explain each caller's role (definition vs Impl dispatch vs route-module.render vs lazy loader vs Node server renderHTMLImpl vs build-time export). Could be slightly more explicit on WHY route-modules wraps it, but role labels make intent clear."
+          "score": 0.9,
+          "rationale": "Distinguishes each caller's role \u2014 request handler vs route module method vs lazy shim vs build-time export \u2014 and explains the module.compiled.js dispatch and the field-order constraint at :6849. Slightly under-explains why route-modules re-export."
         },
         "uncertainty": {
-          "score": 0.5,
-          "rationale": "Flags build-time export/routes/app-page.ts as 'not runtime' and notes Edge server in step4. Does not explicitly call out edge-runtime variants of the renderer or dynamic-dispatch via module.compiled as risk areas for the signature change."
+          "score": 0.8,
+          "rationale": "Flags the runtime dispatch via module.compiled.js and the rebuild step for next-server/app-page.runtime bundles, and notes lazyRenderAppPage uses rest params so callers must be updated. Could have been more explicit about edge-runtime variant absence."
         }
       },
-      "step_quality": 0.7775,
+      "step_quality": 0.9175,
       "usage": {
-        "input_tokens": 4505,
-        "output_tokens": 554,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2995
+        "input_tokens": 6,
+        "output_tokens": 529,
+        "cache_creation_input_tokens": 22027,
+        "cache_read_input_tokens": 15724
       }
     },
     {
       "step": "Assess where to thread a request ID",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "Names RequestMeta (request-meta.ts:51), handleRequest/handleRequestImpl with line numbers (base-server.ts:1035, :1819, :2786), and response-cache files explicitly. Agent could open a PR from this map; only minor gap is no exact line for NEXT_REQUEST_ID_HEADER constant (since none exists yet, but no existing similar constant cited)."
+          "score": 0.95,
+          "rationale": "Names RequestMeta with file:line (request-meta.ts:51+, addRequestMeta), handleRequestImpl generation point (base-server.ts:968-979), ResponseCache interaction sites (response-cache/index.ts:107, route-module.ts:135), and concrete test directories. The agent has everything needed to open a PR without re-exploring."
         },
         "specificity": {
-          "score": 0.85,
-          "rationale": "Cites concrete file:line for generation site (base-server.ts:1035), header write (:1819), RequestMeta interface (request-meta.ts:51), and lists response-cache files individually. Test file references are somewhat vague ('test/integration/*') rather than named files."
+          "score": 0.9,
+          "rationale": "Cites concrete addRequestMeta call, RequestMeta interface location, ResponseCacheEntry/CachedFetchValue.headers, and specific early-return lines (:2120, :2731, :2736). Slight ding: uses 'x-request-id' literal but doesn't locate a NEXT_REQUEST_ID_HEADER constant \u2014 though it does say to add the requestId key explicitly."
         },
         "justification": {
-          "score": 0.9,
-          "rationale": "Explicitly compares RequestMeta vs AsyncLocalStorage with reasoning ('synchronous, per-request, already threaded' vs 'needed only if rendering React components must read it without req'), and explains the cache-key concern ('per-request and must NEVER be stored in the cache entry headers')."
+          "score": 0.95,
+          "rationale": "Explicitly compares RequestMeta vs AsyncLocalStorage with three reasons ((a) survives Pages/App split, (b) precedent with initURL/cacheBustingSearchParam, (c) RequestStore only on App path), and explains why response-cache must not absorb the header (cache hits would replay original id)."
         },
         "uncertainty": {
-          "score": 0.8,
-          "rationale": "Flags response-cache isolation, Edge runtime (crypto.randomUUID availability, web/ server equivalents), and OTEL tracing interaction. Misses explicit Middleware (root middleware) as an interaction point, though Edge is covered."
+          "score": 0.9,
+          "rationale": "Flags response-cache key/header inclusion explicitly, edge runtime via web-server.ts, middleware propagation, static export build-time stubs, and RSC cache-busting redirect branch. Covers all the interaction points the rubric calls for."
         }
       },
-      "step_quality": 0.8725,
+      "step_quality": 0.93,
       "usage": {
-        "input_tokens": 4527,
-        "output_tokens": 532,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2995
+        "input_tokens": 6,
+        "output_tokens": 551,
+        "cache_creation_input_tokens": 22053,
+        "cache_read_input_tokens": 15724
       }
     }
   ]

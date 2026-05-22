@@ -2,13 +2,13 @@
 
 # Sense ⠎⠑⠝⠎⠑
 
-**Codebase understanding for your AI.**
+**An MCP server for codebase context, built for AI coding agents.**
 
 ![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (5 tool calls, 109K tokens, 48s)](docs/comparison.svg)
 
-Sense is an MCP server your AI uses, not a tool you use. You install a binary, add one line to your MCP config, and your AI gets the structural understanding of your codebase that a senior engineer carries in their head. Works with Claude Code, Cursor, Codex CLI, and any MCP client. You notice it in the absence of frustration. Faster answers, fewer wrong turns, code that matches your conventions.
+Your AI agent reads 19 files to answer "who calls this function?" because it has the text of your codebase but never the map. It re-derives structure on every task, burns tokens chasing grep chains, and hallucinates dependencies that don't exist. Sense indexes your repo once and serves a symbol graph plus semantic code search over MCP. Claude Code, Cursor, Codex CLI, and any MCP client finish the same task in 10 tool calls instead of 19, on 156K tokens instead of 228K, with the same correctness ([bench/](bench/)).
 
-One binary, one index, four tools for your AI. No SaaS account, no API key, no cloud dependency.
+One binary, one local index, four tools for your AI. No SaaS account, no API key, no cloud dependency.
 
 > Sense sits on your machine, has no learning curve, and isn't for you. It's for your AI.
 
@@ -99,7 +99,7 @@ Four tools for your AI. A full CLI for you. No sprawl.
 | Tool | Capability |
 |---|---|
 | `sense_graph` | Symbol relationships, callers, callees, inheritance, tests, dead code |
-| `sense_search` | Hybrid semantic + keyword search with text fallback |
+| `sense_search` | Hybrid bi-encoder + cross-encoder semantic code search with keyword and text fallback |
 | `sense_blast` | Blast radius, affected code, affected tests, risk score |
 | `sense_conventions` | Detected project conventions from source |
 
@@ -140,7 +140,7 @@ Measured on Sense's own codebase (382 files, 4,032 symbols). Run `sense benchmar
 
 - **Not a code editor or modifier.** Read-only is the identity, not a limitation. Sense observes your codebase. It never modifies it. Your editor, your agent, your tools stay in control.
 - **Not a token optimizer.** Token savings are a side effect of understanding, not the goal. If LLM costs dropped to zero tomorrow, Sense would still be valuable.
-- **Not a search engine.** Semantic search is one of four tools, not the product. The product is structural understanding.
+- **Not a search engine.** Code search by meaning is one of four tools, not the product. The product is structural understanding.
 - **Not a feature-count competitor.** Four tools is a choice, not a constraint. Your AI doesn't need 102 tools to choose from. It needs a few that work.
 - **Not dependent on anything.** No API keys. No Ollama. No Docker. No Python. One binary, zero external dependencies.
 
@@ -172,8 +172,8 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 | **Ruby** | Rails (associations, callbacks, routes), Stimulus, Turbo |
 | **TypeScript / JavaScript** | React (JSX component calls) |
 | **Python** | Django (models, URL patterns), FastAPI (routes, Depends) |
-| **Go** | — |
-| **Rust** | — |
+| **Go** | - |
+| **Rust** | - |
 | **ERB** | Stimulus, Turbo (cross-language edges to JS controllers) |
 
 **Standard tier.** Symbols, calls, inheritance, imports, blast radius, and semantic search (no framework inference):

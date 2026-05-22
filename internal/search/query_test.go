@@ -55,3 +55,21 @@ func TestEmbedQueryError(t *testing.T) {
 		t.Error("expected error from failing embedder")
 	}
 }
+
+type emptyEmbedder struct{}
+
+func (e *emptyEmbedder) Embed(context.Context, []embed.EmbedInput) ([][]float32, error) {
+	return nil, nil
+}
+func (e *emptyEmbedder) Close() error { return nil }
+
+func TestEmbedQueryNoVectors(t *testing.T) {
+	ctx := context.Background()
+	_, err := search.EmbedQuery(ctx, &emptyEmbedder{}, "test")
+	if err == nil {
+		t.Fatal("expected error when embedder returns no vectors")
+	}
+	if got := err.Error(); got != "embed query: no vectors returned" {
+		t.Errorf("unexpected error: %q", got)
+	}
+}

@@ -105,6 +105,7 @@ type GraphResponse struct {
 	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
 	CoverageNote       string                 `json:"coverage_note,omitempty"`
 	VerifyHint         string                 `json:"verify_hint,omitempty"`
+	IndexCaveat        string                 `json:"index_caveat,omitempty"`
 	SenseMetrics       GraphMetrics           `json:"-"`
 	Freshness          *Freshness             `json:"freshness,omitempty"`
 	NextSteps          []NextStep             `json:"next_steps"`
@@ -298,6 +299,7 @@ type BlastResponse struct {
 	CoverageNote       string `json:"coverage_note,omitempty"`
 
 	VerifyHint   string       `json:"verify_hint,omitempty"`
+	IndexCaveat  string       `json:"index_caveat,omitempty"`
 	SenseMetrics BlastMetrics `json:"-"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`
 	NextSteps    []NextStep   `json:"next_steps"`

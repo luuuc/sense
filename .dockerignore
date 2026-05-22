@@ -1,0 +1,39 @@
+# Reduce docker build context. bench/docker/*/Dockerfile builds from the repo
+# root, so by default the full ~1.8GB tree (incl. internal/embed model weights)
+# would be uploaded to the daemon every build. The exclusions below trim that
+# to just what the COPY commands actually need.
+#
+# IMPORTANT: do NOT exclude internal/embed/* — bench-sense's go build needs
+# the embedded model. Other tool images don't COPY it so they pay only the
+# context-upload cost, which is acceptable for local builds.
+
+.git/
+.github/
+
+# Build outputs / coverage / local caches
+bin/
+dist/
+node_modules/
+*.out
+coverage.html
+
+# Benchmark outputs (huge, regenerated each run)
+bench/results/
+bench/locked/
+
+# Test fixtures only used by `go test`, not by `go build` (1.3GB)
+internal/embed/testdata/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+
+# Local-only / never-committed
+.claude/
+.env
+.env.*
+!.env.example
+
+# A loose binary that lives at repo root for convenience
+/sense

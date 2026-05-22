@@ -6,118 +6,118 @@
     "prompt_version": "v1",
     "rubric_path": "gin.rubric.yaml"
   },
-  "scenario_quality": 0.8231,
+  "scenario_quality": 0.0,
   "steps": [
     {
       "step": "Trace HTTP dispatch from entry point",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "Provides file:line for Engine.ServeHTTP (gin.go:661), updateRouteTrees (516), handleHTTPRequest (689), node.getValue, Context.Next, serveError (763), and redirect helpers in order with what-it-calls-next. Agent could insert a request-ID hook without re-tracing; only minor gap is tree.go line for getValue."
+          "score": 0.0,
+          "rationale": "The answer contains no dispatch chain at all \u2014 no file:line citations, no methods named, no pipeline trace. It is just status text ('Step 1 traced. Now Step 2...')."
         },
         "specificity": {
-          "score": 0.95,
-          "rationale": "Receivers are explicitly named (Engine.ServeHTTP, Engine.updateRouteTrees, Engine.handleHTTPRequest, Context.Next, node.getValue). Intermediates updateRouteTrees and serveError are cited at correct locations with their roles."
+          "score": 0.0,
+          "rationale": "No receivers, no methods, no intermediates like updateRouteTrees or serveError are cited. The answer is empty of any concrete reference."
         },
         "justification": {
-          "score": 0.6,
-          "rationale": "Explains what each function does and why handleHTTPRequest is the dispatcher, but doesn't deeply motivate WHY the radix tree exists or the design rationale for splitting ServeHTTP from handleHTTPRequest. methodTrees role is implicit ('scans engine.trees for the method') rather than explained."
+          "score": 0.0,
+          "rationale": "No explanation of the radix tree, methodTrees, or the split between ServeHTTP and handleHTTPRequest is provided \u2014 the answer says nothing about the code."
         },
         "uncertainty": {
-          "score": 0.6,
-          "rationale": "Flags redirect paths (trailing-slash, fixed-path), NoRoute/NoMethod fallbacks via serveError, and 301-vs-307 GET distinction in redirectRequest. Does not explicitly address HEAD-vs-GET subtleties."
+          "score": 0.0,
+          "rationale": "No mention of redirects, NoRoute/NoMethod fallbacks, or HEAD-vs-GET branching. The answer flags nothing because it contains no substantive content."
         }
       },
-      "step_quality": 0.8075,
+      "step_quality": 0.0,
       "usage": {
-        "input_tokens": 5807,
-        "output_tokens": 539,
-        "cache_creation_input_tokens": 2886,
-        "cache_read_input_tokens": 0
+        "input_tokens": 6,
+        "output_tokens": 350,
+        "cache_creation_input_tokens": 14102,
+        "cache_read_input_tokens": 15724
       }
     },
     {
       "step": "Understand middleware flow",
       "scores": {
         "map_quality": {
-          "score": 0.95,
-          "rationale": "Provides file:line for Context.Next (context.go:187), Context.Abort (context.go:206), abortIndex (context.go:56), handlers slice (context.go:67), and combineHandlers is mentioned though without line. The agent has nearly everything needed to write a new middleware."
+          "score": 0.0,
+          "rationale": "The answer contains no file:line citations, no description of Context.Next or Context.Abort, no handler chain explanation, and no caller list. It is just status text: 'Step 2 done. Now Step 3...' \u2014 the agent would have to do a fresh exploration."
         },
         "specificity": {
-          "score": 0.95,
-          "rationale": "Lists internal callers of Next (gin.go:722, gin.go:766, logger.go:214, logger.go:282, recovery.go:90) and Abort (context.go:216/223/231/1164, recovery.go:84) with file:line. abortIndex is explicitly named with its value math.MaxInt8 >> 1."
+          "score": 0.0,
+          "rationale": "No receivers, methods, callers, or constants (abortIndex) are named. The answer contains zero concrete identifiers tied to file:line."
         },
         "justification": {
-          "score": 0.9,
-          "rationale": "Explains Next's index++/loop mechanism ('c.index++; while c.index < len(c.handlers): call ... c.index++'), why Abort works ('Next() loop's condition becomes false'), and notes the subtlety that Abort doesn't return from current handler. combineHandlers stitching is less developed."
+          "score": 0.0,
+          "rationale": "No explanation of how Next walks the chain, why Abort uses math.MaxInt8, or how combineHandlers works. The answer offers no reasoning at all."
         },
         "uncertainty": {
-          "score": 0.6,
-          "rationale": "Flags the important subtlety that Abort doesn't return from the current handler, and notes the <63 handler chain cap. Does not explicitly discuss panic recovery interaction with Next, goroutine-safety, or handler-chain-mutation concerns."
+          "score": 0.0,
+          "rationale": "No flags about panic recovery, goroutine safety, or handler-chain mutation \u2014 the answer is empty of content, so no caveats are surfaced."
         }
       },
-      "step_quality": 0.8875,
+      "step_quality": 0.0,
       "usage": {
-        "input_tokens": 5809,
-        "output_tokens": 506,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2886
+        "input_tokens": 6,
+        "output_tokens": 355,
+        "cache_creation_input_tokens": 14104,
+        "cache_read_input_tokens": 15724
       }
     },
     {
       "step": "Find dead code in the gin package",
       "scores": {
         "map_quality": {
-          "score": 0.6,
-          "rationale": "Lists two concrete dead symbols (localhostIP at utils.go:23, localhostIPv6 at utils.go:26) with file:line and caller claims, enough for a small deletion PR. However, the list is quite thin \u2014 the rubric expected a broader sweep of unexported symbols, and the answer's 'notes' section asserts everything else has callers without per-symbol evidence."
+          "score": 0.0,
+          "rationale": "The answer is just a status note ('Step 3 - dead code...') with no symbols, no file:line citations, and no claims. The agent cannot open a deletion PR from this \u2014 it would have to do the work from scratch."
         },
         "specificity": {
-          "score": 0.85,
-          "rationale": "Both dead symbols cited at exact file:line (utils.go:23, utils.go:26) with explicit test-only reference lines. Package scope (root gin package) is made explicit in the section header and methodology."
+          "score": 0.0,
+          "rationale": "No symbols are named, no file paths or line numbers are cited, and package scope is only paraphrased from the prompt rather than applied to concrete findings."
         },
         "justification": {
-          "score": 0.8,
-          "rationale": "Explains why each is dead: 'Only references are utils.go:23 (definition) and test files...No production file references this constant.' Goes beyond listing names to defend the no-callers claim."
+          "score": 0.0,
+          "rationale": "No candidates are listed, so there is no 'why this is dead' reasoning at all \u2014 the answer contains zero rationale."
         },
         "uncertainty": {
-          "score": 0.5,
-          "rationale": "Flags test-only symbols (CreateTestContext*) as excluded by definition, which addresses one risk class. Does not explicitly flag reflection-based callers or public-API-but-unused-internally cases as breakage risks."
+          "score": 0.0,
+          "rationale": "No flags for reflection-based callers, test-only usage, or public-API-but-unused cases \u2014 the answer is empty of any caveats because it is empty of any content."
         }
       },
-      "step_quality": 0.6875,
+      "step_quality": 0.0,
       "usage": {
-        "input_tokens": 5800,
-        "output_tokens": 452,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2886
+        "input_tokens": 6,
+        "output_tokens": 334,
+        "cache_creation_input_tokens": 14095,
+        "cache_read_input_tokens": 15724
       }
     },
     {
       "step": "Assess modifying the recovery middleware",
       "scores": {
         "map_quality": {
-          "score": 0.95,
-          "rationale": "All four public symbols (Recovery, CustomRecovery, RecoveryWithWriter, CustomRecoveryWithWriter) cited at file:line with signatures, plus registration in gin.Default() at gin.go:239, internal helpers, and a clear funnel-through structure. Agent can edit directly without re-reading recovery.go."
+          "score": 0.0,
+          "rationale": "The answer contains no file:line citations, no call hierarchy, and no mention of Recovery/CustomRecovery/CustomRecoveryWithWriter or gin.Default. It is a status note about other steps ('Step 1 traced. Now Step 2...'), leaving the agent to re-explore from scratch."
         },
         "specificity": {
-          "score": 0.95,
-          "rationale": "Call hierarchy explicitly diagrammed (Recovery\u2192RecoveryWithWriter\u2192CustomRecoveryWithWriter), exact injection line (recovery.go:90 before c.Next), and signatures listed verbatim. Caller search outside recovery.go is concrete."
+          "score": 0.0,
+          "rationale": "No receivers, signatures, or file:line references are provided \u2014 the text only narrates progression through unrelated steps."
         },
         "justification": {
-          "score": 0.9,
-          "rationale": "Explains why all flavours funnel through CustomRecoveryWithWriter and why that's the right edit site; differentiates Recovery (default writer) vs CustomRecovery (custom handler) vs RecoveryWithWriter (custom output). Could be slightly more explicit on RecoveryFunc rationale but covers the surface."
+          "score": 0.0,
+          "rationale": "No reasoning about why three Recovery flavours exist or which is the right extension surface; the answer addresses a different step entirely."
         },
         "uncertainty": {
-          "score": 0.75,
-          "rationale": "Flags the Logger-before-Recovery ordering issue in Default() and the public-API stability concern, recommending a new constructor over signature changes. Misses explicit mention of transitive Abort callers like BasicAuthForRealm, but otherwise calibrated well to the effort spent."
+          "score": 0.0,
+          "rationale": "No flags about transitive Abort callers, panic-in-middleware ordering, or public API stability \u2014 the answer says nothing about Recovery at all."
         }
       },
-      "step_quality": 0.91,
+      "step_quality": 0.0,
       "usage": {
-        "input_tokens": 5779,
-        "output_tokens": 539,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 2886
+        "input_tokens": 6,
+        "output_tokens": 356,
+        "cache_creation_input_tokens": 14074,
+        "cache_read_input_tokens": 15724
       }
     }
   ]

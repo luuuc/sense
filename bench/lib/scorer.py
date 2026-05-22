@@ -537,7 +537,8 @@ def estimate_cost(usage):
     ) / 1_000_000
 
 
-def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=None):
+def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=None,
+                     overhead=None):
     """Score a transcript against a scenario.
 
     Two-layer scoring:
@@ -553,6 +554,15 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     repo_checkout — the cloned repo at run_meta.repo_commit, used by
                     grounding to verify citations. Optional: if missing,
                     citation_grounding reports total but skips verification.
+    overhead      — optional dict from a build-time setup step that burned
+                    LLM tokens/time/cost before the scoring session
+                    started (currently: serena's onboarding pre-run).
+                    When present, its `token_total_billed`, `wall_time_seconds`,
+                    and `cost_usd` are added to the scoring session's totals
+                    BEFORE efficiency is computed, so a tool whose
+                    recommended install requires LLM onboarding pays for
+                    it in the efficiency axis like any other token spend.
+                    Expected shape — see docker/lib/parse-claude-result.py.
     """
     from grounding import ground_citations
 
@@ -563,6 +573,17 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     usage = t["usage"]
 
     billed_tokens = usage["input_tokens"] + usage["output_tokens"]
+
+    # Optional pre-session overhead (e.g. serena's onboarding pre-run that
+    # writes .serena/memories/ at image build time). Add it to the billed
+    # tokens + wall_time used to compute efficiency so the comparison
+    # against tools without LLM-driven setup stays fair. The raw scoring-
+    # session numbers are preserved in the metrics block alongside the
+    # overhead breakdown, so downstream readers can decompose either way.
+    overhead = overhead or {}
+    overhead_billed = int(overhead.get("token_total_billed") or 0)
+    overhead_wall   = float(overhead.get("wall_time_seconds") or 0.0)
+    overhead_cost   = float(overhead.get("cost_usd") or 0.0)
 
     step_results = []
     for step in scenario.get("steps", []):
@@ -588,10 +609,16 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
 
     wall_time = round((t.get("duration_ms", 0) or 0) / 1000, 1)
 
+    # Effective totals for efficiency: scoring session + any overhead the
+    # tool's recommended setup burns (serena onboarding). For tools with no
+    # overhead, these equal the session-only numbers.
+    eff_billed = billed_tokens + overhead_billed
+    eff_wall   = wall_time + overhead_wall
+
     # Zero tokens or zero wall-time means no measurable work — treat each as
     # a zero in its half of efficiency, not as perfect efficiency.
-    token_eff = max(0.0, 1.0 - (billed_tokens / ceiling)) if billed_tokens > 0 else 0.0
-    time_eff = max(0.0, 1.0 - (wall_time / time_ceiling)) if wall_time > 0 else 0.0
+    token_eff = max(0.0, 1.0 - (eff_billed / ceiling)) if eff_billed > 0 else 0.0
+    time_eff = max(0.0, 1.0 - (eff_wall / time_ceiling)) if eff_wall > 0 else 0.0
     efficiency = 0.5 * token_eff + 0.5 * time_eff
 
     grep_count = 0
@@ -662,13 +689,30 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
             "token_total_billed": billed_tokens,
             "token_total_all": billed_tokens + usage["cache_read_input_tokens"] + usage["cache_creation_input_tokens"],
             "wall_time_seconds": wall_time,
-            "cost_usd": round(t["cost_usd"], 4) if t.get("cost_usd") is not None else None,
+            "cost_usd": round(
+                (t["cost_usd"] if t.get("cost_usd") is not None else 0.0)
+                + overhead_cost, 4
+            ) if (t.get("cost_usd") is not None or overhead_cost > 0) else None,
+            # Effective totals (session + overhead) — what efficiency is
+            # actually computed against. Equal to the session-only numbers
+            # for any tool without an overhead block.
+            "effective_token_total_billed": eff_billed,
+            "effective_wall_time_seconds": round(eff_wall, 1),
             "efficiency_ceiling": ceiling,
             "time_ceiling_seconds": time_ceiling,
             "token_efficiency": round(token_eff, 4),
             "time_efficiency": round(time_eff, 4),
             "answer_chars": len(answer_text),
             "audit_chars": len(audit_text),
+            # Per-tool setup overhead folded into efficiency above. Absent
+            # for tools whose recommended install spends no LLM tokens.
+            "overhead": ({
+                "source": overhead.get("source"),
+                "token_total_billed": overhead_billed,
+                "wall_time_seconds": overhead_wall,
+                "cost_usd": round(overhead_cost, 4),
+                "num_turns": overhead.get("num_turns"),
+            } if overhead else None),
         },
     }
 
@@ -711,6 +755,19 @@ if __name__ == "__main__":
                 run_meta = json.load(f)
         except (json.JSONDecodeError, OSError):
             run_meta = {}
+
+    # Optional pre-session overhead JSON written by each tool's entrypoint
+    # when the tool's recommended install includes an LLM step (serena's
+    # onboarding pre-run is the only current consumer). Absent file =
+    # zero overhead, scored exactly as before.
+    overhead_path = os.path.join(result_dir, "onboarding-overhead.json")
+    overhead_data = None
+    if os.path.exists(overhead_path):
+        try:
+            with open(overhead_path) as f:
+                overhead_data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            overhead_data = None
 
     if run_meta.get("error"):
         # The session was interrupted (over-budget, wall-time timeout, or a
@@ -773,7 +830,8 @@ if __name__ == "__main__":
         else:
             # Score the constrained session normally.
             scored = score_transcript(
-                transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+                transcript_path, scenario, result_dir,
+                repo_checkout=repo_checkout, overhead=overhead_data,
             )
             scored["failed"] = False
             scored["constrained"] = True
@@ -801,7 +859,8 @@ if __name__ == "__main__":
                 m["wall_time_seconds"] = float(run_meta.get("wall_time_seconds") or 0)
     else:
         scored = score_transcript(
-            transcript_path, scenario, result_dir, repo_checkout=repo_checkout
+            transcript_path, scenario, result_dir,
+            repo_checkout=repo_checkout, overhead=overhead_data,
         )
 
     output_path = os.path.join(result_dir, "scored.json")

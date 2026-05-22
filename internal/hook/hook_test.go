@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/luuuc/sense/internal/scan"
@@ -53,6 +54,36 @@ func TestRunSenseBenchSuppressesAllHooks(t *testing.T) {
 		if buf.String() != "{}\n" {
 			t.Errorf("%s: output = %q, want {} (SENSE_BENCH should suppress)", hook, buf.String())
 		}
+	}
+}
+
+func TestSilentRunStdinReadError(t *testing.T) {
+	dir := indexedDir(t)
+	var buf bytes.Buffer
+	code := Run("session-start", dir, iotest.ErrReader(io.ErrUnexpectedEOF), &buf)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if buf.String() != "{}\n" {
+		t.Errorf("output = %q, want {} (stdin read error)", buf.String())
+	}
+}
+
+func TestIndexPathHonorsSENSEDIR(t *testing.T) {
+	t.Setenv("SENSE_DIR", "/tmp/sense-override")
+	got := indexPath("/some/project")
+	want := "/tmp/sense-override/index.db"
+	if got != want {
+		t.Errorf("indexPath = %q, want %q", got, want)
+	}
+}
+
+func TestIndexPathDefault(t *testing.T) {
+	t.Setenv("SENSE_DIR", "")
+	got := indexPath("/some/project")
+	want := filepath.Join("/some/project", ".sense", "index.db")
+	if got != want {
+		t.Errorf("indexPath = %q, want %q", got, want)
 	}
 }
 

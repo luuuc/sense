@@ -207,11 +207,11 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 
 	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: opts.WatchState, tracker: tracker, defaults: defaults, seenSymbols: make(map[int64]bool)}
 
-	s.AddTool(searchTool(), h.handleSearch)
-	s.AddTool(graphTool(), h.handleGraph)
-	s.AddTool(blastTool(), h.handleBlast)
-	s.AddTool(conventionsTool(), h.handleConventions)
-	s.AddTool(statusTool(), h.handleStatus)
+	s.AddTool(searchTool(), withAliasing("sense_search", h.handleSearch))
+	s.AddTool(graphTool(), withAliasing("sense_graph", h.handleGraph))
+	s.AddTool(blastTool(), withAliasing("sense_blast", h.handleBlast))
+	s.AddTool(conventionsTool(), withAliasing("sense_conventions", h.handleConventions))
+	s.AddTool(statusTool(), withAliasing("sense_status", h.handleStatus))
 
 	cleanup := func() {
 		cancelEmbed()
@@ -477,7 +477,7 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	resp.Freshness = freshness
 	resp.NextSteps = graphHints(resp, direction)
 
-	out, err := mcpio.MarshalGraph(resp)
+	out, err := mcpio.MarshalGraphCompactDirectional(resp, direction)
 	if err != nil {
 		return nil, fmt.Errorf("sense_graph: marshal: %w", err)
 	}
@@ -686,7 +686,7 @@ func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) 
 
 	resp.NextSteps = deadCodeHints(resp)
 
-	out, err := mcpio.MarshalDeadCode(resp)
+	out, err := mcpio.MarshalDeadCodeCompact(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense_graph dead_code: marshal: %w", err)
 	}
@@ -820,7 +820,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 
 	resp.NextSteps = searchHints(resp)
 
-	out, err := mcpio.MarshalSearch(resp)
+	out, err := mcpio.MarshalSearchCompact(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense_search: marshal: %w", err)
 	}
@@ -927,7 +927,7 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 	resp.Freshness = freshness
 	resp.NextSteps = blastHints(resp)
 
-	out, err := mcpio.MarshalBlast(resp)
+	out, err := mcpio.MarshalBlastCompact(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense_blast: marshal: %w", err)
 	}
@@ -1270,7 +1270,7 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 
 	resp.NextSteps = conventionsHints(resp, domain)
 
-	out, err := mcpio.MarshalConventions(resp)
+	out, err := mcpio.MarshalConventionsCompact(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense_conventions: marshal: %w", err)
 	}
@@ -1398,7 +1398,7 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 
 	resp.NextSteps = statusHints(resp, sess.Queries)
 
-	out, err := mcpio.MarshalStatus(resp)
+	out, err := mcpio.MarshalStatusCompact(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense_status: marshal: %w", err)
 	}
