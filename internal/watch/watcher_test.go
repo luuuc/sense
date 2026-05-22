@@ -126,6 +126,23 @@ func TestWatcherRemoveDirNonExistent(t *testing.T) {
 	w.RemoveDir(filepath.Join(dir, "never-registered"))
 }
 
+func TestWatcherAddDirReturnsErrorForNonExistent(t *testing.T) {
+	// Cover the fsw.Add error branch in AddDir (watcher.go:81-83):
+	// fsnotify rejects paths that don't exist on disk.
+	dir := t.TempDir()
+	matcher := ignore.New()
+	w, err := New(dir, matcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	err = w.AddDir(filepath.Join(dir, "does-not-exist"))
+	if err == nil {
+		t.Error("expected error when AddDir targets a non-existent path")
+	}
+}
+
 func TestDebounceBatchesEvents(t *testing.T) {
 	dir := t.TempDir()
 	matcher := ignore.New()

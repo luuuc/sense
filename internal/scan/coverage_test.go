@@ -251,6 +251,135 @@ func (e *EnglishGreeter) Goodbye() string {
 	}
 }
 
+func TestScan_SatisfyInterfacesSkipsEmptyMethodInterface(t *testing.T) {
+	// A marker interface (no methods) must not produce an inherits edge
+	// from arbitrary structs — methodSetSatisfies returns true for the
+	// empty required set, so the empty-methods skip at satisfy.go:139 is
+	// what protects against universal "everyone implements Marker" noise.
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "marker.go"), `package mylib
+
+type Marker interface{}
+
+type Foo struct{}
+func (f *Foo) Hello() string { return "hi" }
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	a, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	var markerID, fooID int64
+	if err := a.DB().QueryRowContext(ctx,
+		`SELECT id FROM sense_symbols WHERE name = 'Marker' AND kind = 'interface'`).Scan(&markerID); err != nil {
+		t.Fatalf("query Marker: %v", err)
+	}
+	if err := a.DB().QueryRowContext(ctx,
+		`SELECT id FROM sense_symbols WHERE name = 'Foo' AND kind = 'class'`).Scan(&fooID); err != nil {
+		t.Fatalf("query Foo: %v", err)
+	}
+
+	var count int
+	if err := a.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sense_edges WHERE source_id = ? AND target_id = ? AND kind = 'inherits'`,
+		fooID, markerID).Scan(&count); err != nil {
+		t.Fatalf("query edge: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Foo should not inherit empty-method Marker (got %d edges)", count)
+	}
+}
+
+func TestScan_RunDefaultsRootAndIOWriters(t *testing.T) {
+	// Cover the zero-value defaults in Run: Root="" → ".", Output=nil →
+	// os.Stderr, Warnings=nil → os.Stderr (scan.go:109-111, 121-127).
+	// Run from a tempdir so it doesn't touch the developer's tree.
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Redirect stderr so the default-output write doesn't pollute test output.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = origStderr
+		_ = r.Close()
+	})
+	go func() { _, _ = io.Copy(io.Discard, r) }()
+
+	if _, err := scan.Run(context.Background(), scan.Options{}); err != nil {
+		t.Fatalf("Run with zero options: %v", err)
+	}
+	_ = w.Close()
+}
+
+func TestScan_RunHonorsSENSEDIR(t *testing.T) {
+	// Cover the SENSE_DIR env-override branch (scan.go:114-116) when
+	// opts.Sense is empty.
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n")
+	senseDir := filepath.Join(t.TempDir(), "sense-override")
+	t.Setenv("SENSE_DIR", senseDir)
+	if _, err := scan.Run(context.Background(), scan.Options{
+		Root:     root,
+		Output:   io.Discard,
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(senseDir, "index.db")); err != nil {
+		t.Errorf("expected index at SENSE_DIR override: %v", err)
+	}
+}
+
+func TestScan_RunSkipsSymlinks(t *testing.T) {
+	// Cover the symlink-skip branch in walkTree (scan.go:584-586).
+	root := t.TempDir()
+	target := filepath.Join(root, "real.go")
+	writeFile(t, target, "package p\n")
+	link := filepath.Join(root, "link.go")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink not supported here: %v", err)
+	}
+
+	res, err := scan.Run(context.Background(), quietOpts(root))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Files != 1 {
+		t.Errorf("expected 1 indexed file (symlink skipped), got %d", res.Files)
+	}
+}
+
+func TestScan_RunHonorsSENSEMaxFileSize(t *testing.T) {
+	// Cover the SENSE_MAX_FILE_SIZE env-override branch (scan.go:141-145).
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n")
+	t.Setenv("SENSE_MAX_FILE_SIZE", "256")
+	if _, err := scan.Run(context.Background(), quietOpts(root)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
 func TestScan_TemporalCouplingInGitRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

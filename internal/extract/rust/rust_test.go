@@ -480,6 +480,50 @@ impl Processor for Worker {
 	}
 }
 
+func TestTraitMethodResolutionAmbiguous(t *testing.T) {
+	// Two traits declare the same method on the same struct → ambiguous.
+	// resolveTraitMethod returns "" and the caller falls back to surface
+	// text "self.run" / "method_name" instead of qualifying with a trait.
+	r := parse(t, `trait A { fn run(&self); }
+trait B { fn run(&self); }
+
+struct Worker;
+
+impl A for Worker { fn run(&self) {} }
+impl B for Worker { fn run(&self) {} }
+
+impl Worker {
+    fn caller(&self) { self.run(); }
+}
+`)
+	// With both A::run and B::run available, ambiguity falls back to the
+	// surface call "Worker::run" — not a trait-qualified resolution.
+	if findEdge(r, "Worker::caller", "A::run", "calls") != nil ||
+		findEdge(r, "Worker::caller", "B::run", "calls") != nil {
+		t.Error("ambiguous trait method should not resolve to a specific trait")
+	}
+	// Inherent fallback: caller still emits a call edge to the surface
+	// receiver-qualified name.
+	if findEdge(r, "Worker::caller", "Worker::run", "calls") == nil {
+		t.Error("expected fallback call edge Worker::caller -> Worker::run")
+	}
+}
+
+func TestStructFieldUserGenericTypeComposes(t *testing.T) {
+	// A field with a user-defined generic type that isn't in wrapperTypes
+	// should produce a composes edge to the generic's base name
+	// (rust.go:796-797).
+	r := parse(t, `struct MyCache<T> { items: Vec<T> }
+
+struct Server {
+    cache: MyCache<String>,
+}
+`)
+	if findEdge(r, "Server", "MyCache", "composes") == nil {
+		t.Error("expected composes edge Server -> MyCache for user-defined generic field type")
+	}
+}
+
 func TestScopedIdentifierCall(t *testing.T) {
 	r := parse(t, `fn main() {
     std::io::read();
