@@ -214,13 +214,76 @@ def format_rubric_for_prompt(rubric):
 # ── Anthropic API call ───────────────────────────────────────────────
 
 
+def _call_judge_via_cli(system_text: str, user_text: str, max_tokens: int = 1024) -> dict:
+    """Run the judge through the `claude` CLI subprocess.
+
+    Used when ANTHROPIC_API_KEY is unset (or BENCH_JUDGE_VIA_CLI=1): the CLI
+    falls back to OAuth subscription credit instead of API-key billing, which
+    is what we want when the API key has run dry mid-iteration.
+
+    Maps the CLI's `--output-format json` result into the same Anthropic
+    Messages API response shape that the rest of judge.py consumes, so
+    extract_judge_json / extract_usage downstream don't need to change.
+
+    Limitations vs. the urllib path:
+      - No explicit ephemeral cache_control. The CLI may still benefit from
+        prompt-cache hits at the SDK layer, but we don't control it.
+      - Usage stats come from the CLI's `usage` block; same shape as the
+        API but reflects the CLI's own bookkeeping.
+    """
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)  # force the CLI's OAuth subscription fallback
+    proc = subprocess.run(
+        [
+            "claude", "-p", user_text,
+            "--append-system-prompt", system_text,
+            "--output-format", "json",
+            "--max-turns", "1",
+            "--model", JUDGE_MODEL,
+            "--permission-mode", "bypassPermissions",
+            "--disallowed-tools", "Agent",
+        ],
+        env=env,
+        input="",
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if proc.returncode != 0:
+        # Surface the CLI's stderr verbatim — usually one line. If the user
+        # ran out of subscription credit, the CLI's error message will say so.
+        raise SystemExit(
+            f"judge: claude CLI failed (exit {proc.returncode}): "
+            f"{(proc.stderr or proc.stdout)[:600]}"
+        )
+    try:
+        cli_resp = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"judge: CLI returned non-JSON: {e} / head={proc.stdout[:200]}")
+
+    result_text = cli_resp.get("result", "")
+    usage = cli_resp.get("usage") or {}
+    return {
+        "content": [{"type": "text", "text": result_text}],
+        "usage": usage,
+        "stop_reason": "end_turn",
+        "_cli_total_cost_usd": cli_resp.get("total_cost_usd"),
+    }
+
+
 def call_judge(system_text, user_text, *, api_key, max_tokens=1024, retries=3):
     """POST to Anthropic Messages API, return parsed JSON content.
 
     Caches the system block (audience + full scenario rubric + judge
     instructions) so 12 sessions × 4 steps × 1 scenario share a single
     cached prefix. Cache miss only on the first call per scenario.
+
+    When BENCH_JUDGE_VIA_CLI=1 (or api_key is empty), the call is dispatched
+    through the local `claude` CLI subprocess instead, which uses OAuth
+    subscription credit. The rest of judge.py is shape-agnostic.
     """
+    if os.environ.get("BENCH_JUDGE_VIA_CLI") == "1" or not api_key:
+        return _call_judge_via_cli(system_text, user_text, max_tokens=max_tokens)
     payload = {
         "model": JUDGE_MODEL,
         "max_tokens": max_tokens,
@@ -299,9 +362,13 @@ def extract_usage(api_response):
 def extract_judge_json(api_response):
     """Pull the assistant's JSON object out of an Anthropic Messages response.
 
-    Tolerates the judge wrapping JSON in markdown fences even though the
-    prompt asks not to — strips them if present. Returns the parsed object,
-    or raises a clear error pointing at what came back.
+    Tolerates three common deviations from the "JSON only, no prose" prompt:
+      - markdown fences wrapping the JSON,
+      - a preamble sentence before the JSON ("Here is the scoring: {...}"),
+      - a closing remark after the JSON ("{...} Let me know if you need…").
+    Uses raw_decode from the first `{` so trailing content is ignored.
+    Returns the parsed object, or raises a clear error if no JSON object
+    can be located at all.
     """
     content = api_response.get("content", [])
     text = ""
@@ -312,10 +379,16 @@ def extract_judge_json(api_response):
 
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
+        text = re.sub(r"\s*```\s*$", "", text)
 
+    start = text.find("{")
+    if start == -1:
+        raise SystemExit(
+            f"judge: no JSON object found in response. Got: {text[:500]!r}"
+        )
     try:
-        return json.loads(text)
+        obj, _end = json.JSONDecoder().raw_decode(text, start)
+        return obj
     except json.JSONDecodeError as e:
         raise SystemExit(
             f"judge: model returned non-JSON content: {e}\nGot: {text[:500]!r}"
@@ -353,8 +426,37 @@ def judge_step(*, step_idx, step, answer_slice, system_text, side_context,
     ]
     user_text = "\n".join(user_blocks)
 
-    response = call_judge(system_text, user_text, api_key=api_key)
-    parsed = extract_judge_json(response)
+    # Judge LLM occasionally returns non-JSON (truncated or wrapped prose).
+    # One retry on parse failure recovers most of these without distorting the
+    # variance baseline — the retried call hits the cached system prefix, so
+    # the marginal cost is small.
+    parse_attempts = 2
+    parsed = None
+    last_parse_err = None
+    response = None
+    for parse_attempt in range(parse_attempts):
+        response = call_judge(system_text, user_text, api_key=api_key)
+        try:
+            parsed = extract_judge_json(response)
+            break
+        except SystemExit as e:
+            last_parse_err = e
+            if parse_attempt < parse_attempts - 1:
+                print(f"  step {step_idx + 1}: judge returned non-JSON; retrying once",
+                      file=sys.stderr)
+    if parsed is None:
+        print(f"  step {step_idx + 1}: {last_parse_err}", file=sys.stderr)
+        return {
+            "step": step["name"],
+            "scores": {k: {"score": 0.0, "rationale": "judge response unparseable"}
+                       for k in DEFAULT_WEIGHTS},
+            "step_quality": 0.0,
+            "error": "judge_response_unparseable",
+            "usage": {
+                "input_tokens": 0, "output_tokens": 0,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        }
 
     raw_scores = parsed.get("scores", {})
     normalised = {}
@@ -411,9 +513,10 @@ def main(argv):
     if out_path is None:
         out_path = os.path.join(os.path.dirname(scored_path), "judged.json")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise SystemExit("judge: ANTHROPIC_API_KEY not set")
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or ""
+    via_cli = os.environ.get("BENCH_JUDGE_VIA_CLI") == "1"
+    if not api_key and not via_cli:
+        raise SystemExit("judge: ANTHROPIC_API_KEY not set (set BENCH_JUDGE_VIA_CLI=1 to use claude CLI subscription)")
 
     with open(scored_path) as f:
         scored = json.load(f)

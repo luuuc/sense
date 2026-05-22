@@ -88,3 +88,8 @@ criterion scores; do not include it in your output. Do not invent
 additional criteria. Do not omit criteria — if a criterion is impossible
 to evaluate because the answer is empty, score 0.0 with a rationale that
 says so.
+
+**Begin your response with `{` and end it with `}`.** No preamble like
+"Here is the scoring", no closing remark like "Let me know if you need
+anything else", no markdown fences, no explanation outside the JSON. The
+first character of your response must be `{` and the last must be `}`.

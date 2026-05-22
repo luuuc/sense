@@ -20,11 +20,106 @@ The pitch (20-04) is explicit that ±5 line word-boundary grep is the bar.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from typing import List, Tuple
 
 from scorer import _SOURCE_FILE_RE
+
+
+# ── Repo-aware path resolution ───────────────────────────────────────
+#
+# LLM citations are not consistent about path depth. The model might write
+# `app.py:1566` when it means `src/flask/app.py:1566`, or `flask/app.py`
+# from a deeper-nested project. Treating those as unresolved is a false
+# negative — the citation isn't a hallucination, just abbreviated.
+#
+# The resolver tries the literal path first (the common case for sense's
+# `ref` fields, which include the full repo-relative path) and falls back
+# to a uniqueness check via the repo's file suffix map.
+
+
+@functools.lru_cache(maxsize=8)
+def _index_repo_files(repo_path: str) -> Tuple[Tuple[str, ...], dict]:
+    """Walk repo_path once and build (all_rel_paths, basename_map).
+
+    basename_map[name] = tuple of rel paths whose final segment is `name`.
+    Caches per repo_path because ground_citations() may call us 30+ times
+    per transcript, and the discourse/nextjs walks are 100k+ files.
+    Excludes obvious noise dirs (.git, .sense, node_modules, vendor, etc.).
+    """
+    skip_dirs = {".git", ".sense", ".serena", ".gitnexus", ".roam",
+                 ".grepai", "node_modules", "__pycache__", "vendor",
+                 ".bundle", ".workspace", "target", "build", "dist"}
+    all_files: list[str] = []
+    basename_map: dict[str, list[str]] = {}
+    for root, dirs, files in os.walk(repo_path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+        for f in files:
+            rel = os.path.relpath(os.path.join(root, f), repo_path)
+            all_files.append(rel)
+            basename_map.setdefault(f, []).append(rel)
+    return tuple(all_files), {k: tuple(v) for k, v in basename_map.items()}
+
+
+def _resolve_path(file: str, locator: str, repo_path: str) -> Tuple[str | None, str]:
+    """Resolve a cited path against the repo.
+
+    Returns (rel_path, note). rel_path is None when resolution fails;
+    note explains why (for the citation's `reason` field).
+
+    Resolution strategy:
+      1. Literal: $repo/$file exists → done.
+      2. Suffix-match: find files whose path ends with `file` (or whose
+         basename equals it when there's no slash). One candidate → done.
+      3. Tie-break by line: when locator is a line number, drop candidates
+         that are too short to contain it. If exactly one survives, done.
+         (Flask has `app.py` in src/flask, src/flask/sansio, and a tiny
+         test fixture — line 1501 fits only the first.)
+    """
+    literal = os.path.join(repo_path, file)
+    if os.path.isfile(literal):
+        return file, ""
+
+    all_files, basename_map = _index_repo_files(repo_path)
+
+    if "/" not in file:
+        candidates = basename_map.get(file, ())
+    else:
+        sep = "/" + file
+        candidates = tuple(f for f in all_files if f.endswith(sep))
+
+    if not candidates:
+        return None, f"file not found at {file}"
+    if len(candidates) == 1:
+        return candidates[0], ""
+
+    line_num, _ = _classify_locator(locator)
+    if line_num is not None:
+        # Drop candidates whose file is too short to contain the cited line.
+        viable: list[Tuple[str, int]] = []
+        for c in candidates:
+            try:
+                with open(os.path.join(repo_path, c), "r",
+                          encoding="utf-8", errors="replace") as fh:
+                    n = sum(1 for _ in fh)
+                if n >= line_num:
+                    viable.append((c, n))
+            except OSError:
+                pass
+        if len(viable) == 1:
+            return viable[0][0], ""
+        if len(viable) > 1:
+            # Multiple files contain the line. The cited method/line is
+            # typically in the "main" file (most lines), not a smaller
+            # derivative — `src/flask/app.py` over `src/flask/sansio/app.py`.
+            # Documented heuristic, not principled — but matches practice.
+            viable.sort(key=lambda t: -t[1])
+            return viable[0][0], ""
+
+    head = ", ".join(candidates[:3]) + ("..." if len(candidates) > 3 else "")
+    return None, f"ambiguous: {len(candidates)} files match `{file}` ({head})"
 
 
 # ── Extraction ───────────────────────────────────────────────────────
@@ -91,16 +186,21 @@ def ground_citation(file: str, locator: str, repo_path: str) -> dict:
       {"file": ..., "locator": ..., "status": "grounded"|"unresolved"|"hallucinated",
        "reason": "one-line explanation"}
     """
-    full = os.path.join(repo_path, file)
-    if not os.path.exists(full) or not os.path.isfile(full):
+    resolved, resolve_note = _resolve_path(file, locator, repo_path)
+    if resolved is None:
         return {
             "file": file,
             "locator": locator,
             "status": "unresolved",
-            "reason": f"file not found at {file}",
+            "reason": resolve_note,
         }
 
+    full = os.path.join(repo_path, resolved)
     line_num, symbol = _classify_locator(locator)
+    # `via` is appended to grounded reasons when we matched by suffix rather
+    # than literal path, so the scored.json reader sees that `app.py` was
+    # actually resolved to `src/flask/app.py`.
+    via = f" [via {resolved}]" if resolved != file else ""
 
     try:
         with open(full, "r", encoding="utf-8", errors="replace") as f:
@@ -130,13 +230,13 @@ def ground_citation(file: str, locator: str, repo_path: str) -> dict:
                 "file": file,
                 "locator": locator,
                 "status": "grounded",
-                "reason": f"line {line_num} in {file} (file has {n_lines} lines)",
+                "reason": f"line {line_num} in {file} (file has {n_lines} lines){via}",
             }
         return {
             "file": file,
             "locator": locator,
             "status": "hallucinated",
-            "reason": f"line {line_num} out of range (file only {n_lines} lines)",
+            "reason": f"line {line_num} out of range (file only {n_lines} lines){via}",
         }
 
     # Symbol citation: word-boundary search.
@@ -150,7 +250,7 @@ def ground_citation(file: str, locator: str, repo_path: str) -> dict:
                 "file": file,
                 "locator": locator,
                 "status": "hallucinated",
-                "reason": f"line {line_num} out of range (file only {n_lines} lines)",
+                "reason": f"line {line_num} out of range (file only {n_lines} lines){via}",
             }
         lo = max(1, line_num - 5)
         hi = min(n_lines, line_num + 5)
@@ -160,13 +260,13 @@ def ground_citation(file: str, locator: str, repo_path: str) -> dict:
                 "file": file,
                 "locator": locator,
                 "status": "grounded",
-                "reason": f"`{symbol}` found near line {line_num} in {file}",
+                "reason": f"`{symbol}` found near line {line_num} in {file}{via}",
             }
         return {
             "file": file,
             "locator": locator,
             "status": "unresolved",
-            "reason": f"`{symbol}` not within ±5 of line {line_num} in {file}",
+            "reason": f"`{symbol}` not within ±5 of line {line_num} in {file}{via}",
         }
 
     # No line hint — grep the whole file.
@@ -176,13 +276,13 @@ def ground_citation(file: str, locator: str, repo_path: str) -> dict:
             "file": file,
             "locator": locator,
             "status": "grounded",
-            "reason": f"`{symbol}` found in {file}",
+            "reason": f"`{symbol}` found in {file}{via}",
         }
     return {
         "file": file,
         "locator": locator,
         "status": "unresolved",
-        "reason": f"`{symbol}` not found anywhere in {file}",
+        "reason": f"`{symbol}` not found anywhere in {file}{via}",
     }
 
 
