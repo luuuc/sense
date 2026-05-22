@@ -15,7 +15,7 @@ One binary, one local index, four tools for your AI. No SaaS account, no API key
 ## What changes
 
 Measured across 7 real-world codebases ([Discourse](https://github.com/discourse/discourse), [Flask](https://github.com/pallets/flask), [Next.js](https://github.com/vercel/next.js/), [Axum](https://github.com/tokio-rs/axum), [Gin](https://github.com/gin-gonic/gin), [Javalin](https://github.com/javalin/javalin), and a private e-commerce repo).
-Full methodology and raw data: [`bench/`](bench/). Head-to-head leaderboard against Serena, Probe, GitNexus, GrepAI, and 3 other code-search MCPs: [`docs/bench-leaderboard.svg`](docs/bench-leaderboard.svg).
+Full methodology and raw data: [`bench/`](bench/). Head-to-head leaderboard against Serena, Probe, GitNexus, code-search MCPs: [`docs/bench-leaderboard.svg`](docs/bench-leaderboard.svg).
 
 | Metric | Claude Code (Opus 4.6) | Claude Code (Opus 4.6) + Sense | Change |
 |---|---|---|---|
