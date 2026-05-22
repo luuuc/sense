@@ -207,11 +207,11 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 
 	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: opts.WatchState, tracker: tracker, defaults: defaults, seenSymbols: make(map[int64]bool)}
 
-	s.AddTool(searchTool(), h.handleSearch)
-	s.AddTool(graphTool(), h.handleGraph)
-	s.AddTool(blastTool(), h.handleBlast)
-	s.AddTool(conventionsTool(), h.handleConventions)
-	s.AddTool(statusTool(), h.handleStatus)
+	s.AddTool(searchTool(), withAliasing("sense_search", h.handleSearch))
+	s.AddTool(graphTool(), withAliasing("sense_graph", h.handleGraph))
+	s.AddTool(blastTool(), withAliasing("sense_blast", h.handleBlast))
+	s.AddTool(conventionsTool(), withAliasing("sense_conventions", h.handleConventions))
+	s.AddTool(statusTool(), withAliasing("sense_status", h.handleStatus))
 
 	cleanup := func() {
 		cancelEmbed()
