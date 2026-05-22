@@ -101,6 +101,18 @@ func countTypeNames(instances []string) int {
 // MarshalConventions renders a ConventionsResponse with the same
 // normalization + pretty-print contract as MarshalGraph.
 func MarshalConventions(r ConventionsResponse) ([]byte, error) {
+	normalizeConventionsResponse(&r)
+	return marshalPretty(r)
+}
+
+// MarshalConventionsCompact is MarshalConventions's compact-JSON
+// sibling for MCP transport.
+func MarshalConventionsCompact(r ConventionsResponse) ([]byte, error) {
+	normalizeConventionsResponse(&r)
+	return marshalCompact(r)
+}
+
+func normalizeConventionsResponse(r *ConventionsResponse) {
 	if r.KeySymbols == nil {
 		r.KeySymbols = []KeySymbolEntry{}
 	}
@@ -120,5 +132,4 @@ func MarshalConventions(r ConventionsResponse) ([]byte, error) {
 	if r.NextSteps == nil {
 		r.NextSteps = []NextStep{}
 	}
-	return marshalPretty(r)
 }

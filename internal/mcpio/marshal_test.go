@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/luuuc/sense/internal/model"
 )
 
 // TestMarshalGraphRoundTrip checks that MarshalGraph produces bytes
@@ -502,6 +504,244 @@ func TestMarshalGraphWithTestCallerSummary(t *testing.T) {
 	s := string(raw)
 	if !strings.Contains(s, "test_caller_summary") {
 		t.Errorf("expected test_caller_summary in output:\n%s", s)
+	}
+}
+
+// TestMarshalCompactEquivalence covers pitch 25-05 pattern 1:
+// for every Marshal*Compact variant, the compact bytes must
+//   1. decode back to a Go value equal to the pretty bytes' decode,
+//   2. shrink relative to the pretty bytes on a non-trivial fixture,
+//   3. contain no JSON indentation whitespace ("\n  ").
+//
+// The decoded-equality check is the load-bearing one: it proves the
+// MCP wire change is semantically invisible to consumers.
+func TestMarshalCompactEquivalence(t *testing.T) {
+	filePath := "app/services/payment_gateway.rb"
+	graph := GraphResponse{
+		Symbol: GraphSymbol{
+			Name: "CheckoutService", Qualified: "App::Services::CheckoutService",
+			File: "app/services/checkout_service.rb", LineStart: 12, LineEnd: 85, Kind: "class",
+		},
+		Edges: GraphEdges{
+			Calls: []CallEdgeRef{
+				{Symbol: "PaymentGateway#charge", File: &filePath, Confidence: 1.0},
+				{Symbol: "Beacon.track", File: nil, Confidence: 0.9},
+			},
+			Inherits: []InheritEdgeRef{{Symbol: "ApplicationService", File: nil}},
+			Tests:    []TestEdgeRef{{File: "test/services/checkout_service_test.rb", Confidence: 0.8}},
+		},
+		NextSteps: []NextStep{{Tool: "sense_blast", Args: map[string]any{"symbol": "CheckoutService"}, Reason: "high-fanout symbol — check blast radius"}},
+	}
+
+	tests := []struct {
+		name    string
+		pretty  func() ([]byte, error)
+		compact func() ([]byte, error)
+		into    func() any
+	}{
+		{
+			name:    "graph",
+			pretty:  func() ([]byte, error) { return MarshalGraph(graph) },
+			compact: func() ([]byte, error) { return MarshalGraphCompact(graph) },
+			into:    func() any { return &GraphResponse{} },
+		},
+		{
+			name:    "search",
+			pretty:  func() ([]byte, error) { return MarshalSearch(searchFixture()) },
+			compact: func() ([]byte, error) { return MarshalSearchCompact(searchFixture()) },
+			into:    func() any { return &SearchResponse{} },
+		},
+		{
+			name:    "blast",
+			pretty:  func() ([]byte, error) { return MarshalBlast(blastFixture()) },
+			compact: func() ([]byte, error) { return MarshalBlastCompact(blastFixture()) },
+			into:    func() any { return &BlastResponse{} },
+		},
+		{
+			name:    "status",
+			pretty:  func() ([]byte, error) { return MarshalStatus(statusFixture()) },
+			compact: func() ([]byte, error) { return MarshalStatusCompact(statusFixture()) },
+			into:    func() any { return &StatusResponse{} },
+		},
+		{
+			name:    "dead_code",
+			pretty:  func() ([]byte, error) { return MarshalDeadCode(deadCodeFixture()) },
+			compact: func() ([]byte, error) { return MarshalDeadCodeCompact(deadCodeFixture()) },
+			into:    func() any { return &DeadCodeResponse{} },
+		},
+		{
+			name:    "conventions",
+			pretty:  func() ([]byte, error) { return MarshalConventions(conventionsFixture()) },
+			compact: func() ([]byte, error) { return MarshalConventionsCompact(conventionsFixture()) },
+			into:    func() any { return &ConventionsResponse{} },
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pretty, err := tc.pretty()
+			if err != nil {
+				t.Fatalf("pretty: %v", err)
+			}
+			compact, err := tc.compact()
+			if err != nil {
+				t.Fatalf("compact: %v", err)
+			}
+
+			if len(compact) >= len(pretty) {
+				t.Errorf("compact (%d) not smaller than pretty (%d)", len(compact), len(pretty))
+			}
+			if strings.Contains(string(compact), "\n  ") {
+				t.Errorf("compact bytes contain pretty-print indentation:\n%s", compact)
+			}
+
+			prettyDecoded, compactDecoded := tc.into(), tc.into()
+			if err := json.Unmarshal(pretty, prettyDecoded); err != nil {
+				t.Fatalf("decode pretty: %v", err)
+			}
+			if err := json.Unmarshal(compact, compactDecoded); err != nil {
+				t.Fatalf("decode compact: %v", err)
+			}
+			if !reflect.DeepEqual(prettyDecoded, compactDecoded) {
+				t.Errorf("decoded values differ\npretty:  %+v\ncompact: %+v", prettyDecoded, compactDecoded)
+			}
+		})
+	}
+}
+
+// TestMarshalGraphCompactDirectional covers pitch 25-05 pattern 2:
+// when sense_graph is called with direction=callers or callees, the
+// edge buckets the request excluded are absent from the wire (no
+// `[]` and no `null`), while in-scope empty buckets still emit `[]`.
+func TestMarshalGraphCompactDirectional(t *testing.T) {
+	base := func() GraphResponse {
+		return GraphResponse{
+			Symbol: GraphSymbol{Name: "X", Qualified: "pkg.X", File: "pkg/x.go", Kind: "function"},
+		}
+	}
+
+	t.Run("callers omits calls and inherits", func(t *testing.T) {
+		raw, err := MarshalGraphCompactDirectional(base(), model.DirectionCallers)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		s := string(raw)
+		for _, key := range []string{`"calls"`, `"inherits"`} {
+			if strings.Contains(s, key) {
+				t.Errorf("expected %s to be absent for direction=callers:\n%s", key, s)
+			}
+		}
+		for _, key := range []string{`"called_by":[]`, `"tests":[]`} {
+			if !strings.Contains(s, key) {
+				t.Errorf("expected %s to be present for direction=callers:\n%s", key, s)
+			}
+		}
+	})
+
+	t.Run("callees omits called_by and tests", func(t *testing.T) {
+		raw, err := MarshalGraphCompactDirectional(base(), model.DirectionCallees)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		s := string(raw)
+		for _, key := range []string{`"called_by"`, `"tests"`} {
+			if strings.Contains(s, key) {
+				t.Errorf("expected %s to be absent for direction=callees:\n%s", key, s)
+			}
+		}
+		for _, key := range []string{`"calls":[]`, `"inherits":[]`} {
+			if !strings.Contains(s, key) {
+				t.Errorf("expected %s to be present for direction=callees:\n%s", key, s)
+			}
+		}
+	})
+
+	t.Run("both renders all eight buckets", func(t *testing.T) {
+		raw, err := MarshalGraphCompactDirectional(base(), model.DirectionBoth)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		s := string(raw)
+		for _, key := range []string{"calls", "called_by", "inherits", "composes", "includes", "imports", "tests", "temporal"} {
+			if !strings.Contains(s, `"`+key+`":[]`) {
+				t.Errorf("expected %q:[] to be present for direction=both:\n%s", key, s)
+			}
+		}
+	})
+
+	t.Run("decoded equality with symmetric variant on in-scope buckets", func(t *testing.T) {
+		filePath := "pkg/caller.go"
+		r := base()
+		r.Edges.CalledBy = []CallEdgeRef{{Symbol: "Caller", File: &filePath, Confidence: 1.0}}
+		r.Edges.Tests = []TestEdgeRef{{File: "pkg/x_test.go", Confidence: 0.8}}
+
+		raw, err := MarshalGraphCompactDirectional(r, model.DirectionCallers)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var decoded GraphResponse
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatalf("decode: %v\nbytes:\n%s", err, raw)
+		}
+		if len(decoded.Edges.CalledBy) != 1 || decoded.Edges.CalledBy[0].Symbol != "Caller" {
+			t.Errorf("CalledBy lost in round-trip: %+v", decoded.Edges.CalledBy)
+		}
+		if len(decoded.Edges.Tests) != 1 {
+			t.Errorf("Tests lost in round-trip: %+v", decoded.Edges.Tests)
+		}
+		if decoded.Edges.Calls != nil {
+			t.Errorf("Calls should round-trip as nil for direction=callers, got %+v", decoded.Edges.Calls)
+		}
+	})
+
+	t.Run("byte savings vs symmetric for empty isolated symbol", func(t *testing.T) {
+		symmetric, _ := MarshalGraphCompact(base())
+		directional, _ := MarshalGraphCompactDirectional(base(), model.DirectionCallers)
+		if len(directional) >= len(symmetric) {
+			t.Errorf("directional (%d bytes) not smaller than symmetric (%d) for empty graph", len(directional), len(symmetric))
+		}
+	})
+}
+
+func searchFixture() SearchResponse {
+	return SearchResponse{
+		Results: []SearchResultEntry{
+			{Symbol: "User", File: "app/models/user.rb", Line: 1, Kind: "class", Score: 0.92, Snippet: "class User < ApplicationRecord", References: 12, Source: "structural"},
+		},
+		SearchMode:    "hybrid",
+		FusionWeights: FusionWeights{Keyword: 0.6, Vector: 0.4},
+	}
+}
+
+func blastFixture() BlastResponse {
+	return BlastResponse{
+		Symbol:        "User#verified?",
+		Risk:          "high",
+		RiskFactors:   []string{"public API", "many callers"},
+		DirectCallers: []BlastCaller{{Symbol: "SessionsController#create", File: "app/controllers/sessions_controller.rb", LineStart: 8, LineEnd: 8}},
+		AffectedTests: []string{"spec/models/user_spec.rb"},
+		TotalAffected: 17,
+	}
+}
+
+func statusFixture() StatusResponse {
+	return StatusResponse{
+		Index:     StatusIndex{Path: ".sense.db", SizeBytes: 1024, Files: 10, Symbols: 50, Edges: 80, Embeddings: 50, Coverage: 1.0},
+		Languages: map[string]StatusLanguage{"go": {Files: 10, Symbols: 50, Tier: "full"}},
+	}
+}
+
+func deadCodeFixture() DeadCodeResponse {
+	return DeadCodeResponse{
+		DeadSymbols:  []DeadSymbolEntry{{Symbol: "Old", Qualified: "pkg.Old", File: "pkg/old.go", LineStart: 1, LineEnd: 5, Kind: "function", Confidence: "high"}},
+		TotalSymbols: 100,
+		DeadCount:    1,
+	}
+}
+
+func conventionsFixture() ConventionsResponse {
+	return ConventionsResponse{
+		KeySymbols: []KeySymbolEntry{{Name: "ApplicationRecord", Kind: "class", References: 2, Callers: []string{"User", "Order"}}},
 	}
 }
 
