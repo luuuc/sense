@@ -51,6 +51,24 @@ log() {
   echo "[score] $*" >&2
 }
 
+# Resolve the host repo path that scorer.py uses for citation_grounding.
+# Host mode populates $SENSE_BENCH_ROOT/$tool/$repo via run.sh's `git clone
+# --reference`. Docker mode bakes the repo inside the image and never writes
+# to that path, so we fall back to the shared $SENSE_BENCH_ROOT/_reference/$repo
+# checkout. Both point at the pinned commit when the bench is consistent.
+resolve_repo_checkout() {
+  local tool="$1" repo="$2"
+  local per_tool="$SENSE_BENCH_ROOT/$tool/$repo"
+  local reference="$SENSE_BENCH_ROOT/_reference/$repo"
+  if [[ -d "$per_tool/.git" ]]; then
+    echo "$per_tool"
+  elif [[ -d "$reference/.git" ]]; then
+    echo "$reference"
+  else
+    echo "$per_tool"  # let scorer.py emit its own "repo_path missing" error
+  fi
+}
+
 # --- Find scenario for a repo ---
 find_scenario() {
   local repo="$1"
@@ -95,7 +113,7 @@ for tool_dir in "$RESULTS_DIR"/*/; do
         else
           log "Scoring $tool/$repo"
         fi
-        python3 "$LIB_DIR/scorer.py" "$repo_dir" "$scenario_file" "$BENCH_DIR" "$SENSE_BENCH_ROOT/$tool/$repo"
+        python3 "$LIB_DIR/scorer.py" "$repo_dir" "$scenario_file" "$BENCH_DIR" "$(resolve_repo_checkout "$tool" "$repo")"
         scored_count=$((scored_count + 1))
       fi
     fi
@@ -113,7 +131,7 @@ for tool_dir in "$RESULTS_DIR"/*/; do
         else
           log "Scoring $tool/$repo/$(basename "$run_dir")"
         fi
-        python3 "$LIB_DIR/scorer.py" "$run_dir" "$scenario_file" "$BENCH_DIR" "$SENSE_BENCH_ROOT/$tool/$repo"
+        python3 "$LIB_DIR/scorer.py" "$run_dir" "$scenario_file" "$BENCH_DIR" "$(resolve_repo_checkout "$tool" "$repo")"
         scored_count=$((scored_count + 1))
       fi
     done

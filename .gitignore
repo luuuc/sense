@@ -8,6 +8,9 @@ doc/
 # AI assistant workspace (kept local, never pushed)
 .claude/
 CLAUDE.md
+# Exception: bench/docker/**/CLAUDE.md are baked into docker images
+# at build time, not the user's local AI context.
+!bench/docker/**/CLAUDE.md
 .claude.json
 .mcp.json
 .opencode/
@@ -97,3 +100,12 @@ bench/analysis/
 bench/tools/
 bench/CHANGELOG.md
 /.council
+
+# Host-built sense indexes staged into the docker build context by
+# bench/build-prescan.sh. Each one is ~350MB (nextjs.sense) and is
+# regenerated on demand from $SENSE_BENCH_ROOT/sense/<repo>/.sense.
+bench/docker/sense/preindex/
+
+# Local-only bench result snapshots (manual backups before full sweeps).
+bench/results.snapshot-*/
+bench/results/report-for-humans-*.md
