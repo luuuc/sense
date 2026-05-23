@@ -165,12 +165,13 @@ func (w *walker) collectSpecNames(spec *sitter.Node) {
 // form (`const ( A = 1; B = 2 )`) and the single form (`const A = 1`)
 // produce const_spec children.
 func (w *walker) handleConstDeclaration(n *sitter.Node) error {
+	doc := docstringFor(n, w.source)
 	for i := uint(0); i < n.NamedChildCount(); i++ {
 		spec := n.NamedChild(i)
 		if spec == nil || spec.Kind() != "const_spec" {
 			continue
 		}
-		if err := w.emitConstSpec(spec); err != nil {
+		if err := w.emitConstSpec(spec, doc); err != nil {
 			return err
 		}
 	}
@@ -179,8 +180,8 @@ func (w *walker) handleConstDeclaration(n *sitter.Node) error {
 
 // emitConstSpec emits one Symbol per name in a const_spec. Specs like
 // `const A, B = 1, 2` declare multiple names simultaneously — each
-// becomes its own symbol.
-func (w *walker) emitConstSpec(spec *sitter.Node) error {
+// becomes its own symbol and shares the declaration-level docstring.
+func (w *walker) emitConstSpec(spec *sitter.Node, doc string) error {
 	// `name` is a repeated field on const_spec; ChildrenByFieldName
 	// needs a cursor, so iterate manually by field-name match.
 	for i := uint(0); i < spec.NamedChildCount(); i++ {
@@ -199,6 +200,7 @@ func (w *walker) emitConstSpec(spec *sitter.Node) error {
 			Visibility: visibility(name),
 			LineStart:  extract.Line(spec.StartPosition()),
 			LineEnd:    extract.Line(spec.EndPosition()),
+			Docstring:  doc,
 		}); err != nil {
 			return err
 		}
@@ -210,6 +212,7 @@ func (w *walker) emitConstSpec(spec *sitter.Node) error {
 // package-level variable as a KindConstant symbol (the model has no
 // separate variable kind; for dead code purposes they behave identically).
 func (w *walker) handleVarDeclaration(n *sitter.Node) error {
+	doc := docstringFor(n, w.source)
 	for i := uint(0); i < n.NamedChildCount(); i++ {
 		spec := n.NamedChild(i)
 		if spec == nil || spec.Kind() != "var_spec" {
@@ -231,6 +234,7 @@ func (w *walker) handleVarDeclaration(n *sitter.Node) error {
 				Visibility: visibility(name),
 				LineStart:  extract.Line(spec.StartPosition()),
 				LineEnd:    extract.Line(spec.EndPosition()),
+				Docstring:  doc,
 			}); err != nil {
 				return err
 			}
@@ -242,6 +246,7 @@ func (w *walker) handleVarDeclaration(n *sitter.Node) error {
 // handleTypeDeclaration walks type_spec / type_alias children. Both
 // forms classify by the inner `type` field's kind.
 func (w *walker) handleTypeDeclaration(n *sitter.Node) error {
+	doc := docstringFor(n, w.source)
 	for i := uint(0); i < n.NamedChildCount(); i++ {
 		spec := n.NamedChild(i)
 		if spec == nil {
@@ -249,11 +254,11 @@ func (w *walker) handleTypeDeclaration(n *sitter.Node) error {
 		}
 		switch spec.Kind() {
 		case "type_spec":
-			if err := w.emitTypeSpec(spec, false); err != nil {
+			if err := w.emitTypeSpec(spec, false, doc); err != nil {
 				return err
 			}
 		case "type_alias":
-			if err := w.emitTypeSpec(spec, true); err != nil {
+			if err := w.emitTypeSpec(spec, true, doc); err != nil {
 				return err
 			}
 		}
@@ -261,7 +266,7 @@ func (w *walker) handleTypeDeclaration(n *sitter.Node) error {
 	return nil
 }
 
-func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool) error {
+func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool, doc string) error {
 	nameNode := spec.ChildByFieldName("name")
 	if nameNode == nil {
 		return nil
@@ -294,6 +299,7 @@ func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool) error {
 		Visibility: visibility(name),
 		LineStart:  extract.Line(spec.StartPosition()),
 		LineEnd:    extract.Line(spec.EndPosition()),
+		Docstring:  doc,
 	}); err != nil {
 		return err
 	}
@@ -335,6 +341,7 @@ func (w *walker) emitInterfaceMethods(ifaceNode *sitter.Node, ifaceQualified str
 			ParentQualified: ifaceQualified,
 			LineStart:       extract.Line(me.StartPosition()),
 			LineEnd:         extract.Line(me.EndPosition()),
+			Docstring:       docstringFor(me, w.source),
 		}); err != nil {
 			return err
 		}
@@ -410,6 +417,7 @@ func (w *walker) handleFunction(n *sitter.Node) error {
 		Visibility: visibility(name),
 		LineStart:  extract.Line(n.StartPosition()),
 		LineEnd:    extract.Line(n.EndPosition()),
+		Docstring:  docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -452,6 +460,7 @@ func (w *walker) handleMethod(n *sitter.Node) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
