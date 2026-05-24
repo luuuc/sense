@@ -262,3 +262,31 @@ func Bare() {}
 	}
 }
 
+// TestDocstring_AllBlankComments pins that a run of `//` markers with
+// no body text does not panic the extractor and yields "". The explicit
+// recover guards the load-bearing path: stripCommentMarkers returns an
+// empty slice for body-less comments, and formatGoComments must handle
+// that without indexing lines[-1] (an earlier draft did, and would
+// panic here).
+func TestDocstring_AllBlankComments(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("extractor panicked on body-less comments: %v", r)
+		}
+	}()
+	src := `package p
+
+//
+//
+func Hush() {}
+`
+	r := parse(t, src)
+	sym := findSymbol(r, "p.Hush")
+	if sym == nil {
+		t.Fatalf("symbol p.Hush missing")
+	}
+	if sym.Docstring != "" {
+		t.Errorf("Docstring on body-less comments = %q, want \"\"", sym.Docstring)
+	}
+}
+

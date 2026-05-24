@@ -16,9 +16,6 @@ import (
 // the target is the first child, so JSDoc above a wrapper reaches the
 // inner declaration.
 func docstringFor(node *sitter.Node, source []byte) string {
-	if node == nil {
-		return ""
-	}
 	cur := node
 	for cur.Parent() != nil && isJSDocWrapper(cur.Parent().Kind()) && cur.PrevNamedSibling() == nil {
 		cur = cur.Parent()
@@ -33,20 +30,18 @@ func docstringFor(node *sitter.Node, source []byte) string {
 		if !isJSDocText(text) {
 			break // a `//` or plain `/*` comment ends the JSDoc chain
 		}
+		// Gap rule: see golang/docstring.go for the contract — only `\n`
+		// matters; non-newline bytes are transparent. Safe under tree-
+		// sitter's whitespace-only-between-siblings invariant.
 		gap := source[prev.EndByte():cur.StartByte()]
 		nl := 0
 		blank := false
 		for _, b := range gap {
-			switch b {
-			case '\n':
+			if b == '\n' {
 				nl++
 				if nl >= 2 {
 					blank = true
 				}
-			case ' ', '\t', '\r':
-				// horizontal whitespace doesn't reset
-			default:
-				nl = 0
 			}
 		}
 		if blank {

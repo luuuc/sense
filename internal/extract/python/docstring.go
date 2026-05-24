@@ -23,6 +23,12 @@ func docstringFor(node *sitter.Node, source []byte) string {
 	// non-string first statements (pass, assignment, return) bail at
 	// the kind check below, which is the most common "no docstring"
 	// path in practice.
+	//
+	// ChildByFieldName is a grammar contract, not a caller contract:
+	// tree-sitter-python today always emits the `body` field on
+	// function/class definitions, but grammar churn (PEP 695, future
+	// "function signature" nodes) could change that. A nil body would
+	// segfault on NamedChild below — guard explicitly.
 	body := node.ChildByFieldName("body")
 	if body == nil {
 		return ""
@@ -43,16 +49,15 @@ func docstringFor(node *sitter.Node, source []byte) string {
 	if out == "" || !utf8.ValidString(out) {
 		return ""
 	}
-	// License-header filter on the first non-blank line.
-	for _, line := range strings.Split(out, "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" {
-			continue
-		}
-		if isLicenseHeader(t) {
-			return ""
-		}
-		break
+	// License-header filter on the first line. TrimSpace above
+	// guarantees the first byte is non-whitespace, so the first line
+	// of the split is always non-blank.
+	firstLine := out
+	if idx := strings.IndexByte(out, '\n'); idx >= 0 {
+		firstLine = out[:idx]
+	}
+	if isLicenseHeader(strings.TrimSpace(firstLine)) {
+		return ""
 	}
 	return out
 }

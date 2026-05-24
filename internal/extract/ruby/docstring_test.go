@@ -268,3 +268,48 @@ func TestDocstring_MalformedUTF8(t *testing.T) {
 		t.Errorf("Docstring on malformed-UTF-8 comment = %q, want \"\"", sym.Docstring)
 	}
 }
+
+// TestDocstring_AllBlankComments pins that a run of comment markers
+// with no body text (e.g. `#\n#\n`) does not panic the extractor and
+// yields "". The explicit recover guards the load-bearing path:
+// formatRubyComments must handle the body-less case without indexing
+// lines[firstIdx] when firstIdx is -1.
+func TestDocstring_AllBlankComments(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("extractor panicked on body-less comments: %v", r)
+		}
+	}()
+	src := "#\n#\ndef hush\nend\n"
+	r := parseRuby(t, src)
+	sym := findSymbol(r, "hush")
+	if sym == nil {
+		t.Fatalf("symbol hush missing")
+	}
+	if sym.Docstring != "" {
+		t.Errorf("Docstring on body-less comments = %q, want \"\"", sym.Docstring)
+	}
+}
+
+// TestDocstring_BeginEndTrailingBlank pins that a `=begin/=end` block
+// with trailing blank lines before `=end` trims them rather than
+// preserving them as empty docstring lines.
+func TestDocstring_BeginEndTrailingBlank(t *testing.T) {
+	src := `=begin
+Block body.
+
+
+=end
+class Trim
+end
+`
+	r := parseRuby(t, src)
+	sym := findSymbol(r, "Trim")
+	if sym == nil {
+		t.Fatalf("symbol Trim missing")
+	}
+	want := "Block body."
+	if sym.Docstring != want {
+		t.Errorf("Docstring = %q, want %q (trailing blanks must be trimmed)", sym.Docstring, want)
+	}
+}

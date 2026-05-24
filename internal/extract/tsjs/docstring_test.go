@@ -273,3 +273,25 @@ func TestDocstring_MalformedUTF8(t *testing.T) {
 		t.Errorf("Docstring on malformed-UTF-8 comment = %q, want \"\"", sym.Docstring)
 	}
 }
+
+// TestDocstring_AllBlankJSDoc pins that a JSDoc block whose body is
+// only the wrapper markers (e.g. `/** */`) does not panic the extractor
+// and yields "". The explicit recover guards the load-bearing path:
+// formatJSDocComments must handle the empty-body case without indexing
+// lines[firstIdx] when firstIdx is -1.
+func TestDocstring_AllBlankJSDoc(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("extractor panicked on body-less JSDoc: %v", r)
+		}
+	}()
+	src := "/** */\nfunction hush() {}\n"
+	r := parseTS(t, src, "test.ts")
+	sym := findSym(r, "hush")
+	if sym == nil {
+		t.Fatalf("symbol hush missing")
+	}
+	if sym.Docstring != "" {
+		t.Errorf("Docstring on body-less JSDoc = %q, want \"\"", sym.Docstring)
+	}
+}

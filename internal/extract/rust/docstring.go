@@ -15,9 +15,6 @@ import (
 // are skipped per rustdoc convention; a blank line between any
 // adjacent pair detaches.
 func docstringFor(node *sitter.Node, source []byte) string {
-	if node == nil {
-		return ""
-	}
 	var blocks []string
 	cur := node
 	for {
@@ -51,15 +48,14 @@ func docstringFor(node *sitter.Node, source []byte) string {
 	if out == "" || !utf8.ValidString(out) {
 		return ""
 	}
-	for _, line := range strings.Split(out, "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" {
-			continue
-		}
-		if isLicenseHeader(t) {
-			return ""
-		}
-		break
+	// extractDocBody strips leading blank lines per block, so the join's
+	// first line is the first non-blank line of the run.
+	firstLine := out
+	if idx := strings.IndexByte(out, '\n'); idx >= 0 {
+		firstLine = out[:idx]
+	}
+	if isLicenseHeader(strings.TrimSpace(firstLine)) {
+		return ""
 	}
 	return out
 }
@@ -88,9 +84,6 @@ func extractDocBody(n *sitter.Node, source []byte) string {
 			break
 		}
 	}
-	if body == "" {
-		return ""
-	}
 	lines := strings.Split(body, "\n")
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -116,25 +109,23 @@ func extractDocBody(n *sitter.Node, source []byte) string {
 // of the inter-node gap. With that adjustment a blank line is always
 // `\n\n` regardless of whether the previous neighbour was a line- or
 // block-comment.
+//
+// Gap rule: only `\n` counts — non-newline bytes are transparent. Safe
+// under tree-sitter's invariant that inter-named-sibling gaps contain
+// only whitespace. Caller guarantees start <= end <= len(source); the
+// callers in docstringFor pass prev.EndByte() and cur.StartByte() of
+// adjacent named siblings, which satisfies that by tree ordering.
 func hasBlankLineGap(source []byte, start, end uint) bool {
 	if start > 0 && source[start-1] == '\n' {
 		start--
 	}
-	if start >= end || end > uint(len(source)) {
-		return false
-	}
 	nl := 0
 	for _, b := range source[start:end] {
-		switch b {
-		case '\n':
+		if b == '\n' {
 			nl++
 			if nl >= 2 {
 				return true
 			}
-		case ' ', '\t', '\r':
-			// horizontal whitespace doesn't reset
-		default:
-			nl = 0
 		}
 	}
 	return false

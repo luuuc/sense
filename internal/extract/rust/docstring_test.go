@@ -227,3 +227,55 @@ func TestDocstring_MalformedUTF8(t *testing.T) {
 		t.Errorf("Docstring on malformed-UTF-8 = %q, want \"\"", sym.Docstring)
 	}
 }
+
+// TestHasBlankLineGap_Contract pins the post-simplification contract of
+// the gap helper directly, since the inline copies in the Go/Ruby/TS
+// extractors share the same shape. Two cases matter:
+//
+//  1. `\n \n` (whitespace-only gap) returns true — the real-input case,
+//     produced by tree-sitter for blank-line-separated siblings.
+//  2. `\nX\n` (stray non-newline byte between two newlines) returns true
+//     too — documents the simplification: non-newline bytes are
+//     transparent. The previous switch-based form would have returned
+//     false here. Tree-sitter doesn't produce this shape today; pinning
+//     it makes the contract change visible if a future grammar bump
+//     ever does.
+func TestHasBlankLineGap_Contract(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		src     string
+		s, e    uint
+		want    bool
+	}{
+		{"whitespace-only blank gap", "a\n \nb", 1, 4, true},
+		{"non-newline byte transparent", "a\nx\nb", 1, 4, true},
+		{"single newline is not blank", "a\nb", 1, 2, false},
+		{"no newlines is not blank", "abc", 1, 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasBlankLineGap([]byte(tc.src), tc.s, tc.e); got != tc.want {
+				t.Errorf("hasBlankLineGap(%q, %d, %d) = %v, want %v", tc.src, tc.s, tc.e, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDocstring_BlankLineAfterAttribute pins that a blank line between
+// the attribute_item and the item it decorates detaches any `///`
+// above the attribute. Without this, a visually-separated derive macro
+// would silently carry doc text from above into the struct.
+func TestDocstring_BlankLineAfterAttribute(t *testing.T) {
+	src := `/// orphaned doc above attribute
+#[derive(Debug)]
+
+struct Detached {}
+`
+	r := parse(t, src)
+	sym := findSymbol(r, "Detached")
+	if sym == nil {
+		t.Fatalf("symbol Detached missing")
+	}
+	if sym.Docstring != "" {
+		t.Errorf("Docstring = %q, want \"\" (blank line below attribute detaches the chain)", sym.Docstring)
+	}
+}

@@ -16,9 +16,6 @@ import (
 // Magic comments (frozen_string_literal, encoding, etc.), license
 // headers, and invalid UTF-8 are filtered to "".
 func docstringFor(node *sitter.Node, source []byte) string {
-	if node == nil {
-		return ""
-	}
 	cur := node
 	// tree-sitter-ruby wraps a class/module body in a `body_statement`
 	// node. When the target is the first (or only) statement inside that
@@ -34,20 +31,18 @@ func docstringFor(node *sitter.Node, source []byte) string {
 		if prev == nil || prev.Kind() != "comment" {
 			break
 		}
+		// Gap rule: see golang/docstring.go for the contract — only `\n`
+		// matters; non-newline bytes are transparent. Safe under tree-
+		// sitter's whitespace-only-between-siblings invariant.
 		gap := source[prev.EndByte():cur.StartByte()]
 		nl := 0
 		blank := false
 		for _, b := range gap {
-			switch b {
-			case '\n':
+			if b == '\n' {
 				nl++
 				if nl >= 2 {
 					blank = true
 				}
-			case ' ', '\t', '\r':
-				// horizontal whitespace doesn't reset
-			default:
-				nl = 0
 			}
 		}
 		if blank {
