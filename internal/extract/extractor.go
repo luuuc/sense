@@ -158,6 +158,11 @@ type EmittedSymbol struct {
 	LineStart       int
 	LineEnd         int
 	Snippet         string
+	// Docstring is the doc comment attached to this symbol per language
+	// convention (godoc, RDoc, JSDoc, PEP 257, /// & /** */). Empty when
+	// no comment is attached or when the candidate is filtered (license
+	// header, magic comment, blank-line gap).
+	Docstring string
 }
 
 // EmittedEdge is the pre-insert form of an intra-file edge. Both

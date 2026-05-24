@@ -296,6 +296,7 @@ func (w *walker) emitClassWithBody(n *sitter.Node, name string, scope []string) 
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -429,6 +430,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -461,6 +463,7 @@ func (w *walker) handleInterface(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -501,6 +504,7 @@ func (w *walker) handleTypeAlias(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -625,6 +629,7 @@ func (w *walker) handleEnum(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	})
 }
 
@@ -659,6 +664,7 @@ func (w *walker) emitFunctionWithBody(n *sitter.Node, name string, scope []strin
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -725,6 +731,7 @@ func (w *walker) handleVariableDeclarator(decl *sitter.Node, scope []string) err
 		ParentQualified: parent,
 		LineStart:       extract.Line(decl.StartPosition()),
 		LineEnd:         extract.Line(decl.EndPosition()),
+		Docstring:       docstringFor(decl, w.source),
 	}); err != nil {
 		return err
 	}

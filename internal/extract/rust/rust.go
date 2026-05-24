@@ -311,6 +311,7 @@ func (w *walker) handleTypeDef(n *sitter.Node, scope []string, kind model.Symbol
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -360,6 +361,7 @@ func (w *walker) handleConstItem(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	})
 }
 
@@ -385,6 +387,7 @@ func (w *walker) handleFunction(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -455,6 +458,7 @@ func (w *walker) handleImpl(n *sitter.Node, scope []string) error {
 			ParentQualified: typeQualified,
 			LineStart:       extract.Line(child.StartPosition()),
 			LineEnd:         extract.Line(child.EndPosition()),
+			Docstring:       docstringFor(child, w.source),
 		}); err != nil {
 			return err
 		}
@@ -561,6 +565,7 @@ func (w *walker) handleMod(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -620,6 +625,7 @@ func (w *walker) emitTraitMethods(traitNode *sitter.Node, traitQualified string)
 			ParentQualified: traitQualified,
 			LineStart:       extract.Line(child.StartPosition()),
 			LineEnd:         extract.Line(child.EndPosition()),
+			Docstring:       docstringFor(child, w.source),
 		}); err != nil {
 			return err
 		}

@@ -572,6 +572,7 @@ func (w *walker) handleClassOrModule(n *sitter.Node, scope []string, kind model.
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -653,6 +654,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -1464,6 +1466,7 @@ func (w *walker) handleConstantAssignment(n *sitter.Node, scope []string) error 
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	})
 }
 
@@ -1656,6 +1659,7 @@ func (w *walker) emitCallbackEdges(n *sitter.Node, scope []string, callbackName 
 			ParentQualified: source,
 			LineStart:       line,
 			LineEnd:         line,
+			Docstring:       docstringFor(n, w.source),
 		}); err != nil {
 			return err
 		}
@@ -1706,6 +1710,7 @@ func (w *walker) emitScopeEdge(n *sitter.Node, scope []string) error {
 		ParentQualified: source,
 		LineStart:       line,
 		LineEnd:         line,
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}

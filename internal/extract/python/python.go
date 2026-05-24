@@ -218,6 +218,7 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}
@@ -291,6 +292,7 @@ func (w *walker) emitFunctionAndWalkBody(n *sitter.Node, scope []string, decorat
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
 	}); err != nil {
 		return err
 	}

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	"golang.org/x/sync/errgroup"
@@ -97,6 +98,16 @@ type Result struct {
 // Large minified lines (bundled JS, generated protos) would otherwise
 // balloon the index with source text that nobody reads.
 const snippetMaxBytes = 200
+
+// docstringMaxBytes caps the stored docstring at 2 KB. Real doc comments
+// are almost always <300 chars; the cap is a sanity bound so a pathological
+// 50 KB block comment can't bloat the symbols table.
+const docstringMaxBytes = 2048
+
+// docstringTruncMarker is appended (in place of the cut tail) when a
+// docstring exceeds docstringMaxBytes. The single rune is enough to
+// signal truncation to a reader without inflating storage.
+const docstringTruncMarker = "…"
 
 // Run ensures the .sense directory and index.db exist, walks the
 // working tree, parses each file with a registered extractor, and
@@ -1003,6 +1014,7 @@ func (h *harness) writeFileInner(fr *fileResult) (int, error) {
 			ParentID:   parentID,
 			LineStart:  s.LineStart,
 			LineEnd:    s.LineEnd,
+			Docstring:  capDocstring(s.Docstring),
 			Snippet:    snippetForLine(fr.Source, s.LineStart),
 		}
 		var id int64
@@ -1205,6 +1217,21 @@ func (c *collector) Edge(e extract.EmittedEdge) error     { c.edges = append(c.e
 func hashSource(source []byte) string {
 	sum := sha256.Sum256(source)
 	return hex.EncodeToString(sum[:8])
+}
+
+// capDocstring enforces the 2 KB storage cap on a per-symbol docstring.
+// Truncation is byte-bounded but rune-safe: cuts at the last whole rune
+// boundary before docstringMaxBytes and appends docstringTruncMarker.
+// Returns the input unchanged when within the cap.
+func capDocstring(s string) string {
+	if len(s) <= docstringMaxBytes {
+		return s
+	}
+	cut := docstringMaxBytes - len(docstringTruncMarker)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + docstringTruncMarker
 }
 
 // snippetForLine returns the trimmed content of the given 1-indexed
