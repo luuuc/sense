@@ -1,6 +1,7 @@
 package mcpio
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -928,6 +929,151 @@ func TestGraphCallSiteNoSnippetForNonCallEdges(t *testing.T) {
 
 	if len(resp.Edges.Inherits) != 1 {
 		t.Fatalf("Inherits = %d, want 1", len(resp.Edges.Inherits))
+	}
+}
+
+// TestGraphInheritsInboundExposesImplementors pins the cross-language
+// "who inherits / implements this" path: when a trait or base class is
+// the focal symbol, inbound EdgeInherits edges (implementors,
+// subclasses) must surface in the Inherits bucket. Before this was
+// wired up, `sense graph` on a hub trait like axum's Handler returned
+// empty inherits even when impls were correctly indexed.
+func TestGraphInheritsInboundExposesImplementors(t *testing.T) {
+	files := func(id int64) (string, bool) {
+		switch id {
+		case 1:
+			return "src/handler.rs", true
+		case 2:
+			return "src/router.rs", true
+		case 3:
+			return "src/layered.rs", true
+		}
+		return "", false
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "Handler", Qualified: "Handler",
+			Kind: model.KindInterface, FileID: 1, LineStart: 148, LineEnd: 205,
+		},
+		File: model.File{Path: "src/handler.rs"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeInherits, Confidence: 1.0, FileID: 2},
+				Target: model.Symbol{ID: 100, Qualified: "MethodRouter", FileID: 2, LineStart: 1355},
+			},
+			{
+				Edge:   model.Edge{Kind: model.EdgeInherits, Confidence: 1.0, FileID: 3},
+				Target: model.Symbol{ID: 101, Qualified: "Layered", FileID: 3, LineStart: 317},
+			},
+		},
+	}
+
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
+
+	if len(resp.Edges.Inherits) != 2 {
+		t.Fatalf("Inherits = %d, want 2 (MethodRouter, Layered)", len(resp.Edges.Inherits))
+	}
+	want := map[string]string{
+		"MethodRouter": "src/router.rs:1355",
+		"Layered":      "src/layered.rs:317",
+	}
+	for _, e := range resp.Edges.Inherits {
+		ref, ok := want[e.Symbol]
+		if !ok {
+			t.Errorf("unexpected inherits entry %q", e.Symbol)
+			continue
+		}
+		if e.Ref != ref {
+			t.Errorf("%s ref = %q, want %q", e.Symbol, e.Ref, ref)
+		}
+	}
+}
+
+// TestGraphInheritsInboundSkipsUnresolvedSource pins the unresolved-
+// source filter: inbound inherits edges whose source didn't resolve
+// to an indexed symbol must not leak through as empty stubs. The
+// canonical case is Rust blanket impls like `impl Trait for F` where
+// the implementor F is a generic type parameter; sqlite/loadEdges
+// returns the source-side row via LEFT JOIN, leaving Target.ID == 0
+// and Qualified empty.
+func TestGraphInheritsInboundSkipsUnresolvedSource(t *testing.T) {
+	files := func(id int64) (string, bool) {
+		if id == 2 {
+			return "src/router.rs", true
+		}
+		return "", false
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "Handler", Qualified: "Handler",
+			Kind: model.KindInterface, FileID: 1, LineStart: 148,
+		},
+		File: model.File{Path: "src/handler.rs"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeInherits, Confidence: 1.0, FileID: 1},
+				Target: model.Symbol{ID: 0}, // unresolved blanket impl
+			},
+			{
+				Edge:   model.Edge{Kind: model.EdgeInherits, Confidence: 1.0, FileID: 2},
+				Target: model.Symbol{ID: 100, Qualified: "MethodRouter", FileID: 2, LineStart: 1355},
+			},
+		},
+	}
+
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
+
+	if len(resp.Edges.Inherits) != 1 {
+		t.Fatalf("Inherits = %d, want 1 (resolved-only, blanket impl dropped)", len(resp.Edges.Inherits))
+	}
+	if resp.Edges.Inherits[0].Symbol != "MethodRouter" {
+		t.Errorf("Inherits[0] = %q, want MethodRouter", resp.Edges.Inherits[0].Symbol)
+	}
+}
+
+// TestGraphInheritsInboundIncludedInCallersDirection checks that
+// asking for direction=callers on a trait still surfaces implementors.
+// The callers direction is the natural fit for "who depends on this
+// symbol," so dropping inherits there would silently hide the answer.
+func TestGraphInheritsInboundIncludedInCallersDirection(t *testing.T) {
+	files := func(id int64) (string, bool) {
+		if id == 2 {
+			return "src/router.rs", true
+		}
+		return "", false
+	}
+
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{
+			Name: "Handler", Qualified: "Handler",
+			Kind: model.KindInterface, FileID: 1, LineStart: 148,
+		},
+		File: model.File{Path: "src/handler.rs"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeInherits, Confidence: 1.0, FileID: 2},
+				Target: model.Symbol{ID: 100, Qualified: "MethodRouter", FileID: 2, LineStart: 1355},
+			},
+		},
+	}
+
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
+
+	if len(resp.Edges.Inherits) != 1 {
+		t.Fatalf("Inherits = %d under DirectionCallers, want 1", len(resp.Edges.Inherits))
+	}
+
+	raw, err := MarshalGraphCompactDirectional(resp, model.DirectionCallers)
+	if err != nil {
+		t.Fatalf("MarshalGraphCompactDirectional: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"inherits":[`)) {
+		t.Errorf("compact callers output should include inherits bucket; got:\n%s", raw)
+	}
+	if !bytes.Contains(raw, []byte(`"MethodRouter"`)) {
+		t.Errorf("compact callers output should include MethodRouter; got:\n%s", raw)
 	}
 }
 

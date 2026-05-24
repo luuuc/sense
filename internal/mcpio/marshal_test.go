@@ -620,18 +620,21 @@ func TestMarshalGraphCompactDirectional(t *testing.T) {
 		}
 	}
 
-	t.Run("callers omits calls and inherits", func(t *testing.T) {
+	t.Run("callers omits calls but keeps inherits", func(t *testing.T) {
 		raw, err := MarshalGraphCompactDirectional(base(), model.DirectionCallers)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
 		s := string(raw)
-		for _, key := range []string{`"calls"`, `"inherits"`} {
+		for _, key := range []string{`"calls"`} {
 			if strings.Contains(s, key) {
 				t.Errorf("expected %s to be absent for direction=callers:\n%s", key, s)
 			}
 		}
-		for _, key := range []string{`"called_by":[]`, `"tests":[]`} {
+		// `inherits` carries inheritors (inbound EdgeInherits) under
+		// the callers direction — the natural fit for "who implements
+		// this trait." Empty bucket renders as `[]`.
+		for _, key := range []string{`"called_by":[]`, `"tests":[]`, `"inherits":[]`} {
 			if !strings.Contains(s, key) {
 				t.Errorf("expected %s to be present for direction=callers:\n%s", key, s)
 			}

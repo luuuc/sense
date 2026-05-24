@@ -270,6 +270,30 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 					Confidence: Confidence(e.Edge.Confidence),
 					CallSite:   readSnippet(e),
 				})
+			case model.EdgeInherits:
+				// Inheritors of this symbol (subclasses, trait
+				// implementors) land in the same bucket as the
+				// outbound direction — the convention shared with
+				// Composes / Includes / Imports.
+				//
+				// Skip edges whose source didn't resolve to an
+				// indexed symbol (Target.ID == 0). For inbound
+				// loads, Target carries the source side via a
+				// LEFT JOIN, so unresolved-source rows surface here
+				// as empty stubs. Common in Rust blanket impls
+				// like `impl Trait for F` where F is a generic
+				// type parameter, not a defined symbol.
+				if e.Target.ID == 0 {
+					continue
+				}
+				fp := fileRefOrNil(e.Target.FileID, files)
+				edges.Inherits = append(edges.Inherits, InheritEdgeRef{
+					Symbol:    qualifiedOrName(e.Target),
+					File:      fp,
+					LineStart: e.Target.LineStart,
+					LineEnd:   e.Target.LineEnd,
+					Ref:       FormatRefPtr(fp, e.Target.LineStart),
+				})
 			case model.EdgeComposes:
 				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Composes = append(edges.Composes, ComposeEdgeRef{

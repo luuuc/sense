@@ -60,14 +60,17 @@ func MarshalGraphCompactDirectional(r GraphResponse, direction model.Direction) 
 // table is derived from that logic. Returns nil for direction == Both
 // (or empty), meaning "render every bucket as today".
 //
-//	Callers — outbound (calls, inherits) excluded.
+//	Callers — outbound (calls) excluded.
 //	Callees — inbound-only (called_by, tests) excluded.
-//	Composes / Includes / Imports — populated by both paths, never excluded.
+//	Inherits / Composes / Includes / Imports — populated by both
+//	paths (outbound = "what this inherits from / composes / etc.",
+//	inbound = "what inherits from / composes / etc. this"), never
+//	excluded.
 //	Temporal — bidirectional, never excluded.
 func outOfScopeEdgeBuckets(direction model.Direction) []string {
 	switch direction {
 	case model.DirectionCallers:
-		return []string{"calls", "inherits"}
+		return []string{"calls"}
 	case model.DirectionCallees:
 		return []string{"called_by", "tests"}
 	default:
