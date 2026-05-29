@@ -78,6 +78,11 @@ type Result struct {
 // policies stay in one place; see that const for the pitch rationale.
 const ambiguousConfidence = extract.ConfidenceAmbiguous
 
+// nameCollisionConfidence is applied to a bare-name fallback that had to
+// pick among multiple same-named symbols. It sits below blast's traversal
+// floor so impact analysis ignores these guesses.
+const nameCollisionConfidence = extract.ConfidenceNameCollision
+
 // Resolve looks up req.Target and returns the best candidate. Returns
 // ok=false when nothing matches — callers (scan) drop unresolved
 // edges today; Card 8 may wire the unresolved set to diagnostic
@@ -114,6 +119,13 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 				r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
 				if r.Confidence > ambiguousConfidence {
 					r.Confidence = ambiguousConfidence
+				}
+				if r.Ambiguous {
+					// Bare-name fallback among multiple same-named symbols is the
+					// weakest resolution — no receiver type disambiguates it. Drop
+					// it below blast's floor so impact analysis ignores the guess;
+					// it still counts for dead-code liveness.
+					r.Confidence = nameCollisionConfidence
 				}
 				return r, true
 			}

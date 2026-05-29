@@ -8,10 +8,10 @@
 //
 // Intra-file edges:
 //   - class A < B            → inherits edge (A → B) when B is defined in
-//                              the same file. Cross-file inheritance is
-//                              dropped — 01-03 backfills it.
+//     the same file. Cross-file inheritance is
+//     dropped — 01-03 backfills it.
 //   - include M / extend M   → includes edge (class → M) when M is
-//                              defined in the same file.
+//     defined in the same file.
 //
 // Calls edges:
 //   - Method / singleton-method bodies are walked for `call` nodes. The
@@ -87,10 +87,10 @@ type walker struct {
 	filePath          string
 	routeNS           []string                     // namespace stack for route files (e.g. ["Admin"])
 	testScope         []string                     // nested RSpec block descriptions for synthetic scope
-	classInstanceVars map[string]map[string]string  // @ivar type map per class
-	returnTypes       map[string]string             // method_qualified → class_name (file-level)
-	emittedCallbacks  map[string]bool               // dedup synthetic callback symbols by qualified name
-	pkgBindings       map[string]string              // unqualified name → qualified name for file-level constants
+	classInstanceVars map[string]map[string]string // @ivar type map per class
+	returnTypes       map[string]string            // method_qualified → class_name (file-level)
+	emittedCallbacks  map[string]bool              // dedup synthetic callback symbols by qualified name
+	pkgBindings       map[string]string            // unqualified name → qualified name for file-level constants
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -613,7 +613,15 @@ func (w *walker) handleClassOrModule(n *sitter.Node, scope []string, kind model.
 	if body := n.ChildByFieldName("body"); body != nil {
 		ivarTypes := buildInstanceVarTypeMap(body, w.source)
 		w.classInstanceVars[qualified] = ivarTypes
-		return w.walkChildren(body, newScope)
+		if err := w.walkChildren(body, newScope); err != nil {
+			return err
+		}
+		// Capture references that live at class-body level rather than
+		// inside a method: constant RHS values, and exception/handler
+		// classes named by DSLs like `rescue_from Foo` / `retry_on Bar`.
+		// Method-body references are attributed to their method, so they
+		// are skipped here via the nested-def guard.
+		return w.collectConstRefs(body, qualified, true)
 	}
 	return nil
 }
@@ -677,7 +685,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	if err := w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic); err != nil {
 		return err
 	}
-	return w.emitConstRefs(body, qualified)
+	return w.collectConstRefs(body, qualified, false)
 }
 
 // emitCall produces a calls edge for one `call` node. The target is
@@ -831,6 +839,30 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 	return nil
 }
 
+// coreNoiseMethods are ubiquitous core-Ruby / ActiveSupport methods
+// whose bare name (receiver type unknown) matches far too many unrelated
+// symbols. When the receiver type cannot be inferred we drop the call
+// edge rather than let the resolver's unqualified fallback bind it to an
+// arbitrary same-named method elsewhere — e.g. `count.zero?` resolving
+// to a `Money.zero` singleton. A missing low-confidence edge is cheaper
+// than a false caller that inflates blast radius.
+var coreNoiseMethods = map[string]bool{
+	"zero?": true, "positive?": true, "negative?": true, "nonzero?": true,
+	"present?": true, "blank?": true, "nil?": true, "empty?": true,
+	"to_s": true, "to_i": true, "to_a": true, "to_h": true, "to_sym": true,
+	"freeze": true, "dup": true, "clone": true, "presence": true, "call": true,
+}
+
+// unresolvedCall is the emit decision for a call whose receiver type is
+// unknown: drop ubiquitous core-method names, otherwise emit the bare
+// name at ConfidenceUnresolved for the resolver's unqualified fallback.
+func unresolvedCall(methodName string) (string, float64) {
+	if coreNoiseMethods[methodName] {
+		return "", 0
+	}
+	return methodName, extract.ConfidenceUnresolved
+}
+
 // resolveCallTarget decides what target string to emit for a call node.
 // It returns the target string and the confidence level.
 func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope []string, localTypes, ivarTypes map[string]string) (string, float64) {
@@ -850,7 +882,7 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 		if typ, ok := localTypes[name]; ok {
 			return typ + "#" + methodName, extract.ConfidenceDynamic
 		}
-		return methodName, extract.ConfidenceUnresolved
+		return unresolvedCall(methodName)
 	case "instance_variable":
 		name := extract.Text(recv, w.source)
 		if typ, ok := localTypes[name]; ok {
@@ -859,7 +891,7 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 		if typ, ok := ivarTypes[name]; ok {
 			return typ + "#" + methodName, extract.ConfidenceDynamic
 		}
-		return methodName, extract.ConfidenceUnresolved
+		return unresolvedCall(methodName)
 	case "call":
 		// Method chain — strip to the trailing method unless the inner
 		// call is `.new` on a constant or `self`, in which case we can
@@ -871,10 +903,10 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 		if typ := w.resolveChainReceiver(recv, scope, localTypes, 1); typ != "" {
 			return typ + "#" + methodName, extract.ConfidenceDynamic
 		}
-		return methodName, extract.ConfidenceUnresolved
+		return unresolvedCall(methodName)
 	}
 
-	return methodName, extract.ConfidenceUnresolved
+	return unresolvedCall(methodName)
 }
 
 // resolveChainReceiver recursively resolves a call-chain receiver to a type
@@ -1398,7 +1430,16 @@ func (w *walker) collectConstants(n *sitter.Node, scope []string) {
 			if name == "" {
 				continue
 			}
-			newScope := append(slices.Clone(scope), name)
+			// Register the class/module name so references to it
+			// (`PriceValue.new`, `rescue ApiError`, bare `Service`) resolve
+			// to the type itself, not just its methods. Keyed by trailing
+			// segment, matching how the name is written at reference sites.
+			segments := strings.Split(name, "::")
+			last := segments[len(segments)-1]
+			if _, exists := w.pkgBindings[last]; !exists {
+				w.pkgBindings[last] = strings.Join(append(slices.Clone(scope), segments...), "::")
+			}
+			newScope := append(slices.Clone(scope), segments...)
 			if body := child.ChildByFieldName("body"); body != nil {
 				w.collectConstants(body, newScope)
 			}
@@ -1406,39 +1447,124 @@ func (w *walker) collectConstants(n *sitter.Node, scope []string) {
 	}
 }
 
-// emitConstRefs walks a method body for `constant` nodes that resolve
-// to known file-level constants and emits references edges.
-func (w *walker) emitConstRefs(body *sitter.Node, sourceQualified string) error {
-	if body == nil || len(w.pkgBindings) == 0 {
+// collectConstRefs walks a method or class body for constant and
+// scope-resolution references and emits references edges to them.
+// Same-file constants/classes resolve to their qualified name via
+// pkgBindings; cross-file references emit their surface text for the
+// resolver to match (exact-qualified first, unqualified fallback
+// second). This is what makes a class show up as referenced — and
+// therefore alive — when it is only ever reached through `Const.new`,
+// `rescue Const`, `Const::CHILD`, or a bare constant mention.
+//
+// Skipped, because other edges already record them or they are
+// definitions rather than references: a constant that is the inner
+// segment of a scope resolution, a superclass, or the left-hand side of
+// an assignment. When skipNestedDefs is set (class-body walks) anything
+// inside a nested def/class/module is skipped too, so a method's
+// references stay attributed to the method, not its enclosing class.
+func (w *walker) collectConstRefs(root *sitter.Node, sourceQualified string, skipNestedDefs bool) error {
+	if root == nil {
 		return nil
 	}
 	seen := map[string]bool{}
-	return extract.WalkNamedDescendants(body, "constant", func(cn *sitter.Node) error {
-		name := extract.Text(cn, w.source)
-		if name == "" || seen[name] {
+	emit := func(node *sitter.Node, target string) error {
+		if target == "" || seen[target] {
 			return nil
 		}
-		targetQ, ok := w.pkgBindings[name]
-		if !ok {
+		seen[target] = true
+		line := extract.Line(node.StartPosition())
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: sourceQualified,
+			TargetQualified: target,
+			Kind:            model.EdgeReferences,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		})
+	}
+
+	// Bare constant references (`Foo`, `BAR`).
+	if err := extract.WalkNamedDescendants(root, "constant", func(cn *sitter.Node) error {
+		if skipNestedDefs && (isInsideNestedDef(cn, root) || w.isStructuralDSLArg(cn, root)) {
 			return nil
 		}
-		// Skip constants used as class names or scope resolution (e.g. Foo::Bar).
 		if p := cn.Parent(); p != nil {
+			switch p.Kind() {
+			case "scope_resolution", "superclass":
+				return nil
+			case "assignment", "operator_assignment":
+				if left := p.ChildByFieldName("left"); left != nil && left.Id() == cn.Id() {
+					return nil // constant definition, not a reference
+				}
+			}
+		}
+		name := extract.Text(cn, w.source)
+		if name == "" {
+			return nil
+		}
+		target := name
+		if q, ok := w.pkgBindings[name]; ok {
+			target = q
+		}
+		return emit(cn, target)
+	}); err != nil {
+		return err
+	}
+
+	// Namespaced references (`Foo::Bar`, `A::B::CONST`). Emit only the
+	// outermost scope resolution; skip superclasses.
+	return extract.WalkNamedDescendants(root, "scope_resolution", func(sr *sitter.Node) error {
+		if skipNestedDefs && (isInsideNestedDef(sr, root) || w.isStructuralDSLArg(sr, root)) {
+			return nil
+		}
+		if p := sr.Parent(); p != nil {
 			switch p.Kind() {
 			case "scope_resolution", "superclass":
 				return nil
 			}
 		}
-		seen[name] = true
-		line := extract.Line(cn.StartPosition())
-		return w.emit.Edge(extract.EmittedEdge{
-			SourceQualified: sourceQualified,
-			TargetQualified: targetQ,
-			Kind:            model.EdgeReferences,
-			Line:            &line,
-			Confidence:      extract.ConfidenceStatic,
-		})
+		return emit(sr, strings.TrimSpace(extract.Text(sr, w.source)))
 	})
+}
+
+// structuralRefDSLs are class-body DSL calls whose constant arguments
+// already produce a more specific edge (includes / composes / calls).
+// The class-body reference walk skips their arguments so a single
+// `include Foo` does not also emit a redundant references edge.
+// Exception DSLs (rescue_from / retry_on / discard_on) are deliberately
+// absent — their class arguments have no other edge and must be captured.
+var structuralRefDSLs = map[string]bool{
+	"include": true, "extend": true, "prepend": true,
+	"has_many": true, "has_one": true, "belongs_to": true,
+	"has_and_belongs_to_many": true,
+	"broadcasts":              true, "broadcasts_to": true,
+}
+
+// isStructuralDSLArg reports whether n is an argument to a structural DSL
+// call (see structuralRefDSLs) nested below root.
+func (w *walker) isStructuralDSLArg(n, root *sitter.Node) bool {
+	rootID := root.Id()
+	for p := n.Parent(); p != nil && p.Id() != rootID; p = p.Parent() {
+		if p.Kind() == "call" {
+			if mn := p.ChildByFieldName("method"); mn != nil && structuralRefDSLs[extract.Text(mn, w.source)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isInsideNestedDef reports whether n sits inside a method/class/module
+// nested below root (root excluded). Used by class-body reference walks
+// to avoid re-attributing a method's references to its enclosing class.
+func isInsideNestedDef(n, root *sitter.Node) bool {
+	rootID := root.Id()
+	for p := n.Parent(); p != nil && p.Id() != rootID; p = p.Parent() {
+		switch p.Kind() {
+		case "method", "singleton_method", "class", "module":
+			return true
+		}
+	}
+	return false
 }
 
 // handleConstantAssignment emits a KindConstant symbol when the LHS of

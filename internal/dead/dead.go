@@ -94,15 +94,15 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	}
 
 	candidates = excludeEntryPoints(candidates, entryPointFilters{
-		testsTargets:        testsTargets,
-		interfaceIDs:       interfaceIDs,
-		frameworks:         frameworks,
-		isLibrary:          isLibrary,
+		testsTargets:         testsTargets,
+		interfaceIDs:         interfaceIDs,
+		frameworks:           frameworks,
+		isLibrary:            isLibrary,
 		interfaceMethodNames: interfaceMethodNames,
-		implementorIDs:    implementorIDs,
+		implementorIDs:       implementorIDs,
 	})
 
-	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs)
+	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs, usesDynamicAutoload(frameworks))
 
 	if len(candidates) > opts.Limit {
 		candidates = candidates[:opts.Limit]
@@ -308,12 +308,12 @@ func hasMainFunction(ctx context.Context, db *sql.DB, opts Options) (bool, error
 }
 
 type entryPointFilters struct {
-	testsTargets        map[int64]struct{}
-	interfaceIDs        map[int64]struct{}
-	frameworks          map[string]struct{}
-	isLibrary           bool
+	testsTargets         map[int64]struct{}
+	interfaceIDs         map[int64]struct{}
+	frameworks           map[string]struct{}
+	isLibrary            bool
 	interfaceMethodNames map[string]struct{}
-	implementorIDs      map[int64]struct{}
+	implementorIDs       map[int64]struct{}
 }
 
 func excludeEntryPoints(candidates []Symbol, filters entryPointFilters) []Symbol {
@@ -610,7 +610,7 @@ func isGoConstructor(s Symbol) bool {
 	return s.Language == "go" && strings.HasPrefix(s.Name, "New") && s.Kind == "function"
 }
 
-func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[int64]struct{}) []Symbol {
+func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[int64]struct{}, dynamicFramework bool) []Symbol {
 	for i := range candidates {
 		s := &candidates[i]
 		if s.ParentID != nil {
@@ -627,7 +627,35 @@ func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[in
 			s.Confidence = ConfidencePossibly
 			continue
 		}
+		if dynamicFramework && isDynamicallyReferenceable(*s) {
+			s.Confidence = ConfidencePossibly
+			continue
+		}
 		s.Confidence = ConfidenceDead
 	}
 	return candidates
+}
+
+// usesDynamicAutoload reports whether the project relies on a framework
+// whose autoloading / const_get / constantize / STI conventions make a
+// statically-unreferenced type genuinely uncertain rather than dead.
+func usesDynamicAutoload(frameworks map[string]struct{}) bool {
+	_, ok := frameworks["Rails"]
+	return ok
+}
+
+// isDynamicallyReferenceable flags Ruby types and constants that are
+// commonly reached through paths the indexer cannot see — autoloading,
+// const_get / constantize, STI, and other metaprogrammed lookups. They
+// are reported as possibly-dead rather than dead so a reader double-
+// checks before deleting.
+func isDynamicallyReferenceable(s Symbol) bool {
+	if s.Language != "ruby" {
+		return false
+	}
+	switch s.Kind {
+	case "class", "module", "constant":
+		return true
+	}
+	return false
 }

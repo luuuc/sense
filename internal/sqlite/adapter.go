@@ -15,6 +15,7 @@ import (
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/index"
 	"github.com/luuuc/sense/internal/model"
 )
@@ -582,6 +583,15 @@ func (a *Adapter) ReadSymbolGraph(ctx context.Context, id int64, depth int, dire
 		return nil, err
 	}
 	result := &model.GraphResult{Root: *root}
+	// For container symbols a "who calls this" question is best answered by
+	// who calls the container's members, not only who names the type. Fold
+	// member callers into the root's inbound set so a class/type graph query
+	// reflects real usage — the gap that made graph and blast disagree.
+	if direction != model.DirectionCallees {
+		if err := a.foldMemberCallers(ctx, &result.Root); err != nil {
+			return nil, err
+		}
+	}
 	if depth <= 1 {
 		return result, nil
 	}
@@ -690,6 +700,114 @@ func graphFrontier(sc *model.SymbolContext, direction model.Direction, visited m
 		}
 	}
 	return frontier
+}
+
+// isContainerExpandKind reports the symbol kinds whose member callers are
+// folded into the symbol's own inbound edges by foldMemberCallers. Matches
+// blast's child-expansion set: concrete types whose methods carry the real
+// callers (modules/interfaces are excluded — their children are definitions,
+// not usage).
+func isContainerExpandKind(k model.SymbolKind) bool {
+	return k == model.KindClass || k == model.KindType
+}
+
+// isUsageEdge reports whether an edge kind represents a symbol being used
+// (called or referenced) rather than a structural relationship
+// (inherits/composes/includes) or co-change noise (temporal).
+func isUsageEdge(k model.EdgeKind) bool {
+	return k == model.EdgeCalls || k == model.EdgeReferences
+}
+
+// hasUsageCaller reports whether edges contains at least one above-floor
+// usage edge — a real "someone calls/references this" signal, as opposed to
+// a structural edge or a low-confidence resolution guess.
+func hasUsageCaller(edges []model.EdgeRef) bool {
+	for _, e := range edges {
+		if isUsageEdge(e.Edge.Kind) && e.Edge.Confidence >= extract.ConfidenceUnresolved {
+			return true
+		}
+	}
+	return false
+}
+
+// foldMemberCallers enriches a container symbol's inbound edges with the
+// callers of its own members. Without it, "who calls Order" returns only the
+// edges that name the type (references/inherits), missing every caller that
+// goes through Order's methods. The container and its own members are
+// excluded as callers so internal method-to-method calls don't masquerade as
+// external usage; results are deduped against the existing inbound set.
+func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext) error {
+	if !isContainerExpandKind(sc.Symbol.Kind) {
+		return nil
+	}
+	// Only enrich when the container has no real direct caller of its own —
+	// the "a referenced class looks unused" case (graph returned [] while
+	// blast found callers via the class's methods). A structural edge
+	// (inherits/composes) or a low-confidence name-collision guess is not a
+	// real caller, so those do not suppress enrichment.
+	if hasUsageCaller(sc.Inbound) {
+		return nil
+	}
+	childIDs, err := a.childSymbolIDs(ctx, sc.Symbol.ID)
+	if err != nil {
+		return err
+	}
+	if len(childIDs) == 0 {
+		return nil
+	}
+	exclude := make(map[int64]struct{}, len(childIDs)+1)
+	exclude[sc.Symbol.ID] = struct{}{}
+	for _, cid := range childIDs {
+		exclude[cid] = struct{}{}
+	}
+	seen := make(map[int64]struct{}, len(sc.Inbound))
+	for _, e := range sc.Inbound {
+		seen[e.Target.ID] = struct{}{}
+	}
+	for _, cid := range childIDs {
+		refs, err := a.loadEdges(ctx, cid, false)
+		if err != nil {
+			return err
+		}
+		for _, e := range refs {
+			if e.Target.ID == 0 || e.Edge.Kind == model.EdgeTemporal {
+				continue
+			}
+			// Don't fold low-confidence guesses (e.g. name-collision
+			// fallbacks stamped below the traversal floor) into the class's
+			// callers — that would re-admit exactly what blast filters out.
+			if e.Edge.Confidence < extract.ConfidenceUnresolved {
+				continue
+			}
+			if _, skip := exclude[e.Target.ID]; skip {
+				continue
+			}
+			if _, dup := seen[e.Target.ID]; dup {
+				continue
+			}
+			seen[e.Target.ID] = struct{}{}
+			sc.Inbound = append(sc.Inbound, e)
+		}
+	}
+	return nil
+}
+
+// childSymbolIDs returns the ids of symbols whose parent is parentID.
+func (a *Adapter) childSymbolIDs(ctx context.Context, parentID int64) ([]int64, error) {
+	rows, err := a.db.QueryContext(ctx, `SELECT id FROM sense_symbols WHERE parent_id = ?`, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite childSymbolIDs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sqlite childSymbolIDs scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (a *Adapter) Query(ctx context.Context, f index.Filter) ([]model.Symbol, error) {

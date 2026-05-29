@@ -15,8 +15,11 @@ type recorder struct {
 	edges   []extract.EmittedEdge
 }
 
-func (r *recorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
-func (r *recorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
+func (r *recorder) Symbol(s extract.EmittedSymbol) error {
+	r.symbols = append(r.symbols, s)
+	return nil
+}
+func (r *recorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
 
 // counter counts emitted symbols and edges.
 type counter struct {
@@ -804,7 +807,6 @@ end
 		t.Error("lowercase assignment should not be emitted as constant")
 	}
 }
-
 
 func TestSuperclassNameScopeResolution(t *testing.T) {
 	r := parseRuby(t, `
@@ -3220,14 +3222,16 @@ end
 		t.Errorf("confidence = %v, want %v", e.Confidence, extract.ConfidenceDynamic)
 	}
 	// Verify no duplicate edges — each call should be emitted exactly once.
-	serviceEdges := 0
+	// Count calls only; references edges (e.g. to the Order constant) are
+	// emitted separately and are not the subject of this assertion.
+	serviceCalls := 0
 	for _, edge := range r.edges {
-		if edge.SourceQualified == "Service#process" {
-			serviceEdges++
+		if edge.SourceQualified == "Service#process" && string(edge.Kind) == "calls" {
+			serviceCalls++
 		}
 	}
-	if serviceEdges != 3 {
-		t.Errorf("expected 3 edges from Service#process, got %d", serviceEdges)
+	if serviceCalls != 3 {
+		t.Errorf("expected 3 calls edges from Service#process, got %d", serviceCalls)
 	}
 }
 
@@ -3358,13 +3362,15 @@ end
 class Service
   def process
     orders = Order.new
-    orders.each { |(id, name)| id.to_s }
+    orders.each { |(id, name)| id.archive }
   end
 end
 `)
-	// Destructuring parameter → skip block parameter inference
-	// The call inside falls back to bare method name
-	e := findEdge(r, "Service#process", "to_s", "calls")
+	// Destructuring parameter → skip block parameter inference.
+	// The call inside falls back to the bare method name. (A domain method
+	// is used rather than a core method like to_s, which is intentionally
+	// dropped from unknown-receiver calls to avoid name-collision noise.)
+	e := findEdge(r, "Service#process", "archive", "calls")
 	if e == nil {
 		t.Fatal("missing bare fallback edge for destructuring block parameter")
 	}
@@ -3693,7 +3699,13 @@ end
 	}
 }
 
-func TestConstReferenceSkipsUnknownRuby(t *testing.T) {
+func TestConstReferenceEmitsUnknownRuby(t *testing.T) {
+	// A constant defined in this file resolves to its qualified name; one
+	// that is not (defined cross-file, or a gem/stdlib class) is emitted
+	// with its surface text so the resolver can match it against the
+	// global symbol table — and drop it if it resolves to nothing. This is
+	// what lets a class referenced only as `Foo.new` from another file
+	// show up as referenced rather than dead.
 	r := parseRuby(t, `KNOWN = 1
 
 class Svc
@@ -3706,8 +3718,12 @@ end
 	if findEdge(r, "Svc#run", "KNOWN", "references") == nil {
 		t.Error("missing references edge for known constant")
 	}
-	if findEdge(r, "Svc#run", "UNKNOWN", "references") != nil {
-		t.Error("should not emit references for unknown constant")
+	e := findEdge(r, "Svc#run", "UNKNOWN", "references")
+	if e == nil {
+		t.Fatal("missing references edge for unknown constant (needed for cross-file resolution)")
+	}
+	if e.Confidence != extract.ConfidenceStatic {
+		t.Errorf("UNKNOWN reference confidence = %v, want %v", e.Confidence, extract.ConfidenceStatic)
 	}
 }
 
@@ -3728,5 +3744,175 @@ end
 `)
 	if findEdge(r, "Parent#run", "BASE", "references") == nil {
 		t.Error("missing references edge for BASE in Parent.run")
+	}
+}
+
+func TestClassReceiverEmitsReferenceRuby(t *testing.T) {
+	// `Foo.new` must record a reference to the class itself, not just a
+	// call to `new` — otherwise a class reached only via instantiation
+	// looks uncalled (and dead).
+	r := parseRuby(t, `class Order
+  class Processor
+    def run
+      ProcessPaymentService.new
+    end
+  end
+end
+`)
+	if findEdge(r, "Order::Processor#run", "ProcessPaymentService", "references") == nil {
+		t.Error("missing references edge to class used via .new")
+	}
+}
+
+func TestRescueEmitsReferenceRuby(t *testing.T) {
+	r := parseRuby(t, `class Worker
+  def perform
+    do_work
+  rescue ApiError => e
+    handle(e)
+  end
+end
+`)
+	if findEdge(r, "Worker#perform", "ApiError", "references") == nil {
+		t.Error("missing references edge to rescued exception class")
+	}
+}
+
+func TestScopeResolutionRefEmitsReferenceRuby(t *testing.T) {
+	r := parseRuby(t, `class Worker
+  def perform
+    x = SocialCommerce::Meta::ApiError
+  end
+end
+`)
+	if findEdge(r, "Worker#perform", "SocialCommerce::Meta::ApiError", "references") == nil {
+		t.Error("missing references edge to namespaced constant")
+	}
+}
+
+func TestRescueFromEmitsReferenceRuby(t *testing.T) {
+	r := parseRuby(t, `class ApplicationController
+  rescue_from ActiveRecord::RecordNotFound, with: :not_found
+end
+`)
+	if findEdge(r, "ApplicationController", "ActiveRecord::RecordNotFound", "references") == nil {
+		t.Error("missing references edge to rescue_from exception class")
+	}
+}
+
+func TestIncludeDoesNotDoubleEmitReferenceRuby(t *testing.T) {
+	// `include Foo` already yields an includes edge; it must not also
+	// produce a redundant references edge.
+	r := parseRuby(t, `class Widget
+  include Printable
+end
+`)
+	if findEdge(r, "Widget", "Printable", "includes") == nil {
+		t.Error("missing includes edge")
+	}
+	if findEdge(r, "Widget", "Printable", "references") != nil {
+		t.Error("include arg should not also emit a references edge")
+	}
+}
+
+func TestCoreNoiseMethodDroppedRuby(t *testing.T) {
+	// A ubiquitous core method on an unknown receiver must NOT emit a
+	// calls edge — otherwise the resolver's unqualified fallback binds
+	// `count.zero?` to an arbitrary same-named symbol. A non-core method
+	// on an unknown receiver still emits its bare fallback edge.
+	r := parseRuby(t, `class Order
+  def process
+    count.zero?
+    other.archive
+  end
+end
+`)
+	if findEdge(r, "Order#process", "zero?", "calls") != nil {
+		t.Error("core-noise method zero? should be dropped on unknown receiver")
+	}
+	if findEdge(r, "Order#process", "archive", "calls") == nil {
+		t.Error("non-noise method should still emit a fallback calls edge")
+	}
+}
+
+func TestCoreNoiseMethodDroppedOnLiteralReceiverRuby(t *testing.T) {
+	// Receiver kinds not matched by resolveCallTarget's switch (string,
+	// array, integer literals) hit the fallthrough; core-noise methods on
+	// them must also be dropped, while a domain method still emits.
+	r := parseRuby(t, `class Order
+  def process
+    "".empty?
+    [].archive
+  end
+end
+`)
+	if findEdge(r, "Order#process", "empty?", "calls") != nil {
+		t.Error("core-noise method empty? on a literal receiver should be dropped")
+	}
+	if findEdge(r, "Order#process", "archive", "calls") == nil {
+		t.Error("non-noise method on a literal receiver should still emit a fallback edge")
+	}
+}
+
+func TestSuperclassNotEmittedAsReferenceRuby(t *testing.T) {
+	// A superclass is recorded as an inherits edge, never as a references edge.
+	r := parseRuby(t, `class Parent
+end
+
+class Child < Parent
+  def work
+    helper
+  end
+end
+`)
+	if findEdge(r, "Child", "Parent", "references") != nil {
+		t.Error("superclass should be inherits, not references")
+	}
+	if findEdge(r, "Child", "Parent", "inherits") == nil {
+		t.Error("missing inherits edge Child -> Parent")
+	}
+}
+
+func TestStructuralDSLArgsNoDoubleReferenceRuby(t *testing.T) {
+	// extend (includes) and has_many (composes via serializer:) already emit
+	// a more specific edge; their constant args must not also emit references.
+	r := parseRuby(t, `class Widget
+  extend Helpers
+  has_many :comments, serializer: CommentSerializer
+end
+`)
+	if findEdge(r, "Widget", "Helpers", "includes") == nil {
+		t.Error("missing includes edge for extend")
+	}
+	if findEdge(r, "Widget", "Helpers", "references") != nil {
+		t.Error("extend arg should not also emit a references edge")
+	}
+	if findEdge(r, "Widget", "CommentSerializer", "references") != nil {
+		t.Error("has_many serializer arg should not also emit a references edge")
+	}
+}
+
+func TestPkgBindingFirstWriteWinsRuby(t *testing.T) {
+	// Two classes share a trailing segment; the bare-name binding resolves to
+	// the first-registered one. Exercises the already-exists guard in
+	// collectConstants.
+	r := parseRuby(t, `module Admin
+  class Account
+  end
+end
+
+module Billing
+  class Account
+  end
+end
+
+class Report
+  def run
+    x = Account
+  end
+end
+`)
+	if findEdge(r, "Report#run", "Admin::Account", "references") == nil {
+		t.Error("bare Account should resolve to first-registered Admin::Account")
 	}
 }
