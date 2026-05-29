@@ -102,7 +102,7 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		implementorIDs:       implementorIDs,
 	})
 
-	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs)
+	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs, usesDynamicAutoload(frameworks))
 
 	if len(candidates) > opts.Limit {
 		candidates = candidates[:opts.Limit]
@@ -610,7 +610,7 @@ func isGoConstructor(s Symbol) bool {
 	return s.Language == "go" && strings.HasPrefix(s.Name, "New") && s.Kind == "function"
 }
 
-func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[int64]struct{}) []Symbol {
+func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[int64]struct{}, dynamicFramework bool) []Symbol {
 	for i := range candidates {
 		s := &candidates[i]
 		if s.ParentID != nil {
@@ -627,13 +627,21 @@ func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[in
 			s.Confidence = ConfidencePossibly
 			continue
 		}
-		if isDynamicallyReferenceable(*s) {
+		if dynamicFramework && isDynamicallyReferenceable(*s) {
 			s.Confidence = ConfidencePossibly
 			continue
 		}
 		s.Confidence = ConfidenceDead
 	}
 	return candidates
+}
+
+// usesDynamicAutoload reports whether the project relies on a framework
+// whose autoloading / const_get / constantize / STI conventions make a
+// statically-unreferenced type genuinely uncertain rather than dead.
+func usesDynamicAutoload(frameworks map[string]struct{}) bool {
+	_, ok := frameworks["Rails"]
+	return ok
 }
 
 // isDynamicallyReferenceable flags Ruby types and constants that are

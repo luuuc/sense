@@ -13,14 +13,14 @@ import (
 func refs() []model.SymbolRef {
 	return []model.SymbolRef{
 		{ID: 1, Qualified: "app.User", FileID: 10},
-		{ID: 2, Qualified: "app.User.email", FileID: 10},   // method on class via `.`
-		{ID: 3, Qualified: "Greeter#hello", FileID: 11},    // Ruby instance method
+		{ID: 2, Qualified: "app.User.email", FileID: 10}, // method on class via `.`
+		{ID: 3, Qualified: "Greeter#hello", FileID: 11},  // Ruby instance method
 		{ID: 4, Qualified: "Greeter#greet", FileID: 11},
-		{ID: 5, Qualified: "Money::new", FileID: 12},       // Rust associated fn
+		{ID: 5, Qualified: "Money::new", FileID: 12}, // Rust associated fn
 		{ID: 6, Qualified: "Money::display", FileID: 12},
-		{ID: 7, Qualified: "test.User", FileID: 20},        // same bare name, different file
-		{ID: 8, Qualified: "helper", FileID: 10},           // top-level fn, no parent
-		{ID: 9, Qualified: "fmt.Sprintf", FileID: 30},      // unqualified target for fallback
+		{ID: 7, Qualified: "test.User", FileID: 20},   // same bare name, different file
+		{ID: 8, Qualified: "helper", FileID: 10},      // top-level fn, no parent
+		{ID: 9, Qualified: "fmt.Sprintf", FileID: 30}, // unqualified target for fallback
 	}
 }
 
@@ -308,12 +308,12 @@ func TestResolveIncludesCrossFile(t *testing.T) {
 	// Include edges resolve cross-file via byQualified just like any
 	// other edge kind — there is no intra-file restriction.
 	tests := []struct {
-		name       string
-		refs       []model.SymbolRef
-		target     string
-		wantOK     bool
-		wantID     int64
-		wantConf   float64
+		name     string
+		refs     []model.SymbolRef
+		target   string
+		wantOK   bool
+		wantID   int64
+		wantConf float64
 	}{
 		{
 			name:   "bare target cross-file",
@@ -356,5 +356,53 @@ func TestResolveIncludesCrossFile(t *testing.T) {
 				t.Errorf("Confidence = %v, want %v", r.Confidence, tt.wantConf)
 			}
 		})
+	}
+}
+
+func TestResolveAmbiguousNameOnlyDroppedBelowBlastFloor(t *testing.T) {
+	// Two symbols share a trailing name but neither matches the target's
+	// qualified form, so resolution falls to the bare-name index with
+	// multiple candidates. That guess must land below blast's 0.5 floor.
+	rs := append(refs(),
+		model.SymbolRef{ID: 200, Qualified: "A.process", FileID: 10},
+		model.SymbolRef{ID: 201, Qualified: "B.process", FileID: 11},
+	)
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "process",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   99,
+		BaseConfidence: 1.0,
+	})
+	if !ok {
+		t.Fatal("expected resolution via name fallback")
+	}
+	if !r.Ambiguous {
+		t.Error("Ambiguous = false, want true (multiple same-named candidates)")
+	}
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 so blast ignores the guess", r.Confidence)
+	}
+}
+
+func TestResolveSingleNameOnlyKeepsConfidence(t *testing.T) {
+	// A unique bare-name match is trustworthy enough to keep the ambiguous
+	// clamp (0.8) — only multi-candidate fallback is dropped below the floor.
+	rs := append(refs(), model.SymbolRef{ID: 300, Qualified: "Only.unique_method", FileID: 10})
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "unique_method",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   99,
+		BaseConfidence: 1.0,
+	})
+	if !ok {
+		t.Fatal("expected resolution")
+	}
+	if r.Ambiguous {
+		t.Error("single match should not be ambiguous")
+	}
+	if r.Confidence != 0.8 {
+		t.Errorf("Confidence = %v, want 0.8 (single name-only clamp)", r.Confidence)
 	}
 }

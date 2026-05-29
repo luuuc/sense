@@ -90,6 +90,13 @@ const (
 	// the edge is intentionally low-confidence to avoid surfacing noisy
 	// cross-class guesses in blast-radius and caller queries.
 	ConfidenceUnresolved = 0.5
+
+	// ConfidenceNameCollision marks an edge whose target resolved only by
+	// bare-name fallback among multiple same-named symbols (no receiver type
+	// to disambiguate). Deliberately below blast's traversal floor (0.5) so
+	// impact analysis ignores the guess, while it still counts as a weak
+	// incoming edge for dead-code liveness.
+	ConfidenceNameCollision = 0.3
 )
 
 // Synthetic qualified-name prefixes for cross-language resolution.
