@@ -11,6 +11,65 @@ import (
 
 const testCallerCollapseThreshold = 20
 
+// ApplyGraphBudget trims a graph response until its estimated token count
+// fits within budget. It sheds the least-relevant content first — deeper
+// BFS layers, then the longest edge list one chunk at a time — keeping
+// the focal symbol and the highest-signal edges. Dropped edges are
+// counted in OmittedEdges and set Truncated, so the consumer knows the
+// view is partial. A non-positive budget disables trimming.
+//
+// Applied on the MCP path only, matching ApplyBlastBudget: the CLI emits
+// the full response for scripting, the MCP surface stays within context.
+func ApplyGraphBudget(resp *GraphResponse, budget int) {
+	if budget <= 0 {
+		return
+	}
+	// 1. Deeper layers are the weakest signal — drop whole hops first.
+	for estimateJSONTokens(resp) > budget && len(resp.Layers) > 0 {
+		dropped := countEdgeSymbols(resp.Layers[len(resp.Layers)-1].Edges)
+		resp.Layers = resp.Layers[:len(resp.Layers)-1]
+		resp.OmittedEdges += dropped
+		resp.Truncated = true
+	}
+	// 2. Trim the longest root edge list, a chunk at a time, until it fits.
+	for estimateJSONTokens(resp) > budget && trimLongestEdgeList(&resp.Edges, resp) {
+		resp.Truncated = true
+	}
+}
+
+// trimLongestEdgeList drops a chunk from whichever root edge slice is
+// longest, keeping at least one entry per kind so each relationship type
+// stays represented. Returns false when nothing more can be trimmed.
+func trimLongestEdgeList(e *GraphEdges, resp *GraphResponse) bool {
+	type slot struct {
+		n    int
+		drop func(int)
+	}
+	slots := []slot{
+		{len(e.CalledBy), func(k int) { e.CalledBy = e.CalledBy[:len(e.CalledBy)-k] }},
+		{len(e.Calls), func(k int) { e.Calls = e.Calls[:len(e.Calls)-k] }},
+		{len(e.Composes), func(k int) { e.Composes = e.Composes[:len(e.Composes)-k] }},
+		{len(e.Inherits), func(k int) { e.Inherits = e.Inherits[:len(e.Inherits)-k] }},
+		{len(e.Includes), func(k int) { e.Includes = e.Includes[:len(e.Includes)-k] }},
+		{len(e.Imports), func(k int) { e.Imports = e.Imports[:len(e.Imports)-k] }},
+		{len(e.Temporal), func(k int) { e.Temporal = e.Temporal[:len(e.Temporal)-k] }},
+		{len(e.Tests), func(k int) { e.Tests = e.Tests[:len(e.Tests)-k] }},
+	}
+	best := -1
+	for i, s := range slots {
+		if best == -1 || s.n > slots[best].n {
+			best = i
+		}
+	}
+	if best == -1 || slots[best].n <= 1 {
+		return false
+	}
+	drop := trimStep(slots[best].n - 1)
+	slots[best].drop(drop)
+	resp.OmittedEdges += drop
+	return true
+}
+
 const (
 	MaxGraphDepth = 3
 	MaxPerHop     = 200

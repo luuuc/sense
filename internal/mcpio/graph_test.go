@@ -8,6 +8,114 @@ import (
 	"github.com/luuuc/sense/internal/model"
 )
 
+func bigGraphResponse(callers, layers int) GraphResponse {
+	r := GraphResponse{Symbol: GraphSymbol{Name: "Hub", Qualified: "pkg.Hub"}}
+	for i := 0; i < callers; i++ {
+		f := "app/models/caller" + itoa(i) + ".rb"
+		r.Edges.CalledBy = append(r.Edges.CalledBy, CallEdgeRef{
+			Symbol: "pkg.Caller" + itoa(i), File: &f, LineStart: i, Confidence: 1.0,
+			CallSite: &CallSite{Line: i, Snippet: "a representative line of calling source code"},
+		})
+	}
+	for d := 0; d < layers; d++ {
+		layer := GraphLayer{Depth: d + 2}
+		for i := 0; i < 20; i++ {
+			s := "pkg.L" + itoa(d) + "_" + itoa(i)
+			layer.Edges.CalledBy = append(layer.Edges.CalledBy, CallEdgeRef{Symbol: s, Confidence: 1.0})
+		}
+		r.Layers = append(r.Layers, layer)
+	}
+	return r
+}
+
+func TestApplyGraphBudgetNoopAndDisabled(t *testing.T) {
+	r := bigGraphResponse(3, 0)
+	ApplyGraphBudget(&r, 1_000_000)
+	if r.Truncated || r.OmittedEdges != 0 || len(r.Edges.CalledBy) != 3 {
+		t.Error("under-budget graph response should be untouched")
+	}
+	r2 := bigGraphResponse(200, 2)
+	ApplyGraphBudget(&r2, 0)
+	if r2.Truncated || len(r2.Edges.CalledBy) != 200 {
+		t.Error("budget <= 0 must disable trimming")
+	}
+}
+
+func TestApplyGraphBudgetDropsLayersFirst(t *testing.T) {
+	r := bigGraphResponse(15, 3)
+	const budget = 1200
+	ApplyGraphBudget(&r, budget)
+	if got := estimateJSONTokens(&r); got > budget {
+		t.Errorf("after trim tokens=%d exceed budget=%d", got, budget)
+	}
+	if !r.Truncated || r.OmittedEdges == 0 {
+		t.Errorf("expected Truncated + OmittedEdges>0, got Truncated=%v Omitted=%d", r.Truncated, r.OmittedEdges)
+	}
+	if len(r.Layers) == 3 {
+		t.Error("expected deeper layers to be dropped first")
+	}
+}
+
+func TestApplyGraphBudgetTrimsLongestEdgeList(t *testing.T) {
+	r := bigGraphResponse(400, 0)
+	const budget = 800
+	ApplyGraphBudget(&r, budget)
+	if got := estimateJSONTokens(&r); got > budget {
+		t.Errorf("after trim tokens=%d exceed budget=%d", got, budget)
+	}
+	if len(r.Edges.CalledBy) < 1 {
+		t.Error("must keep at least one edge per kind")
+	}
+	if r.OmittedEdges != 400-len(r.Edges.CalledBy) {
+		t.Errorf("OmittedEdges=%d should equal dropped=%d", r.OmittedEdges, 400-len(r.Edges.CalledBy))
+	}
+}
+
+func TestApplyGraphBudgetTrimsEveryEdgeKind(t *testing.T) {
+	// All eight edge kinds start equally long; a tiny budget forces the
+	// trimmer to cycle through and shrink each kind's slice in turn.
+	r := GraphResponse{Symbol: GraphSymbol{Name: "Hub", Qualified: "pkg.Hub"}}
+	const per = 12
+	for i := 0; i < per; i++ {
+		s := "pkg.S" + itoa(i)
+		r.Edges.CalledBy = append(r.Edges.CalledBy, CallEdgeRef{Symbol: s, Confidence: 1.0})
+		r.Edges.Calls = append(r.Edges.Calls, CallEdgeRef{Symbol: s, Confidence: 1.0})
+		r.Edges.Inherits = append(r.Edges.Inherits, InheritEdgeRef{Symbol: s})
+		r.Edges.Composes = append(r.Edges.Composes, ComposeEdgeRef{Symbol: s})
+		r.Edges.Includes = append(r.Edges.Includes, IncludeEdgeRef{Symbol: s})
+		r.Edges.Imports = append(r.Edges.Imports, ImportEdgeRef{Symbol: s})
+		r.Edges.Temporal = append(r.Edges.Temporal, TemporalEdgeRef{Symbol: s, Strength: 0.5})
+		r.Edges.Tests = append(r.Edges.Tests, TestEdgeRef{File: "test/" + s + "_test.rb", Confidence: 0.8})
+	}
+	// A budget below the one-entry-per-kind floor forces every kind to be
+	// trimmed down to its single representative, exercising each kind's
+	// drop path while proving no relationship type is dropped entirely.
+	ApplyGraphBudget(&r, 200)
+	kinds := []int{
+		len(r.Edges.CalledBy), len(r.Edges.Calls), len(r.Edges.Inherits), len(r.Edges.Composes),
+		len(r.Edges.Includes), len(r.Edges.Imports), len(r.Edges.Temporal), len(r.Edges.Tests),
+	}
+	for i, n := range kinds {
+		if n != 1 {
+			t.Errorf("edge kind %d trimmed to %d, want 1", i, n)
+		}
+	}
+	if !r.Truncated {
+		t.Error("expected Truncated=true")
+	}
+	if want := (per - 1) * 8; r.OmittedEdges != want {
+		t.Errorf("OmittedEdges = %d, want %d", r.OmittedEdges, want)
+	}
+}
+
+func TestTrimLongestEdgeListStopsWhenMinimal(t *testing.T) {
+	e := &GraphEdges{CalledBy: []CallEdgeRef{{Symbol: "a"}}, Calls: []CallEdgeRef{{Symbol: "b"}}}
+	resp := &GraphResponse{}
+	if trimLongestEdgeList(e, resp) {
+		t.Error("should return false when no list has more than one entry")
+	}
+}
+
 func TestBuildGraphResponseComposesEdges(t *testing.T) {
 	filePaths := map[int64]string{
 		1: "app/models/user.rb",

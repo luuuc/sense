@@ -10,7 +10,70 @@ import (
 const (
 	tier1Cap         = 200
 	tier2ExamplesCap = 5
+	// blastTestExamplesCap bounds the affected-test sample kept when a
+	// response must be trimmed to fit a token budget. tests_affected_count
+	// still reports the true total.
+	blastTestExamplesCap = 10
 )
+
+// ApplyBlastBudget trims a blast response in least-relevant-first order
+// until its estimated token count fits within budget. Summary counts
+// (total_affected, tests_affected_count, references.count) are never
+// reduced — only the enumerated lists shrink — so the headline answer
+// stays truthful and reachable even when the body is capped. Any trim
+// sets Truncated. A non-positive budget disables trimming.
+//
+// Applied on the MCP path only — the token budget is an LLM-context
+// concern. The CLI emits the full (untrimmed) response for piping to
+// jq and friends, so the two surfaces can diverge by design.
+func ApplyBlastBudget(resp *BlastResponse, budget int) {
+	if budget <= 0 {
+		return
+	}
+	// 1. Affected-test sample: tests_affected_count carries the real total.
+	if estimateJSONTokens(resp) > budget && len(resp.AffectedTests) > blastTestExamplesCap {
+		resp.AffectedTests = resp.AffectedTests[:blastTestExamplesCap]
+		resp.Truncated = true
+	}
+	// 2. Call-site snippets are supporting detail; a caller's identity is
+	// the decision-relevant signal for "what breaks?". Shed snippets before
+	// dropping any caller, so more callers survive within the same budget.
+	if estimateJSONTokens(resp) > budget {
+		stripped := false
+		for i := range resp.DirectCallers {
+			if resp.DirectCallers[i].CallSite != nil {
+				resp.DirectCallers[i].CallSite = nil
+				stripped = true
+			}
+		}
+		if stripped {
+			resp.Truncated = true
+		}
+	}
+	// 3. Indirect callers are a weaker signal than direct callers.
+	for estimateJSONTokens(resp) > budget && len(resp.IndirectCallers) > 0 {
+		n := len(resp.IndirectCallers)
+		resp.IndirectCallers = resp.IndirectCallers[:n-trimStep(n)]
+		resp.Truncated = true
+	}
+	// 4. Direct callers last; keep at least one. total_affected still
+	// reports how many exist beyond what is shown.
+	for estimateJSONTokens(resp) > budget && len(resp.DirectCallers) > 1 {
+		n := len(resp.DirectCallers)
+		resp.DirectCallers = resp.DirectCallers[:n-trimStep(n-1)]
+		resp.Truncated = true
+	}
+}
+
+// trimStep returns how many trailing items to drop this iteration —
+// ~10% of what remains, at least 1 — so trimming a long list converges
+// in a handful of marshal passes instead of one pass per dropped item.
+func trimStep(n int) int {
+	if step := n / 10; step > 1 {
+		return step
+	}
+	return 1
+}
 
 // BuildBlastResponse assembles a wire BlastResponse from the blast
 // engine's Result plus a file-path lookup for caller symbols. Results
