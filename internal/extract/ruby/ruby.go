@@ -678,6 +678,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	// edge is an accurate record of what was written.
 	body := n.ChildByFieldName("body")
 	localTypes := buildLocalTypeMap(body, w.source)
+	w.addRescueBindings(body, localTypes)
 	ivarTypes := w.classInstanceVars[strings.Join(scope, "::")]
 	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
 		if isInsideBlock(c) {
@@ -1046,6 +1047,96 @@ func buildLocalTypeMap(body *sitter.Node, source []byte) map[string]string {
 		})
 	}
 	return types
+}
+
+// addRescueBindings records the type of each `rescue ExceptionType => var`
+// clause in the method body into localTypes, so a call on the bound variable
+// (`raise if e.retriable?`) resolves to ExceptionType#method instead of the
+// resolver's bare-name fallback, which would otherwise bind it to an arbitrary
+// same-named method on an unrelated class.
+//
+// Only single-type rescues with an identifier variable are recorded:
+// `rescue A, B => e` leaves the variable's type ambiguous, and a bare
+// `rescue => e` has no type. An existing entry (e.g. an explicit
+// `X = Class.new`) is never overwritten. The map is method-wide rather than
+// rescue-scoped, so two rescues binding the same name to different types are
+// last-write-wins — rare, and a missed/loose bind only costs one weak edge.
+func (w *walker) addRescueBindings(body *sitter.Node, localTypes map[string]string) {
+	if body == nil {
+		return
+	}
+	_ = extract.WalkNamedDescendants(body, "rescue", func(r *sitter.Node) error {
+		typ := w.singleRescueType(r)
+		if typ == "" {
+			return nil
+		}
+		varName := rescueVariableName(r, w.source)
+		if varName == "" {
+			return nil
+		}
+		if _, exists := localTypes[varName]; !exists {
+			localTypes[varName] = typ
+		}
+		return nil
+	})
+}
+
+// singleRescueType returns the fully-qualified exception type of a rescue
+// clause when it names exactly one constant/scope_resolution, resolving the
+// trailing segment through pkgBindings so `rescue ApiError` inside its own
+// namespace still yields the qualified name. Returns "" for multi-type or
+// typeless rescues.
+func (w *walker) singleRescueType(rescueNode *sitter.Node) string {
+	var exceptions *sitter.Node
+	for i := uint(0); i < rescueNode.NamedChildCount(); i++ {
+		if c := rescueNode.NamedChild(i); c.Kind() == "exceptions" {
+			exceptions = c
+			break
+		}
+	}
+	if exceptions == nil || exceptions.NamedChildCount() != 1 {
+		return ""
+	}
+	typeNode := exceptions.NamedChild(0)
+	switch typeNode.Kind() {
+	case "constant", "scope_resolution":
+	default:
+		return ""
+	}
+	text := strings.TrimSpace(extract.Text(typeNode, w.source))
+	if text == "" {
+		return ""
+	}
+	if q, ok := w.pkgBindings[lastConstSegment(text)]; ok {
+		return q
+	}
+	return text
+}
+
+// rescueVariableName returns the identifier bound by a rescue clause's
+// `=> var`, or "" when the binding is absent or not a simple identifier.
+func rescueVariableName(rescueNode *sitter.Node, source []byte) string {
+	for i := uint(0); i < rescueNode.NamedChildCount(); i++ {
+		c := rescueNode.NamedChild(i)
+		if c.Kind() != "exception_variable" {
+			continue
+		}
+		for j := uint(0); j < c.NamedChildCount(); j++ {
+			if v := c.NamedChild(j); v.Kind() == "identifier" {
+				return extract.Text(v, source)
+			}
+		}
+	}
+	return ""
+}
+
+// lastConstSegment returns the trailing `::`-separated segment of a constant
+// reference: "SocialCommerce::Meta::ApiError" → "ApiError", "ApiError" → "ApiError".
+func lastConstSegment(name string) string {
+	if i := strings.LastIndex(name, "::"); i >= 0 {
+		return name[i+len("::"):]
+	}
+	return name
 }
 
 // buildInstanceVarTypeMap scans a class body for `initialize` methods and

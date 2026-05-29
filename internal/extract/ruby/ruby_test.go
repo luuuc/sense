@@ -4038,3 +4038,150 @@ end
 		t.Error("bare Account should resolve to first-registered Admin::Account")
 	}
 }
+
+// A rescue clause binds its exception variable's type, so a call on that
+// variable resolves to ExceptionType#method instead of a bare-name guess.
+func TestRescueBindingResolvesNamespacedException(t *testing.T) {
+	r := parseRuby(t, `module SocialCommerce
+  module Meta
+    class ApiError < StandardError
+      def retriable?
+        true
+      end
+    end
+  end
+end
+
+class BatchSyncJob
+  def perform
+    do_work
+  rescue SocialCommerce::Meta::ApiError => e
+    raise if e.retriable?
+  end
+end
+`)
+	if findEdge(r, "BatchSyncJob#perform", "SocialCommerce::Meta::ApiError#retriable?", "calls") == nil {
+		t.Errorf("expected rescue var resolved to SocialCommerce::Meta::ApiError#retriable?; edges: %v", edgeTargetsFrom(r, "BatchSyncJob#perform"))
+	}
+	if findEdge(r, "BatchSyncJob#perform", "retriable?", "calls") != nil {
+		t.Error("should not also emit a bare-name retriable? fallback once the type is known")
+	}
+}
+
+// A bare exception constant resolves to its qualified name through pkgBindings.
+func TestRescueBindingResolvesViaPkgBindings(t *testing.T) {
+	r := parseRuby(t, `module SocialCommerce
+  module Meta
+    class ApiError < StandardError
+      def retriable?
+        true
+      end
+    end
+
+    class CatalogSyncService
+      def call
+        do_work
+      rescue ApiError => e
+        raise if e.retriable?
+      end
+    end
+  end
+end
+`)
+	want := "SocialCommerce::Meta::ApiError#retriable?"
+	if findEdge(r, "SocialCommerce::Meta::CatalogSyncService#call", want, "calls") == nil {
+		t.Errorf("expected bare ApiError resolved via pkgBindings to %s; edges: %v",
+			want, edgeTargetsFrom(r, "SocialCommerce::Meta::CatalogSyncService#call"))
+	}
+}
+
+// A multi-type rescue leaves the variable ambiguous — no typed edge is emitted;
+// the bare-name fallback is used instead.
+func TestRescueBindingSkipsMultiType(t *testing.T) {
+	r := parseRuby(t, `class Worker
+  def run
+    do_work
+  rescue FooError, BarError => e
+    raise if e.retriable?
+  end
+end
+`)
+	if findEdge(r, "Worker#run", "FooError#retriable?", "calls") != nil ||
+		findEdge(r, "Worker#run", "BarError#retriable?", "calls") != nil {
+		t.Error("multi-type rescue must not bind the variable to either type")
+	}
+	if findEdge(r, "Worker#run", "retriable?", "calls") == nil {
+		t.Error("expected bare-name fallback edge for an ambiguous rescue variable")
+	}
+}
+
+// A typeless rescue (`rescue => e`) has no type to bind.
+func TestRescueBindingSkipsTypeless(t *testing.T) {
+	r := parseRuby(t, `class Worker
+  def run
+    do_work
+  rescue => e
+    raise if e.retriable?
+  end
+end
+`)
+	if findEdge(r, "Worker#run", "retriable?", "calls") == nil {
+		t.Error("typeless rescue should fall back to the bare method name")
+	}
+}
+
+// An explicit assignment type takes precedence over a same-named rescue binding.
+func TestRescueBindingDoesNotOverrideAssignment(t *testing.T) {
+	r := parseRuby(t, `class Helper
+  def retriable?
+    false
+  end
+end
+
+class FooError < StandardError
+  def retriable?
+    true
+  end
+end
+
+class Worker
+  def run
+    e = Helper.new
+    e.retriable?
+  rescue FooError => e
+    e.retriable?
+  end
+end
+`)
+	if findEdge(r, "Worker#run", "Helper#retriable?", "calls") == nil {
+		t.Error("explicit e = Helper.new should keep precedence for the variable type")
+	}
+}
+
+// edgeTargetsFrom lists the calls-edge targets emitted from a given source, for
+// test failure diagnostics.
+func edgeTargetsFrom(r *recorder, source string) []string {
+	var out []string
+	for _, e := range r.edges {
+		if e.SourceQualified == source && e.Kind == "calls" {
+			out = append(out, e.TargetQualified)
+		}
+	}
+	return out
+}
+
+// A rescue that names a type but binds no variable (`rescue FooError`) records
+// nothing and does not panic.
+func TestRescueBindingNoVariable(t *testing.T) {
+	r := parseRuby(t, `class Worker
+  def run
+    do_work
+  rescue FooError
+    cleanup
+  end
+end
+`)
+	if findEdge(r, "Worker#run", "FooError#retriable?", "calls") != nil {
+		t.Error("a rescue without a variable binding should not produce a typed call edge")
+	}
+}
