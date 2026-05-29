@@ -1,6 +1,10 @@
 package mcpio
 
-import "github.com/luuuc/sense/internal/dead"
+import (
+	"fmt"
+
+	"github.com/luuuc/sense/internal/dead"
+)
 
 // BuildDeadCodeResponse assembles a wire DeadCodeResponse from the dead
 // package's result plus a rolled-up symbol list. Matches the
@@ -22,6 +26,7 @@ func BuildDeadCodeResponse(symbols []dead.Symbol, totalSymbols int) DeadCodeResp
 			LineEnd:    s.LineEnd,
 			Kind:       s.Kind,
 			Confidence: confidence,
+			VerifyCmd:  deadVerifyCmd(s.Name),
 		}
 		uniqueFiles[s.File] = struct{}{}
 	}
@@ -43,4 +48,14 @@ func BuildDeadCodeResponse(symbols []dead.Symbol, totalSymbols int) DeadCodeResp
 			EstimatedTokensSaved:      filesAvoided * AvgTokensPerFile,
 		},
 	}
+}
+
+// deadVerifyCmd builds a copy-paste grep that lists every textual occurrence of
+// a candidate's name across the tree — the definition plus any call sites the
+// static index missed (duck-typed dispatch, metaprogramming). Fixed-string (-F)
+// so predicate names ending in `?` aren't interpreted as a regex. The VCS and
+// index directories are excluded as guaranteed noise; every source extension is
+// still searched, since a predicate may be called from a view or template.
+func deadVerifyCmd(name string) string {
+	return fmt.Sprintf("grep -rFn --exclude-dir=.git --exclude-dir=.sense %q .", name)
 }

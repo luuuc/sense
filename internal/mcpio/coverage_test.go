@@ -67,6 +67,22 @@ func TestBuildDeadCodeResponse(t *testing.T) {
 	if resp.SenseMetrics.EstimatedFileReadsAvoided != 2 {
 		t.Errorf("EstimatedFileReadsAvoided = %d, want 2", resp.SenseMetrics.EstimatedFileReadsAvoided)
 	}
+
+	// Every entry carries a ready-to-run verify grep.
+	if got := resp.DeadSymbols[0].VerifyCmd; got != `grep -rFn --exclude-dir=.git --exclude-dir=.sense "Unused" .` {
+		t.Errorf("VerifyCmd = %q, want %q", got, `grep -rFn --exclude-dir=.git --exclude-dir=.sense "Unused" .`)
+	}
+}
+
+// A predicate name ending in `?` must be emitted as a fixed-string grep so the
+// `?` is matched literally rather than interpreted as a regex quantifier.
+func TestDeadVerifyCmdEscapesPredicate(t *testing.T) {
+	resp := BuildDeadCodeResponse([]dead.Symbol{
+		{Name: "retriable?", Qualified: "ApiError#retriable?", File: "api_error.rb", Kind: "method", Confidence: dead.ConfidencePossibly},
+	}, 1)
+	if got := resp.DeadSymbols[0].VerifyCmd; got != `grep -rFn --exclude-dir=.git --exclude-dir=.sense "retriable?" .` {
+		t.Errorf("VerifyCmd = %q, want %q", got, `grep -rFn --exclude-dir=.git --exclude-dir=.sense "retriable?" .`)
+	}
 }
 
 func TestBuildDeadCodeResponseEmpty(t *testing.T) {

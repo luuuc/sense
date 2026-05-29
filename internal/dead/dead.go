@@ -668,35 +668,29 @@ var serviceClassSuffixes = []string{
 	"Service", "Command", "Query", "Interactor", "Operation", "Job", "Worker",
 }
 
-// resultClassSuffixes name value-object conventions whose predicate methods
-// (success?/failure?/...) are read off a return value of an unknown static
-// type, so their call sites frequently don't resolve to the definition.
-var resultClassSuffixes = []string{"Result", "Response", "Outcome"}
-
-// resultPredicates are the predicate method names commonly defined on the
-// result/value objects above.
-var resultPredicates = map[string]bool{
-	"success?": true, "failure?": true, "error?": true,
-	"ok?": true, "valid?": true, "invalid?": true,
-}
-
 // isDynamicRubyMethod flags Ruby methods that follow a dynamic-dispatch
-// convention the static indexer routinely under-resolves: the service-object
-// `call` entry point, and predicate methods on result/value objects. With no
-// detected caller these would otherwise top-tier as "dead"; the convention
-// makes that confidence unwarranted, so they are reported possibly-dead.
+// convention the static indexer routinely under-resolves, so a zero-caller
+// result can't justify a hard "dead" verdict:
+//
+//   - Predicate methods (foo?) — almost always invoked on a duck-typed
+//     receiver (`if result.success?`, `raise if e.retriable?`) or implicitly
+//     on self (`return false unless retriable?`), paths the indexer frequently
+//     can't tie back to the definition. This covers result/value-object
+//     predicates whose inner Struct is flattened onto a *Service class, where
+//     the parent name carries no Result/Response suffix to key off.
+//   - The service-object `call` entry point — reached through `Klass.new.call`,
+//     a `.()` shorthand, or a duck-typed handler.
+//
+// They are reported possibly-dead rather than dead.
 func isDynamicRubyMethod(s Symbol) bool {
 	if s.Language != "ruby" || s.Kind != "method" {
 		return false
 	}
-	parent := rubyMethodParentName(s.Qualified)
-	switch {
-	case s.Name == "call" && hasAnySuffix(parent, serviceClassSuffixes):
-		return true
-	case resultPredicates[s.Name] && hasAnySuffix(parent, resultClassSuffixes):
+	if strings.HasSuffix(s.Name, "?") {
 		return true
 	}
-	return false
+	parent := rubyMethodParentName(s.Qualified)
+	return s.Name == "call" && hasAnySuffix(parent, serviceClassSuffixes)
 }
 
 // rubyMethodParentName returns the unqualified parent class/module name from
