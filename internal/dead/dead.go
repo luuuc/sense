@@ -94,12 +94,12 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	}
 
 	candidates = excludeEntryPoints(candidates, entryPointFilters{
-		testsTargets:        testsTargets,
-		interfaceIDs:       interfaceIDs,
-		frameworks:         frameworks,
-		isLibrary:          isLibrary,
+		testsTargets:         testsTargets,
+		interfaceIDs:         interfaceIDs,
+		frameworks:           frameworks,
+		isLibrary:            isLibrary,
 		interfaceMethodNames: interfaceMethodNames,
-		implementorIDs:    implementorIDs,
+		implementorIDs:       implementorIDs,
 	})
 
 	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs)
@@ -308,12 +308,12 @@ func hasMainFunction(ctx context.Context, db *sql.DB, opts Options) (bool, error
 }
 
 type entryPointFilters struct {
-	testsTargets        map[int64]struct{}
-	interfaceIDs        map[int64]struct{}
-	frameworks          map[string]struct{}
-	isLibrary           bool
+	testsTargets         map[int64]struct{}
+	interfaceIDs         map[int64]struct{}
+	frameworks           map[string]struct{}
+	isLibrary            bool
 	interfaceMethodNames map[string]struct{}
-	implementorIDs      map[int64]struct{}
+	implementorIDs       map[int64]struct{}
 }
 
 func excludeEntryPoints(candidates []Symbol, filters entryPointFilters) []Symbol {
@@ -627,7 +627,27 @@ func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[in
 			s.Confidence = ConfidencePossibly
 			continue
 		}
+		if isDynamicallyReferenceable(*s) {
+			s.Confidence = ConfidencePossibly
+			continue
+		}
 		s.Confidence = ConfidenceDead
 	}
 	return candidates
+}
+
+// isDynamicallyReferenceable flags Ruby types and constants that are
+// commonly reached through paths the indexer cannot see — autoloading,
+// const_get / constantize, STI, and other metaprogrammed lookups. They
+// are reported as possibly-dead rather than dead so a reader double-
+// checks before deleting.
+func isDynamicallyReferenceable(s Symbol) bool {
+	if s.Language != "ruby" {
+		return false
+	}
+	switch s.Kind {
+	case "class", "module", "constant":
+		return true
+	}
+	return false
 }
