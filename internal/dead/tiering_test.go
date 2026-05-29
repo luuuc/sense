@@ -33,6 +33,70 @@ func TestRubyDynamicTypesTieredUnderFramework(t *testing.T) {
 	}
 }
 
+// Ruby service-object `call` methods and result-object predicates follow
+// dynamic-dispatch conventions the indexer under-resolves, so with no
+// detected caller they are possibly-dead, not dead — but only under a
+// dynamic framework, and only for the matching name/parent conventions.
+func TestRubyDynamicMethodTiering(t *testing.T) {
+	cases := []struct {
+		name      string
+		sym       Symbol
+		framework bool
+		want      string
+	}{
+		{
+			"service call under framework",
+			Symbol{Language: "ruby", Kind: "method", Name: "call", Qualified: "Checkout::ProcessPaymentService#call"},
+			true, ConfidencePossibly,
+		},
+		{
+			"result predicate under framework",
+			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Payments::Result#success?"},
+			true, ConfidencePossibly,
+		},
+		{
+			"plain call on a non-service class stays dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "call", Qualified: "Widget#call"},
+			true, ConfidenceDead,
+		},
+		{
+			"predicate on a non-result class stays dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Widget#success?"},
+			true, ConfidenceDead,
+		},
+		{
+			"service call without a dynamic framework stays dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "call", Qualified: "Checkout::ProcessPaymentService#call"},
+			false, ConfidenceDead,
+		},
+		{
+			"non-ruby call is untouched",
+			Symbol{Language: "go", Kind: "method", Name: "call", Qualified: "FooService#call"},
+			true, ConfidenceDead,
+		},
+	}
+	for _, c := range cases {
+		got := annotateConfidence([]Symbol{c.sym}, nil, nil, c.framework)
+		if got[0].Confidence != c.want {
+			t.Errorf("%s: confidence = %q, want %q", c.name, got[0].Confidence, c.want)
+		}
+	}
+}
+
+func TestRubyMethodParentName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Checkout::ProcessPaymentService#call", "ProcessPaymentService"},
+		{"A.b", "A"},
+		{"Foo::Bar.baz", "Bar"},
+		{"top_level", ""},
+	}
+	for _, c := range cases {
+		if got := rubyMethodParentName(c.in); got != c.want {
+			t.Errorf("rubyMethodParentName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestGoConstructorPossiblyDead(t *testing.T) {
 	got := annotateConfidence([]Symbol{{Language: "go", Kind: "function", Name: "NewThing"}}, nil, nil, false)
 	if got[0].Confidence != ConfidencePossibly {
