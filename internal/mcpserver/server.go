@@ -682,7 +682,7 @@ func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	rolled := dead.Rollup(result.Dead)
-	resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols)
+	resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols, result.Frameworks)
 	resp.CoverageNote = "Static analysis — does not trace dynamic dispatch, decorator registration, or external API consumers"
 
 	h.tracker.Record("sense_graph", "dead_code",
