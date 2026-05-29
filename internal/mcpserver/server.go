@@ -477,6 +477,10 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	resp.Freshness = freshness
 	resp.NextSteps = graphHints(resp, direction)
 
+	// Keep hub responses within the MCP token budget — sheds deeper layers
+	// and trims the longest edge list, recording the count in OmittedEdges.
+	mcpio.ApplyGraphBudget(&resp, h.defaults.GraphTokenBudget)
+
 	out, err := mcpio.MarshalGraphCompactDirectional(resp, direction)
 	if err != nil {
 		return nil, fmt.Errorf("sense_graph: marshal: %w", err)
@@ -926,6 +930,11 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
 	resp.Freshness = freshness
 	resp.NextSteps = blastHints(resp)
+
+	// Keep the response within the MCP token budget — trims enumerated
+	// lists while preserving the summary counts. Runs last so hints and
+	// metrics still reflect the full radius.
+	mcpio.ApplyBlastBudget(&resp, h.defaults.BlastTokenBudget)
 
 	out, err := mcpio.MarshalBlastCompact(resp)
 	if err != nil {

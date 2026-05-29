@@ -183,6 +183,8 @@ type Defaults struct {
 	BlastMaxHops           int
 	BlastMinConfidence     float64
 	BlastResultCap         int
+	BlastTokenBudget       int
+	GraphTokenBudget       int
 	GraphSegmentCallers    bool
 }
 
@@ -196,6 +198,8 @@ func DefaultParams() Defaults {
 		BlastMaxHops:           5,
 		BlastMinConfidence:     0.3,
 		BlastResultCap:         200,
+		BlastTokenBudget:       12000,
+		GraphTokenBudget:       12000,
 		GraphSegmentCallers:    false,
 	}
 }

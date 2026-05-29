@@ -967,6 +967,45 @@ func TestHandleBlastWithIncludeTests(t *testing.T) {
 	}
 }
 
+// TestHandleBlastAppliesTokenBudget locks the wiring: a tiny budget on
+// the handler must trim the response and flag it, while the summary
+// counts survive. Guards against the budget call being dropped.
+func TestHandleBlastAppliesTokenBudget(t *testing.T) {
+	ts := setupTestServer(t)
+	ts.handlers.defaults.BlastTokenBudget = 1 // force trimming
+	result, err := ts.handlers.handleBlast(context.Background(), toolReq(map[string]any{"symbol": "auth.Verify"}))
+	if err != nil {
+		t.Fatalf("handleBlast: %v", err)
+	}
+	var resp mcpio.BlastResponse
+	if err := json.Unmarshal([]byte(resultText(t, result)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.Truncated {
+		t.Error("expected truncated=true when budget forces trimming")
+	}
+	if resp.TotalAffected == 0 {
+		t.Error("total_affected must survive trimming")
+	}
+}
+
+// TestHandleGraphAppliesTokenBudget is the graph-side wiring lock.
+func TestHandleGraphAppliesTokenBudget(t *testing.T) {
+	ts := setupTestServer(t)
+	ts.handlers.defaults.GraphTokenBudget = 1 // force trimming
+	result, err := ts.handlers.handleGraph(context.Background(), toolReq(map[string]any{"symbol": "auth.Verify", "direction": "callers"}))
+	if err != nil {
+		t.Fatalf("handleGraph: %v", err)
+	}
+	var resp mcpio.GraphResponse
+	if err := json.Unmarshal([]byte(resultText(t, result)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.Truncated {
+		t.Error("expected truncated=true when budget forces trimming")
+	}
+}
+
 func TestHandleBlastWithMaxResults(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()

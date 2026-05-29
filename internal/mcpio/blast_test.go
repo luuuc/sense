@@ -627,6 +627,79 @@ func TestBuildDiffBlastResponseTestsAffectedCount(t *testing.T) {
 	}
 }
 
+func bigBlastResponse(direct, indirect, tests int) BlastResponse {
+	r := BlastResponse{
+		Symbol:             "Hub",
+		Risk:               "high",
+		TotalAffected:      direct + indirect,
+		AffectedSymbols:    direct + indirect,
+		TestsAffectedCount: tests,
+	}
+	for i := 0; i < direct; i++ {
+		r.DirectCallers = append(r.DirectCallers, BlastCaller{
+			Symbol: "pkg.Caller" + itoa(i), File: "app/models/caller" + itoa(i) + ".rb", LineStart: i,
+			CallSite: &CallSite{Line: i, Snippet: "some representative source line of code here"},
+		})
+	}
+	for i := 0; i < indirect; i++ {
+		r.IndirectCallers = append(r.IndirectCallers, BlastIndirect{Symbol: "pkg.Ind" + itoa(i), Via: "pkg.V", Hops: 2})
+	}
+	for i := 0; i < tests; i++ {
+		r.AffectedTests = append(r.AffectedTests, "test/thing"+itoa(i)+"_test.rb")
+	}
+	return r
+}
+
+func itoa(i int) string { return fmt.Sprintf("%d", i) }
+
+func TestApplyBlastBudgetNoopUnderBudget(t *testing.T) {
+	r := bigBlastResponse(5, 3, 2)
+	ApplyBlastBudget(&r, 1_000_000)
+	if r.Truncated || len(r.DirectCallers) != 5 || len(r.IndirectCallers) != 3 || len(r.AffectedTests) != 2 {
+		t.Errorf("under-budget response should be untouched: %+v", r)
+	}
+}
+
+func TestApplyBlastBudgetDisabledWhenNonPositive(t *testing.T) {
+	r := bigBlastResponse(200, 200, 200)
+	ApplyBlastBudget(&r, 0)
+	if r.Truncated || len(r.DirectCallers) != 200 {
+		t.Error("budget <= 0 must disable trimming")
+	}
+}
+
+func TestApplyBlastBudgetTrimsToFitPreservingCounts(t *testing.T) {
+	r := bigBlastResponse(400, 300, 120)
+	const budget = 1500
+	ApplyBlastBudget(&r, budget)
+
+	if got := estimateJSONTokens(&r); got > budget {
+		t.Errorf("after trim, tokens=%d still exceed budget=%d", got, budget)
+	}
+	if !r.Truncated {
+		t.Error("expected Truncated=true after trimming")
+	}
+	// Summary counts must survive untouched — the headline answer stays true.
+	if r.TotalAffected != 700 || r.TestsAffectedCount != 120 {
+		t.Errorf("counts must not shrink: TotalAffected=%d TestsAffectedCount=%d", r.TotalAffected, r.TestsAffectedCount)
+	}
+	if len(r.DirectCallers) < 1 {
+		t.Error("must keep at least one direct caller")
+	}
+	if len(r.AffectedTests) > blastTestExamplesCap {
+		t.Errorf("affected_tests sample = %d, want <= %d", len(r.AffectedTests), blastTestExamplesCap)
+	}
+}
+
+func TestTrimStep(t *testing.T) {
+	cases := map[int]int{1: 1, 5: 1, 9: 1, 10: 1, 20: 2, 100: 10}
+	for n, want := range cases {
+		if got := trimStep(n); got != want {
+			t.Errorf("trimStep(%d) = %d, want %d", n, got, want)
+		}
+	}
+}
+
 func TestBuildBlastResponseZeroEdges(t *testing.T) {
 	r := blast.Result{
 		Symbol:         model.Symbol{ID: 1, Qualified: "Isolated"},

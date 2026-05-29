@@ -107,6 +107,11 @@ type GraphResponse struct {
 	// for the root symbol only (not deeper layers), so a consumer knows the
 	// edge list was filtered rather than silently truncated.
 	LowConfidenceHidden int               `json:"low_confidence_hidden,omitempty"`
+	// OmittedEdges counts edges dropped to keep the response within its
+	// token budget (distinct from low_confidence_hidden, which is a
+	// confidence filter). Non-zero means the edge lists are a partial,
+	// highest-signal view — narrow with a direction or a specific symbol.
+	OmittedEdges       int                    `json:"omitted_edges,omitempty"`
 	CoverageNote       string                 `json:"coverage_note,omitempty"`
 	VerifyHint         string                 `json:"verify_hint,omitempty"`
 	IndexCaveat        string                 `json:"index_caveat,omitempty"`

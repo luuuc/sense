@@ -52,6 +52,8 @@ func TestDefaultParams(t *testing.T) {
 		BlastMaxHops:           5,
 		BlastMinConfidence:     0.3,
 		BlastResultCap:         200,
+		BlastTokenBudget:       12000,
+		GraphTokenBudget:       12000,
 		GraphSegmentCallers:    false,
 	}
 	if d != want {
