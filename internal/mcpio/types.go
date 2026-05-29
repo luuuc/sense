@@ -103,6 +103,10 @@ type GraphResponse struct {
 	Truncated          bool               `json:"truncated,omitempty"`
 	SnippetsTruncated  bool               `json:"snippets_truncated,omitempty"`
 	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
+	// LowConfidenceHidden counts usage edges dropped below graphConfidenceFloor
+	// for the root symbol only (not deeper layers), so a consumer knows the
+	// edge list was filtered rather than silently truncated.
+	LowConfidenceHidden int               `json:"low_confidence_hidden,omitempty"`
 	CoverageNote       string                 `json:"coverage_note,omitempty"`
 	VerifyHint         string                 `json:"verify_hint,omitempty"`
 	IndexCaveat        string                 `json:"index_caveat,omitempty"`
