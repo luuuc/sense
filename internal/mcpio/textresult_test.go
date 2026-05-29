@@ -24,7 +24,7 @@ func TestConvertTextResultsBasic(t *testing.T) {
 
 func TestConvertTextResultsDeduplicates(t *testing.T) {
 	existing := []SearchResultEntry{
-		{File: "schema.sql", Line: 1, Kind: "type", Source: "structural"},
+		{File: "schema.sql", Line: 1, Kind: "type", Source: "keyword"},
 	}
 	matches := []TextMatch{
 		{File: "schema.sql", Line: 1, Match: "CREATE TABLE users"},
@@ -44,7 +44,7 @@ func TestConvertTextResultsDeduplicates(t *testing.T) {
 
 func TestConvertTextResultsAllDuplicates(t *testing.T) {
 	existing := []SearchResultEntry{
-		{File: "a.go", Line: 10, Source: "structural"},
+		{File: "a.go", Line: 10, Source: "keyword"},
 	}
 	matches := []TextMatch{
 		{File: "a.go", Line: 10, Match: "something"},
@@ -70,7 +70,7 @@ func TestConvertTextResultsEmpty(t *testing.T) {
 
 func TestConvertTextResultsSameFileDifferentLine(t *testing.T) {
 	existing := []SearchResultEntry{
-		{File: "schema.sql", Line: 1, Source: "structural"},
+		{File: "schema.sql", Line: 1, Source: "keyword"},
 	}
 	matches := []TextMatch{
 		{File: "schema.sql", Line: 5, Match: "ALTER TABLE"},

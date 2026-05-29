@@ -126,6 +126,88 @@ func openTestDB(t *testing.T) *sqlite.Adapter {
 	return a
 }
 
+func TestEnrichFromGraphInjectsGraphSource(t *testing.T) {
+	ctx := context.Background()
+	a := openTestDB(t)
+
+	fid, err := a.WriteFile(ctx, &model.File{Path: "h.go", Language: "go", Hash: "h1", Symbols: 2, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub, err := a.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "Hub", Qualified: "pkg.Hub", Kind: "function", LineStart: 1, LineEnd: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callee, err := a.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "Leaf", Qualified: "pkg.Leaf", Kind: "function", LineStart: 6, LineEnd: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteEdge(ctx, &model.Edge{SourceID: &hub, TargetID: callee, Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0}); err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewEngine(a, nil, nil)
+	// Only the hub is a search hit; the callee is absent and must be
+	// injected by graph enrichment with SourceGraph provenance.
+	results := []Result{{SymbolID: hub, Name: "Hub", Qualified: "pkg.Hub", Score: 1.0, Source: SourceKeyword}}
+	out, err := e.enrichFromGraph(ctx, results)
+	if err != nil {
+		t.Fatalf("enrichFromGraph: %v", err)
+	}
+	var found bool
+	for _, r := range out {
+		if r.SymbolID == callee {
+			found = true
+			if r.Source != SourceGraph {
+				t.Errorf("injected callee source = %q, want %q", r.Source, SourceGraph)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected callee to be injected by enrichment")
+	}
+}
+
+func TestSubstringFallbackEarlyReturn(t *testing.T) {
+	// At or above the threshold, keyword results are returned untouched
+	// without consulting the substring index.
+	e := NewEngine(nil, nil, nil)
+	kw := make([]sqlite.SearchResult, substringFallbackThreshold)
+	for i := range kw {
+		kw[i] = sqlite.SearchResult{SymbolID: int64(i + 1)}
+	}
+	got := e.substringFallback(context.Background(), kw, "anything", "", 10)
+	if len(got) != substringFallbackThreshold {
+		t.Errorf("len = %d, want %d (unchanged)", len(got), substringFallbackThreshold)
+	}
+}
+
+func TestSubstringFallbackMergesMatches(t *testing.T) {
+	ctx := context.Background()
+	a := openTestDB(t)
+	fid, err := a.WriteFile(ctx, &model.File{Path: "w.go", Language: "go", Hash: "h1", Symbols: 1, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := a.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "ZebraWidget", Qualified: "pkg.ZebraWidget", Kind: "function", LineStart: 1, LineEnd: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewEngine(a, nil, nil)
+	// Below threshold and empty → substring search supplies the match.
+	got := e.substringFallback(ctx, nil, "Zebra", "", 10)
+	var found bool
+	for _, r := range got {
+		if r.SymbolID == sid {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("substring fallback did not surface ZebraWidget; got %+v", got)
+	}
+}
+
 func TestPromoteParentsEmpty(t *testing.T) {
 	e := NewEngine(nil, nil, nil)
 	out, err := e.promoteParents(context.Background(), nil, 10)
@@ -194,8 +276,8 @@ func TestPromoteParentsPromotes(t *testing.T) {
 
 	e := NewEngine(a, nil, nil)
 	results := []Result{
-		{SymbolID: child1, Name: "Method1", Score: 0.9},
-		{SymbolID: child2, Name: "Method2", Score: 0.8},
+		{SymbolID: child1, Name: "Method1", Score: 0.9, Source: SourceVector},
+		{SymbolID: child2, Name: "Method2", Score: 0.8, Source: SourceKeyword},
 	}
 	out, err := e.promoteParents(ctx, results, 10)
 	if err != nil {
@@ -210,6 +292,11 @@ func TestPromoteParentsPromotes(t *testing.T) {
 	}
 	if out[0].Name != "MyClass" {
 		t.Errorf("expected name MyClass, got %q", out[0].Name)
+	}
+	// The promoted parent inherits the provenance of the highest-scoring
+	// child (Method1, vector-sourced) whose score it takes.
+	if out[0].Source != SourceVector {
+		t.Errorf("promoted parent source = %q, want %q", out[0].Source, SourceVector)
 	}
 }
 

@@ -184,7 +184,7 @@ func buildSearchResponse(results []search.Result, pathByID map[int64]string, met
 			Score:      mcpio.SearchScore(r.Score),
 			Snippet:    r.Snippet,
 			References: r.References,
-			Source:     "structural",
+			Source:     r.Source,
 		}
 		if path != "" {
 			uniqueFiles[path] = struct{}{}

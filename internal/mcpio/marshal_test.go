@@ -709,7 +709,7 @@ func TestMarshalGraphCompactDirectional(t *testing.T) {
 func searchFixture() SearchResponse {
 	return SearchResponse{
 		Results: []SearchResultEntry{
-			{Symbol: "User", File: "app/models/user.rb", Line: 1, Kind: "class", Score: 0.92, Snippet: "class User < ApplicationRecord", References: 12, Source: "structural"},
+			{Symbol: "User", File: "app/models/user.rb", Line: 1, Kind: "class", Score: 0.92, Snippet: "class User < ApplicationRecord", References: 12, Source: "hybrid"},
 		},
 		SearchMode:    "hybrid",
 		FusionWeights: FusionWeights{Keyword: 0.6, Vector: 0.4},

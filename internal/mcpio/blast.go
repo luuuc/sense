@@ -229,6 +229,7 @@ func BuildDiffBlastResponse(ctx context.Context, ref string, results []blast.Res
 	}
 
 	resp.Risk = risk
+	resp.TestsAffectedCount = len(resp.AffectedTests)
 	resp.TotalAffected = len(resp.DirectCallers) + len(resp.IndirectCallers)
 	resp.AffectedSymbols = resp.TotalAffected
 	resp.GraphEdgesTraversed = totalEdges

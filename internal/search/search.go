@@ -20,6 +20,8 @@ type Reranker interface {
 }
 
 // Result is a single fused search hit with metadata from both backends.
+// Source records which retrieval leg surfaced the hit so consumers can
+// tell keyword matches from semantic ones — see the Source* constants.
 type Result struct {
 	SymbolID   int64
 	Name       string
@@ -30,6 +32,49 @@ type Result struct {
 	Snippet    string
 	Score      float64
 	References int
+	Source     string
+}
+
+// Source values for Result.Source. They report provenance — which
+// retrieval leg actually surfaced a hit — not where it finally ranked.
+// A hit found by both the keyword (FTS5) and vector (HNSW) legs is
+// SourceHybrid; one injected by graph enrichment is SourceGraph; the
+// substring text-fallback path sets "text" directly (see textresult.go).
+const (
+	SourceKeyword = "keyword"
+	SourceVector  = "vector"
+	SourceHybrid  = "hybrid"
+	SourceGraph   = "graph"
+)
+
+// sourceLabel maps the per-leg contribution flags to a Source value.
+// Keyword-only mode (no vector leg) always yields SourceKeyword because
+// vec is never set.
+func sourceLabel(kw, vec bool) string {
+	switch {
+	case kw && vec:
+		return SourceHybrid
+	case vec:
+		return SourceVector
+	default:
+		return SourceKeyword
+	}
+}
+
+// mergeSource combines the provenance of one symbol seen across multiple
+// sub-queries. Differing non-empty legs (keyword in one, vector in
+// another) mean both legs contributed somewhere, so the merge is hybrid.
+func mergeSource(a, b string) string {
+	switch {
+	case a == b:
+		return a
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return SourceHybrid
+	}
 }
 
 // Options controls search behavior.
@@ -331,6 +376,8 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vec
 	type entry struct {
 		result Result
 		score  float64
+		kw     bool
+		vec    bool
 	}
 	merged := make(map[int64]*entry)
 
@@ -339,6 +386,7 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vec
 		rrfScore := kwWeight / float64(rrfK+rank+1)
 		if e, ok := merged[id]; ok {
 			e.score += rrfScore
+			e.kw = true
 		} else {
 			merged[id] = &entry{
 				result: Result{
@@ -351,6 +399,7 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vec
 					Snippet:   kr.Snippet,
 				},
 				score: rrfScore,
+				kw:    true,
 			}
 		}
 	}
@@ -361,12 +410,14 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vec
 			rrfScore := vecWeight / float64(rrfK+rank+1)
 			if e, ok := merged[id]; ok {
 				e.score += rrfScore
+				e.vec = true
 			} else {
 				merged[id] = &entry{
 					result: Result{
 						SymbolID: vr.SymbolID,
 					},
 					score: rrfScore,
+					vec:   true,
 				}
 			}
 		}
@@ -375,6 +426,7 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vec
 	results := make([]Result, 0, len(merged))
 	for _, e := range merged {
 		e.result.Score = e.score
+		e.result.Source = sourceLabel(e.kw, e.vec)
 		results = append(results, e.result)
 	}
 	return results
@@ -661,6 +713,7 @@ func (e *Engine) enrichFromGraph(ctx context.Context, results []Result) ([]Resul
 				LineStart:  sym.LineStart,
 				Snippet:   sym.Snippet,
 				Score:     enrichBaseScore,
+				Source:    SourceGraph,
 			})
 		}
 	}
@@ -702,9 +755,10 @@ func (e *Engine) promoteParents(ctx context.Context, results []Result, limit int
 	}
 
 	type parentGroup struct {
-		info     sqlite.ParentInfo
-		children []int
-		maxScore float64
+		info      sqlite.ParentInfo
+		children  []int
+		maxScore  float64
+		maxSource string
 	}
 	groups := map[int64]*parentGroup{}
 	for i := range topK {
@@ -720,6 +774,7 @@ func (e *Engine) promoteParents(ctx context.Context, results []Result, limit int
 		g.children = append(g.children, i)
 		if results[i].Score > g.maxScore {
 			g.maxScore = results[i].Score
+			g.maxSource = results[i].Source
 		}
 	}
 
@@ -749,6 +804,7 @@ func (e *Engine) promoteParents(ctx context.Context, results []Result, limit int
 			LineStart: g.info.LineStart,
 			Snippet:   g.info.Snippet,
 			Score:     g.maxScore,
+			Source:    g.maxSource,
 		})
 	}
 
