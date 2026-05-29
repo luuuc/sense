@@ -2,6 +2,12 @@ package mcpio
 
 import "strconv"
 
+// SourceText labels a SearchResultEntry that came from the substring
+// text-fallback path rather than the keyword/vector retrieval legs. The
+// other Source values (keyword/vector/hybrid/graph) originate in the
+// search engine; "text" originates here, so it is named here.
+const SourceText = "text"
+
 // TextMatch holds the fields needed to convert a text fallback hit into
 // a SearchResultEntry. Defined here (rather than importing search.TextResult)
 // to keep mcpio free of upstream dependencies on the search package.
@@ -32,7 +38,7 @@ func ConvertTextResults(matches []TextMatch, structuralEntries []SearchResultEnt
 			Line:    m.Line,
 			Kind:    "text_match",
 			Snippet: m.Match,
-			Source:  "text",
+			Source:  SourceText,
 		})
 	}
 	return entries, len(entries) > 0

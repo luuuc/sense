@@ -985,6 +985,18 @@ func TestGraphEnrichmentBoostsCallees(t *testing.T) {
 		t.Errorf("HandleRoute (callee of top result) score=%.4f should be > HTTPConfig score=%.4f",
 			handleRouteScore, httpConfigScore)
 	}
+
+	// Every result must carry honest provenance — never empty, never the
+	// old hardcoded "structural" placeholder.
+	valid := map[string]bool{
+		search.SourceKeyword: true, search.SourceVector: true,
+		search.SourceHybrid: true, search.SourceGraph: true,
+	}
+	for _, r := range results {
+		if !valid[r.Source] {
+			t.Errorf("result %s has invalid source %q", r.Qualified, r.Source)
+		}
+	}
 	t.Logf("enrichment result:")
 	for i, r := range results {
 		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)

@@ -207,6 +207,43 @@ func TestHandleSearchStripsSnippets(t *testing.T) {
 	}
 }
 
+// TestHandleSearchSourceIsHonest pins the wire-layer contract: the
+// handler must emit the engine's real provenance, never the old
+// hardcoded "structural" placeholder. Guards against a future refactor
+// silently re-hardcoding the field.
+func TestHandleSearchSourceIsHonest(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result, err := ts.handlers.handleSearch(ctx, toolReq(map[string]any{
+		"query": "Verify",
+		"limit": 10,
+	}))
+	if err != nil {
+		t.Fatalf("handleSearch: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", resultText(t, result))
+	}
+
+	var resp mcpio.SearchResponse
+	if err := json.Unmarshal([]byte(resultText(t, result)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("expected results for seeded query")
+	}
+	honest := map[string]bool{"keyword": true, "vector": true, "hybrid": true, "graph": true, "text": true}
+	for _, r := range resp.Results {
+		if r.Source == "structural" {
+			t.Errorf("result %s still carries hardcoded 'structural' source", r.Symbol)
+		}
+		if !honest[r.Source] {
+			t.Errorf("result %s has unrecognized source %q", r.Symbol, r.Source)
+		}
+	}
+}
+
 func TestHandleSearchSessionDedup(t *testing.T) {
 	ts := setupTestServer(t)
 	h := ts.handlers

@@ -761,7 +761,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 			Score:      mcpio.SearchScore(r.Score),
 			Snippet:    r.Snippet,
 			References: r.References,
-			Source:     "structural",
+			Source:     r.Source,
 		}
 		h.seenMu.Lock()
 		if h.seenSymbols[r.SymbolID] {

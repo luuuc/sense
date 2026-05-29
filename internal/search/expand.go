@@ -110,6 +110,7 @@ func mergeMultiQuery(queryResults [][]Result) []Result {
 			rrfScore := 1.0 / float64(rrfK+rank+1)
 			if e, ok := merged[r.SymbolID]; ok {
 				e.score += rrfScore
+				e.result.Source = mergeSource(e.result.Source, r.Source)
 			} else {
 				merged[r.SymbolID] = &entry{result: r, score: rrfScore}
 			}

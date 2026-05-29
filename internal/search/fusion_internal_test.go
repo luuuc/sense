@@ -125,12 +125,113 @@ func TestFuseRRFBothSources(t *testing.T) {
 		t.Fatalf("fuseRRF returned %d, want 3", len(got))
 	}
 	scoreMap := map[int64]float64{}
+	srcMap := map[int64]string{}
 	for _, r := range got {
 		scoreMap[r.SymbolID] = r.Score
+		srcMap[r.SymbolID] = r.Source
 	}
 	// Symbol 1 appears in both sources, should have highest score
 	if scoreMap[1] <= scoreMap[2] || scoreMap[1] <= scoreMap[3] {
 		t.Errorf("shared symbol should have highest score: %v", scoreMap)
+	}
+	// Provenance must be honest: 1 from both legs, 2 keyword-only, 3 vector-only.
+	if srcMap[1] != SourceHybrid {
+		t.Errorf("symbol 1 source = %q, want %q", srcMap[1], SourceHybrid)
+	}
+	if srcMap[2] != SourceKeyword {
+		t.Errorf("symbol 2 source = %q, want %q", srcMap[2], SourceKeyword)
+	}
+	if srcMap[3] != SourceVector {
+		t.Errorf("symbol 3 source = %q, want %q", srcMap[3], SourceVector)
+	}
+}
+
+func TestFuseRRFKeywordOnlyTagsSource(t *testing.T) {
+	kw := []sqlite.SearchResult{{SymbolID: 1, Name: "a"}, {SymbolID: 2, Name: "b"}}
+	// vecWeight 0 means the vector leg is ignored entirely (keyword-only mode).
+	got := fuseRRF(kw, []VectorResult{{SymbolID: 1, Similarity: 0.9}}, 1.0, 0.0)
+	for _, r := range got {
+		if r.Source != SourceKeyword {
+			t.Errorf("symbol %d source = %q, want %q", r.SymbolID, r.Source, SourceKeyword)
+		}
+	}
+}
+
+func TestFuseRRFKeywordDuplicateAccumulates(t *testing.T) {
+	// A symbol appearing twice in the keyword list accumulates both RRF
+	// contributions and stays keyword-sourced.
+	kw := []sqlite.SearchResult{
+		{SymbolID: 1, Name: "dup"},
+		{SymbolID: 1, Name: "dup"},
+		{SymbolID: 2, Name: "other"},
+	}
+	got := fuseRRF(kw, nil, 1.0, 0.0)
+	var dup, other Result
+	for _, r := range got {
+		switch r.SymbolID {
+		case 1:
+			dup = r
+		case 2:
+			other = r
+		}
+	}
+	if dup.Source != SourceKeyword {
+		t.Errorf("dup source = %q, want %q", dup.Source, SourceKeyword)
+	}
+	if dup.Score <= other.Score {
+		t.Errorf("twice-listed symbol should outscore single: dup=%v other=%v", dup.Score, other.Score)
+	}
+}
+
+func TestSourceLabel(t *testing.T) {
+	cases := []struct {
+		kw, vec bool
+		want    string
+	}{
+		{true, false, SourceKeyword},
+		{false, true, SourceVector},
+		{true, true, SourceHybrid},
+		{false, false, SourceKeyword}, // defensive default
+	}
+	for _, c := range cases {
+		if got := sourceLabel(c.kw, c.vec); got != c.want {
+			t.Errorf("sourceLabel(%v, %v) = %q, want %q", c.kw, c.vec, got, c.want)
+		}
+	}
+}
+
+func TestMergeSource(t *testing.T) {
+	cases := []struct {
+		a, b, want string
+	}{
+		{SourceKeyword, SourceKeyword, SourceKeyword},
+		{SourceVector, SourceVector, SourceVector},
+		{SourceKeyword, SourceVector, SourceHybrid},
+		{SourceVector, SourceKeyword, SourceHybrid},
+		{"", SourceVector, SourceVector},
+		{SourceKeyword, "", SourceKeyword},
+		{SourceHybrid, SourceKeyword, SourceHybrid},
+	}
+	for _, c := range cases {
+		if got := mergeSource(c.a, c.b); got != c.want {
+			t.Errorf("mergeSource(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestMergeMultiQueryCombinesSource(t *testing.T) {
+	// Symbol 1 is keyword-sourced in query A and vector-sourced in query B:
+	// the merged provenance must reflect both legs.
+	queryResults := [][]Result{
+		{{SymbolID: 1, Source: SourceKeyword}},
+		{{SymbolID: 1, Source: SourceVector}},
+	}
+	got := mergeMultiQuery(queryResults)
+	if len(got) != 1 {
+		t.Fatalf("mergeMultiQuery returned %d, want 1", len(got))
+	}
+	if got[0].Source != SourceHybrid {
+		t.Errorf("merged source = %q, want %q", got[0].Source, SourceHybrid)
 	}
 }
 
