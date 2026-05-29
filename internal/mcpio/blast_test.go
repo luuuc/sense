@@ -597,6 +597,36 @@ func TestBuildDiffBlastResponseAffectedSymbolsAndFiles(t *testing.T) {
 	}
 }
 
+// TestBuildDiffBlastResponseTestsAffectedCount pins that the diff path
+// populates tests_affected_count from the deduped affected_tests list —
+// it was silently left at 0 while the list held entries, contradicting
+// the data a consumer reads for safe-to-change decisions.
+func TestBuildDiffBlastResponseTestsAffectedCount(t *testing.T) {
+	results := []blast.Result{
+		{
+			Symbol:        model.Symbol{ID: 1, Qualified: "A"},
+			Risk:          blast.RiskLow,
+			AffectedTests: []string{"test/a_test.rb", "test/shared_test.rb"},
+		},
+		{
+			Symbol:        model.Symbol{ID: 2, Qualified: "B"},
+			Risk:          blast.RiskLow,
+			AffectedTests: []string{"test/b_test.rb", "test/shared_test.rb"},
+		},
+	}
+
+	resp := BuildDiffBlastResponse(context.Background(), "HEAD~1", results, noFiles, nil)
+
+	// shared_test.rb is deduped → 3 unique tests.
+	if len(resp.AffectedTests) != 3 {
+		t.Fatalf("AffectedTests = %d, want 3", len(resp.AffectedTests))
+	}
+	if resp.TestsAffectedCount != len(resp.AffectedTests) {
+		t.Errorf("TestsAffectedCount = %d, want %d (must match affected_tests)",
+			resp.TestsAffectedCount, len(resp.AffectedTests))
+	}
+}
+
 func TestBuildBlastResponseZeroEdges(t *testing.T) {
 	r := blast.Result{
 		Symbol:         model.Symbol{ID: 1, Qualified: "Isolated"},
