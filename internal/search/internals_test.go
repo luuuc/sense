@@ -208,6 +208,48 @@ func TestSubstringFallbackMergesMatches(t *testing.T) {
 	}
 }
 
+func TestSearchRanksImplementationAboveItsTest(t *testing.T) {
+	ctx := context.Background()
+	a := openTestDB(t)
+
+	implFile, err := a.WriteFile(ctx, &model.File{Path: "internal/parse/parse.go", Language: "go", Hash: "h1", Symbols: 1, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testFile, err := a.WriteFile(ctx, &model.File{Path: "internal/parse/parse_test.go", Language: "go", Hash: "h2", Symbols: 1, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{FileID: implFile, Name: "ParseConfig", Qualified: "parse.ParseConfig", Kind: "function", LineStart: 1, LineEnd: 5, Snippet: "func ParseConfig(path string) (*Config, error)"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{FileID: testFile, Name: "TestParseConfig", Qualified: "parse_test.TestParseConfig", Kind: "function", LineStart: 1, LineEnd: 5, Snippet: "func TestParseConfig(t *testing.T)"}); err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewEngine(a, nil, nil)
+	results, _, err := e.Search(ctx, Options{Query: "parse config", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	implPos, testPos := -1, -1
+	for i, r := range results {
+		switch r.Name {
+		case "ParseConfig":
+			implPos = i
+		case "TestParseConfig":
+			testPos = i
+		}
+	}
+	if implPos == -1 {
+		t.Fatal("implementation ParseConfig not in results")
+	}
+	if testPos != -1 && implPos > testPos {
+		t.Errorf("implementation ranked %d, below its test at %d — demotion failed", implPos, testPos)
+	}
+}
+
 func TestPromoteParentsEmpty(t *testing.T) {
 	e := NewEngine(nil, nil, nil)
 	out, err := e.promoteParents(context.Background(), nil, 10)
