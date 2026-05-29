@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -304,6 +305,14 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	normalizeScores(fused)
 	applyGraphCentrality(fused, centrality)
 
+	// Decisive test demotion, applied last so it survives the [0,1]
+	// rescale above. Test symbols match a query's tokens more densely
+	// than the implementation they exercise (TestParseConfig vs Parse),
+	// so a pre-normalize penalty is out-voted by the raw keyword gap;
+	// here every score is bounded, so the penalty reliably ranks the
+	// implementation above its tests. Skipped for test-oriented queries.
+	applyTestDemotion(fused, pathByID, opts.Query)
+
 	// Sort by final score descending.
 	sort.Slice(fused, func(i, j int) bool {
 		return fused[i].Score > fused[j].Score
@@ -503,6 +512,15 @@ const (
 
 var testNamePrefixes = []string{"Test", "Mock", "Fake", "Stub"}
 
+// applyKindWeights demotes modules (namespaces, rarely the search target)
+// and applies a pre-normalization test-name penalty. This pre-norm pass
+// is NOT redundant with applyTestDemotion (which runs post-norm): it
+// keeps a verbatim-matching test from becoming the normalize-max, since
+// normalizeScores pins the lowest score to 0 and the multiplicative
+// centrality boost cannot lift a 0 — so without it an implementation
+// that is the weakest keyword match gets stuck at the bottom. The two
+// passes are complementary: this one shapes which symbol anchors the
+// rescale; applyTestDemotion is the decisive reorder afterward.
 func applyKindWeights(results []Result) {
 	for i := range results {
 		if results[i].Kind == "module" {
@@ -602,6 +620,88 @@ func applyPathWeights(results []Result, pathByID map[int64]string) {
 			}
 		}
 	}
+}
+
+// testRankPenalty multiplies the final, normalized score of a test or
+// mock symbol. Tuned so an implementation of even modest relevance
+// (normalized ~0.3) outranks a test that matched the query verbatim
+// (normalized 1.0 → 0.2 after the penalty).
+const testRankPenalty = 0.2
+
+// testFilePathSegments identifies test/spec/mock paths across languages.
+var testFilePathSegments = []string{
+	"_test.", "_spec.", ".test.", ".spec.",
+	"/test/", "/tests/", "/spec/", "/specs/",
+	"/mock/", "/mocks/", "/__tests__/", "/testdata/",
+}
+
+var testFilePathPrefixes = []string{"test/", "spec/"}
+
+// applyTestDemotion multiplies test/mock symbols' scores by
+// testRankPenalty as the final ranking step, so implementations outrank
+// the tests that exercise them. It is a no-op when the query is itself
+// about tests (e.g. "test for the parser", "spec coverage"), where the
+// caller genuinely wants test code surfaced.
+func applyTestDemotion(results []Result, pathByID map[int64]string, query string) {
+	if queryTargetsTests(query) {
+		return
+	}
+	for i := range results {
+		if isTestSymbol(results[i].Name) || isTestPath(pathByID[results[i].FileID]) {
+			results[i].Score *= testRankPenalty
+		}
+	}
+}
+
+// testQueryWords are whole-word signals that the caller wants test code.
+var testQueryWords = map[string]struct{}{
+	"test": {}, "tests": {}, "testing": {},
+	"spec": {}, "specs": {}, "mock": {}, "mocks": {}, "mocked": {},
+}
+
+// queryTargetsTests reports whether the query is explicitly about test
+// code, in which case test results should not be demoted. It matches on
+// whole words so "latest", "specification", and "inspect" do not count
+// as test queries.
+func queryTargetsTests(query string) bool {
+	for _, tok := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if _, ok := testQueryWords[tok]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isTestSymbol reports whether a symbol name signals test/mock code.
+func isTestSymbol(name string) bool {
+	for _, prefix := range testNamePrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTestPath reports whether a file path is a test/spec/mock file.
+// Mirrors mcpio.IsTestPath; kept separate because search cannot import
+// the mcpio marshalling layer. Keep the two in sync if patterns change.
+func isTestPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, p := range testFilePathPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	for _, seg := range testFilePathSegments {
+		if strings.Contains(path, seg) {
+			return true
+		}
+	}
+	return false
 }
 
 const vectorConfidenceTopK = 3

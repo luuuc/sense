@@ -1,6 +1,7 @@
 package search
 
 import (
+	"math"
 	"sort"
 	"testing"
 
@@ -180,6 +181,87 @@ func TestFuseRRFKeywordDuplicateAccumulates(t *testing.T) {
 	}
 	if dup.Score <= other.Score {
 		t.Errorf("twice-listed symbol should outscore single: dup=%v other=%v", dup.Score, other.Score)
+	}
+}
+
+func TestQueryTargetsTests(t *testing.T) {
+	yes := []string{"test for the parser", "spec coverage", "mock server", "unit Test", "test_helpers setup"}
+	// Whole-word matching: these contain test/spec/mock as substrings but
+	// are not about tests.
+	no := []string{"build the scanner", "how does auth work", "payment flow",
+		"latest changes", "specification format", "inspect the request", "hammock config"}
+	for _, q := range yes {
+		if !queryTargetsTests(q) {
+			t.Errorf("queryTargetsTests(%q) = false, want true", q)
+		}
+	}
+	for _, q := range no {
+		if queryTargetsTests(q) {
+			t.Errorf("queryTargetsTests(%q) = true, want false", q)
+		}
+	}
+}
+
+func TestIsTestSymbol(t *testing.T) {
+	for _, n := range []string{"TestParse", "MockClient", "FakeDB", "StubServer"} {
+		if !isTestSymbol(n) {
+			t.Errorf("isTestSymbol(%q) = false, want true", n)
+		}
+	}
+	for _, n := range []string{"Parse", "FindUser", "Authenticator"} {
+		if isTestSymbol(n) {
+			t.Errorf("isTestSymbol(%q) = true, want false", n)
+		}
+	}
+}
+
+func TestIsTestPath(t *testing.T) {
+	for _, p := range []string{"internal/dead/dead_test.go", "spec/models/user_spec.rb", "test/foo.rb", "app/__tests__/x.js", "internal/scan/testdata/x.go"} {
+		if !isTestPath(p) {
+			t.Errorf("isTestPath(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{"app/models/user.rb", "internal/dead/dead.go", ""} {
+		if isTestPath(p) {
+			t.Errorf("isTestPath(%q) = true, want false", p)
+		}
+	}
+}
+
+func TestApplyTestDemotion(t *testing.T) {
+	paths := map[int64]string{1: "internal/dead/dead.go", 2: "internal/dead/dead_test.go", 3: "internal/x/y.go"}
+	mk := func() []Result {
+		return []Result{
+			{SymbolID: 1, Name: "FindDead", FileID: 1, Score: 0.6},  // impl
+			{SymbolID: 2, Name: "TestFindDead", FileID: 2, Score: 1.0}, // test by path+name
+			{SymbolID: 3, Name: "MockThing", FileID: 3, Score: 0.9},  // test by name only
+		}
+	}
+
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+	// Non-test query: tests demoted, impl untouched.
+	r := mk()
+	applyTestDemotion(r, paths, "find dead code")
+	if r[0].Score != 0.6 {
+		t.Errorf("impl score changed: %v", r[0].Score)
+	}
+	if !near(r[1].Score, 1.0*testRankPenalty) {
+		t.Errorf("test-by-path score = %v, want %v", r[1].Score, testRankPenalty)
+	}
+	if !near(r[2].Score, 0.9*testRankPenalty) {
+		t.Errorf("mock-by-name score = %v, want %v", r[2].Score, 0.9*testRankPenalty)
+	}
+	// After demotion the implementation outranks both tests.
+	if r[0].Score <= r[1].Score || r[0].Score <= r[2].Score {
+		t.Error("implementation should outrank tests after demotion")
+	}
+
+	// Test-oriented query: no demotion at all.
+	r2 := mk()
+	applyTestDemotion(r2, paths, "test for dead code")
+	if r2[1].Score != 1.0 || r2[2].Score != 0.9 {
+		t.Error("test-oriented query must not demote test results")
 	}
 }
 
