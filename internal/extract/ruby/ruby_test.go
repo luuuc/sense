@@ -3834,3 +3834,85 @@ end
 		t.Error("non-noise method should still emit a fallback calls edge")
 	}
 }
+
+func TestCoreNoiseMethodDroppedOnLiteralReceiverRuby(t *testing.T) {
+	// Receiver kinds not matched by resolveCallTarget's switch (string,
+	// array, integer literals) hit the fallthrough; core-noise methods on
+	// them must also be dropped, while a domain method still emits.
+	r := parseRuby(t, `class Order
+  def process
+    "".empty?
+    [].archive
+  end
+end
+`)
+	if findEdge(r, "Order#process", "empty?", "calls") != nil {
+		t.Error("core-noise method empty? on a literal receiver should be dropped")
+	}
+	if findEdge(r, "Order#process", "archive", "calls") == nil {
+		t.Error("non-noise method on a literal receiver should still emit a fallback edge")
+	}
+}
+
+func TestSuperclassNotEmittedAsReferenceRuby(t *testing.T) {
+	// A superclass is recorded as an inherits edge, never as a references edge.
+	r := parseRuby(t, `class Parent
+end
+
+class Child < Parent
+  def work
+    helper
+  end
+end
+`)
+	if findEdge(r, "Child", "Parent", "references") != nil {
+		t.Error("superclass should be inherits, not references")
+	}
+	if findEdge(r, "Child", "Parent", "inherits") == nil {
+		t.Error("missing inherits edge Child -> Parent")
+	}
+}
+
+func TestStructuralDSLArgsNoDoubleReferenceRuby(t *testing.T) {
+	// extend (includes) and has_many (composes via serializer:) already emit
+	// a more specific edge; their constant args must not also emit references.
+	r := parseRuby(t, `class Widget
+  extend Helpers
+  has_many :comments, serializer: CommentSerializer
+end
+`)
+	if findEdge(r, "Widget", "Helpers", "includes") == nil {
+		t.Error("missing includes edge for extend")
+	}
+	if findEdge(r, "Widget", "Helpers", "references") != nil {
+		t.Error("extend arg should not also emit a references edge")
+	}
+	if findEdge(r, "Widget", "CommentSerializer", "references") != nil {
+		t.Error("has_many serializer arg should not also emit a references edge")
+	}
+}
+
+func TestPkgBindingFirstWriteWinsRuby(t *testing.T) {
+	// Two classes share a trailing segment; the bare-name binding resolves to
+	// the first-registered one. Exercises the already-exists guard in
+	// collectConstants.
+	r := parseRuby(t, `module Admin
+  class Account
+  end
+end
+
+module Billing
+  class Account
+  end
+end
+
+class Report
+  def run
+    x = Account
+  end
+end
+`)
+	if findEdge(r, "Report#run", "Admin::Account", "references") == nil {
+		t.Error("bare Account should resolve to first-registered Admin::Account")
+	}
+}

@@ -906,7 +906,7 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 		return unresolvedCall(methodName)
 	}
 
-	return methodName, extract.ConfidenceUnresolved
+	return unresolvedCall(methodName)
 }
 
 // resolveChainReceiver recursively resolves a call-chain receiver to a type

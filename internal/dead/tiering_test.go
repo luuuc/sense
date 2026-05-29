@@ -36,3 +36,24 @@ func TestGoConstructorPossiblyDead(t *testing.T) {
 		t.Errorf("go constructor confidence = %q, want %q", got[0].Confidence, ConfidencePossibly)
 	}
 }
+
+// Interface methods and trait/interface-implementor methods are tiered
+// possibly_dead — covers the two ParentID branches in annotateConfidence.
+func TestInterfaceAndImplementorTiering(t *testing.T) {
+	interfaceIDs := map[int64]struct{}{10: {}}
+	implementorIDs := map[int64]struct{}{20: {}}
+	pid10, pid20 := int64(10), int64(20)
+	cases := []struct {
+		name string
+		sym  Symbol
+	}{
+		{"interface method", Symbol{Kind: "method", Name: "Do", ParentID: &pid10}},
+		{"implementor method", Symbol{Kind: "method", Name: "Do", ParentID: &pid20}},
+	}
+	for _, c := range cases {
+		got := annotateConfidence([]Symbol{c.sym}, interfaceIDs, implementorIDs)
+		if got[0].Confidence != ConfidencePossibly {
+			t.Errorf("%s: confidence = %q, want %q", c.name, got[0].Confidence, ConfidencePossibly)
+		}
+	}
+}
