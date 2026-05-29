@@ -197,6 +197,40 @@ func TestSymbolRefs(t *testing.T) {
 	}
 }
 
+func TestSymbolRefsCarriesReceiver(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "price.rb", "ruby", "h1")
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "zero", Qualified: "PriceValue.zero",
+		Kind: model.KindMethod, Receiver: "singleton", LineStart: 1, LineEnd: 3,
+	}); err != nil {
+		t.Fatalf("WriteSymbol singleton: %v", err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "zero?", Qualified: "PriceValue#zero?",
+		Kind: model.KindMethod, Receiver: "instance", LineStart: 5, LineEnd: 7,
+	}); err != nil {
+		t.Fatalf("WriteSymbol instance: %v", err)
+	}
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.Qualified] = r.Receiver
+	}
+	if got["PriceValue.zero"] != "singleton" {
+		t.Errorf("PriceValue.zero Receiver = %q, want singleton", got["PriceValue.zero"])
+	}
+	if got["PriceValue#zero?"] != "instance" {
+		t.Errorf("PriceValue#zero? Receiver = %q, want instance", got["PriceValue#zero?"])
+	}
+}
+
 func TestEdgesOfKind(t *testing.T) {
 	a := openTestDB(t)
 	ctx := context.Background()

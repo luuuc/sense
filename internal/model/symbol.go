@@ -17,6 +17,11 @@ type Symbol struct {
 	Qualified  string
 	Kind       SymbolKind
 	Visibility string
+	// Receiver is a method's dispatch kind for languages that distinguish
+	// them: "instance" or "singleton". Empty for non-methods and languages
+	// that don't carry the distinction. See the resolver's unqualified
+	// fallback, which uses it to avoid instance/singleton mis-binding.
+	Receiver   string
 	ParentID   *int64
 	LineStart  int // 1-indexed; 0 means unknown (emitted as omitted via json:",omitempty" on wire types)
 	LineEnd    int // 1-indexed; 0 means unknown (emitted as omitted via json:",omitempty" on wire types)
@@ -34,6 +39,10 @@ type SymbolRef struct {
 	ID        int64
 	Qualified string
 	FileID    int64
+	// Receiver mirrors Symbol.Receiver ("instance"/"singleton"/""): the
+	// resolver's unqualified fallback filters candidates by dispatch kind
+	// so an instance call cannot bind to a same-named singleton method.
+	Receiver string
 }
 
 // HydrateSymbolNullables copies the sql.NullXxx carriers scanned from

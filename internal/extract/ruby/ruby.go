@@ -365,8 +365,8 @@ func (w *walker) walkTestBody(body *sitter.Node, scope []string, source string) 
 	}); err != nil {
 		return err
 	}
-	// Emit edges for bare identifiers in statement position.
-	return w.emitBareIdentifierCalls(body, source, extract.ConfidenceTests)
+	// Emit edges for bare identifiers in statement and value positions.
+	return w.emitBareIdentifierCalls(body, source, extract.ConfidenceTests, nil)
 }
 
 // isInsideNestedTestBlock returns true if n sits inside a test DSL call
@@ -645,20 +645,25 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	}
 
 	parent := strings.Join(scope, "::")
-	var qualified string
+	var qualified, receiver string
 	switch {
 	case parent == "":
+		// Top-level def: attaches to Object at runtime; no class-vs-instance
+		// dispatch distinction to record.
 		qualified = name
 	case singleton:
 		qualified = parent + "." + name
+		receiver = extract.ReceiverSingleton
 	default:
 		qualified = parent + "#" + name
+		receiver = extract.ReceiverInstance
 	}
 
 	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindMethod,
+		Receiver:        receiver,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -682,7 +687,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	}); err != nil {
 		return err
 	}
-	if err := w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic); err != nil {
+	if err := w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic, methodParamNames(n, w.source)); err != nil {
 		return err
 	}
 	return w.collectConstRefs(body, qualified, false)
@@ -1222,23 +1227,74 @@ var statementParents = map[string]bool{
 	"ensure":         true,
 }
 
-// emitBareIdentifierCalls walks a method body for identifier nodes in
-// statement position (direct children of body_statement, then, else,
-// begin, ensure). Tree-sitter-ruby parses bare receiverless method
-// calls without parentheses as identifier nodes rather than call
-// nodes; we emit them as `self.name` so the resolver rewrites them to
-// the enclosing class (e.g. `self.validate` → `Order#validate`).
-func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string, confidence float64) error {
+// valueParents is the set of node kinds where a bare identifier sits in a
+// value position — a method argument, string interpolation, conditional,
+// or the right-hand side of an assignment. A receiverless identifier here is
+// a method send (e.g. a controller-concern helper like `current_currency`
+// used inside `redirect_to foo(current_currency)`), not a definition or a
+// call receiver. We emit those as `self.name` so the resolver can bind them
+// to the included-concern method; a name that resolves to no symbol is
+// dropped, and an ambiguous one is clamped below the blast floor. Locals and
+// parameters are filtered out before this set is consulted.
+var valueParents = map[string]bool{
+	"argument_list":   true,
+	"interpolation":   true,
+	"pair":            true,
+	"array":           true,
+	"binary":          true,
+	"unary":           true,
+	"return":          true,
+	"if":              true,
+	"unless":          true,
+	"while":           true,
+	"until":           true,
+	"elsif":           true,
+	"case":            true,
+	"when":            true,
+	"if_modifier":     true, // `render :ok if current_country`
+	"unless_modifier": true,
+	"while_modifier":  true,
+	"until_modifier":  true,
+	// Assignment RHS — `@currency = current_currency`, `@user ||= current_user`.
+	// isAssignmentTarget excludes the left-hand-side identifier.
+	"assignment":          true,
+	"operator_assignment": true,
+}
+
+// emitBareIdentifierCalls walks a method body for identifier nodes that are
+// bare (receiverless, parenless) method calls. Tree-sitter-ruby parses these
+// as identifier nodes rather than call nodes; we emit them as `self.name` so
+// the resolver rewrites them to the enclosing class or an included concern
+// (e.g. `validate` → `Order#validate`, `current_currency` →
+// `CurrencyContext#current_currency`).
+//
+// Statement-position identifiers (direct children of body_statement, then,
+// else, begin, ensure) are always emitted. Value-position identifiers
+// (arguments, interpolations, conditionals, assignment RHS) are emitted only
+// when the name is not a known local variable or parameter — the signal that
+// distinguishes a method send from a variable reference. params carries the
+// enclosing definition's parameter names; body-local assignments and block
+// parameters are discovered here.
+func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified string, confidence float64, params map[string]bool) error {
+	locals := collectLocalNames(body, w.source, params)
 	return extract.WalkNamedDescendants(body, "identifier", func(ident *sitter.Node) error {
 		if w.isInsideNestedTestBlock(ident, body) {
 			return nil
 		}
 		parent := ident.Parent()
-		if parent == nil || !statementParents[parent.Kind()] {
+		if parent == nil {
 			return nil
 		}
 		name := extract.Text(ident, w.source)
 		if name == "" {
+			return nil
+		}
+		switch {
+		case statementParents[parent.Kind()]:
+			// always a bare call in statement position
+		case valueParents[parent.Kind()] && !locals[name] && !isAssignmentTarget(parent, ident):
+			// a value-position send that isn't a local/parameter
+		default:
 			return nil
 		}
 		line := extract.Line(ident.StartPosition())
@@ -1250,6 +1306,83 @@ func (w *walker) emitBareIdentifierCalls(body *sitter.Node, sourceQualified stri
 			Confidence:      confidence,
 		})
 	})
+}
+
+// isAssignmentTarget reports whether ident is the left-hand side of its
+// parent assignment — `x` in `x = current_currency`, which is a variable
+// being defined, not a method send. Right-hand-side identifiers fall through
+// and are treated as value-position sends.
+func isAssignmentTarget(parent, ident *sitter.Node) bool {
+	switch parent.Kind() {
+	case "assignment", "operator_assignment":
+		left := parent.ChildByFieldName("left")
+		return left != nil && left.Equals(*ident)
+	}
+	return false
+}
+
+// addIdentifierNames records every identifier name in n's subtree (including
+// n itself when it is an identifier) into set. WalkNamedDescendants only
+// visits children, so a simple `x = ...` target — where the left node is the
+// identifier itself — needs the explicit self check.
+func addIdentifierNames(n *sitter.Node, source []byte, set map[string]bool) {
+	if n == nil {
+		return
+	}
+	if n.Kind() == "identifier" {
+		if name := extract.Text(n, source); name != "" {
+			set[name] = true
+		}
+	}
+	_ = extract.WalkNamedDescendants(n, "identifier", func(id *sitter.Node) error {
+		if name := extract.Text(id, source); name != "" {
+			set[name] = true
+		}
+		return nil
+	})
+}
+
+// methodParamNames returns the parameter names of a method/singleton_method
+// node so they can be excluded from value-position send detection. It collects
+// every identifier under the parameters node, which over-approximates across
+// optional/keyword/splat/block parameter shapes — a safe bias, since the only
+// effect of an extra name is suppressing one would-be self-call edge.
+func methodParamNames(method *sitter.Node, source []byte) map[string]bool {
+	names := map[string]bool{}
+	if method == nil {
+		return names
+	}
+	addIdentifierNames(method.ChildByFieldName("parameters"), source, names)
+	return names
+}
+
+// collectLocalNames returns the set of names that are local variables or
+// parameters within body: the seed (enclosing parameters), assignment targets,
+// and block parameters. A name in this set is a variable reference, not a
+// method send, so value-position emission skips it.
+func collectLocalNames(body *sitter.Node, source []byte, seed map[string]bool) map[string]bool {
+	locals := map[string]bool{}
+	for k := range seed {
+		locals[k] = true
+	}
+	if body == nil {
+		return locals
+	}
+	for _, kind := range []string{"assignment", "operator_assignment"} {
+		_ = extract.WalkNamedDescendants(body, kind, func(n *sitter.Node) error {
+			// `x = ...` (identifier) and `a, b = ...` (left_assignment_list)
+			// both reduce to their identifier names. Attribute writes like
+			// `obj.attr = ...` add their receiver too — harmless, it just
+			// suppresses one would-be self-call.
+			addIdentifierNames(n.ChildByFieldName("left"), source, locals)
+			return nil
+		})
+	}
+	_ = extract.WalkNamedDescendants(body, "block_parameters", func(n *sitter.Node) error {
+		addIdentifierNames(n, source, locals)
+		return nil
+	})
+	return locals
 }
 
 // literalSendTarget extracts the target name from `send(:name)` /

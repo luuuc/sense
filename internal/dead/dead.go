@@ -627,7 +627,7 @@ func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[in
 			s.Confidence = ConfidencePossibly
 			continue
 		}
-		if dynamicFramework && isDynamicallyReferenceable(*s) {
+		if dynamicFramework && (isDynamicallyReferenceable(*s) || isDynamicRubyMethod(*s)) {
 			s.Confidence = ConfidencePossibly
 			continue
 		}
@@ -656,6 +656,70 @@ func isDynamicallyReferenceable(s Symbol) bool {
 	switch s.Kind {
 	case "class", "module", "constant":
 		return true
+	}
+	return false
+}
+
+// serviceClassSuffixes name the command-object conventions whose entry
+// point is a polymorphic `call` — invoked through `Klass.new.call`, a
+// `.()` shorthand, or a duck-typed handler the static indexer often can't
+// tie back to the definition.
+var serviceClassSuffixes = []string{
+	"Service", "Command", "Query", "Interactor", "Operation", "Job", "Worker",
+}
+
+// resultClassSuffixes name value-object conventions whose predicate methods
+// (success?/failure?/...) are read off a return value of an unknown static
+// type, so their call sites frequently don't resolve to the definition.
+var resultClassSuffixes = []string{"Result", "Response", "Outcome"}
+
+// resultPredicates are the predicate method names commonly defined on the
+// result/value objects above.
+var resultPredicates = map[string]bool{
+	"success?": true, "failure?": true, "error?": true,
+	"ok?": true, "valid?": true, "invalid?": true,
+}
+
+// isDynamicRubyMethod flags Ruby methods that follow a dynamic-dispatch
+// convention the static indexer routinely under-resolves: the service-object
+// `call` entry point, and predicate methods on result/value objects. With no
+// detected caller these would otherwise top-tier as "dead"; the convention
+// makes that confidence unwarranted, so they are reported possibly-dead.
+func isDynamicRubyMethod(s Symbol) bool {
+	if s.Language != "ruby" || s.Kind != "method" {
+		return false
+	}
+	parent := rubyMethodParentName(s.Qualified)
+	switch {
+	case s.Name == "call" && hasAnySuffix(parent, serviceClassSuffixes):
+		return true
+	case resultPredicates[s.Name] && hasAnySuffix(parent, resultClassSuffixes):
+		return true
+	}
+	return false
+}
+
+// rubyMethodParentName returns the unqualified parent class/module name from
+// a Ruby method's qualified name: "Checkout::ProcessPaymentService#call" →
+// "ProcessPaymentService", "A.b" → "A". Returns "" when there is no
+// receiver separator (top-level def).
+func rubyMethodParentName(qualified string) string {
+	sep := strings.LastIndexAny(qualified, "#.")
+	if sep < 0 {
+		return ""
+	}
+	parent := qualified[:sep]
+	if i := strings.LastIndex(parent, "::"); i >= 0 {
+		parent = parent[i+len("::"):]
+	}
+	return parent
+}
+
+func hasAnySuffix(s string, suffixes []string) bool {
+	for _, suf := range suffixes {
+		if strings.HasSuffix(s, suf) {
+			return true
+		}
 	}
 	return false
 }

@@ -1011,6 +1011,7 @@ func (h *harness) writeFileInner(fr *fileResult) (int, error) {
 			Qualified:  s.Qualified,
 			Kind:       s.Kind,
 			Visibility: s.Visibility,
+			Receiver:   s.Receiver,
 			ParentID:   parentID,
 			LineStart:  s.LineStart,
 			LineEnd:    s.LineEnd,

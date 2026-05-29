@@ -99,6 +99,16 @@ const (
 	ConfidenceNameCollision = 0.3
 )
 
+// Receiver kinds for EmittedSymbol.Receiver / Symbol.Receiver. They record
+// a method's dispatch kind for languages that distinguish them (Ruby
+// instance `Class#m` vs singleton `Class.m`). Empty means "no distinction"
+// — non-methods and languages that don't carry it. The resolver uses these
+// to keep an instance call from binding to a same-named singleton method.
+const (
+	ReceiverInstance  = "instance"
+	ReceiverSingleton = "singleton"
+)
+
 // Synthetic qualified-name prefixes for cross-language resolution.
 // Edges targeting these names connect symbols across language boundaries
 // (e.g., ERB template → JS controller via Turbo channel name matching).
@@ -106,6 +116,14 @@ const (
 	PrefixTurboChannel = "turbo-channel:"
 	PrefixTurboFrame   = "turbo-frame:"
 	PrefixImportmap    = "importmap:"
+	// PrefixPartial qualifies a Rails view partial by its render path
+	// (e.g. "partial:users/profile"). The partial file emits a symbol with
+	// this prefix; `render "users/profile"` emits a matching calls edge.
+	PrefixPartial = "partial:"
+	// PrefixI18n qualifies a translation key referenced from a view
+	// (e.g. "i18n:users.show.title"). Emitted as a symbol so semantic search
+	// can surface the view that renders a given piece of copy.
+	PrefixI18n = "i18n:"
 )
 
 // StimulusControllerQualified converts a kebab-case Stimulus controller name
@@ -157,10 +175,15 @@ func kebabToPascal(s string) string {
 // Tier-Basic — a method's class always lives in the same file as the
 // method.
 type EmittedSymbol struct {
-	Name            string
-	Qualified       string
-	Kind            model.SymbolKind
-	Visibility      string
+	Name       string
+	Qualified  string
+	Kind       model.SymbolKind
+	Visibility string
+	// Receiver is a method's dispatch kind ("instance" / "singleton") for
+	// languages that distinguish them; empty otherwise. Persisted to
+	// sense_symbols.receiver and used by the resolver to keep instance and
+	// singleton methods of the same name from cross-binding.
+	Receiver        string
 	ParentQualified string
 	LineStart       int
 	LineEnd         int

@@ -3,6 +3,7 @@ package resolve_test
 import (
 	"testing"
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/resolve"
 )
@@ -404,5 +405,79 @@ func TestResolveSingleNameOnlyKeepsConfidence(t *testing.T) {
 	}
 	if r.Confidence != 0.8 {
 		t.Errorf("Confidence = %v, want 0.8 (single name-only clamp)", r.Confidence)
+	}
+}
+
+// receiverRefs models the headline collision: a class/singleton method and a
+// same-named instance method. Their qualified names differ by separator, so
+// they share a bare-name bucket and the unqualified fallback must use the
+// call's dispatch kind to pick the right one.
+func receiverRefs() []model.SymbolRef {
+	return []model.SymbolRef{
+		{ID: 1, Qualified: "PriceValue.zero", FileID: 10, Receiver: extract.ReceiverSingleton},
+		{ID: 2, Qualified: "Counter#zero", FileID: 11, Receiver: extract.ReceiverInstance},
+	}
+}
+
+func TestResolveInstanceCallDoesNotBindSingleton(t *testing.T) {
+	ix := resolve.NewIndex(receiverRefs())
+	// Instance dispatch: `something#zero` whose class guess missed. The
+	// fallback must land on the instance method, never the PriceValue
+	// singleton — the bug that attributed `.zero?`-style calls to PriceValue.
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Counter#zero",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   99,
+		BaseConfidence: 1.0,
+	})
+	if !ok {
+		t.Fatal("expected resolution")
+	}
+	if r.SymbolID != 2 {
+		t.Errorf("SymbolID = %d, want 2 (Counter#zero instance method)", r.SymbolID)
+	}
+	if r.Ambiguous {
+		t.Error("dispatch kind uniquely disambiguates — should not be ambiguous")
+	}
+}
+
+func TestResolveSingletonCallDoesNotBindInstance(t *testing.T) {
+	ix := resolve.NewIndex(receiverRefs())
+	// Class dispatch on a constant whose qualified form missed: must land on
+	// the singleton, not the same-named instance method.
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Other.zero",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   99,
+		BaseConfidence: 1.0,
+	})
+	if !ok {
+		t.Fatal("expected resolution")
+	}
+	if r.SymbolID != 1 {
+		t.Errorf("SymbolID = %d, want 1 (PriceValue.zero singleton)", r.SymbolID)
+	}
+}
+
+func TestResolveImplicitSelfReachesInstanceConcernMethod(t *testing.T) {
+	// A template/file-level `self.current_currency` (no source parent to
+	// rewrite against) must still resolve to an instance concern method. The
+	// `self.` sentinel's trailing `.` must not be mistaken for singleton
+	// dispatch and filter the instance candidate out.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "CurrencyContext#current_currency", FileID: 11, Receiver: extract.ReceiverInstance},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "self.current_currency",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   50, // a view file, no parent class
+		BaseConfidence: extract.ConfidenceConvention,
+	})
+	if !ok {
+		t.Fatal("expected resolution to the concern method")
+	}
+	if r.SymbolID != 1 {
+		t.Errorf("SymbolID = %d, want 1 (CurrencyContext#current_currency)", r.SymbolID)
 	}
 }

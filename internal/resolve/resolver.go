@@ -114,8 +114,18 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 		// byName["Sprintf"]). byQualified and byName are different
 		// indexes, so looking up the same key in both is not
 		// duplicate work.
-		if name := unqualifiedName(target); name != "" {
-			if matches := ix.byName[name]; len(matches) > 0 {
+		if name, sep := unqualifiedNameSep(target); name != "" {
+			// A target still carrying a `self.`/`Self::` prefix here means
+			// rewriteReceiver had no parent to bind it to (e.g. a template
+			// file-level call). Its trailing `.` is the sentinel separator,
+			// not a class-method dispatch, so the dispatch kind is unknown and
+			// receiver filtering must not narrow on it.
+			if strings.HasPrefix(target, "self.") || strings.HasPrefix(target, "Self::") {
+				sep = ""
+			}
+			matches := ix.byName[name]
+			matches = filterByReceiver(matches, sep)
+			if len(matches) > 0 {
 				r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
 				if r.Confidence > ambiguousConfidence {
 					r.Confidence = ambiguousConfidence
@@ -215,6 +225,16 @@ func separator(sourceQualified, parentQualified string) string {
 // using `.`, `#`, or `::` as separators. When no separator is
 // present, the original string is returned (it's already bare).
 func unqualifiedName(qualified string) string {
+	name, _ := unqualifiedNameSep(qualified)
+	return name
+}
+
+// unqualifiedNameSep returns the trailing segment of a qualified name and
+// the separator that precedes it (`.`, `#`, `::`, or "" when the name is
+// already bare). The separator carries the call's dispatch kind for Ruby —
+// `#` is an instance call, `.` is a class/singleton call — which
+// filterByReceiver uses to disambiguate same-named candidates.
+func unqualifiedNameSep(qualified string) (name, sep string) {
 	best := -1
 	bestSep := ""
 	for _, s := range []string{"::", "#", "."} {
@@ -224,7 +244,69 @@ func unqualifiedName(qualified string) string {
 		}
 	}
 	if best < 0 {
-		return qualified
+		return qualified, ""
 	}
-	return qualified[best+len(bestSep):]
+	return qualified[best+len(bestSep):], bestSep
+}
+
+// filterByReceiver narrows unqualified-fallback candidates to those whose
+// dispatch kind matches the call separator, so an instance call (`X#m`)
+// cannot bind to a same-named singleton method (`Y.m`) and vice-versa.
+//
+// It only acts when (a) the separator maps to a receiver kind (`#` ⇒
+// instance, `.` ⇒ singleton) and (b) at least one candidate declares a
+// receiver — i.e. a Ruby method carrying the distinction. Candidates with
+// an empty receiver (non-methods, other languages, top-level defs) are
+// always kept, so resolution for languages that don't populate receiver is
+// unchanged. If filtering would remove every candidate, the original set is
+// returned rather than dropping the edge — the dispatch hint is a tie-break,
+// not a hard gate.
+func filterByReceiver(matches []model.SymbolRef, sep string) []model.SymbolRef {
+	want := receiverForSeparator(sep)
+	if want == "" {
+		return matches
+	}
+	declared := false
+	for _, m := range matches {
+		if m.Receiver != "" {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return matches
+	}
+	kept := make([]model.SymbolRef, 0, len(matches))
+	for _, m := range matches {
+		if m.Receiver == "" || m.Receiver == want {
+			kept = append(kept, m)
+		}
+	}
+	if len(kept) == 0 {
+		return matches
+	}
+	return kept
+}
+
+// receiverForSeparator maps a call separator to the dispatch kind it implies:
+// `#` ⇒ instance, `.` ⇒ singleton/class. `::` (namespace) and "" (bare,
+// receiver unknown) carry no dispatch hint.
+//
+// IMPORTANT: this encodes *Ruby* dispatch semantics, where `.` is a
+// singleton/class call and `#` an instance call. It is safe for other
+// languages today only because Ruby is the sole extractor that populates
+// SymbolRef.Receiver — filterByReceiver no-ops when no candidate declares a
+// receiver, so a Go/Python `pkg.fn` target (also separated by `.`) is never
+// narrowed. If another language begins populating Receiver, it must share this
+// `.`=singleton / `#`=instance convention, or filterByReceiver must be gated
+// by language — otherwise a `.`-dispatched instance call in that language
+// would be wrongly filtered against same-named singletons.
+func receiverForSeparator(sep string) string {
+	switch sep {
+	case "#":
+		return extract.ReceiverInstance
+	case ".":
+		return extract.ReceiverSingleton
+	}
+	return ""
 }

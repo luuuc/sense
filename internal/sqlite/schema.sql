@@ -22,6 +22,13 @@ CREATE TABLE IF NOT EXISTS sense_symbols (
     qualified   TEXT    NOT NULL,
     kind        TEXT    NOT NULL,
     visibility  TEXT    DEFAULT 'public',
+    -- receiver records a method's dispatch kind for languages that
+    -- distinguish them: 'instance' (Ruby Class#m) or 'singleton'
+    -- (Ruby Class.m / def self.m). Empty for non-methods and for
+    -- languages that don't carry the distinction. Used by the resolver
+    -- to keep an instance call from binding to a same-named singleton
+    -- method (and vice-versa) in the unqualified-name fallback.
+    receiver    TEXT    NOT NULL DEFAULT '',
     parent_id   INTEGER REFERENCES sense_symbols(id),
     line_start  INTEGER NOT NULL,
     line_end    INTEGER NOT NULL,
