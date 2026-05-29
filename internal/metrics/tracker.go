@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,11 @@ type Tracker struct {
 		textFallbackFired int64
 	}
 
+	// flushMu serializes the DB transaction in flush so that the write-through
+	// flush triggered by each Record never contends with another Record's
+	// flush (or the background ticker) on the single SQLite writer.
+	flushMu sync.Mutex
+
 	stop chan struct{}
 	done chan struct{}
 }
@@ -61,7 +67,12 @@ func NewTrackerWithInterval(db *sql.DB, interval time.Duration) *Tracker {
 	return t
 }
 
-// Record adds a query's estimates to both session and lifetime counters.
+// Record adds a query's estimates to both session and lifetime counters, then
+// flushes the lifetime delta to SQLite write-through. Persisting on every query
+// (rather than only on the 30s ticker or a graceful Close) keeps the durable
+// lifetime totals accurate even when the MCP server process is restarted on
+// reconnect/compaction or killed without a clean shutdown — the churn that also
+// resets the in-memory session counters.
 func (t *Tracker) Record(tool, args string, fileReadsAvoided, tokensSaved int, textFallback bool) {
 	t.session.queries.Add(1)
 	t.session.fileReadsAvoided.Add(int64(fileReadsAvoided))
@@ -86,6 +97,11 @@ func (t *Tracker) Record(tool, args string, fileReadsAvoided, tokensSaved int, t
 		t.topQuery.tokensSaved = tokensSaved
 	}
 	t.topQuery.mu.Unlock()
+
+	// Write-through. A transient failure (e.g. the DB briefly locked) leaves
+	// the delta in the in-memory buffer; the background ticker and Close retry
+	// it, so no increment is dropped.
+	t.flush()
 }
 
 // Session returns current session counters.
@@ -149,6 +165,9 @@ func (t *Tracker) flushLoop() {
 }
 
 func (t *Tracker) flush() {
+	t.flushMu.Lock()
+	defer t.flushMu.Unlock()
+
 	t.lifetime.mu.Lock()
 	q := t.lifetime.queries
 	f := t.lifetime.fileReadsAvoided
@@ -164,31 +183,52 @@ func (t *Tracker) flush() {
 		return
 	}
 
+	if err := t.persist(q, f, ts, tf); err != nil {
+		log.Printf("sense metrics: flush: %v", err)
+		// Return the delta to the buffer so the next flush (write-through,
+		// ticker, or Close) retries it — a transient DB lock never drops counts.
+		t.lifetime.mu.Lock()
+		t.lifetime.queries += q
+		t.lifetime.fileReadsAvoided += f
+		t.lifetime.tokensSaved += ts
+		t.lifetime.textFallbackFired += tf
+		t.lifetime.mu.Unlock()
+	}
+}
+
+// persist upserts the lifetime deltas into sense_metrics in a single
+// transaction, rolling back (and returning the error) if any statement fails so
+// the caller can re-buffer the whole delta. Zero deltas are skipped.
+func (t *Tracker) persist(q, f, ts, tf int64) error {
 	ctx := context.Background()
 	const upsert = `INSERT INTO sense_metrics (key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = value + excluded.value`
 	tx, err := t.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("sense metrics: flush begin tx: %v", err)
-		return
+		return fmt.Errorf("begin tx: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, upsert, "lifetime_queries", q); err != nil {
-		log.Printf("sense metrics: flush queries: %v", err)
+	deltas := []struct {
+		key string
+		val int64
+	}{
+		{"lifetime_queries", q},
+		{"lifetime_file_reads_avoided", f},
+		{"lifetime_tokens_saved", ts},
+		{"lifetime_text_fallback_fired", tf},
 	}
-	if _, err := tx.ExecContext(ctx, upsert, "lifetime_file_reads_avoided", f); err != nil {
-		log.Printf("sense metrics: flush file_reads_avoided: %v", err)
-	}
-	if _, err := tx.ExecContext(ctx, upsert, "lifetime_tokens_saved", ts); err != nil {
-		log.Printf("sense metrics: flush tokens_saved: %v", err)
-	}
-	if tf > 0 {
-		if _, err := tx.ExecContext(ctx, upsert, "lifetime_text_fallback_fired", tf); err != nil {
-			log.Printf("sense metrics: flush text_fallback_fired: %v", err)
+	for _, d := range deltas {
+		if d.val == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, upsert, d.key, d.val); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("upsert %s: %w", d.key, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		log.Printf("sense metrics: flush commit: %v", err)
+		return fmt.Errorf("commit: %w", err)
 	}
+	return nil
 }
 
 func (t *Tracker) loadPersisted(ctx context.Context) LifetimeCounters {

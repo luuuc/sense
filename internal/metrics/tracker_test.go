@@ -160,3 +160,49 @@ func TestTrackerLifetimeAccumulates(t *testing.T) {
 	}
 	tr2.Close()
 }
+
+// Write-through: a recorded query is persisted to SQLite immediately, without
+// waiting for the 30s ticker or a graceful Close — so an abrupt restart can't
+// drop it.
+func TestTrackerWriteThroughPersistsWithoutClose(t *testing.T) {
+	db := openTestDB(t)
+	tr := NewTracker(db)
+	defer tr.Close()
+
+	tr.Record("sense_search", "auth", 5, 4000, false)
+
+	var val int
+	if err := db.QueryRow(`SELECT value FROM sense_metrics WHERE key = 'lifetime_queries'`).Scan(&val); err != nil {
+		t.Fatalf("expected lifetime_queries persisted without Close: %v", err)
+	}
+	if val != 1 {
+		t.Errorf("persisted queries = %d, want 1 (write-through)", val)
+	}
+}
+
+// A flush that fails (here: the table is missing) must not drop the delta — it
+// is returned to the buffer and persisted by a later flush once the DB recovers.
+func TestTrackerFlushFailureRetainsDelta(t *testing.T) {
+	db := openTestDB(t)
+	tr := NewTracker(db)
+
+	// Break the write path so the write-through flush in Record fails.
+	if _, err := db.Exec(`DROP TABLE sense_metrics`); err != nil {
+		t.Fatal(err)
+	}
+	tr.Record("sense_search", "auth", 5, 4000, false)
+
+	// Recover the DB and flush again — the retained delta must land now.
+	if _, err := db.Exec(`CREATE TABLE sense_metrics (key TEXT PRIMARY KEY, value INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	tr.Close()
+
+	var val int
+	if err := db.QueryRow(`SELECT value FROM sense_metrics WHERE key = 'lifetime_queries'`).Scan(&val); err != nil {
+		t.Fatalf("retained delta should persist after recovery: %v", err)
+	}
+	if val != 1 {
+		t.Errorf("persisted queries = %d, want 1 (delta retained across failed flush)", val)
+	}
+}
