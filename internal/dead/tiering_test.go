@@ -33,10 +33,9 @@ func TestRubyDynamicTypesTieredUnderFramework(t *testing.T) {
 	}
 }
 
-// Ruby service-object `call` methods and result-object predicates follow
-// dynamic-dispatch conventions the indexer under-resolves, so with no
-// detected caller they are possibly-dead, not dead — but only under a
-// dynamic framework, and only for the matching name/parent conventions.
+// Ruby service-object `call` methods and predicate (foo?) methods follow
+// dynamic-dispatch conventions the indexer under-resolves, so with no detected
+// caller they are possibly-dead, not dead — but only under a dynamic framework.
 func TestRubyDynamicMethodTiering(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -55,13 +54,30 @@ func TestRubyDynamicMethodTiering(t *testing.T) {
 			true, ConfidencePossibly,
 		},
 		{
+			// Verified false positive: the inner `Result = Struct.new do def
+			// success? end end` is flattened onto the *Service class, so the
+			// parent name carries no Result suffix — the old narrow rule
+			// hard-flagged it dead.
+			"predicate flattened onto a service class is possibly-dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Checkout::ProcessPaymentService#success?"},
+			true, ConfidencePossibly,
+		},
+		{
+			// Verified false positive: dispatched on a rescued `e`
+			// (`raise if e.retriable?`); not a known predicate name, class
+			// matches no suffix — the old rule hard-flagged it dead.
+			"arbitrary predicate on any class is possibly-dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "retriable?", Qualified: "SocialCommerce::Meta::ApiError#retriable?"},
+			true, ConfidencePossibly,
+		},
+		{
 			"plain call on a non-service class stays dead",
 			Symbol{Language: "ruby", Kind: "method", Name: "call", Qualified: "Widget#call"},
 			true, ConfidenceDead,
 		},
 		{
-			"predicate on a non-result class stays dead",
-			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Widget#success?"},
+			"plain non-predicate method stays dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "frobnicate", Qualified: "Widget#frobnicate"},
 			true, ConfidenceDead,
 		},
 		{
