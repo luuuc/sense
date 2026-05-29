@@ -63,6 +63,75 @@ func seedSearchProject(t *testing.T) string {
 	return dir
 }
 
+func TestParseSearchArgsMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+		want    string
+	}{
+		{"default is hybrid", []string{"query"}, false, search.ModeHybrid},
+		{"explicit hybrid", []string{"--mode", "hybrid", "query"}, false, search.ModeHybrid},
+		{"semantic", []string{"--mode", "semantic", "query"}, false, search.ModeSemantic},
+		{"keyword", []string{"--mode", "keyword", "query"}, false, search.ModeKeyword},
+		{"invalid mode rejected", []string{"--mode", "fuzzy", "query"}, true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			opts, err := parseSearchArgs(tt.args, &stderr)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for args %v, got none", tt.args)
+				}
+				if !strings.Contains(stderr.String(), "invalid --mode") {
+					t.Errorf("expected invalid-mode message, got: %s", stderr.String())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if opts.Mode != tt.want {
+				t.Errorf("Mode = %q, want %q", opts.Mode, tt.want)
+			}
+		})
+	}
+}
+
+// TestRunSearchModeKeyword is a plumbing smoke test: it confirms --mode is
+// accepted and reaches the engine without error. The actual mode→ranking
+// behavior is pinned in search.TestSearchModeOverridesShape (resolved
+// weights per mode); this test is its complement, not the behavioral gate.
+func TestRunSearchModeKeyword(t *testing.T) {
+	dir := seedSearchProject(t)
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+
+	var stdout, stderr bytes.Buffer
+	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: dir}
+
+	code := RunSearch([]string{"--mode", "keyword", "payment"}, cio)
+	if code != ExitSuccess {
+		t.Fatalf("exit code = %d, want %d; stderr: %s", code, ExitSuccess, stderr.String())
+	}
+	if stdout.String() == "" {
+		t.Fatal("expected output, got empty")
+	}
+}
+
+func TestRunSearchInvalidMode(t *testing.T) {
+	dir := seedSearchProject(t)
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+
+	var stdout, stderr bytes.Buffer
+	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: dir}
+
+	code := RunSearch([]string{"--mode", "nonsense", "payment"}, cio)
+	if code != ExitGeneralError {
+		t.Fatalf("exit code = %d, want %d", code, ExitGeneralError)
+	}
+}
+
 func TestRunSearchKeywordFallback(t *testing.T) {
 	dir := seedSearchProject(t)
 	t.Setenv("SENSE_EMBEDDINGS", "false")

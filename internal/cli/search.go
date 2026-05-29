@@ -22,6 +22,9 @@ Flags:
   --limit N                 Maximum results (default 10)
   --language LANG           Filter by language (e.g. "ruby", "go")
   --min-score F             Minimum score threshold 0.0–1.0 (default 0.0)
+  --mode MODE               Ranking mode: hybrid (default), semantic, keyword.
+                            hybrid auto-detects query shape; semantic forces
+                            concept ranking; keyword forces literal ranking.
   --json                    Emit JSON matching the sense_search MCP schema
   --no-color                Disable ANSI color (NO_COLOR env var is also respected)
   -h, --help                Show this help
@@ -44,6 +47,7 @@ type searchOptions struct {
 	Limit    int
 	Language string
 	MinScore float64
+	Mode     string
 	JSON     bool
 	NoColor  bool
 }
@@ -109,6 +113,7 @@ func RunSearch(args []string, cio IO) int {
 		Limit:    opts.Limit,
 		Language: opts.Language,
 		MinScore: opts.MinScore,
+		Mode:     opts.Mode,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)
@@ -215,12 +220,21 @@ func parseSearchArgs(args []string, stderr io.Writer) (searchOptions, error) {
 	fs.IntVar(&opts.Limit, "limit", 10, "maximum results")
 	fs.StringVar(&opts.Language, "language", "", "filter by language")
 	fs.Float64Var(&opts.MinScore, "min-score", 0.0, "minimum score threshold")
+	fs.StringVar(&opts.Mode, "mode", search.ModeHybrid, "ranking mode: hybrid, semantic, or keyword")
 	fs.BoolVar(&opts.JSON, "json", false, "emit JSON matching the sense_search MCP schema")
 	fs.BoolVar(&opts.NoColor, "no-color", false, "disable ANSI color")
 
 	positional, err := parseInterleaved(fs, args)
 	if err != nil {
 		return searchOptions{}, err
+	}
+
+	switch opts.Mode {
+	case search.ModeHybrid, search.ModeSemantic, search.ModeKeyword:
+		// valid
+	default:
+		_, _ = fmt.Fprintf(stderr, "sense search: invalid --mode %q (want hybrid, semantic, or keyword)\n", opts.Mode)
+		return searchOptions{}, fmt.Errorf("invalid mode: %s", opts.Mode)
 	}
 
 	if len(positional) < 1 {

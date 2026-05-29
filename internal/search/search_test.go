@@ -904,6 +904,282 @@ func TestLowConfidenceVectorFloor(t *testing.T) {
 	t.Logf("low confidence weights: kw=%.2f vec=%.2f", meta.KeywordWeight, meta.VectorWeight)
 }
 
+// TestNaturalLanguageQueryFloorsVectorWeight drives the full Search path
+// with a low-confidence embedder (vectors orthogonal to the index, so
+// confidence lands in the < 0.4 bucket) on a NATURAL-LANGUAGE query. The
+// confidence ladder alone would return vector weight 0.3; the shape floor
+// must lift it to 0.5. This proves the shape (not just cosine confidence)
+// steers the weighting end-to-end, including propagation through
+// expandQuery's sub-queries.
+func TestNaturalLanguageQueryFloorsVectorWeight(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(ctx, t, a)
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+	engine := search.NewEngine(a, vectorIdx, &lowConfidenceEmbedder{})
+
+	// Natural-language query: stopword "the" + multiple plain words, no
+	// identifier-shaped tokens → NaturalLanguage.
+	_, meta, err := engine.Search(ctx, search.Options{
+		Query: "prevent the user from charging their own card", Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if meta.Shape != "natural_language" {
+		t.Fatalf("shape = %q, want natural_language", meta.Shape)
+	}
+	if meta.VectorWeight != 0.5 {
+		t.Errorf("vector weight = %v, want 0.5 (floored despite low confidence)", meta.VectorWeight)
+	}
+	if meta.KeywordWeight != 0.5 {
+		t.Errorf("keyword weight = %v, want 0.5", meta.KeywordWeight)
+	}
+	t.Logf("NL floored weights: kw=%.2f vec=%.2f", meta.KeywordWeight, meta.VectorWeight)
+}
+
+// TestGenericTokenPenaltyEndToEnd seeds a corpus where "prevent" is a
+// high-frequency generic token and "listing" is a rare domain token, then
+// drives the full keyword-only Search path with a natural-language query.
+// The hits that matched ONLY the generic token ("preventClose" etc.) must
+// be demoted below the domain match ("ListingGuard"), reproducing the
+// headline fix in miniature.
+func TestGenericTokenPenaltyEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "app/ui.js", Language: "javascript",
+		Hash: "h1", Symbols: 40, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, qualified string) {
+		t.Helper()
+		if _, err := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: name, Qualified: qualified,
+			Kind: "function", LineStart: 1, LineEnd: 2,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Six symbols whose only query overlap is the generic token "prevent".
+	preventNames := []string{
+		"preventClose", "preventEscape", "preventResize",
+		"preventScroll", "preventDefault", "preventEditing",
+	}
+	for _, n := range preventNames {
+		write(n, "ui."+n)
+	}
+	// One rare domain symbol matching the non-generic token "listing".
+	write("ListingGuard", "shop.ListingGuard")
+	// Filler symbols (none containing the query terms) to make "prevent"
+	// land above the 5% generic threshold and "listing" below it: 7 named
+	// symbols + 33 fillers = 40 total → prevent 6/40=0.15 (generic),
+	// listing 1/40=0.025 (specific).
+	for i := 0; i < 33; i++ {
+		write(fmt.Sprintf("Widget%d", i), fmt.Sprintf("ui.Widget%d", i))
+	}
+
+	// Keyword-only engine (no embedder) isolates the keyword-leg defect.
+	engine := search.NewEngine(a, nil, nil)
+	results, meta, err := engine.Search(ctx, search.Options{
+		Query: "prevent adding own listing", Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Shape != "natural_language" {
+		t.Fatalf("shape = %q, want natural_language", meta.Shape)
+	}
+
+	rank := map[string]int{}
+	for i, r := range results {
+		rank[r.Name] = i
+	}
+	listingRank, ok := rank["ListingGuard"]
+	if !ok {
+		t.Fatalf("ListingGuard absent from results: %+v", names(results))
+	}
+	for _, n := range preventNames {
+		if pr, ok := rank[n]; ok && pr < listingRank {
+			t.Errorf("generic-only hit %q (rank %d) outranked domain match ListingGuard (rank %d)", n, pr, listingRank)
+		}
+	}
+	if listingRank != 0 {
+		t.Logf("ListingGuard at rank %d (top result is %q)", listingRank, results[0].Name)
+	}
+}
+
+// uniformReranker scores every document identically, erasing all RRF rank
+// information. It isolates the generic-token penalty: any surviving
+// reordering must come from the penalty, not from residual fusion order.
+type uniformReranker struct{}
+
+func (uniformReranker) Score(_ string, docs []string) ([]float32, error) {
+	scores := make([]float32, len(docs))
+	for i := range scores {
+		scores[i] = 1.0
+	}
+	return scores, nil
+}
+
+// TestGenericTokenPenaltySurvivesReranking pins the card-5 decision: the
+// generic-token penalty runs AFTER reranking, so a cross-encoder cannot
+// silently erase it. With a uniform reranker every hit is tied at 1.0; if
+// the penalty ran before rerank the reranker's overwrite would erase it
+// and the tie would stand. Because it runs after, the generic-only
+// "prevent" hits are demoted below the domain match "ListingGuard".
+func TestGenericTokenPenaltySurvivesReranking(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "app/ui.js", Language: "javascript",
+		Hash: "h1", Symbols: 40, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, qualified string) {
+		t.Helper()
+		if _, err := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: name, Qualified: qualified,
+			Kind: "function", LineStart: 1, LineEnd: 2,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	preventNames := []string{
+		"preventClose", "preventEscape", "preventResize",
+		"preventScroll", "preventDefault", "preventEditing",
+	}
+	for _, n := range preventNames {
+		write(n, "ui."+n)
+	}
+	write("ListingGuard", "shop.ListingGuard")
+	for i := 0; i < 33; i++ {
+		write(fmt.Sprintf("Widget%d", i), fmt.Sprintf("ui.Widget%d", i))
+	}
+
+	engine := search.NewEngine(a, nil, nil)
+	engine.SetReranker(uniformReranker{})
+
+	results, meta, err := engine.Search(ctx, search.Options{
+		Query: "prevent adding own listing", Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Reranked {
+		t.Fatal("expected Reranked=true")
+	}
+
+	rank := map[string]int{}
+	for i, r := range results {
+		rank[r.Name] = i
+	}
+	listingRank, ok := rank["ListingGuard"]
+	if !ok {
+		t.Fatalf("ListingGuard absent from results: %v", names(results))
+	}
+	for _, n := range preventNames {
+		if pr, ok := rank[n]; ok && pr < listingRank {
+			t.Errorf("reranker erased the penalty: generic-only %q (rank %d) above ListingGuard (rank %d)", n, pr, listingRank)
+		}
+	}
+}
+
+func names(rs []search.Result) []string {
+	out := make([]string, len(rs))
+	for i, r := range rs {
+		out[i] = r.Name
+	}
+	return out
+}
+
+// TestSearchModeOverridesShape drives the full Search path under a
+// low-confidence embedder and asserts each mode's effect on the resolved
+// fusion weights: keyword mode reproduces the pre-shape ranking (vector
+// 0.3 in the low bucket) even on an NL query; semantic mode floors the
+// vector leg (0.5) even on an identifier query; hybrid is the default and
+// defers to the classifier.
+func TestSearchModeOverridesShape(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(ctx, t, a)
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+	engine := search.NewEngine(a, vectorIdx, &lowConfidenceEmbedder{})
+
+	const nlQuery = "prevent the user from charging their own card"
+	const identQuery = "ProcessPayment"
+
+	tests := []struct {
+		name      string
+		mode      string
+		query     string
+		wantShape string
+		wantVec   float64
+		wantKw    float64
+	}{
+		{"NL query, default mode is hybrid → classifier → NL floor", "", nlQuery, "natural_language", 0.5, 0.5},
+		{"NL query, hybrid → classifier → NL floor", search.ModeHybrid, nlQuery, "natural_language", 0.5, 0.5},
+		{"NL query, keyword mode reproduces pre-shape ranking", search.ModeKeyword, nlQuery, "identifier", 0.3, 0.7},
+		{"identifier query, hybrid → Identifier (pre-shape)", search.ModeHybrid, identQuery, "identifier", 0.3, 0.7},
+		{"identifier query, semantic mode floors the vector leg", search.ModeSemantic, identQuery, "natural_language", 0.5, 0.5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, meta, err := engine.Search(ctx, search.Options{Query: tt.query, Mode: tt.mode, Limit: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Shape != tt.wantShape {
+				t.Errorf("shape = %q, want %q", meta.Shape, tt.wantShape)
+			}
+			if meta.VectorWeight != tt.wantVec {
+				t.Errorf("vector weight = %v, want %v", meta.VectorWeight, tt.wantVec)
+			}
+			if meta.KeywordWeight != tt.wantKw {
+				t.Errorf("keyword weight = %v, want %v", meta.KeywordWeight, tt.wantKw)
+			}
+		})
+	}
+}
+
 func TestGraphEnrichmentBoostsCallees(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

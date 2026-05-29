@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/luuuc/sense/internal/search"
 )
 
 // newTestIO returns an IO with byte buffer sinks and Dir="." so a
@@ -137,17 +139,17 @@ func TestParseSearchArgs(t *testing.T) {
 		{
 			name: "query with defaults",
 			args: []string{"payment error handling"},
-			want: searchOptions{Query: "payment error handling", Limit: 10},
+			want: searchOptions{Query: "payment error handling", Limit: 10, Mode: search.ModeHybrid},
 		},
 		{
 			name: "with flags",
 			args: []string{"--limit", "5", "--language", "ruby", "--json", "auth flow"},
-			want: searchOptions{Query: "auth flow", Limit: 5, Language: "ruby", JSON: true},
+			want: searchOptions{Query: "auth flow", Limit: 5, Language: "ruby", JSON: true, Mode: search.ModeHybrid},
 		},
 		{
 			name: "min-score flag",
 			args: []string{"--min-score", "0.5", "test query"},
-			want: searchOptions{Query: "test query", Limit: 10, MinScore: 0.5},
+			want: searchOptions{Query: "test query", Limit: 10, MinScore: 0.5, Mode: search.ModeHybrid},
 		},
 		{name: "missing query", args: nil, wantErr: true},
 	}

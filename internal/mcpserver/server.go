@@ -279,6 +279,10 @@ func searchTool() mcp.Tool {
 		mcp.WithNumber("min_score",
 			mcp.Description("Minimum relevance score threshold 0.0–1.0 (default 0.0). Raise to filter weak matches."),
 		),
+		mcp.WithString("mode",
+			mcp.Description("Ranking mode (default 'hybrid'). 'hybrid' auto-detects whether the query is a concept or an identifier. 'semantic' forces concept ranking — use when an identifier-looking query is actually conceptual. 'keyword' forces literal ranking — use for exact identifier lookups."),
+			mcp.Enum(search.ModeHybrid, search.ModeSemantic, search.ModeKeyword),
+		),
 	)
 }
 
@@ -728,6 +732,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	limit := req.GetInt("limit", 10)
 	language := req.GetString("language", "")
 	minScore := req.GetFloat("min_score", 0.0)
+	mode := req.GetString("mode", search.ModeHybrid)
 
 	keywordBias := h.defaults.SearchKeywordWeight - 0.5
 	if keywordBias < 0 {
@@ -739,6 +744,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 		Language:    language,
 		MinScore:    minScore,
 		KeywordBias: keywordBias,
+		Mode:        mode,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sense_search: %w", err)
