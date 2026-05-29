@@ -594,6 +594,15 @@ func (a *Adapter) ReadSymbolGraph(ctx context.Context, id int64, depth int, dire
 			return nil, err
 		}
 	}
+	// Symmetric to foldMemberCallers: fold member callees into the container's
+	// outbound set so "what does this class call" reflects what its methods
+	// reach, instead of returning an empty list that reads as "depends on
+	// nothing".
+	if direction != model.DirectionCallers {
+		if err := a.foldMemberCallees(ctx, &result.Root); err != nil {
+			return nil, err
+		}
+	}
 	if depth <= 1 {
 		return result, nil
 	}
@@ -720,10 +729,12 @@ func isUsageEdge(k model.EdgeKind) bool {
 	return k == model.EdgeCalls || k == model.EdgeReferences
 }
 
-// hasUsageCaller reports whether edges contains at least one above-floor
-// usage edge — a real "someone calls/references this" signal, as opposed to
-// a structural edge or a low-confidence resolution guess.
-func hasUsageCaller(edges []model.EdgeRef) bool {
+// hasUsageEdge reports whether edges contains at least one above-floor
+// usage edge — a real call/reference signal, as opposed to a structural
+// edge or a low-confidence resolution guess. Used by both fold paths:
+// against Inbound it means "has a real caller", against Outbound it means
+// "has a real callee".
+func hasUsageEdge(edges []model.EdgeRef) bool {
 	for _, e := range edges {
 		if isUsageEdge(e.Edge.Kind) && e.Edge.Confidence >= extract.ConfidenceUnresolved {
 			return true
@@ -747,7 +758,7 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 	// blast found callers via the class's methods). A structural edge
 	// (inherits/composes) or a low-confidence name-collision guess is not a
 	// real caller, so those do not suppress enrichment.
-	if hasUsageCaller(sc.Inbound) {
+	if hasUsageEdge(sc.Inbound) {
 		return nil
 	}
 	childIDs, err := a.childSymbolIDs(ctx, sc.Symbol.ID)
@@ -789,6 +800,71 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 			}
 			seen[e.Target.ID] = struct{}{}
 			sc.Inbound = append(sc.Inbound, e)
+		}
+	}
+	return nil
+}
+
+// foldMemberCallees enriches a container symbol's outbound edges with the
+// callees of its own members. Without it, "what does PriceValue call" returns
+// only the edges the type itself names (usually none), so calls renders as
+// `[]` — read as "depends on nothing" when the class in fact reaches Money.new,
+// money.format, and friends through its methods. Calls back into the container
+// or its own siblings are excluded so internal method-to-method traffic doesn't
+// masquerade as an external dependency; results are deduped by target against
+// the existing outbound set and each other.
+func (a *Adapter) foldMemberCallees(ctx context.Context, sc *model.SymbolContext) error {
+	if !isContainerExpandKind(sc.Symbol.Kind) {
+		return nil
+	}
+	// Only enrich when the container has no real callee of its own — the
+	// "a class's dependencies look empty" case. A structural edge
+	// (inherits/composes) or a low-confidence guess is not a real callee, so
+	// those do not suppress enrichment.
+	if hasUsageEdge(sc.Outbound) {
+		return nil
+	}
+	childIDs, err := a.childSymbolIDs(ctx, sc.Symbol.ID)
+	if err != nil {
+		return err
+	}
+	if len(childIDs) == 0 {
+		return nil
+	}
+	exclude := make(map[int64]struct{}, len(childIDs)+1)
+	exclude[sc.Symbol.ID] = struct{}{}
+	for _, cid := range childIDs {
+		exclude[cid] = struct{}{}
+	}
+	seen := make(map[int64]struct{}, len(sc.Outbound))
+	for _, e := range sc.Outbound {
+		seen[e.Target.ID] = struct{}{}
+	}
+	for _, cid := range childIDs {
+		refs, err := a.loadEdges(ctx, cid, true)
+		if err != nil {
+			return err
+		}
+		for _, e := range refs {
+			if e.Target.ID == 0 || e.Edge.Kind == model.EdgeTemporal {
+				continue
+			}
+			// Don't fold low-confidence guesses (e.g. the 0.3 ERB/i18n
+			// edges) into the class's callees — that would re-admit exactly
+			// what blast and the graph confidence floor filter out.
+			if e.Edge.Confidence < extract.ConfidenceUnresolved {
+				continue
+			}
+			if _, skip := exclude[e.Target.ID]; skip {
+				continue
+			}
+			if _, dup := seen[e.Target.ID]; dup {
+				continue
+			}
+			// First member edge to a given target wins; the displayed
+			// confidence is first-seen (by edge id), not the max across members.
+			seen[e.Target.ID] = struct{}{}
+			sc.Outbound = append(sc.Outbound, e)
 		}
 	}
 	return nil

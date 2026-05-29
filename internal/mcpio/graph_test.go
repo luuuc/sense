@@ -1308,3 +1308,94 @@ func TestFullGraphResponseSharedSnippetBudget(t *testing.T) {
 		t.Error("SnippetsTruncated should be true when total edges exceed cap")
 	}
 }
+
+// Usage edges (calls / references) below the confidence floor are dropped from
+// the graph and tallied in LowConfidenceHidden — the 0.3 ERB/i18n noise the
+// real Rails index produced for Listing::Item#price_amount.
+func TestCategorizeEdgesHidesLowConfidenceUsageEdges(t *testing.T) {
+	files := func(int64) (string, bool) { return "", false }
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "price_amount", Qualified: "Listing::Item#price_amount", Kind: "method"},
+		File:   model.File{Path: "app/models/listing/item.rb"},
+		Outbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.7}, Target: model.Symbol{Qualified: "PriceValue#amount"}},
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.3}, Target: model.Symbol{Qualified: "i18n:admin.help.articles.new.breadcrumbs.new"}},
+			{Edge: model.Edge{Kind: model.EdgeReferences, Confidence: 0.3}, Target: model.Symbol{Qualified: "i18n:account.wallet.currency"}},
+		},
+		Inbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.5}, Target: model.Symbol{Qualified: "Admin::ProductsController#generate_csv"}},
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.3}, Target: model.Symbol{Qualified: "Noise#caller"}},
+		},
+	}
+
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
+
+	if len(resp.Edges.Calls) != 1 || resp.Edges.Calls[0].Symbol != "PriceValue#amount" {
+		t.Errorf("Calls = %v, want only PriceValue#amount (0.3 i18n edges floored)", resp.Edges.Calls)
+	}
+	if len(resp.Edges.CalledBy) != 1 || resp.Edges.CalledBy[0].Symbol != "Admin::ProductsController#generate_csv" {
+		t.Errorf("CalledBy = %v, want only the 0.5 caller (0.3 caller floored)", resp.Edges.CalledBy)
+	}
+	if resp.LowConfidenceHidden != 3 {
+		t.Errorf("LowConfidenceHidden = %d, want 3 (2 outbound + 1 inbound below floor)", resp.LowConfidenceHidden)
+	}
+}
+
+// The floor applies only to usage edges. Structural edges (inherits, composes,
+// includes, imports) are syntactically explicit and are never confidence-floored.
+func TestCategorizeEdgesDoesNotFloorStructuralEdges(t *testing.T) {
+	files := func(int64) (string, bool) { return "", false }
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{Name: "User", Qualified: "User", Kind: "class"},
+		File:   model.File{Path: "user.rb"},
+		Outbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeInherits, Confidence: 0.3}, Target: model.Symbol{Qualified: "Base"}},
+			{Edge: model.Edge{Kind: model.EdgeComposes, Confidence: 0.3}, Target: model.Symbol{Qualified: "Order"}},
+		},
+	}
+
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
+
+	if len(resp.Edges.Inherits) != 1 {
+		t.Errorf("Inherits = %v, want 1 (structural edges are not floored)", resp.Edges.Inherits)
+	}
+	if len(resp.Edges.Composes) != 1 {
+		t.Errorf("Composes = %v, want 1 (structural edges are not floored)", resp.Edges.Composes)
+	}
+	if resp.LowConfidenceHidden != 0 {
+		t.Errorf("LowConfidenceHidden = %d, want 0 (no usage edges below floor)", resp.LowConfidenceHidden)
+	}
+}
+
+// The floor is applied to every hop's edges, but LowConfidenceHidden tallies
+// the root only — deeper hops drop their below-floor edges without counting.
+func TestBuildFullGraphResponseFloorsLayersCountsRootOnly(t *testing.T) {
+	files := func(int64) (string, bool) { return "", false }
+	gr := &model.GraphResult{
+		Root: model.SymbolContext{
+			Symbol: model.Symbol{Name: "A", Qualified: "A", Kind: "method"},
+			File:   model.File{Path: "a.rb"},
+			Outbound: []model.EdgeRef{
+				{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.3}, Target: model.Symbol{Qualified: "rootNoise"}},
+			},
+		},
+		Layers: []model.HopEdges{
+			{Outbound: []model.EdgeRef{
+				{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.3}, Target: model.Symbol{Qualified: "layerNoise"}},
+				{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.9}, Target: model.Symbol{Qualified: "layerReal"}},
+			}},
+		},
+	}
+
+	resp := BuildFullGraphResponse(context.Background(), gr, files, BuildGraphRequest{})
+
+	if len(resp.Edges.Calls) != 0 {
+		t.Errorf("root Calls = %v, want 0 (0.3 floored)", resp.Edges.Calls)
+	}
+	if len(resp.Layers) != 1 || len(resp.Layers[0].Edges.Calls) != 1 || resp.Layers[0].Edges.Calls[0].Symbol != "layerReal" {
+		t.Errorf("layer Calls = %v, want only layerReal (0.3 floored)", resp.Layers)
+	}
+	if resp.LowConfidenceHidden != 1 {
+		t.Errorf("LowConfidenceHidden = %d, want 1 (root only, layer hides not counted)", resp.LowConfidenceHidden)
+	}
+}

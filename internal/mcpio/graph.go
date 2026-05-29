@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/model"
 )
 
@@ -14,6 +15,18 @@ const (
 	MaxGraphDepth = 3
 	MaxPerHop     = 200
 )
+
+// graphConfidenceFloor hides usage edges (calls / references) whose
+// resolution confidence is below blast's traversal floor. It tracks the same
+// constant the sqlite fold uses (extract.ConfidenceUnresolved == 0.5) so the
+// display floor and the fold floor move together if the ladder is retuned.
+// Below it live bare-name and basic-tier guesses — e.g. the 0.3 ERB i18n edges
+// that point at a Ruby method's own definition line, which read as real
+// dependencies in raw graph output and carry a misattributed snippet. blast
+// already filters them; sense_graph now matches. Structural edges
+// (inherits/composes/includes/imports) and tests are never confidence-floored
+// — they're syntactically explicit.
+const graphConfidenceFloor = extract.ConfidenceUnresolved
 
 // FileLookup resolves a sense_files row id to its path. Used by
 // BuildGraphResponse / BuildBlastResponse to hydrate edge endpoints.
@@ -59,7 +72,9 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 		},
 	}
 
-	resp.Edges = categorizeEdges(ctx, sc.Outbound, sc.Inbound, files, req.Direction, req.Snippets)
+	var hidden int
+	resp.Edges, hidden = categorizeEdges(ctx, sc.Outbound, sc.Inbound, files, req.Direction, req.Snippets)
+	resp.LowConfidenceHidden = hidden
 	resp.SnippetsTruncated = req.Snippets.Truncated(len(sc.Outbound) + len(sc.Inbound))
 
 	// Test-caller segmentation: split test callers out of CalledBy.
@@ -177,18 +192,22 @@ func BuildFullGraphResponse(ctx context.Context, gr *model.GraphResult, files Fi
 // BuildGraphLayer converts a model.HopEdges into a wire-format
 // GraphLayer for the given hop depth.
 func BuildGraphLayer(ctx context.Context, hop model.HopEdges, depth int, files FileLookup, req BuildGraphRequest) GraphLayer {
+	edges, _ := categorizeEdges(ctx, hop.Outbound, hop.Inbound, files, req.Direction, req.Snippets)
 	return GraphLayer{
 		Depth: depth,
-		Edges: categorizeEdges(ctx, hop.Outbound, hop.Inbound, files, req.Direction, req.Snippets),
+		Edges: edges,
 	}
 }
 
 // categorizeEdges maps model edge refs into the wire-format GraphEdges
 // shape, dispatching each edge kind to the right bucket. Temporal edges
 // and test-caller segmentation are root-only concerns handled by
-// BuildGraphResponse on top of this.
-func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, files FileLookup, direction model.Direction, snippets *SnippetReader) GraphEdges {
+// BuildGraphResponse on top of this. Usage edges (calls / references)
+// below graphConfidenceFloor are dropped and counted in the returned
+// hidden total so the caller can report them rather than silently omit.
+func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, files FileLookup, direction model.Direction, snippets *SnippetReader) (GraphEdges, int) {
 	var edges GraphEdges
+	var hidden int
 
 	readSnippet := func(e model.EdgeRef) *CallSite {
 		if e.Edge.Line == nil {
@@ -205,6 +224,10 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 		for _, e := range outbound {
 			switch e.Edge.Kind {
 			case model.EdgeCalls, model.EdgeReferences:
+				if e.Edge.Confidence < graphConfidenceFloor {
+					hidden++
+					continue
+				}
 				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Calls = append(edges.Calls, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
@@ -260,6 +283,10 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 		for _, e := range inbound {
 			switch e.Edge.Kind {
 			case model.EdgeCalls, model.EdgeReferences:
+				if e.Edge.Confidence < graphConfidenceFloor {
+					hidden++
+					continue
+				}
 				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.CalledBy = append(edges.CalledBy, CallEdgeRef{
 					Symbol:     qualifiedOrName(e.Target),
@@ -333,7 +360,7 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 		}
 	}
 
-	return edges
+	return edges, hidden
 }
 
 // qualifiedOrName prefers the qualified name but falls back to the
