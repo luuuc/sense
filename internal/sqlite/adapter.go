@@ -30,7 +30,7 @@ var schemaFTSSQL string
 // Bump when schema.sql changes incompatibly — a mismatch triggers
 // auto-rebuild (drop all tables, fresh schema, full scan). Never set
 // before a scan completes successfully; see StampSchemaVersion.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // maxOpenConns is the connection-pool size Open applies. InTx relies on
 // this being 1 — its raw BEGIN/COMMIT approach shares a transaction
@@ -372,13 +372,14 @@ func (a *Adapter) WriteFile(ctx context.Context, f *model.File) (int64, error) {
 func (a *Adapter) WriteSymbol(ctx context.Context, s *model.Symbol) (int64, error) {
 	const q = `
 		INSERT INTO sense_symbols
-			(file_id, name, qualified, kind, visibility, parent_id,
+			(file_id, name, qualified, kind, visibility, receiver, parent_id,
 			 line_start, line_end, docstring, complexity, snippet, name_parts)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id, qualified) DO UPDATE SET
 			name       = excluded.name,
 			kind       = excluded.kind,
 			visibility = excluded.visibility,
+			receiver   = excluded.receiver,
 			parent_id  = excluded.parent_id,
 			line_start = excluded.line_start,
 			line_end   = excluded.line_end,
@@ -391,7 +392,7 @@ func (a *Adapter) WriteSymbol(ctx context.Context, s *model.Symbol) (int64, erro
 	nameParts := symbolNameParts(s.Name, s.Qualified)
 	var id int64
 	err := a.db.QueryRowContext(ctx, q,
-		s.FileID, s.Name, s.Qualified, string(s.Kind), s.Visibility,
+		s.FileID, s.Name, s.Qualified, string(s.Kind), s.Visibility, s.Receiver,
 		nullableInt64(s.ParentID), s.LineStart, s.LineEnd,
 		s.Docstring, nullableInt(s.Complexity), s.Snippet, nameParts,
 	).Scan(&id)
@@ -453,13 +454,14 @@ func (a *Adapter) WriteEdge(ctx context.Context, e *model.Edge) (int64, error) {
 func (a *Adapter) PrepareSymbolStmt(ctx context.Context) (*sql.Stmt, error) {
 	const q = `
 		INSERT INTO sense_symbols
-			(file_id, name, qualified, kind, visibility, parent_id,
+			(file_id, name, qualified, kind, visibility, receiver, parent_id,
 			 line_start, line_end, docstring, complexity, snippet, name_parts)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id, qualified) DO UPDATE SET
 			name       = excluded.name,
 			kind       = excluded.kind,
 			visibility = excluded.visibility,
+			receiver   = excluded.receiver,
 			parent_id  = excluded.parent_id,
 			line_start = excluded.line_start,
 			line_end   = excluded.line_end,
@@ -476,7 +478,7 @@ func ExecSymbolStmt(ctx context.Context, stmt *sql.Stmt, s *model.Symbol) (int64
 	nameParts := symbolNameParts(s.Name, s.Qualified)
 	var id int64
 	err := stmt.QueryRowContext(ctx,
-		s.FileID, s.Name, s.Qualified, string(s.Kind), s.Visibility,
+		s.FileID, s.Name, s.Qualified, string(s.Kind), s.Visibility, s.Receiver,
 		nullableInt64(s.ParentID), s.LineStart, s.LineEnd,
 		s.Docstring, nullableInt(s.Complexity), s.Snippet, nameParts,
 	).Scan(&id)
@@ -873,7 +875,7 @@ func (a *Adapter) Query(ctx context.Context, f index.Filter) ([]model.Symbol, er
 // follow-up sort: the first id under each key is deterministically
 // the earliest written.
 func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
-	const q = `SELECT id, qualified, file_id FROM sense_symbols ORDER BY id ASC`
+	const q = `SELECT id, qualified, file_id, receiver FROM sense_symbols ORDER BY id ASC`
 	rows, err := a.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite SymbolRefs: %w", err)
@@ -883,7 +885,7 @@ func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
 	var refs []model.SymbolRef
 	for rows.Next() {
 		var r model.SymbolRef
-		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID); err != nil {
+		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Receiver); err != nil {
 			return nil, fmt.Errorf("sqlite SymbolRefs scan: %w", err)
 		}
 		refs = append(refs, r)

@@ -485,3 +485,153 @@ func TestMultipleActionsOnElement(t *testing.T) {
 		t.Fatalf("expected at least 2 action edges, got %d", len(r.edges))
 	}
 }
+
+// --- template Ruby extraction (helpers, partials, i18n) ---
+
+func (r *recorder) hasEdgeTo(target string) bool {
+	for _, e := range r.edges {
+		if e.TargetQualified == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *recorder) hasSymbol(qualified string) bool {
+	for _, s := range r.symbols {
+		if s.Qualified == qualified {
+			return true
+		}
+	}
+	return false
+}
+
+func extractERB(t *testing.T, src, path string) *recorder {
+	t.Helper()
+	r := &recorder{}
+	if err := (Extractor{}).ExtractRaw([]byte(src), path, r); err != nil {
+		t.Fatalf("ExtractRaw: %v", err)
+	}
+	return r
+}
+
+func TestExtractHelperCalls(t *testing.T) {
+	r := extractERB(t, `<p><%= current_currency %></p>
+<%= link_to "Edit profile", edit_user_path(user) %>`, "app/views/orders/show.html.erb")
+
+	for _, want := range []string{"self.current_currency", "self.link_to", "self.edit_user_path", "self.user"} {
+		if !r.hasEdgeTo(want) {
+			t.Errorf("missing helper-call edge %q", want)
+		}
+	}
+	// Words inside string copy must not become calls.
+	for _, bad := range []string{"self.Edit", "self.profile", "self.edit"} {
+		if r.hasEdgeTo(bad) {
+			t.Errorf("string-literal word wrongly emitted as call: %q", bad)
+		}
+	}
+}
+
+func TestExtractRenderPartial(t *testing.T) {
+	r := extractERB(t, `<%= render "shared/header" %>
+<%= render partial: "form" %>`, "app/views/users/show.html.erb")
+
+	if !r.hasEdgeTo("partial:shared/header") {
+		t.Error("missing absolute partial render edge partial:shared/header")
+	}
+	// Bare "form" resolves relative to the rendering view's directory (users).
+	if !r.hasEdgeTo("partial:users/form") {
+		t.Error("missing relative partial render edge partial:users/form")
+	}
+}
+
+func TestEmitPartialSymbol(t *testing.T) {
+	r := extractERB(t, `<div>just markup</div>`, "app/views/users/_profile.html.erb")
+	if !r.hasSymbol("partial:users/profile") {
+		t.Error("partial file should emit symbol partial:users/profile")
+	}
+
+	// A non-partial template emits no partial symbol.
+	r2 := extractERB(t, `<div>page</div>`, "app/views/users/show.html.erb")
+	if r2.hasSymbol("partial:users/show") {
+		t.Error("non-partial template must not emit a partial symbol")
+	}
+}
+
+func TestExtractI18nKeys(t *testing.T) {
+	r := extractERB(t, `<h1><%= t(".title") %></h1>
+<p><%= t("shared.footer.copyright") %></p>
+<span><%= I18n.t("users.greeting") %></span>`, "app/views/users/show.html.erb")
+
+	for _, want := range []string{
+		"i18n:users.show.title",     // lazy key expanded against the view scope
+		"i18n:shared.footer.copyright",
+		"i18n:users.greeting",
+	} {
+		if !r.hasSymbol(want) {
+			t.Errorf("missing i18n symbol %q", want)
+		}
+	}
+}
+
+func TestErbCommentTagSkipped(t *testing.T) {
+	r := extractERB(t, `<%# render "shared/header" and t(".title") %>`, "app/views/users/show.html.erb")
+	if len(r.edges) != 0 || len(r.symbols) != 0 {
+		t.Errorf("comment tag should emit nothing, got %d edges %d symbols", len(r.edges), len(r.symbols))
+	}
+}
+
+// failingEmitter returns an error on the Nth Symbol or Edge call so error
+// propagation paths are exercised.
+type failingEmitter struct {
+	failSymbolOn int
+	failEdgeOn   int
+	syms, edges  int
+}
+
+func (f *failingEmitter) Symbol(extract.EmittedSymbol) error {
+	f.syms++
+	if f.syms == f.failSymbolOn {
+		return errBoom
+	}
+	return nil
+}
+func (f *failingEmitter) Edge(extract.EmittedEdge) error {
+	f.edges++
+	if f.edges == f.failEdgeOn {
+		return errBoom
+	}
+	return nil
+}
+
+var errBoom = errBoomType("boom")
+
+type errBoomType string
+
+func (e errBoomType) Error() string { return string(e) }
+
+func TestExtractTemplateRubyPathsOutsideViewsRoot(t *testing.T) {
+	// A template not under a views/ root: render targets and partial symbols
+	// fall back to bare names with no directory anchor.
+	r := extractERB(t, `<%= render "menu" %>`, "components/_menu.erb")
+	if !r.hasEdgeTo("partial:menu") {
+		t.Error("bare render outside views/ should target partial:menu")
+	}
+	if !r.hasSymbol("partial:menu") {
+		t.Error("partial outside views/ should emit symbol partial:menu")
+	}
+}
+
+func TestExtractErrorPropagation(t *testing.T) {
+	src := `<%= render "shared/header" %>
+<%= t(".title") %>
+<%= current_user %>`
+	// Symbol emission failure (partial self-symbol / i18n key) propagates.
+	if err := (Extractor{}).ExtractRaw([]byte(src), "app/views/users/_show.html.erb", &failingEmitter{failSymbolOn: 1}); err == nil {
+		t.Error("expected symbol emit error to propagate")
+	}
+	// Edge emission failure (render / helper call) propagates.
+	if err := (Extractor{}).ExtractRaw([]byte(src), "app/views/users/show.html.erb", &failingEmitter{failEdgeOn: 1}); err == nil {
+		t.Error("expected edge emit error to propagate")
+	}
+}

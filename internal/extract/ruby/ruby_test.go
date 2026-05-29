@@ -365,8 +365,13 @@ func TestSendNonLiteralSkipped(t *testing.T) {
   end
 end
 `)
+	// send() with a non-literal argument must not fabricate an edge to a
+	// guessed send target. The argument `method_name` is itself a
+	// receiverless call (no local binding ⇒ a method send in Ruby), so a
+	// `self.method_name` edge is expected; nothing else may be emitted.
 	for _, e := range r.edges {
-		if string(e.Kind) == "calls" && e.SourceQualified == "Service#invoke" {
+		if string(e.Kind) == "calls" && e.SourceQualified == "Service#invoke" &&
+			e.TargetQualified != "self.method_name" {
 			t.Errorf("unexpected calls edge from send with non-literal arg: %v", e.TargetQualified)
 		}
 	}
@@ -1486,9 +1491,13 @@ class Service
   end
 end
 `)
+	// The send target stays unresolved, but `callback` has no local binding,
+	// so it is itself a receiverless call — `self.callback` is expected and is
+	// the only edge allowed.
 	for _, e := range r.edges {
-		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" {
-			t.Error("should not emit calls edge when variable assignment cannot be traced")
+		if e.SourceQualified == "Service#process" && string(e.Kind) == "calls" &&
+			e.TargetQualified != "self.callback" {
+			t.Errorf("unexpected calls edge: %v", e.TargetQualified)
 		}
 	}
 }
@@ -3851,6 +3860,119 @@ end
 	}
 	if findEdge(r, "Order#process", "archive", "calls") == nil {
 		t.Error("non-noise method on a literal receiver should still emit a fallback edge")
+	}
+}
+
+func TestBareHelperCallInValuePositionRuby(t *testing.T) {
+	// Helpers (often injected via an included concern) are called bare and
+	// parenless in value positions — as arguments, in interpolations, in
+	// conditions, on the RHS of an assignment. Each must emit a self-call so
+	// the resolver can bind it to the concern method, while genuine locals
+	// and parameters are not mistaken for sends.
+	r := parseRuby(t, `class CheckoutController
+  def show(quantity)
+    total = quantity * 2
+    redirect_to path(currency: current_currency)
+    flash[:notice] = "in #{current_locale}"
+    render :ok if current_country
+    @sum = total
+    @cur = current_currency
+  end
+end
+`)
+	wantCalls := []string{"current_currency", "current_locale", "current_country"}
+	for _, name := range wantCalls {
+		if findEdge(r, "CheckoutController#show", "self."+name, "calls") == nil {
+			t.Errorf("missing self.%s call edge for value-position helper", name)
+		}
+	}
+	// `total` is a local and `quantity` a parameter — neither is a send.
+	for _, local := range []string{"total", "quantity"} {
+		if findEdge(r, "CheckoutController#show", "self."+local, "calls") != nil {
+			t.Errorf("local/parameter %q wrongly emitted as a call", local)
+		}
+	}
+}
+
+func TestBareHelperCallInAssignmentRHSRuby(t *testing.T) {
+	// Assignment and operator-assignment RHS are the canonical place a concern
+	// helper is captured (`@currency = current_currency`, memoised
+	// `@user ||= current_user`). The assignment target itself is not a send.
+	r := parseRuby(t, `class OrdersController
+  def show
+    @currency = current_currency
+    @user ||= current_user
+  end
+end
+`)
+	for _, name := range []string{"current_currency", "current_user"} {
+		if findEdge(r, "OrdersController#show", "self."+name, "calls") == nil {
+			t.Errorf("missing assignment-RHS helper call self.%s", name)
+		}
+	}
+}
+
+func TestTwoStepNamespacedNewCallResolvesRuby(t *testing.T) {
+	// `service = Klass.new; service.call(...)` on a namespaced constant must
+	// emit a resolved calls edge so the service-object entry point isn't
+	// reported dead. Regression guard for the dead-code false-positive case.
+	r := parseRuby(t, `module Checkout
+  class ProcessPaymentService
+    def call(order)
+      true
+    end
+  end
+end
+
+class PaymentCallbacksController
+  def create
+    service = Checkout::ProcessPaymentService.new
+    service.call(order)
+  end
+end
+`)
+	e := findEdge(r, "PaymentCallbacksController#create", "Checkout::ProcessPaymentService#call", "calls")
+	if e == nil {
+		t.Fatal("expected calls edge to Checkout::ProcessPaymentService#call")
+	}
+	if e.Confidence < 0.5 {
+		t.Errorf("edge confidence = %v, want >= 0.5 so dead-code counts it as a caller", e.Confidence)
+	}
+}
+
+func TestMethodReceiverKindRuby(t *testing.T) {
+	// Instance methods carry receiver=instance, singletons receiver=singleton,
+	// top-level defs carry none — feeding the resolver's dispatch-kind
+	// disambiguation.
+	r := parseRuby(t, `class PriceValue
+  def self.zero
+    new(0)
+  end
+
+  def zero?
+    amount == 0
+  end
+end
+
+def top_level_helper
+  1
+end
+`)
+	cases := []struct {
+		qualified, want string
+	}{
+		{"PriceValue.zero", extract.ReceiverSingleton},
+		{"PriceValue#zero?", extract.ReceiverInstance},
+		{"top_level_helper", ""},
+	}
+	for _, c := range cases {
+		s := findSymbol(r, c.qualified)
+		if s == nil {
+			t.Fatalf("missing symbol %q", c.qualified)
+		}
+		if s.Receiver != c.want {
+			t.Errorf("%q Receiver = %q, want %q", c.qualified, s.Receiver, c.want)
+		}
 	}
 }
 
