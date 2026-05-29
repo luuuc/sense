@@ -3,6 +3,7 @@ package mcpio
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestBuildDeadCodeResponse(t *testing.T) {
 		{Name: "NoConf", Qualified: "pkg.NoConf", File: "pkg/unused.go", LineStart: 30, LineEnd: 35, Kind: "method"},
 	}
 
-	resp := BuildDeadCodeResponse(symbols, 100)
+	resp := BuildDeadCodeResponse(symbols, 100, nil)
 
 	if resp.DeadCount != 3 {
 		t.Errorf("DeadCount = %d, want 3", resp.DeadCount)
@@ -79,14 +80,32 @@ func TestBuildDeadCodeResponse(t *testing.T) {
 func TestDeadVerifyCmdEscapesPredicate(t *testing.T) {
 	resp := BuildDeadCodeResponse([]dead.Symbol{
 		{Name: "retriable?", Qualified: "ApiError#retriable?", File: "api_error.rb", Kind: "method", Confidence: dead.ConfidencePossibly},
-	}, 1)
+	}, 1, nil)
 	if got := resp.DeadSymbols[0].VerifyCmd; got != `grep -rFn --exclude-dir=.git --exclude-dir=.sense "retriable?" .` {
 		t.Errorf("VerifyCmd = %q, want %q", got, `grep -rFn --exclude-dir=.git --exclude-dir=.sense "retriable?" .`)
 	}
 }
 
+func TestDeadCodeNoteIsFrameworkAware(t *testing.T) {
+	rails := deadCodeNote([]string{"Sidekiq", "Rails"})
+	if !strings.Contains(rails, "routing") || !strings.Contains(rails, "Concern") || !strings.Contains(rails, "Stimulus") {
+		t.Errorf("Rails note should cover routing/concerns/Stimulus, got: %s", rails)
+	}
+	if strings.Contains(rails, "ServiceLoader") || strings.Contains(rails, "blank identifier") {
+		t.Error("Rails note must not carry Go-specific blind spots")
+	}
+
+	generic := deadCodeNote(nil)
+	if !strings.Contains(generic, "ServiceLoader") {
+		t.Errorf("non-Rails note should be the generic blind-spot list, got: %s", generic)
+	}
+	if strings.Contains(generic, "routing — controller actions") {
+		t.Error("generic note must not carry Rails idioms")
+	}
+}
+
 func TestBuildDeadCodeResponseEmpty(t *testing.T) {
-	resp := BuildDeadCodeResponse(nil, 50)
+	resp := BuildDeadCodeResponse(nil, 50, nil)
 	if resp.DeadCount != 0 {
 		t.Errorf("DeadCount = %d, want 0", resp.DeadCount)
 	}

@@ -72,7 +72,7 @@ func RunDead(args []string, cio IO) int {
 	rolled := dead.Rollup(result.Dead)
 
 	if opts.JSON {
-		resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols)
+		resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols, result.Frameworks)
 		out, merr := mcpio.MarshalDeadCode(resp)
 		if merr != nil {
 			_, _ = fmt.Fprintln(cio.Stderr, "sense dead:", merr)

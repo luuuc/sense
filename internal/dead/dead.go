@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/luuuc/sense/internal/sqlite"
@@ -38,6 +39,9 @@ type Symbol struct {
 type Result struct {
 	Dead         []Symbol
 	TotalSymbols int
+	// Frameworks are the detected project frameworks (e.g. "Rails"),
+	// used to tailor the blind-spot caveat to the right ecosystem.
+	Frameworks []string
 }
 
 func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
@@ -93,6 +97,15 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: interface implementors: %w", err)
 	}
 
+	controllerConcernIDs, err := queryControllerConcernModuleIDs(ctx, db)
+	if err != nil {
+		return Result{}, fmt.Errorf("dead: controller concern modules: %w", err)
+	}
+	includedModuleIDs, err := queryIncludedModuleIDs(ctx, db)
+	if err != nil {
+		return Result{}, fmt.Errorf("dead: included modules: %w", err)
+	}
+
 	candidates = excludeEntryPoints(candidates, entryPointFilters{
 		testsTargets:         testsTargets,
 		interfaceIDs:         interfaceIDs,
@@ -100,9 +113,15 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		isLibrary:            isLibrary,
 		interfaceMethodNames: interfaceMethodNames,
 		implementorIDs:       implementorIDs,
+		controllerConcernIDs: controllerConcernIDs,
 	})
 
-	candidates = annotateConfidence(candidates, interfaceIDs, implementorIDs, usesDynamicAutoload(frameworks))
+	candidates = annotateConfidence(candidates, confidenceInputs{
+		interfaceIDs:      interfaceIDs,
+		implementorIDs:    implementorIDs,
+		includedModuleIDs: includedModuleIDs,
+		dynamicFramework:  usesDynamicAutoload(frameworks),
+	})
 
 	if len(candidates) > opts.Limit {
 		candidates = candidates[:opts.Limit]
@@ -111,7 +130,19 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	return Result{
 		Dead:         candidates,
 		TotalSymbols: totalSymbols,
+		Frameworks:   frameworkNames(frameworks),
 	}, nil
+}
+
+// frameworkNames returns the detected framework names in sorted order
+// for stable output.
+func frameworkNames(frameworks map[string]struct{}) []string {
+	names := make([]string, 0, len(frameworks))
+	for n := range frameworks {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
@@ -279,6 +310,52 @@ func queryInterfaceImplementors(ctx context.Context, db *sql.DB) (map[int64]stru
 	return out, rows.Err()
 }
 
+// queryControllerConcernModuleIDs returns IDs of modules included into a
+// class whose name ends in "Controller". Their instance methods become
+// routed controller actions (ActiveSupport::Concern mixed into a
+// controller), so they are framework entry points, not dead code.
+func queryControllerConcernModuleIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT e.target_id FROM sense_edges e
+		JOIN sense_symbols s ON s.id = e.source_id
+		WHERE e.kind = 'includes' AND e.target_id IS NOT NULL AND s.name LIKE '%Controller'`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// queryIncludedModuleIDs returns IDs of modules included anywhere (any
+// incoming includes edge). A method on such a module is reachable through
+// the including type, so a zero-caller verdict is uncertain rather than
+// dead.
+func queryIncludedModuleIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT DISTINCT target_id FROM sense_edges WHERE kind = 'includes' AND target_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
 func hasMainFunction(ctx context.Context, db *sql.DB, opts Options) (bool, error) {
 	q := `SELECT 1 FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
@@ -314,6 +391,9 @@ type entryPointFilters struct {
 	isLibrary            bool
 	interfaceMethodNames map[string]struct{}
 	implementorIDs       map[int64]struct{}
+	// controllerConcernIDs are module IDs included into a *Controller —
+	// their methods are routed actions. Populated only for Rails projects.
+	controllerConcernIDs map[int64]struct{}
 }
 
 func excludeEntryPoints(candidates []Symbol, filters entryPointFilters) []Symbol {
@@ -430,6 +510,14 @@ func isEntryPoint(s Symbol, f entryPointFilters) bool {
 	}
 	if isFrameworkHook(s, f.frameworks) {
 		return true
+	}
+	if isStimulusController(s) {
+		return true
+	}
+	if _, rails := f.frameworks["Rails"]; rails {
+		if isRailsControllerClass(s) || isRailsControllerAction(s, f.controllerConcernIDs) {
+			return true
+		}
 	}
 	if isInterfaceMethod(s, f.interfaceIDs) {
 		return true
@@ -559,6 +647,53 @@ func isFrameworkHook(s Symbol, frameworks map[string]struct{}) bool {
 	return false
 }
 
+// isRailsControllerClass reports whether s is a Rails controller class.
+// Controllers are instantiated and dispatched by the router, never by a
+// Ruby caller, so a zero-edge controller is an entry point, not dead.
+func isRailsControllerClass(s Symbol) bool {
+	return s.Language == "ruby" && s.Kind == "class" && strings.HasSuffix(s.Name, "Controller")
+}
+
+// isRailsControllerAction reports whether s is a public instance method
+// that the router can dispatch — defined directly on a *Controller, or
+// on a concern mixed into one.
+//
+// The visibility guard is currently inert: the Ruby extractor does not
+// populate Visibility, so every controller method passes it. That is the
+// intended trade — wrongly excluding an unused private helper is benign,
+// while flagging a routed action as dead would make a reader delete live
+// code. The guard stays so the policy is explicit and tightens for free
+// if visibility is ever indexed.
+func isRailsControllerAction(s Symbol, controllerConcernIDs map[int64]struct{}) bool {
+	if s.Language != "ruby" || s.Kind != "method" {
+		return false
+	}
+	if s.Visibility == "private" || s.Visibility == "protected" {
+		return false
+	}
+	if strings.HasSuffix(rubyMethodParentName(s.Qualified), "Controller") {
+		return true
+	}
+	if s.ParentID != nil {
+		_, ok := controllerConcernIDs[*s.ParentID]
+		return ok
+	}
+	return false
+}
+
+// isStimulusController reports whether s belongs to a Stimulus controller.
+// Stimulus dispatches lifecycle callbacks (connect/disconnect), action
+// methods, and target getters through the runtime and HTML data-*
+// attributes — none are static JS call edges. The *_controller.js
+// convention is the signal; no framework flag is required because the
+// filename is unambiguous.
+func isStimulusController(s Symbol) bool {
+	if s.Language != "javascript" && s.Language != "typescript" {
+		return false
+	}
+	return strings.HasSuffix(s.File, "_controller.js") || strings.HasSuffix(s.File, "_controller.ts")
+}
+
 func readFrameworks(ctx context.Context, db *sql.DB) map[string]struct{} {
 	out := map[string]struct{}{}
 	var raw string
@@ -610,15 +745,28 @@ func isGoConstructor(s Symbol) bool {
 	return s.Language == "go" && strings.HasPrefix(s.Name, "New") && s.Kind == "function"
 }
 
-func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[int64]struct{}, dynamicFramework bool) []Symbol {
+type confidenceInputs struct {
+	interfaceIDs      map[int64]struct{}
+	implementorIDs    map[int64]struct{}
+	includedModuleIDs map[int64]struct{}
+	dynamicFramework  bool
+}
+
+func annotateConfidence(candidates []Symbol, in confidenceInputs) []Symbol {
 	for i := range candidates {
 		s := &candidates[i]
 		if s.ParentID != nil {
-			if _, ok := interfaceIDs[*s.ParentID]; ok {
+			if _, ok := in.interfaceIDs[*s.ParentID]; ok {
 				s.Confidence = ConfidencePossibly
 				continue
 			}
-			if _, ok := implementorIDs[*s.ParentID]; ok {
+			if _, ok := in.implementorIDs[*s.ParentID]; ok {
+				s.Confidence = ConfidencePossibly
+				continue
+			}
+			// A method on a module included somewhere is reachable through
+			// the including type, so a zero-caller verdict is uncertain.
+			if _, ok := in.includedModuleIDs[*s.ParentID]; ok {
 				s.Confidence = ConfidencePossibly
 				continue
 			}
@@ -627,7 +775,7 @@ func annotateConfidence(candidates []Symbol, interfaceIDs, implementorIDs map[in
 			s.Confidence = ConfidencePossibly
 			continue
 		}
-		if dynamicFramework && (isDynamicallyReferenceable(*s) || isDynamicRubyMethod(*s)) {
+		if in.dynamicFramework && (isDynamicallyReferenceable(*s) || isDynamicRubyMethod(*s)) {
 			s.Confidence = ConfidencePossibly
 			continue
 		}

@@ -16,18 +16,18 @@ func TestRubyDynamicTypesTieredUnderFramework(t *testing.T) {
 		{"method", ConfidenceDead},
 	}
 	for _, c := range cases {
-		got := annotateConfidence([]Symbol{{Language: "ruby", Kind: c.kind, Name: "X"}}, nil, nil, true)
+		got := annotateConfidence([]Symbol{{Language: "ruby", Kind: c.kind, Name: "X"}}, confidenceInputs{dynamicFramework: true})
 		if got[0].Confidence != c.want {
 			t.Errorf("ruby %s (framework): confidence = %q, want %q", c.kind, got[0].Confidence, c.want)
 		}
 	}
 	// Without a dynamic framework, an unreferenced Ruby class is plain dead.
-	got := annotateConfidence([]Symbol{{Language: "ruby", Kind: "class", Name: "X"}}, nil, nil, false)
+	got := annotateConfidence([]Symbol{{Language: "ruby", Kind: "class", Name: "X"}}, confidenceInputs{dynamicFramework: false})
 	if got[0].Confidence != ConfidenceDead {
 		t.Errorf("ruby class (no framework): confidence = %q, want %q", got[0].Confidence, ConfidenceDead)
 	}
 	// Non-Ruby types are never tiered by this rule.
-	got = annotateConfidence([]Symbol{{Language: "python", Kind: "class", Name: "X"}}, nil, nil, true)
+	got = annotateConfidence([]Symbol{{Language: "python", Kind: "class", Name: "X"}}, confidenceInputs{dynamicFramework: true})
 	if got[0].Confidence != ConfidenceDead {
 		t.Errorf("python class: confidence = %q, want %q", got[0].Confidence, ConfidenceDead)
 	}
@@ -92,7 +92,7 @@ func TestRubyDynamicMethodTiering(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		got := annotateConfidence([]Symbol{c.sym}, nil, nil, c.framework)
+		got := annotateConfidence([]Symbol{c.sym}, confidenceInputs{dynamicFramework: c.framework})
 		if got[0].Confidence != c.want {
 			t.Errorf("%s: confidence = %q, want %q", c.name, got[0].Confidence, c.want)
 		}
@@ -114,7 +114,7 @@ func TestRubyMethodParentName(t *testing.T) {
 }
 
 func TestGoConstructorPossiblyDead(t *testing.T) {
-	got := annotateConfidence([]Symbol{{Language: "go", Kind: "function", Name: "NewThing"}}, nil, nil, false)
+	got := annotateConfidence([]Symbol{{Language: "go", Kind: "function", Name: "NewThing"}}, confidenceInputs{dynamicFramework: false})
 	if got[0].Confidence != ConfidencePossibly {
 		t.Errorf("go constructor confidence = %q, want %q", got[0].Confidence, ConfidencePossibly)
 	}
@@ -132,7 +132,7 @@ func TestInterfaceAndImplementorTiering(t *testing.T) {
 		{"implementor method", Symbol{Kind: "method", Name: "Do", ParentID: &pid20}},
 	}
 	for _, c := range cases {
-		got := annotateConfidence([]Symbol{c.sym}, interfaceIDs, implementorIDs, false)
+		got := annotateConfidence([]Symbol{c.sym}, confidenceInputs{interfaceIDs: interfaceIDs, implementorIDs: implementorIDs})
 		if got[0].Confidence != ConfidencePossibly {
 			t.Errorf("%s: confidence = %q, want %q", c.name, got[0].Confidence, ConfidencePossibly)
 		}
