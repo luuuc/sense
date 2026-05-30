@@ -10,13 +10,13 @@ const DefaultTokenBudget = 6000
 // ConventionsResponse is the shape of the sense_conventions tool's reply
 // and the `sense conventions --json` CLI output.
 type ConventionsResponse struct {
-	KeySymbols   []KeySymbolEntry     `json:"key_symbols,omitempty"`
-	Summary      string               `json:"summary,omitempty"`
-	Conventions  []ConventionEntry    `json:"conventions"`
-	Truncated    bool                 `json:"truncated,omitempty"`
-	TokenBudget  int                  `json:"token_budget,omitempty"`
-	SenseMetrics ConventionsMetrics   `json:"-"`
-	NextSteps    []NextStep           `json:"next_steps"`
+	KeySymbols   []KeySymbolEntry   `json:"key_symbols,omitempty"`
+	Summary      string             `json:"summary,omitempty"`
+	Conventions  []ConventionEntry  `json:"conventions"`
+	Truncated    bool               `json:"truncated,omitempty"`
+	TokenBudget  int                `json:"token_budget,omitempty"`
+	SenseMetrics ConventionsMetrics `json:"-"`
+	NextSteps    []NextStep         `json:"next_steps"`
 }
 
 // KeySymbolEntry is a high-reach type/interface with callers, emitted first
@@ -66,7 +66,7 @@ func BuildConventionsSummary(r *ConventionsResponse) {
 	}
 
 	type ranked struct {
-		index    int
+		index     int
 		typeNames int
 	}
 	ranks := make([]ranked, len(r.Conventions))

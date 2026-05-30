@@ -99,9 +99,9 @@ type FileLookup func(fileID int64) (path string, ok bool)
 // caller has already loaded the SymbolContext at the right depth
 // from the DB layer.
 type BuildGraphRequest struct {
-	Direction       model.Direction // DirectionBoth, DirectionCallers, DirectionCallees; "" == both
-	SegmentCallers  bool
-	Snippets        *SnippetReader
+	Direction      model.Direction // DirectionBoth, DirectionCallers, DirectionCallees; "" == both
+	SegmentCallers bool
+	Snippets       *SnippetReader
 }
 
 // BuildGraphResponse assembles the wire-shape response from the

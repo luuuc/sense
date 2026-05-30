@@ -386,4 +386,3 @@ func segmentBlastCallers(resp *BlastResponse) {
 	resp.ProductionAffected = prod
 	resp.TestAffected = test
 }
-
