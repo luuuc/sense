@@ -6,9 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 
-	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/metrics"
 	"github.com/luuuc/sense/internal/search"
@@ -68,44 +66,13 @@ func RunSearch(args []string, cio IO) int {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	var vectorIdx search.VectorIndex
-	var embedder embed.Embedder
-
-	if EmbeddingsEnabled(cio.Dir) {
-		hnswPath := filepath.Join(cio.Dir, ".sense", "hnsw.bin")
-		idx, loadErr := search.LoadHNSWIndex(hnswPath)
-		if loadErr == nil && idx != nil {
-			vectorIdx = idx
-		} else {
-			embeddings, err := adapter.LoadEmbeddings(ctx)
-			if err != nil {
-				_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)
-				return ExitGeneralError
-			}
-			if len(embeddings) > 0 {
-				vectorIdx = search.BuildHNSWIndex(embeddings)
-			}
-		}
-		if vectorIdx != nil && vectorIdx.Len() > 0 {
-			embedder, err = embed.NewBundledEmbedder(0)
-			if err != nil {
-				_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)
-				return ExitGeneralError
-			}
-			defer func() { _ = embedder.Close() }()
-		}
+	engine, embedder, err := search.BuildEngine(ctx, adapter, cio.Dir)
+	if err != nil {
+		_, _ = fmt.Fprintln(cio.Stderr, "sense search:", err)
+		return ExitGeneralError
 	}
-
-	engine := search.NewEngine(adapter, vectorIdx, embedder)
-
 	if embedder != nil {
-		reranker, rerankErr := embed.NewBundledReranker(0)
-		if rerankErr != nil {
-			_, _ = fmt.Fprintln(cio.Stderr, "sense search: init reranker:", rerankErr)
-		} else {
-			engine.SetReranker(reranker)
-			defer func() { _ = reranker.Close() }()
-		}
+		defer func() { _ = embedder.Close() }()
 	}
 
 	results, meta, err := engine.Search(ctx, search.Options{

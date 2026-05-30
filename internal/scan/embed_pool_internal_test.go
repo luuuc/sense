@@ -3,14 +3,10 @@ package scan
 import (
 	"context"
 	"errors"
-	"io"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/luuuc/sense/internal/embed"
-	"github.com/luuuc/sense/internal/sqlite"
 )
 
 // fakeEmbedder satisfies the embedder interface for testing the
@@ -131,48 +127,3 @@ func (c *closingEmbedder) Embed(context.Context, []embed.EmbedInput) ([][]float3
 	return nil, nil
 }
 func (c *closingEmbedder) Close() error { return c.closeErr }
-
-// TestTryIncrementalHNSWNoChangedFiles pins the early-return path: with
-// no changedFileIDs there is nothing to load and the function must
-// signal "not updated, no error" so the caller falls back to a full rebuild.
-func TestTryIncrementalHNSWNoChangedFiles(t *testing.T) {
-	ctx := context.Background()
-	tmp := t.TempDir()
-	adapter, err := sqlite.Open(ctx, filepath.Join(tmp, "index.db"))
-	if err != nil {
-		t.Fatalf("open adapter: %v", err)
-	}
-	defer func() { _ = adapter.Close() }()
-
-	h := &harness{ctx: ctx, idx: adapter, out: io.Discard, warn: io.Discard}
-	updated, err := h.tryIncrementalHNSW(filepath.Join(tmp, "hnsw.bin"))
-	if err != nil {
-		t.Fatalf("tryIncrementalHNSW: %v", err)
-	}
-	if updated {
-		t.Error("expected updated=false with no changedFileIDs")
-	}
-}
-
-// TestBuildHNSWIndexEmptyDB exercises the empty-embeddings short-circuit
-// in buildHNSWIndex (LoadEmbeddings returns nil → return nil without
-// writing anything to disk).
-func TestBuildHNSWIndexEmptyDB(t *testing.T) {
-	ctx := context.Background()
-	tmp := t.TempDir()
-	adapter, err := sqlite.Open(ctx, filepath.Join(tmp, "index.db"))
-	if err != nil {
-		t.Fatalf("open adapter: %v", err)
-	}
-	defer func() { _ = adapter.Close() }()
-
-	senseDir := tmp
-	h := &harness{ctx: ctx, idx: adapter, out: io.Discard, warn: io.Discard}
-	if err := h.buildHNSWIndex(senseDir); err != nil {
-		t.Fatalf("buildHNSWIndex on empty DB: %v", err)
-	}
-	// Should not have written hnsw.bin.
-	if _, err := os.Stat(filepath.Join(senseDir, "hnsw.bin")); err == nil {
-		t.Error("hnsw.bin should not exist for empty DB")
-	}
-}

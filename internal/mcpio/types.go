@@ -528,7 +528,7 @@ type FusionWeights struct {
 //
 // Source reports which retrieval path surfaced the hit, so a consumer
 // can distinguish a keyword match from a semantic one. It is one of:
-// "keyword" (FTS5 leg only), "vector" (HNSW semantic leg only),
+// "keyword" (FTS5 leg only), "vector" (semantic leg only),
 // "hybrid" (both legs), "graph" (injected by graph enrichment — search
 // did not match it directly), or "text" (substring text-fallback path).
 type SearchResultEntry struct {

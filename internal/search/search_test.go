@@ -155,7 +155,7 @@ func TestFusionBothBackendsRankHigher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
@@ -450,7 +450,7 @@ func TestNormalizeScoresSpread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
 	results, _, err := engine.Search(ctx, search.Options{
@@ -666,7 +666,7 @@ func TestSearchModeHybrid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
 	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
@@ -703,7 +703,7 @@ func TestSearchModeUpgradeViaSetVectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine.SetVectors(vectorIdx)
 
 	_, meta2, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
@@ -835,7 +835,7 @@ func TestFusionWeightsHybrid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &paymentQueryEmbedder{})
 
 	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
@@ -884,7 +884,7 @@ func TestLowConfidenceVectorFloor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	// Use an embedder that produces vectors orthogonal to the index,
 	// guaranteeing low vector confidence (< 0.4).
 	engine := search.NewEngine(a, vectorIdx, &lowConfidenceEmbedder{})
@@ -925,7 +925,7 @@ func TestNaturalLanguageQueryFloorsVectorWeight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &lowConfidenceEmbedder{})
 
 	// Natural-language query: stopword "the" + multiple plain words, no
@@ -1029,26 +1029,12 @@ func TestGenericTokenPenaltyEndToEnd(t *testing.T) {
 	}
 }
 
-// uniformReranker scores every document identically, erasing all RRF rank
-// information. It isolates the generic-token penalty: any surviving
-// reordering must come from the penalty, not from residual fusion order.
-type uniformReranker struct{}
-
-func (uniformReranker) Score(_ string, docs []string) ([]float32, error) {
-	scores := make([]float32, len(docs))
-	for i := range scores {
-		scores[i] = 1.0
-	}
-	return scores, nil
-}
-
-// TestGenericTokenPenaltySurvivesReranking pins the card-5 decision: the
-// generic-token penalty runs AFTER reranking, so a cross-encoder cannot
-// silently erase it. With a uniform reranker every hit is tied at 1.0; if
-// the penalty ran before rerank the reranker's overwrite would erase it
-// and the tie would stand. Because it runs after, the generic-only
-// "prevent" hits are demoted below the domain match "ListingGuard".
-func TestGenericTokenPenaltySurvivesReranking(t *testing.T) {
+// TestGenericTokenPenaltyDemotesGenericOnlyHits pins the generic-token
+// penalty: a keyword-only hit that matched solely on a high-frequency token
+// ("prevent" → preventClose) must rank below the genuine domain match
+// ("ListingGuard") for the query. This is the demotion the score-domain
+// passes exist to deliver, asserted on the live pipeline.
+func TestGenericTokenPenaltyDemotesGenericOnlyHits(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
@@ -1086,16 +1072,12 @@ func TestGenericTokenPenaltySurvivesReranking(t *testing.T) {
 	}
 
 	engine := search.NewEngine(a, nil, nil)
-	engine.SetReranker(uniformReranker{})
 
-	results, meta, err := engine.Search(ctx, search.Options{
+	results, _, err := engine.Search(ctx, search.Options{
 		Query: "prevent adding own listing", Limit: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !meta.Reranked {
-		t.Fatal("expected Reranked=true")
 	}
 
 	rank := map[string]int{}
@@ -1108,7 +1090,7 @@ func TestGenericTokenPenaltySurvivesReranking(t *testing.T) {
 	}
 	for _, n := range preventNames {
 		if pr, ok := rank[n]; ok && pr < listingRank {
-			t.Errorf("reranker erased the penalty: generic-only %q (rank %d) above ListingGuard (rank %d)", n, pr, listingRank)
+			t.Errorf("generic-token penalty failed: generic-only %q (rank %d) above ListingGuard (rank %d)", n, pr, listingRank)
 		}
 	}
 }
@@ -1141,7 +1123,7 @@ func TestSearchModeOverridesShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine := search.NewEngine(a, vectorIdx, &lowConfidenceEmbedder{})
 
 	const nlQuery = "prevent the user from charging their own card"
@@ -1279,137 +1261,6 @@ func TestGraphEnrichmentBoostsCallees(t *testing.T) {
 	}
 }
 
-// boostReranker boosts documents containing the target substring.
-type boostReranker struct {
-	target string
-}
-
-func (b *boostReranker) Score(_ string, docs []string) ([]float32, error) {
-	scores := make([]float32, len(docs))
-	for i, doc := range docs {
-		if strings.Contains(doc, b.target) {
-			scores[i] = 10.0
-		} else {
-			scores[i] = -10.0
-		}
-	}
-	return scores, nil
-}
-
-func TestRerankerChangesOrdering(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = a.Close() }()
-
-	seedFusionIndex(ctx, t, a)
-
-	engine := search.NewEngine(a, nil, nil)
-
-	// Without reranker: "ProcessPayment" ranks first for "payment".
-	results1, meta1, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta1.Reranked {
-		t.Error("expected Reranked=false without reranker")
-	}
-	if len(results1) == 0 || results1[0].Qualified != "pkg.ProcessPayment" {
-		t.Fatalf("expected ProcessPayment first without reranker, got %v", results1)
-	}
-
-	// With reranker that boosts "PaymentConfig": it should flip to rank first,
-	// despite ProcessPayment having higher centrality (2 callers).
-	engine.SetReranker(&boostReranker{target: "PaymentConfig"})
-
-	results2, meta2, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !meta2.Reranked {
-		t.Error("expected Reranked=true with reranker")
-	}
-
-	for i, r := range results2 {
-		t.Logf("  %d. %s (score=%.4f)", i+1, r.Qualified, r.Score)
-	}
-	if len(results2) == 0 || results2[0].Qualified != "pkg.PaymentConfig" {
-		t.Errorf("reranker should have promoted PaymentConfig to first, got %q", results2[0].Qualified)
-	}
-}
-
-func TestRerankerMetaFlag(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = a.Close() }()
-
-	seedFusionIndex(ctx, t, a)
-
-	engine := search.NewEngine(a, nil, nil)
-
-	_, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.Reranked {
-		t.Error("Reranked should be false when no reranker is set")
-	}
-
-	engine.SetReranker(&boostReranker{target: "anything"})
-	_, meta, err = engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !meta.Reranked {
-		t.Error("Reranked should be true when reranker is set")
-	}
-}
-
-func TestRerankerGracefulDegradation(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = a.Close() }()
-
-	seedFusionIndex(ctx, t, a)
-
-	engine := search.NewEngine(a, nil, nil)
-
-	// Search with no reranker works normally.
-	results, _, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) == 0 {
-		t.Fatal("expected results without reranker")
-	}
-
-	// Set reranker, then clear it — should degrade back gracefully.
-	engine.SetReranker(&boostReranker{target: "ChargeCard"})
-	engine.SetReranker(nil)
-
-	results2, meta, err := engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.Reranked {
-		t.Error("Reranked should be false after clearing reranker")
-	}
-	if len(results2) == 0 {
-		t.Fatal("expected results after clearing reranker")
-	}
-}
-
 // errEmbedder always fails, exercising the embed error path in Search.
 type errEmbedder struct{}
 
@@ -1436,7 +1287,7 @@ func TestSearchEmbedError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 
 	engine := search.NewEngine(a, vectorIdx, &errEmbedder{})
 

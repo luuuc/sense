@@ -124,7 +124,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 			return writeAdapter.EmbeddingDebtCount(ctx)
 		},
 		runEmbed: func(ctx context.Context) (int, error) {
-			return scan.EmbedPending(ctx, writeAdapter, root, senseDir)
+			return scan.EmbedPending(ctx, writeAdapter, root)
 		},
 	}
 	defer embedCtl.Cancel()

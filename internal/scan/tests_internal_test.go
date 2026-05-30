@@ -124,7 +124,7 @@ func TestMigrateEmbeddingModel(t *testing.T) {
 	h := &harness{ctx: ctx, idx: adapter, root: tmp, out: io.Discard, warn: io.Discard}
 
 	// Case 1: No stored model → no migration
-	migrated, err := h.migrateEmbeddingModel(senseDir)
+	migrated, err := h.migrateEmbeddingModel()
 	if err != nil {
 		t.Fatalf("migrate with no stored model: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestMigrateEmbeddingModel(t *testing.T) {
 	if err := adapter.WriteMeta(ctx, "embedding_model", embed.ModelID); err != nil {
 		t.Fatalf("write meta: %v", err)
 	}
-	migrated, err = h.migrateEmbeddingModel(senseDir)
+	migrated, err = h.migrateEmbeddingModel()
 	if err != nil {
 		t.Fatalf("migrate with matching model: %v", err)
 	}
@@ -169,13 +169,7 @@ func TestMigrateEmbeddingModel(t *testing.T) {
 		t.Fatalf("insert embedding: %v", err)
 	}
 
-	// Create hnsw.bin to verify it's removed
-	hnswPath := filepath.Join(senseDir, "hnsw.bin")
-	if err := os.WriteFile(hnswPath, []byte("fake"), 0o644); err != nil {
-		t.Fatalf("write hnsw.bin: %v", err)
-	}
-
-	migrated, err = h.migrateEmbeddingModel(senseDir)
+	migrated, err = h.migrateEmbeddingModel()
 	if err != nil {
 		t.Fatalf("migrate with mismatched model: %v", err)
 	}
@@ -197,10 +191,5 @@ func TestMigrateEmbeddingModel(t *testing.T) {
 	err = db.QueryRow("SELECT value FROM sense_meta WHERE key = ?", "embedding_model").Scan(&meta)
 	if err == nil {
 		t.Error("expected embedding_model meta to be deleted")
-	}
-
-	// Verify hnsw.bin removed
-	if _, err := os.Stat(hnswPath); !os.IsNotExist(err) {
-		t.Error("expected hnsw.bin to be removed")
 	}
 }

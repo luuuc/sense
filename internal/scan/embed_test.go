@@ -200,7 +200,6 @@ func Logout(token string) {
 	}
 
 	dbPath := filepath.Join(root, ".sense", "index.db")
-	senseDir := filepath.Join(root, ".sense")
 
 	// Phase 2: EmbedPending picks up the debt
 	adapter, err := sql.Open("sqlite", dbPath)
@@ -215,7 +214,7 @@ func Logout(token string) {
 	}
 	defer func() { _ = sqliteAdapter.Close() }()
 
-	n, err := scan.EmbedPending(ctx, sqliteAdapter, root, senseDir)
+	n, err := scan.EmbedPending(ctx, sqliteAdapter, root)
 	if err != nil {
 		t.Fatalf("EmbedPending: %v", err)
 	}
@@ -232,12 +231,6 @@ func Logout(token string) {
 	watermark := readMeta(t, dbPath, "embedding_watermark")
 	if watermark != "" {
 		t.Errorf("embedding_watermark should be cleared after EmbedPending, got %q", watermark)
-	}
-
-	// Verify HNSW index was written
-	hnswPath := filepath.Join(senseDir, "hnsw.bin")
-	if _, err := os.Stat(hnswPath); err != nil {
-		t.Errorf("hnsw.bin should exist after EmbedPending: %v", err)
 	}
 }
 
@@ -311,7 +304,6 @@ func TestEmbedPendingCancelSafe(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(root, ".sense", "index.db")
-	senseDir := filepath.Join(root, ".sense")
 
 	// Cancel immediately — EmbedPending should exit without corrupting the index.
 	cancelCtx, cancel := context.WithCancel(ctx)
@@ -323,7 +315,7 @@ func TestEmbedPendingCancelSafe(t *testing.T) {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	_, _ = scan.EmbedPending(cancelCtx, adapter, root, senseDir)
+	_, _ = scan.EmbedPending(cancelCtx, adapter, root)
 	// EmbedPending may fail (cancelled) or succeed (race) — either is fine.
 	// What matters: the index is not corrupted.
 
@@ -348,7 +340,6 @@ func Validate() bool { return true }
 
 	ctx := context.Background()
 	dbPath := filepath.Join(root, ".sense", "index.db")
-	senseDir := filepath.Join(root, ".sense")
 
 	// State 1: Deferred scan — structural index exists, no embeddings.
 	res, err := scan.Run(ctx, scan.Options{
@@ -381,7 +372,7 @@ func Validate() bool { return true }
 	}
 	defer func() { _ = adapter.Close() }()
 
-	n, err := scan.EmbedPending(ctx, adapter, root, senseDir)
+	n, err := scan.EmbedPending(ctx, adapter, root)
 	if err != nil {
 		t.Fatalf("EmbedPending: %v", err)
 	}
@@ -397,7 +388,7 @@ func Validate() bool { return true }
 	}
 
 	// State 3: No more debt — EmbedPending is a no-op.
-	n2, err := scan.EmbedPending(ctx, adapter, root, senseDir)
+	n2, err := scan.EmbedPending(ctx, adapter, root)
 	if err != nil {
 		t.Fatalf("second EmbedPending: %v", err)
 	}
