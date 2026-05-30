@@ -124,7 +124,9 @@ var erbHelperSkip = map[string]bool{
 	// ActionView / ActionController context accessors. These are framework
 	// objects, never application methods, so a bare reference (request.path,
 	// params[:id]) must not emit a self-call that the resolver then binds to a
-	// coincidental same-named app symbol (e.g. a test fake's #request).
+	// coincidental same-named app symbol (e.g. a test fake's #request). The
+	// receiver-unknown analogue for the Ruby fragment walker is
+	// coreNoiseMethods in internal/extract/ruby/ruby.go.
 	"request": true, "response": true, "params": true, "session": true,
 	"cookies": true, "flash": true, "controller": true,
 }

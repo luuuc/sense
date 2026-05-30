@@ -866,7 +866,9 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 // edge rather than let the resolver's unqualified fallback bind it to an
 // arbitrary same-named method elsewhere — e.g. `count.zero?` resolving
 // to a `Money.zero` singleton. A missing low-confidence edge is cheaper
-// than a false caller that inflates blast radius.
+// than a false caller that inflates blast radius. The ERB analogue, for
+// framework context accessors referenced bare in a template, is
+// erbHelperSkip in internal/extract/erb/erb.go.
 var coreNoiseMethods = map[string]bool{
 	"zero?": true, "positive?": true, "negative?": true, "nonzero?": true,
 	"present?": true, "blank?": true, "nil?": true, "empty?": true,
@@ -2419,6 +2421,12 @@ func (w *walker) emitResourceRouteHelpers(name string, singular bool, controller
 
 // emitRouteHelper emits one synthetic route:* symbol (deduped per file) and an
 // edge from it to the controller action it routes to.
+//
+// Note: like any symbol, a route:* symbol enters the resolver's by-name index,
+// so bare unqualified calls elsewhere in the routes file can fall back onto it,
+// giving it spurious sub-floor (<0.5) outgoing edges. Those are filtered from
+// graph/blast output at query time (the confidence floor); the one real,
+// convention-confidence edge is the controller-action edge emitted here.
 func (w *walker) emitRouteHelper(helperName, actionTarget string, line int) error {
 	qualified := extract.PrefixRoute + helperName
 	if !w.emittedSynthetics[qualified] {
