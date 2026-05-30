@@ -21,7 +21,6 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-
 func TestEdgeKindToRole(t *testing.T) {
 	tests := []struct {
 		edgeKind string
@@ -447,9 +446,9 @@ func TestHandleDeadCodeViaGraphCoverage(t *testing.T) {
 		t.Fatalf("handleGraph dead_code: %v", err)
 	}
 	text := resultText(t, result)
-	var resp mcpio.DeadCodeResponse
+	var resp mcpio.UnreferencedResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("unmarshal dead code: %v", err)
+		t.Fatalf("unmarshal unreferenced: %v", err)
 	}
 	if resp.TotalSymbols == 0 {
 		t.Error("expected non-zero total_symbols")
@@ -954,8 +953,8 @@ func TestHandleBlastWithIncludeTests(t *testing.T) {
 	ctx := context.Background()
 
 	result, err := ts.handlers.handleBlast(ctx, toolReq(map[string]any{
-		"symbol":         "auth.Verify",
-		"include_tests":  true,
+		"symbol":        "auth.Verify",
+		"include_tests": true,
 	}))
 	if err != nil {
 		t.Fatalf("handleBlast with include_tests: %v", err)
@@ -1012,7 +1011,7 @@ func TestHandleBlastWithMaxResults(t *testing.T) {
 
 	result, err := ts.handlers.handleBlast(ctx, toolReq(map[string]any{
 		"symbol":      "auth.Verify",
-		"max_results":  float64(2),
+		"max_results": float64(2),
 	}))
 	if err != nil {
 		t.Fatalf("handleBlast with max_results: %v", err)
@@ -1437,8 +1436,8 @@ func TestConventionsHintsDomainFilter(t *testing.T) {
 }
 
 func TestDeadCodeHintsNoDeadSymbols(t *testing.T) {
-	resp := mcpio.DeadCodeResponse{
-		DeadSymbols: []mcpio.DeadSymbolEntry{},
+	resp := mcpio.UnreferencedResponse{
+		Unreferenced: mcpio.UnreferencedSymbols{Dead: []mcpio.DeadEntry{}},
 		DeadCount:    0,
 	}
 	hints := deadCodeHints(resp)

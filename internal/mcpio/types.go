@@ -96,33 +96,33 @@ type NextStep struct {
 // that do not compute it (the CLI in 01-04) omit the block entirely;
 // the MCP server in 01-05 always populates it.
 type GraphResponse struct {
-	Symbol             GraphSymbol            `json:"symbol"`
-	Edges              GraphEdges             `json:"edges"`
-	DispatchInferred   []DispatchInferredRef  `json:"dispatch_inferred,omitempty"`
-	Layers             []GraphLayer           `json:"layers,omitempty"`
-	Truncated          bool               `json:"truncated,omitempty"`
-	SnippetsTruncated  bool               `json:"snippets_truncated,omitempty"`
-	TestCallerSummary  *TestCallerSummary `json:"test_caller_summary,omitempty"`
+	Symbol            GraphSymbol           `json:"symbol"`
+	Edges             GraphEdges            `json:"edges"`
+	DispatchInferred  []DispatchInferredRef `json:"dispatch_inferred,omitempty"`
+	Layers            []GraphLayer          `json:"layers,omitempty"`
+	Truncated         bool                  `json:"truncated,omitempty"`
+	SnippetsTruncated bool                  `json:"snippets_truncated,omitempty"`
+	TestCallerSummary *TestCallerSummary    `json:"test_caller_summary,omitempty"`
 	// LowConfidenceHidden counts usage edges dropped below graphConfidenceFloor
 	// for the root symbol only (not deeper layers), so a consumer knows the
 	// edge list was filtered rather than silently truncated.
-	LowConfidenceHidden int               `json:"low_confidence_hidden,omitempty"`
+	LowConfidenceHidden int `json:"low_confidence_hidden,omitempty"`
 	// OmittedEdges counts edges dropped to keep the response within its
 	// token budget (distinct from low_confidence_hidden, which is a
 	// confidence filter). Non-zero means the edge lists are a partial,
 	// highest-signal view — narrow with a direction or a specific symbol.
-	OmittedEdges       int                    `json:"omitted_edges,omitempty"`
-	CoverageNote       string                 `json:"coverage_note,omitempty"`
-	VerifyHint         string                 `json:"verify_hint,omitempty"`
-	IndexCaveat        string                 `json:"index_caveat,omitempty"`
+	OmittedEdges int    `json:"omitted_edges,omitempty"`
+	CoverageNote string `json:"coverage_note,omitempty"`
+	VerifyHint   string `json:"verify_hint,omitempty"`
+	IndexCaveat  string `json:"index_caveat,omitempty"`
 	// ViewEdges is the per-subject view-reachability signal: "present" when a
 	// view template reaches this symbol, "none" when view-dispatch is a live
 	// question for it but no view edge exists, "" (omitted) otherwise. See
 	// viewedges.go for the full contract.
-	ViewEdges          string                 `json:"view_edges,omitempty"`
-	SenseMetrics       GraphMetrics           `json:"-"`
-	Freshness          *Freshness             `json:"freshness,omitempty"`
-	NextSteps          []NextStep             `json:"next_steps"`
+	ViewEdges    string       `json:"view_edges,omitempty"`
+	SenseMetrics GraphMetrics `json:"-"`
+	Freshness    *Freshness   `json:"freshness,omitempty"`
+	NextSteps    []NextStep   `json:"next_steps"`
 }
 
 // DispatchInferredRef is a caller discovered through interface dispatch —
@@ -175,14 +175,14 @@ type GraphSymbol struct {
 // leave unrequested kinds as empty slices and callers must treat
 // `[]` as "none found" rather than "not provided."
 type GraphEdges struct {
-	Calls    []CallEdgeRef      `json:"calls"`
-	CalledBy []CallEdgeRef      `json:"called_by"`
-	Inherits []InheritEdgeRef   `json:"inherits"`
-	Composes []ComposeEdgeRef   `json:"composes"`
-	Includes []IncludeEdgeRef   `json:"includes"`
-	Imports  []ImportEdgeRef    `json:"imports"`
-	Tests    []TestEdgeRef      `json:"tests"`
-	Temporal []TemporalEdgeRef  `json:"temporal"`
+	Calls    []CallEdgeRef     `json:"calls"`
+	CalledBy []CallEdgeRef     `json:"called_by"`
+	Inherits []InheritEdgeRef  `json:"inherits"`
+	Composes []ComposeEdgeRef  `json:"composes"`
+	Includes []IncludeEdgeRef  `json:"includes"`
+	Imports  []ImportEdgeRef   `json:"imports"`
+	Tests    []TestEdgeRef     `json:"tests"`
+	Temporal []TemporalEdgeRef `json:"temporal"`
 }
 
 // CallEdgeRef is the shape of a calls / called_by edge entry. File
@@ -285,16 +285,16 @@ type GraphMetrics struct {
 // by line range. Freshness follows the same CLI-omits / MCP-populates
 // convention as GraphResponse.
 type BlastResponse struct {
-	Symbol          string          `json:"symbol"`
-	Risk            string          `json:"risk"`
-	RiskFactors     []string        `json:"risk_factors"`
-	DirectCallers   []BlastCaller   `json:"direct_callers"`
-	IndirectCallers []BlastIndirect `json:"indirect_callers"`
-	AffectedTests   []string        `json:"affected_tests"`
-	AffectedSymbols     int `json:"affected_symbols"`
-	AffectedFiles       int `json:"affected_files"`
-	GraphEdgesTraversed int `json:"graph_edges_traversed"`
-	TotalAffected       int `json:"total_affected"`
+	Symbol              string          `json:"symbol"`
+	Risk                string          `json:"risk"`
+	RiskFactors         []string        `json:"risk_factors"`
+	DirectCallers       []BlastCaller   `json:"direct_callers"`
+	IndirectCallers     []BlastIndirect `json:"indirect_callers"`
+	AffectedTests       []string        `json:"affected_tests"`
+	AffectedSymbols     int             `json:"affected_symbols"`
+	AffectedFiles       int             `json:"affected_files"`
+	GraphEdgesTraversed int             `json:"graph_edges_traversed"`
+	TotalAffected       int             `json:"total_affected"`
 
 	AffectedSubclasses     []BlastCaller `json:"affected_subclasses"`
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
@@ -312,8 +312,8 @@ type BlastResponse struct {
 	SnippetsTruncated  bool   `json:"snippets_truncated,omitempty"`
 	CoverageNote       string `json:"coverage_note,omitempty"`
 
-	VerifyHint   string       `json:"verify_hint,omitempty"`
-	IndexCaveat  string       `json:"index_caveat,omitempty"`
+	VerifyHint  string `json:"verify_hint,omitempty"`
+	IndexCaveat string `json:"index_caveat,omitempty"`
 	// ViewEdges is the per-subject view-reachability signal: "present" when a
 	// view template reaches this symbol, "none" when view-dispatch is a live
 	// question for it but no view edge exists, "" (omitted) otherwise. See
@@ -394,16 +394,16 @@ type Freshness struct {
 // sense_status schema has no `sense_metrics` footer — status is
 // metadata about the index itself, not the result of a query against
 type StatusResponse struct {
-	Index             StatusIndex              `json:"index"`
+	Index             StatusIndex               `json:"index"`
 	Languages         map[string]StatusLanguage `json:"languages"`
-	Structure         *StatusStructure         `json:"structure,omitempty"`
-	Profile           *StatusProfile           `json:"profile,omitempty"`
-	Freshness         Freshness                `json:"freshness"`
-	EmbeddingProgress *EmbeddingProgress       `json:"embedding_progress,omitempty"`
-	Session           *StatusSession           `json:"session,omitempty"`
-	Lifetime          *StatusLifetime          `json:"lifetime,omitempty"`
-	Version           *StatusVersion           `json:"version,omitempty"`
-	NextSteps         []NextStep               `json:"next_steps"`
+	Structure         *StatusStructure          `json:"structure,omitempty"`
+	Profile           *StatusProfile            `json:"profile,omitempty"`
+	Freshness         Freshness                 `json:"freshness"`
+	EmbeddingProgress *EmbeddingProgress        `json:"embedding_progress,omitempty"`
+	Session           *StatusSession            `json:"session,omitempty"`
+	Lifetime          *StatusLifetime           `json:"lifetime,omitempty"`
+	Version           *StatusVersion            `json:"version,omitempty"`
+	NextSteps         []NextStep                `json:"next_steps"`
 }
 
 type StatusProfile struct {
@@ -481,11 +481,11 @@ type StatusLifetime struct {
 // Created and managed by pitch 04-04; this pitch reads whatever is
 // available and displays current/mismatch status.
 type StatusVersion struct {
-	Binary               string `json:"binary"`
-	Schema               int    `json:"schema"`
-	SchemaCurrent        bool   `json:"schema_current"`
-	EmbeddingModel       string `json:"embedding_model"`
-	EmbeddingModelCurrent bool  `json:"embedding_model_current"`
+	Binary                string `json:"binary"`
+	Schema                int    `json:"schema"`
+	SchemaCurrent         bool   `json:"schema_current"`
+	EmbeddingModel        string `json:"embedding_model"`
+	EmbeddingModelCurrent bool   `json:"embedding_model_current"`
 }
 
 // StatusIndex reports index-level counts and size. Path is the
@@ -575,43 +575,77 @@ type SearchMetrics struct {
 // Dead code response (sense_graph dead_code mode)
 // ---------------------------------------------------------------
 
-// DeadCodeResponse is the shape returned by sense_graph when dead_code
-// is true. It replaces the normal GraphResponse with project-wide dead
-// symbol analysis.
-type DeadCodeResponse struct {
-	DeadSymbols  []DeadSymbolEntry `json:"dead_symbols"`
-	TotalSymbols int               `json:"total_symbols"`
-	DeadCount    int               `json:"dead_count"`
-	Note         string            `json:"note,omitempty"`
-	CoverageNote string            `json:"coverage_note,omitempty"`
-	SenseMetrics DeadCodeMetrics   `json:"-"`
-	NextSteps    []NextStep        `json:"next_steps"`
-}
-
-// DeadSymbolEntry is a single dead symbol in the response.
-type DeadSymbolEntry struct {
-	Symbol     string `json:"symbol"`
-	Qualified  string `json:"qualified"`
-	File       string `json:"file"`
-	LineStart  int    `json:"line_start"`
-	LineEnd    int    `json:"line_end"`
-	Kind       string `json:"kind"`
-	Confidence string `json:"confidence"`
-	// VerifyCmd is a copy-paste command to confirm the verdict: a call-scoped
-	// grep (`\.name`) for call sites the static index missed (duck-typed
-	// dispatch, metaprogramming), excluding the definition's own file:line so
-	// a surviving hit is a real missed call. When VerifyTooCommon is true it
-	// carries a manual-inspect hint instead — the name is too common across
-	// the index for a grep to be useful.
-	VerifyCmd string `json:"verify_cmd,omitempty"`
-	// VerifyTooCommon is true when the name is too common to auto-verify by
-	// grep; VerifyCmd then points at the definition site to inspect manually.
-	VerifyTooCommon bool `json:"verify_too_common,omitempty"`
-}
-
 // DeadCodeMetrics is the observability footer for dead code analysis.
 type DeadCodeMetrics struct {
 	SymbolsAnalyzed           int `json:"symbols_analyzed"`
 	EstimatedFileReadsAvoided int `json:"estimated_file_reads_avoided"`
 	EstimatedTokensSaved      int `json:"estimated_tokens_saved"`
+}
+
+// ---------------------------------------------------------------
+// Unreferenced-symbols response (honest-verdict contract)
+// ---------------------------------------------------------------
+//
+// This is the shape the dead-code honest-verdicts rebuild emits (pitch
+// 25-13). It replaces the flat dead_symbols list with the *fact* — symbols
+// with zero indexed references — split into the rare, earned `dead` (safe to
+// remove now) and the default-majority `possibly_dead` (a hidden caller could
+// exist), grouped by reason. The internal open/closed-world vocabulary never
+// appears: the agent gets a verdict, a reason, and a check, not a taxonomy.
+
+// UnreferencedResponse is the top-level shape returned by sense_graph
+// dead_code mode and `sense dead`.
+type UnreferencedResponse struct {
+	Unreferenced      UnreferencedSymbols `json:"unreferenced_symbols"`
+	TotalSymbols      int                 `json:"total_symbols"`
+	DeadCount         int                 `json:"dead_count"`
+	PossiblyDeadCount int                 `json:"possibly_dead_count"`
+	CoverageNote      string              `json:"coverage_note,omitempty"`
+	SenseMetrics      DeadCodeMetrics     `json:"-"`
+	NextSteps         []NextStep          `json:"next_steps"`
+}
+
+// UnreferencedSymbols is the two-tier body: the earned `dead` list first
+// (never truncated), then `possibly_dead` grouped by reason and ranked by
+// removability.
+type UnreferencedSymbols struct {
+	Dead         []DeadEntry         `json:"dead"`
+	PossiblyDead []PossiblyDeadGroup `json:"possibly_dead"`
+}
+
+// DeadEntry is one symbol the engine proved safe to remove. It is
+// self-contained: it carries its own per-symbol verify grep (call-scoped,
+// definition line excluded) so a surviving hit is a genuinely missed call.
+type DeadEntry struct {
+	Qualified string `json:"qualified"`
+	File      string `json:"file"`
+	Line      int    `json:"line"`
+	Kind      string `json:"kind"`
+	Verify    string `json:"verify"`
+}
+
+// PossiblyDeadGroup is a set of symbols sharing one open-world reason. The
+// group carries the reason (stable code + imperative hint) and a single
+// verify recipe for the whole group; Dropped reports how many symbols of
+// this group were cut by --limit, so truncation is never silent.
+type PossiblyDeadGroup struct {
+	Reason  ReasonInfo           `json:"reason"`
+	Verify  string               `json:"verify"`
+	Dropped int                  `json:"dropped,omitempty"`
+	Symbols []PossiblyDeadSymbol `json:"symbols"`
+}
+
+// ReasonInfo is the wire view of an open-world reason: a stable enum code the
+// agent can switch on, plus an imperative one-line hint.
+type ReasonInfo struct {
+	Code string `json:"code"`
+	Hint string `json:"hint"`
+}
+
+// PossiblyDeadSymbol is one unreferenced symbol within a reason group.
+type PossiblyDeadSymbol struct {
+	Qualified string `json:"qualified"`
+	File      string `json:"file"`
+	Line      int    `json:"line"`
+	Kind      string `json:"kind"`
 }

@@ -106,13 +106,14 @@ func TestFindDeadBasic(t *testing.T) {
 	}
 
 	deadNames := map[string]bool{}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		deadNames[s.Qualified] = true
 	}
 
-	// DeadService and its methods should be flagged.
-	if !deadNames["DeadService"] || !deadNames["DeadService#handle"] {
-		t.Error("expected DeadService or DeadService#handle in dead symbols")
+	// DeadService should be flagged. Its methods (handle, cleanup) are rolled
+	// up into the dead class, so the class alone represents them.
+	if !deadNames["DeadService"] {
+		t.Error("expected DeadService in unreferenced symbols")
 	}
 
 	// LiveService#process is called by Caller#run via send(:process),
@@ -131,7 +132,7 @@ func TestFindDeadExcludesMainFunction(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if s.Name == "main" {
 			t.Error("main function should be excluded as entry point")
 		}
@@ -147,7 +148,7 @@ func TestFindDeadExcludesTestFunctions(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if s.Name == "TestWidget" {
 			t.Error("TestWidget should be excluded as test entry point")
 		}
@@ -163,7 +164,7 @@ func TestFindDeadExcludesTestFiles(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if s.File == "widget_test.go" {
 			t.Errorf("symbol %q in test file should be excluded", s.Qualified)
 		}
@@ -179,7 +180,7 @@ func TestFindDeadExcludesConstructors(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if s.Name == "initialize" {
 			t.Error("initialize should be excluded as constructor entry point")
 		}
@@ -195,7 +196,7 @@ func TestFindDeadLanguageFilter(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if filepath.Ext(s.File) != ".rb" {
 			t.Errorf("found non-ruby symbol %q in file %q with language=ruby filter", s.Qualified, s.File)
 		}
@@ -212,22 +213,32 @@ func TestFindDeadDomainFilter(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	if len(result.Dead) != 0 {
-		t.Errorf("expected no results with nonexistent domain filter, got %d", len(result.Dead))
+	if len(allSymbols(result)) != 0 {
+		t.Errorf("expected no results with nonexistent domain filter, got %d", len(allSymbols(result)))
 	}
 }
 
-func TestFindDeadLimit(t *testing.T) {
+// TestFindDeadLimitIsWireLayerConcern pins the post-rebuild contract: FindDead
+// classifies every candidate and does NOT truncate. The --limit cap (with
+// per-group dropped counts) is applied by the wire builder
+// (mcpio.BuildUnreferencedResponse), never silently here — so a low Limit must
+// not drop findings at this layer.
+func TestFindDeadLimitIsWireLayerConcern(t *testing.T) {
 	db, _ := setupFixture(t)
 	ctx := context.Background()
 
-	result, err := dead.FindDead(ctx, db, dead.Options{Limit: 1})
+	limited, err := dead.FindDead(ctx, db, dead.Options{Limit: 1})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+	full, err := dead.FindDead(ctx, db, dead.Options{})
 	if err != nil {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	if len(result.Dead) > 1 {
-		t.Errorf("expected at most 1 result with limit=1, got %d", len(result.Dead))
+	if len(allSymbols(limited)) != len(allSymbols(full)) {
+		t.Errorf("FindDead truncated at the analysis layer: limit=1 gave %d, default gave %d (limit must be a wire-layer concern)",
+			len(allSymbols(limited)), len(allSymbols(full)))
 	}
 }
 
@@ -328,7 +339,7 @@ end
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if s.Qualified == "MixedService" {
 			t.Error("MixedService should be excluded — it has a live child (alive_method)")
 		}
@@ -341,8 +352,10 @@ end
 // command builder can tell a common name from a unique one.
 func TestNameOccurrencesEstimated(t *testing.T) {
 	root := t.TempDir()
-	// Three classes all defining `ping`, none called — all dead, and the
-	// name is shared three ways.
+	// Three classes all defining `ping`, none of the ping methods called — so
+	// the name is shared three ways. Each class is kept alive by a subclass
+	// (an inherits edge), so the dead `ping` methods survive rollup as
+	// individual findings instead of collapsing into a dead class.
 	writeFile(t, filepath.Join(root, "pingers.rb"), `class Alpha
   def ping
     1
@@ -360,12 +373,25 @@ class Gamma
     3
   end
 end
+
+class AlphaChild < Alpha
+end
+
+class BetaChild < Beta
+end
+
+class GammaChild < Gamma
+end
 `)
-	// A uniquely-named dead method as the contrast.
+	// A uniquely-named dead method as the contrast, on a class kept alive by
+	// a subclass so the method reports individually.
 	writeFile(t, filepath.Join(root, "lonely.rb"), `class Lonely
   def quux_only_here
     9
   end
+end
+
+class LonelyChild < Lonely
 end
 `)
 
@@ -387,7 +413,7 @@ end
 
 	var pingOcc, lonelyOcc int
 	var sawPing, sawLonely bool
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		switch s.Qualified {
 		case "Alpha#ping":
 			pingOcc, sawPing = s.NameOccurrences, true
@@ -456,11 +482,11 @@ end
 	}
 
 	deadWithout := map[string]bool{}
-	for _, s := range withoutExclude.Dead {
+	for _, s := range allSymbols(withoutExclude) {
 		deadWithout[s.Qualified] = true
 	}
 	deadWith := map[string]bool{}
-	for _, s := range withExclude.Dead {
+	for _, s := range allSymbols(withExclude) {
 		deadWith[s.Qualified] = true
 	}
 
@@ -471,9 +497,9 @@ end
 		t.Log("method not flagged in either mode — scanner resolved the edge differently; skipping assertion")
 	}
 	// The key invariant: with exclusion on, at least as many symbols are dead.
-	if len(withExclude.Dead) < len(withoutExclude.Dead) {
+	if len(allSymbols(withExclude)) < len(allSymbols(withoutExclude)) {
 		t.Errorf("ExcludeTestRefs=true produced fewer dead symbols (%d) than false (%d)",
-			len(withExclude.Dead), len(withoutExclude.Dead))
+			len(allSymbols(withExclude)), len(allSymbols(withoutExclude)))
 	}
 }
 
@@ -537,7 +563,7 @@ func RenderAll(rs []Renderer) {
 	}
 
 	deadNames := map[string]bool{}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		deadNames[s.Qualified] = true
 	}
 
@@ -598,29 +624,20 @@ func standaloneUnused() {}
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	confidenceByQualified := map[string]string{}
-	for _, s := range result.Dead {
-		confidenceByQualified[s.Qualified] = s.Confidence
-	}
+	verdict := verdictByQualified(result)
 
-	if c, ok := confidenceByQualified["svc.standaloneUnused"]; ok {
-		if c != dead.ConfidenceDead {
-			t.Errorf("standaloneUnused confidence = %q, want %q", c, dead.ConfidenceDead)
+	// Go has no language voice yet, so every Go symbol the arbiter reports is
+	// possibly_dead (core_no_language_voice) — never a confident dead. This is
+	// the safety invariant: an unsupported stack can't produce a false dead.
+	if v, ok := verdict["svc.standaloneUnused"]; ok {
+		if v != dead.VerdictPossiblyDead {
+			t.Errorf("standaloneUnused verdict = %q, want %q (Go has no language voice)", v, dead.VerdictPossiblyDead)
 		}
 	}
-
-	// The interface method Handle on Handler is excluded as an entry point
-	// (isInterfaceMethod). But MyHandler.Handle — an implementing method with
-	// no direct callers — should appear with "possibly_dead" confidence if the
-	// scanner detected the inherits edge.
-	if c, ok := confidenceByQualified["svc.MyHandler.Handle"]; ok {
-		if c != dead.ConfidencePossibly {
-			t.Errorf("MyHandler.Handle confidence = %q, want %q", c, dead.ConfidencePossibly)
+	if v, ok := verdict["svc.MyHandler.Handle"]; ok {
+		if v != dead.VerdictPossiblyDead {
+			t.Errorf("MyHandler.Handle verdict = %q, want %q", v, dead.VerdictPossiblyDead)
 		}
-	} else {
-		// If the method was excluded entirely (interface alive filter or entry point),
-		// that's also acceptable — it means the interface awareness is working.
-		t.Log("MyHandler.Handle not in dead results — likely excluded by interface filter (acceptable)")
 	}
 }
 
@@ -695,15 +712,18 @@ func main() {}
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
-		if s.Name == "NewRouter" {
-			if s.Confidence != dead.ConfidencePossibly {
-				t.Errorf("NewRouter confidence = %q, want %q", s.Confidence, dead.ConfidencePossibly)
+	verdict := verdictByQualified(result)
+	// NewRouter is unreferenced, but Go has no language voice, so it is
+	// possibly_dead (core_no_language_voice), never a confident dead.
+	for q, v := range verdict {
+		if q == "router.NewRouter" || q == "NewRouter" {
+			if v != dead.VerdictPossiblyDead {
+				t.Errorf("NewRouter verdict = %q, want %q", v, dead.VerdictPossiblyDead)
 			}
 			return
 		}
 	}
-	t.Error("NewRouter not found in dead results")
+	t.Error("NewRouter not found in unreferenced results")
 }
 
 func TestDeadCodeExcludesFrameworkHooks(t *testing.T) {
@@ -762,7 +782,7 @@ end
 	}
 
 	excluded := map[string]bool{"included": true, "class_methods": true, "after_commit": true}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if excluded[s.Name] {
 			t.Errorf("%q should be excluded as Rails framework hook", s.Name)
 		}
@@ -815,7 +835,7 @@ func TestDeadCodeExcludesJVMLifecycle(t *testing.T) {
 	}
 
 	excluded := map[string]bool{"handle": true, "onCreate": true, "configure": true}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if excluded[s.Name] {
 			t.Errorf("%q should be excluded as JVM lifecycle/framework hook", s.Name)
 		}
@@ -866,14 +886,21 @@ func TestDeadCodeExcludesDunderMethods(t *testing.T) {
 	}
 
 	excluded := map[string]bool{"__init__": true, "__repr__": true, "__str__": true}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if excluded[s.Name] {
 			t.Errorf("%q should be excluded as Python dunder method", s.Name)
 		}
 	}
 }
 
-func TestDeadCodeExcludesLibraryPublicAPI(t *testing.T) {
+// TestLibraryPublicAPIIsPossiblyDead pins the polarity inversion (pitch 25-13
+// decisions #1 and #6): a library's exported API is no longer silently
+// excluded. It surfaces as possibly_dead with the core_exported_api reason —
+// an external consumer Sense cannot see may exist — and, because Go has no
+// language voice, it can never earn the `dead` verdict. The honest contract
+// reports the fact (zero indexed references) and the reason, rather than
+// dropping the symbol and pretending it was reachable.
+func TestLibraryPublicAPIIsPossiblyDead(t *testing.T) {
 	root := t.TempDir()
 
 	writeFile(t, filepath.Join(root, "lib.go"), `package lib
@@ -915,15 +942,27 @@ func (p PublicType) privateMethod() {}
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	for _, s := range result.Dead {
-		if s.Name == "PublicFunc" {
-			t.Error("PublicFunc should be excluded as library public API")
+	byQualified := map[string]dead.Finding{}
+	for _, f := range result.Findings {
+		byQualified[f.Symbol.Qualified] = f
+		// Nothing in a Go library can earn `dead`: Go has no language voice.
+		if f.Verdict == dead.VerdictDead {
+			t.Errorf("%q earned `dead` in a Go library; Go has no language voice so every symbol must stay possibly_dead", f.Symbol.Qualified)
 		}
-		if s.Name == "PublicType" {
-			t.Error("PublicType should be excluded as library public API")
+	}
+
+	// The exported API is reported (not excluded) and carries core_exported_api.
+	for _, name := range []string{"lib.PublicFunc", "lib.PublicType"} {
+		f, ok := byQualified[name]
+		if !ok {
+			t.Errorf("%q should be reported as possibly_dead, not excluded", name)
+			continue
 		}
-		if s.Name == "PublicMethod" {
-			t.Error("PublicMethod should be excluded as library public API")
+		if f.Verdict != dead.VerdictPossiblyDead {
+			t.Errorf("%q verdict = %q, want %q", name, f.Verdict, dead.VerdictPossiblyDead)
+		}
+		if f.Reason == nil || f.Reason.Code != dead.ReasonExportedAPI {
+			t.Errorf("%q reason = %v, want %q", name, f.Reason, dead.ReasonExportedAPI)
 		}
 	}
 }
@@ -985,7 +1024,7 @@ func RenderAll(rs []Renderer) {
 	}
 
 	deadNames := map[string]bool{}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		deadNames[s.Qualified] = true
 	}
 
@@ -1030,7 +1069,7 @@ func main() {
 		t.Fatalf("FindDead: %v", err)
 	}
 	deadNames := map[string]bool{}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		deadNames[s.Qualified] = true
 	}
 	if !deadNames["main.DeadConst"] {
@@ -1073,7 +1112,7 @@ func main() {
 		t.Fatalf("FindDead: %v", err)
 	}
 	deadNames := map[string]bool{}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		deadNames[s.Qualified] = true
 	}
 	if !deadNames["main.deadVar"] {
@@ -1128,7 +1167,7 @@ func TestServe(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 	deadNames := map[string]bool{}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		deadNames[s.Qualified] = true
 	}
 	if !deadNames["utils.localhostIP"] {
@@ -1149,7 +1188,7 @@ func TestServe(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 	deadNamesAll := map[string]bool{}
-	for _, s := range resultAll.Dead {
+	for _, s := range allSymbols(resultAll) {
 		deadNamesAll[s.Qualified] = true
 	}
 	if !deadNamesAll["utils.localhostIP"] {
@@ -1224,7 +1263,7 @@ func TestContext(t *testing.T) {
 		t.Fatalf("FindDead: %v", err)
 	}
 	deadNames := map[string]bool{}
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		deadNames[s.Qualified] = true
 	}
 	if !deadNames["gin.localhostIP"] {
@@ -1246,6 +1285,26 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+}
+
+// allSymbols flattens a dead.Result's findings to the unreferenced symbols,
+// regardless of verdict — the post-rebuild equivalent of the old result.Dead
+// candidate list, for tests that only assert membership.
+func allSymbols(r dead.Result) []dead.Symbol {
+	out := make([]dead.Symbol, 0, len(r.Findings))
+	for _, f := range r.Findings {
+		out = append(out, f.Symbol)
+	}
+	return out
+}
+
+// verdictByQualified maps each finding's qualified name to its verdict.
+func verdictByQualified(r dead.Result) map[string]dead.Verdict {
+	m := make(map[string]dead.Verdict, len(r.Findings))
+	for _, f := range r.Findings {
+		m[f.Symbol.Qualified] = f.Verdict
+	}
+	return m
 }
 
 // TestFindDeadExcludesRouteHelpers proves synthetic route:* helper symbols —
@@ -1282,7 +1341,7 @@ end
 		t.Fatalf("FindDead: %v", err)
 	}
 	var sawRouteHelper bool
-	for _, s := range result.Dead {
+	for _, s := range allSymbols(result) {
 		if len(s.Qualified) >= 6 && s.Qualified[:6] == "route:" {
 			sawRouteHelper = true
 		}

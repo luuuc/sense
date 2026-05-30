@@ -3,11 +3,9 @@ package mcpio
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/luuuc/sense/internal/dead"
 	"github.com/luuuc/sense/internal/model"
 )
 
@@ -37,140 +35,6 @@ func TestWatchStateSetGet(t *testing.T) {
 	on, _ = ws.Get()
 	if on {
 		t.Error("expected watching=false after Set(false)")
-	}
-}
-
-func TestBuildDeadCodeResponse(t *testing.T) {
-	symbols := []dead.Symbol{
-		{Name: "Unused", Qualified: "pkg.Unused", File: "pkg/unused.go", LineStart: 10, LineEnd: 20, Kind: "function", Confidence: dead.ConfidenceDead},
-		{Name: "Other", Qualified: "pkg.Other", File: "pkg/other.go", LineStart: 5, LineEnd: 8, Kind: "function", Confidence: dead.ConfidenceDead},
-		{Name: "NoConf", Qualified: "pkg.NoConf", File: "pkg/unused.go", LineStart: 30, LineEnd: 35, Kind: "method"},
-	}
-
-	resp := BuildDeadCodeResponse(symbols, 100, nil)
-
-	if resp.DeadCount != 3 {
-		t.Errorf("DeadCount = %d, want 3", resp.DeadCount)
-	}
-	if resp.TotalSymbols != 100 {
-		t.Errorf("TotalSymbols = %d, want 100", resp.TotalSymbols)
-	}
-	if len(resp.DeadSymbols) != 3 {
-		t.Fatalf("len(DeadSymbols) = %d, want 3", len(resp.DeadSymbols))
-	}
-
-	// Symbol with empty confidence should get ConfidenceDead default.
-	if resp.DeadSymbols[2].Confidence != dead.ConfidenceDead {
-		t.Errorf("empty confidence should default to %q, got %q", dead.ConfidenceDead, resp.DeadSymbols[2].Confidence)
-	}
-
-	// Two unique files.
-	if resp.SenseMetrics.EstimatedFileReadsAvoided != 2 {
-		t.Errorf("EstimatedFileReadsAvoided = %d, want 2", resp.SenseMetrics.EstimatedFileReadsAvoided)
-	}
-
-	// Every entry carries a call-scoped verify grep that excludes its own
-	// def site, not a bare-text grep.
-	want0 := `grep -rEn --exclude-dir=.git --exclude-dir=.sense "\.Unused" . | grep -vF "./pkg/unused.go:10:"`
-	if got := resp.DeadSymbols[0].VerifyCmd; got != want0 {
-		t.Errorf("VerifyCmd = %q, want %q", got, want0)
-	}
-}
-
-// The verify command scopes to CALL syntax (`\.name`), escapes the `?`
-// predicate suffix for the regex engine, and excludes the definition's own
-// file:line — so a surviving hit is a missed call, not the def echoing back.
-func TestDeadVerifyCmd_CallScopedPredicate(t *testing.T) {
-	cmd, tooCommon := deadVerifyCmd("retriable?", "api_error.rb", 7, 3)
-	if tooCommon {
-		t.Fatal("3 occurrences is under the threshold; should not be flagged too common")
-	}
-	want := `grep -rEn --exclude-dir=.git --exclude-dir=.sense "\.retriable\?" . | grep -vF "./api_error.rb:7:"`
-	if cmd != want {
-		t.Errorf("verify cmd = %q, want %q", cmd, want)
-	}
-	// The bare predicate text must NOT appear unanchored — that was the
-	// flood-the-caller bug.
-	if strings.Contains(cmd, `"retriable?"`) {
-		t.Error("verify cmd uses bare-text grep, not call-scoped")
-	}
-}
-
-// The too-common flag flips exactly at the threshold boundary: a name at
-// the threshold still gets a grep; one occurrence past it gets the
-// manual-inspect hint.
-func TestDeadVerifyCmd_TooCommonBoundary(t *testing.T) {
-	atBoundary, tooCommon := deadVerifyCmd("success?", "result.rb", 17, verifyTooCommonThreshold)
-	if tooCommon {
-		t.Errorf("at threshold (%d) should still grep, not flag too common", verifyTooCommonThreshold)
-	}
-	if !strings.HasPrefix(atBoundary, "grep -rEn") {
-		t.Errorf("at-threshold cmd should be a grep, got %q", atBoundary)
-	}
-
-	over, tooCommon := deadVerifyCmd("success?", "result.rb", 17, verifyTooCommonThreshold+1)
-	if !tooCommon {
-		t.Errorf("past threshold (%d) should flag too common", verifyTooCommonThreshold+1)
-	}
-	if strings.HasPrefix(over, "grep") {
-		t.Errorf("too-common cmd should be a manual-inspect hint, not a grep: %q", over)
-	}
-	// The hint points at the def site so the reader can inspect by hand.
-	if !strings.Contains(over, "result.rb:17") {
-		t.Errorf("too-common hint should name the def site, got %q", over)
-	}
-}
-
-// The too-common flag is plumbed onto the wire entry, not just returned
-// from the helper.
-func TestBuildDeadCodeResponse_TooCommonFlag(t *testing.T) {
-	resp := BuildDeadCodeResponse([]dead.Symbol{
-		{Name: "success?", Qualified: "Result#success?", File: "result.rb", LineStart: 17, Kind: "method",
-			Confidence: dead.ConfidencePossibly, NameOccurrences: verifyTooCommonThreshold + 50},
-	}, 1, nil)
-	if !resp.DeadSymbols[0].VerifyTooCommon {
-		t.Error("entry for a very common name should set VerifyTooCommon")
-	}
-}
-
-func TestDeadCodeNoteIsFrameworkAware(t *testing.T) {
-	rails := deadCodeNote([]string{"Sidekiq", "Rails"})
-	if !strings.Contains(rails, "routing") || !strings.Contains(rails, "Concern") {
-		t.Errorf("Rails note should cover routing/concerns, got: %s", rails)
-	}
-	// Honesty fix (pitch 25-12): view/Hotwire dispatch is NOT listed as an
-	// untracked blind spot — those edges are extracted and resolve. Assert the
-	// positive statement is present and the stale "dispatch is a blind spot"
-	// list-item phrasing is gone, both directions.
-	if !strings.Contains(rails, "NOT a blind spot") {
-		t.Errorf("Rails note must affirm view/Hotwire dispatch is tracked, got: %s", rails)
-	}
-	if !strings.Contains(rails, "view templates that produced no indexed edges") {
-		t.Errorf("Rails note must name the real residual blind spot (zero-edge view files), got: %s", rails)
-	}
-	if strings.Contains(rails, "dispatch — methods reached") {
-		t.Errorf("Rails note must not list view/Hotwire dispatch as a blind spot, got: %s", rails)
-	}
-	if strings.Contains(rails, "ServiceLoader") || strings.Contains(rails, "blank identifier") {
-		t.Error("Rails note must not carry Go-specific blind spots")
-	}
-
-	generic := deadCodeNote(nil)
-	if !strings.Contains(generic, "ServiceLoader") {
-		t.Errorf("non-Rails note should be the generic blind-spot list, got: %s", generic)
-	}
-	if strings.Contains(generic, "routing — controller actions") {
-		t.Error("generic note must not carry Rails idioms")
-	}
-}
-
-func TestBuildDeadCodeResponseEmpty(t *testing.T) {
-	resp := BuildDeadCodeResponse(nil, 50, nil)
-	if resp.DeadCount != 0 {
-		t.Errorf("DeadCount = %d, want 0", resp.DeadCount)
-	}
-	if resp.TotalSymbols != 50 {
-		t.Errorf("TotalSymbols = %d, want 50", resp.TotalSymbols)
 	}
 }
 
@@ -368,25 +232,6 @@ func TestBuildFullGraphResponse(t *testing.T) {
 	}
 	if resp.Layers[0].Depth != 2 {
 		t.Errorf("Layer depth = %d, want 2", resp.Layers[0].Depth)
-	}
-}
-
-func TestMarshalDeadCodeNilSlices(t *testing.T) {
-	resp := DeadCodeResponse{
-		DeadSymbols: nil,
-		NextSteps:   nil,
-	}
-	raw, err := MarshalDeadCode(resp)
-	if err != nil {
-		t.Fatalf("MarshalDeadCode: %v", err)
-	}
-
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if out["dead_symbols"] == nil {
-		t.Error("dead_symbols should be [] not null")
 	}
 }
 

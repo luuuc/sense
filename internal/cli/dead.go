@@ -13,7 +13,8 @@ import (
 
 const deadHelp = `usage: sense dead [flags]
 
-Find dead code: symbols with no incoming references.
+Find unreferenced symbols: those with no incoming references, split into
+the rare provably-dead (safe to remove) and possibly-dead (verify first).
 
 Flags:
   --language LANG    Filter by language (e.g. "go", "ruby")
@@ -69,11 +70,10 @@ func RunDead(args []string, cio IO) int {
 		return ExitGeneralError
 	}
 
-	rolled := dead.Rollup(result.Dead)
+	resp := mcpio.BuildUnreferencedResponse(result.Findings, result.TotalSymbols, opts.Limit)
 
 	if opts.JSON {
-		resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols, result.Frameworks)
-		out, merr := mcpio.MarshalDeadCode(resp)
+		out, merr := mcpio.MarshalUnreferenced(resp)
 		if merr != nil {
 			_, _ = fmt.Fprintln(cio.Stderr, "sense dead:", merr)
 			return ExitGeneralError
@@ -82,32 +82,48 @@ func RunDead(args []string, cio IO) int {
 		return ExitSuccess
 	}
 
-	RenderDeadHuman(cio.Stdout, rolled, result.TotalSymbols)
+	RenderUnreferencedHuman(cio.Stdout, resp)
 	return ExitSuccess
 }
 
-func RenderDeadHuman(w io.Writer, symbols []dead.Symbol, totalSymbols int) {
-	if len(symbols) == 0 {
-		_, _ = fmt.Fprintln(w, "No dead code found.")
+// RenderUnreferencedHuman prints the honest-verdict output for a human
+// reader: the earned `dead` list first (safe to remove), then the
+// `possibly_dead` groups by reason (verify before removing), each with its
+// recipe. It mirrors the wire shape so the CLI and MCP surfaces tell the
+// same story.
+func RenderUnreferencedHuman(w io.Writer, resp mcpio.UnreferencedResponse) {
+	u := resp.Unreferenced
+	if len(u.Dead) == 0 && len(u.PossiblyDead) == 0 {
+		_, _ = fmt.Fprintln(w, "No unreferenced symbols found.")
 		return
 	}
 
-	_, _ = fmt.Fprintf(w, "Dead code: %d symbols with no incoming references\n\n", len(symbols))
-
-	var currentFile string
-	for _, s := range symbols {
-		if s.File != currentFile {
-			if currentFile != "" {
-				_, _ = fmt.Fprintln(w)
-			}
-			currentFile = s.File
-			_, _ = fmt.Fprintln(w, s.File)
+	if len(u.Dead) > 0 {
+		_, _ = fmt.Fprintf(w, "Dead (%d) — no references and safe to remove:\n", resp.DeadCount)
+		for _, d := range u.Dead {
+			_, _ = fmt.Fprintf(w, "  %s (%s) %s:%d\n", d.Qualified, d.Kind, d.File, d.Line)
+			_, _ = fmt.Fprintf(w, "    verify: %s\n", d.Verify)
 		}
-		_, _ = fmt.Fprintf(w, "  %s (%s, lines %d-%d)\n", s.Qualified, s.Kind, s.LineStart, s.LineEnd)
+		_, _ = fmt.Fprintln(w)
 	}
 
-	pct := float64(len(symbols)) * 100 / float64(totalSymbols)
-	_, _ = fmt.Fprintf(w, "\n%d dead symbols out of %d total (%.1f%%)\n", len(symbols), totalSymbols, pct)
+	if len(u.PossiblyDead) > 0 {
+		_, _ = fmt.Fprintf(w, "Possibly dead (%d) — unreferenced, but a hidden caller may exist:\n", resp.PossiblyDeadCount)
+		for _, g := range u.PossiblyDead {
+			_, _ = fmt.Fprintf(w, "  [%s] %s\n", g.Reason.Code, g.Reason.Hint)
+			for _, s := range g.Symbols {
+				_, _ = fmt.Fprintf(w, "    %s (%s) %s:%d\n", s.Qualified, s.Kind, s.File, s.Line)
+			}
+			if g.Dropped > 0 {
+				_, _ = fmt.Fprintf(w, "    … and %d more (raise --limit to see them)\n", g.Dropped)
+			}
+			_, _ = fmt.Fprintf(w, "    verify: %s\n", g.Verify)
+		}
+		_, _ = fmt.Fprintln(w)
+	}
+
+	_, _ = fmt.Fprintf(w, "%d dead, %d possibly dead, out of %d total symbols\n",
+		resp.DeadCount, resp.PossiblyDeadCount, resp.TotalSymbols)
 }
 
 func parseDeadArgs(args []string, stderr io.Writer) (deadOptions, error) {

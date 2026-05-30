@@ -737,15 +737,21 @@ func TestHandleDeadCode(t *testing.T) {
 		checkJSON func(t *testing.T, text string)
 	}{
 		{
-			name: "returns dead symbols",
+			name: "returns unreferenced symbols",
 			args: map[string]any{"dead_code": true},
 			checkJSON: func(t *testing.T, text string) {
-				var resp mcpio.DeadCodeResponse
+				var resp mcpio.UnreferencedResponse
 				if err := json.Unmarshal([]byte(text), &resp); err != nil {
 					t.Fatalf("unmarshal: %v", err)
 				}
-				if resp.DeadCount == 0 {
-					t.Error("expected dead symbols (model.Order has zero incoming edges)")
+				// Seeded data is Go, which has no language voice, so every
+				// unreferenced symbol is possibly_dead (core_no_language_voice),
+				// never an earned dead — the honest default on an unsupported stack.
+				if resp.DeadCount != 0 {
+					t.Errorf("Go has no language voice; expected 0 earned dead, got %d", resp.DeadCount)
+				}
+				if resp.PossiblyDeadCount == 0 {
+					t.Error("expected possibly_dead symbols (model.Order has zero incoming edges)")
 				}
 			},
 		},
@@ -753,7 +759,7 @@ func TestHandleDeadCode(t *testing.T) {
 			name: "language filter",
 			args: map[string]any{"dead_code": true, "language": "go"},
 			checkJSON: func(t *testing.T, text string) {
-				var resp mcpio.DeadCodeResponse
+				var resp mcpio.UnreferencedResponse
 				if err := json.Unmarshal([]byte(text), &resp); err != nil {
 					t.Fatalf("unmarshal: %v", err)
 				}
@@ -767,13 +773,15 @@ func TestHandleDeadCode(t *testing.T) {
 			name: "domain filter",
 			args: map[string]any{"dead_code": true, "domain": "internal/model"},
 			checkJSON: func(t *testing.T, text string) {
-				var resp mcpio.DeadCodeResponse
+				var resp mcpio.UnreferencedResponse
 				if err := json.Unmarshal([]byte(text), &resp); err != nil {
 					t.Fatalf("unmarshal: %v", err)
 				}
-				for _, ds := range resp.DeadSymbols {
-					if !strings.Contains(ds.File, "internal/model") {
-						t.Errorf("expected domain-scoped dead symbol, got file %q", ds.File)
+				for _, g := range resp.Unreferenced.PossiblyDead {
+					for _, s := range g.Symbols {
+						if !strings.Contains(s.File, "internal/model") {
+							t.Errorf("expected domain-scoped symbol, got file %q", s.File)
+						}
 					}
 				}
 			},

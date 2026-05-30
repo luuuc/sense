@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -19,16 +20,23 @@ import (
 
 var updateGolden = flag.Bool("update-golden", false, "regenerate dead-golden.json")
 
+// goldenEntry is one classified symbol: its identity plus the verdict and (for
+// possibly_dead) the open-world reason code. Recording verdict + reason — not
+// just membership — is the point: the golden pins the two-sided gate
+// (something earns `dead`, the rest are honestly `possibly_dead`) end to end.
 type goldenEntry struct {
 	Qualified string `json:"qualified"`
 	Kind      string `json:"kind"`
 	File      string `json:"file"`
+	Verdict   string `json:"verdict"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type goldenFile struct {
-	Dead         []goldenEntry `json:"dead"`
-	TotalSymbols int           `json:"total_symbols"`
-	DeadCount    int           `json:"dead_count"`
+	Findings          []goldenEntry `json:"findings"`
+	TotalSymbols      int           `json:"total_symbols"`
+	DeadCount         int           `json:"dead_count"`
+	PossiblyDeadCount int           `json:"possibly_dead_count"`
 }
 
 func smokeRoot(t *testing.T) string {
@@ -69,27 +77,50 @@ func scanSmoke(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestDeadCodeGolden(t *testing.T) {
+func smokeGolden(t *testing.T) goldenFile {
+	t.Helper()
 	db := scanSmoke(t)
-	ctx := context.Background()
-
-	result, err := dead.FindDead(ctx, db, dead.Options{Limit: 200})
+	result, err := dead.FindDead(context.Background(), db, dead.Options{Limit: 200})
 	if err != nil {
 		t.Fatalf("FindDead: %v", err)
 	}
 
-	rolled := dead.Rollup(result.Dead)
-
-	entries := make([]goldenEntry, len(rolled))
-	for i, s := range rolled {
-		entries[i] = goldenEntry{s.Qualified, s.Kind, s.File}
+	entries := make([]goldenEntry, 0, len(result.Findings))
+	var deadCount, possiblyCount int
+	for _, f := range result.Findings {
+		e := goldenEntry{
+			Qualified: f.Symbol.Qualified,
+			Kind:      f.Symbol.Kind,
+			File:      f.Symbol.File,
+			Verdict:   string(f.Verdict),
+		}
+		if f.Verdict == dead.VerdictDead {
+			deadCount++
+		} else {
+			possiblyCount++
+			if f.Reason != nil {
+				e.Reason = f.Reason.Code
+			}
+		}
+		entries = append(entries, e)
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Qualified != entries[j].Qualified {
+			return entries[i].Qualified < entries[j].Qualified
+		}
+		return entries[i].File < entries[j].File
+	})
 
-	actual := goldenFile{
-		Dead:         entries,
-		TotalSymbols: result.TotalSymbols,
-		DeadCount:    len(rolled),
+	return goldenFile{
+		Findings:          entries,
+		TotalSymbols:      result.TotalSymbols,
+		DeadCount:         deadCount,
+		PossiblyDeadCount: possiblyCount,
 	}
+}
+
+func TestDeadCodeGolden(t *testing.T) {
+	actual := smokeGolden(t)
 
 	if *updateGolden {
 		data, err := json.MarshalIndent(actual, "", "  ")
@@ -99,7 +130,8 @@ func TestDeadCodeGolden(t *testing.T) {
 		if err := os.WriteFile(goldenPath(t), append(data, '\n'), 0o644); err != nil {
 			t.Fatalf("write golden: %v", err)
 		}
-		t.Logf("updated %s: %d dead out of %d total", goldenPath(t), actual.DeadCount, actual.TotalSymbols)
+		t.Logf("updated %s: %d dead, %d possibly_dead out of %d total",
+			goldenPath(t), actual.DeadCount, actual.PossiblyDeadCount, actual.TotalSymbols)
 		return
 	}
 
@@ -114,58 +146,79 @@ func TestDeadCodeGolden(t *testing.T) {
 
 	actualJSON, _ := json.MarshalIndent(actual, "", "  ")
 	expectedJSON, _ := json.MarshalIndent(expected, "", "  ")
-
 	if !bytes.Equal(actualJSON, expectedJSON) {
 		t.Errorf("dead code output differs from golden file.\nGot:\n%s\nWant:\n%s\n\nRun with -update-golden to regenerate.",
 			string(actualJSON), string(expectedJSON))
 	}
 }
 
+// TestDeadCLIIntegration is the two-sided-gate proof on a real scanned
+// fixture: the genuinely-dead Ruby private earns `dead`; the value-object
+// predicates and every Go symbol (no Go voice) stay `possibly_dead`; and no
+// known-live symbol is reported at all.
 func TestDeadCLIIntegration(t *testing.T) {
-	db := scanSmoke(t)
-	ctx := context.Background()
+	g := smokeGolden(t)
 
-	result, err := dead.FindDead(ctx, db, dead.Options{Limit: 200})
-	if err != nil {
-		t.Fatalf("FindDead: %v", err)
+	verdict := map[string]string{}
+	reason := map[string]string{}
+	for _, e := range g.Findings {
+		verdict[e.Qualified] = e.Verdict
+		reason[e.Qualified] = e.Reason
 	}
 
-	rolled := dead.Rollup(result.Dead)
-
-	if len(rolled) == 0 {
-		t.Fatal("expected dead symbols in smoke fixture, got none")
+	// EARNED dead: the genuinely-dead private method. The exact qualified name
+	// depends on extractor nesting, so match on the method-name suffix.
+	var foundDeadPrivate bool
+	for q, v := range verdict {
+		if endsWith(q, "#orphaned_private") {
+			foundDeadPrivate = true
+			if v != "dead" {
+				t.Errorf("%s verdict = %q, want dead (private, no caller, not reflection-reachable)", q, v)
+			}
+		}
+	}
+	if !foundDeadPrivate {
+		t.Error("orphaned_private not found in findings — expected the one earned `dead`")
 	}
 
-	// Verify known-alive symbols are absent.
-	deadSet := map[string]bool{}
-	for _, s := range rolled {
-		deadSet[s.Qualified] = true
-	}
-
-	// In a library project (no main), public symbols like Refund are
-	// excluded as potential API surface — even if they're never called.
-	if deadSet["smoke.PaymentGateway.Refund"] {
-		t.Error("smoke.PaymentGateway.Refund should be excluded as library public API")
-	}
-
-	// Verify known-alive symbols are absent.
-	alive := []string{
-		"smoke.OrderService.Process",
-		"smoke.PaymentGateway.Charge",
-		"Order",
-		"ApplicationRecord",
-		"Trackable",
-	}
-	for _, name := range alive {
-		if deadSet[name] {
-			t.Errorf("%s should be alive, but appears in dead set", name)
+	// POSSIBLY_DEAD: value-object predicates must never be `dead`.
+	for q, v := range verdict {
+		if endsWith(q, "#success?") || endsWith(q, "#pending?") {
+			if v == "dead" {
+				t.Errorf("%s was flagged dead but is a duck-typed value-object predicate", q)
+			}
 		}
 	}
 
-	// Test files should not appear.
-	for _, s := range rolled {
-		if s.File == "order_test.go" || s.File == "order_test.rb" {
-			t.Errorf("test file symbol %q should be excluded", s.Qualified)
+	// SAFETY INVARIANT: every Go symbol reported is possibly_dead (no Go voice).
+	for _, e := range g.Findings {
+		if hasSuffix(e.File, ".go") && e.Verdict == "dead" {
+			t.Errorf("%s (Go) was flagged dead, but Go has no language voice — must be possibly_dead", e.Qualified)
 		}
 	}
+
+	// Known-live symbols must not be reported at all.
+	for q := range verdict {
+		for _, live := range []string{
+			"smoke.OrderService.Process",
+			"smoke.PaymentGateway.Charge",
+		} {
+			if q == live {
+				t.Errorf("%s should be alive, but appears in findings", q)
+			}
+		}
+	}
+
+	// Test files must never appear.
+	for _, e := range g.Findings {
+		if e.File == "order_test.go" || e.File == "order_test.rb" {
+			t.Errorf("test file symbol %q should be excluded", e.Qualified)
+		}
+	}
+}
+
+func endsWith(s, suffix string) bool { return hasSuffix(s, suffix) }
+
+func hasSuffix(s, suffix string) bool {
+	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
