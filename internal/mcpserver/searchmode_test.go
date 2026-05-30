@@ -80,7 +80,7 @@ func setupVectorHandlers(t *testing.T) *handlers {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine := search.NewEngine(adapter, vectorIdx, lowConfEmbedder{})
 
 	tracker := metrics.NewTracker(adapter.DB())

@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"github.com/luuuc/sense/internal/embed"
-	"github.com/luuuc/sense/internal/search"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
@@ -130,9 +129,9 @@ func (p *embedPool) Close() error {
 
 // migrateEmbeddingModel checks whether the stored embedding model
 // matches the current binary's model. If they differ, it clears all
-// embeddings and removes the HNSW index so everything gets
-// re-embedded with the new model. Returns true if a migration occurred.
-func (h *harness) migrateEmbeddingModel(senseDir string) (bool, error) {
+// embeddings so everything gets re-embedded with the new model on the
+// next embed pass. Returns true if a migration occurred.
+func (h *harness) migrateEmbeddingModel() (bool, error) {
 	stored, err := h.idx.ReadMeta(h.ctx, "embedding_model")
 	if err != nil {
 		return false, fmt.Errorf("read embedding model: %w", err)
@@ -147,15 +146,15 @@ func (h *harness) migrateEmbeddingModel(senseDir string) (bool, error) {
 	if err := h.idx.DeleteMeta(h.ctx, "embedding_model"); err != nil {
 		return false, fmt.Errorf("delete embedding model meta: %w", err)
 	}
-	_ = os.Remove(filepath.Join(senseDir, "hnsw.bin"))
 	return true, nil
 }
 
-// EmbedPending generates embeddings for all symbols that lack them and
-// rebuilds the HNSW index. Designed for the MCP server's background
-// embedder — it constructs a minimal harness internally and clears the
-// embedding watermark on success. Returns the number of symbols embedded.
-func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root, senseDir string) (int, error) {
+// EmbedPending generates embeddings for all symbols that lack them.
+// Designed for the MCP server's background embedder — it constructs a
+// minimal harness internally and clears the embedding watermark on success.
+// Returns the number of symbols embedded. The caller rebuilds the in-memory
+// vector index from the embeddings table afterward.
+func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, error) {
 	syms, err := idx.SymbolsWithoutEmbeddings(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("query pending symbols: %w", err)
@@ -227,17 +226,6 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root, senseDir strin
 	if total > 0 {
 		if err := idx.WriteMeta(ctx, "embedding_model", embed.ModelID); err != nil {
 			return total, fmt.Errorf("write embedding model meta: %w", err)
-		}
-	}
-
-	hnswPath := filepath.Join(senseDir, "hnsw.bin")
-	embeddings, err := idx.LoadEmbeddings(ctx)
-	if err != nil {
-		return total, fmt.Errorf("load embeddings for hnsw: %w", err)
-	}
-	if len(embeddings) > 0 {
-		if err := search.SaveHNSWIndex(hnswPath, embeddings); err != nil {
-			return total, fmt.Errorf("save hnsw index: %w", err)
 		}
 	}
 
@@ -331,64 +319,6 @@ func (h *harness) embedSymbols() error {
 	}
 
 	return nil
-}
-
-// buildHNSWIndex updates the prebuilt HNSW index at .sense/hnsw.bin.
-// On incremental scans it loads the existing index, deletes stale vectors,
-// and inserts fresh ones — avoiding a full O(n log n) rebuild. Falls back
-// to a full build when no existing index is found (first scan).
-func (h *harness) buildHNSWIndex(senseDir string) error {
-	path := filepath.Join(senseDir, "hnsw.bin")
-
-	if updated, err := h.tryIncrementalHNSW(path); updated {
-		return nil
-	} else if err != nil {
-		_, _ = fmt.Fprintf(h.out, "warn: incremental hnsw update failed, rebuilding: %v\n", err)
-	}
-
-	embeddings, err := h.idx.LoadEmbeddings(h.ctx)
-	if err != nil {
-		return fmt.Errorf("load embeddings for hnsw: %w", err)
-	}
-	if len(embeddings) == 0 {
-		return nil
-	}
-	if err := search.SaveHNSWIndex(path, embeddings); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(h.out, "saved hnsw index (%d vectors) to %s\n", len(embeddings), filepath.Base(path))
-	return nil
-}
-
-// tryIncrementalHNSW attempts an incremental HNSW update. Returns true if
-// the update succeeded, false if a full rebuild is needed instead.
-// Pure-deletion (files removed, nothing changed) skips the incremental path
-// because the hnsw library's Delete can corrupt small graphs.
-func (h *harness) tryIncrementalHNSW(path string) (bool, error) {
-	fresh, err := h.idx.EmbeddingsForFiles(h.ctx, h.changedFileIDs)
-	if err != nil {
-		return false, fmt.Errorf("load changed embeddings: %w", err)
-	}
-	if len(fresh) == 0 {
-		return false, nil
-	}
-
-	updated, err := search.UpdateHNSWIndex(path, h.removedSymbolIDs, fresh)
-	if err != nil {
-		return false, err
-	}
-	if !updated {
-		return false, nil
-	}
-
-	delta := len(fresh) - len(h.removedSymbolIDs)
-	sign := "+"
-	if delta < 0 {
-		sign = ""
-	}
-	_, _ = fmt.Fprintf(h.out, "updated hnsw index (%s%d vectors, %d deleted) at %s\n",
-		sign, delta, len(h.removedSymbolIDs), filepath.Base(path))
-	return true, nil
 }
 
 func uniqueFileIDs(syms []sqlite.EmbedSymbol) []int64 {

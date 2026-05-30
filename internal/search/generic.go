@@ -79,9 +79,9 @@ func nonGenericTerms(terms []string, df map[string]int, totalSymbols int) map[st
 // scores of single-term keyword matches are tightly clustered, so the
 // multiplier is decisive here, whereas a post-normalize multiplier is
 // neutralized whenever the genuine domain match is the rescale floor
-// (pinned to 0). It runs AFTER any reranking, so a cross-encoder cannot
-// silently erase it. Vector and hybrid hits are exempt: the vector leg
-// vouching for a hit means it is not generic-only.
+// (pinned to 0). Vector and hybrid hits are exempt: the vector leg
+// vouching for a hit means it is not generic-only. The penalty is applied
+// via demote so it can never invert into a promotion.
 func genericTokenPenalty(results []Result, nonGeneric map[string]struct{}) {
 	if len(nonGeneric) == 0 {
 		return
@@ -93,7 +93,7 @@ func genericTokenPenalty(results []Result, nonGeneric map[string]struct{}) {
 		if symbolMatchesAny(results[i], nonGeneric) {
 			continue
 		}
-		results[i].Score *= genericOnlyPenalty
+		results[i].Score = demote(results[i].Score, genericOnlyPenalty)
 	}
 }
 

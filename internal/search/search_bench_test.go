@@ -31,7 +31,7 @@ func BenchmarkSearch(b *testing.B) {
 		b.Fatalf("LoadEmbeddings: %v", err)
 	}
 
-	vectorIdx := search.BuildHNSWIndex(embeddings)
+	vectorIdx := search.BuildFlatIndex(embeddings)
 	engine := search.NewEngine(adapter, vectorIdx, &fixedEmbedder{})
 	_ = fix.SymbolIDs
 

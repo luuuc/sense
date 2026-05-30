@@ -634,37 +634,6 @@ func TestLoadEmbeddingsEmpty(t *testing.T) {
 	}
 }
 
-func TestEmbeddingsForFilesNoMatch(t *testing.T) {
-	ctx := context.Background()
-	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = a.Close() }()
-
-	fid, err := a.WriteFile(ctx, &model.File{
-		Path: "no_embeddings.go", Language: "go",
-		Hash: "ne1", Symbols: 1, IndexedAt: time.Now(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.WriteSymbol(ctx, &model.Symbol{
-		FileID: fid, Name: "Bare", Qualified: "pkg.Bare",
-		Kind: "function", LineStart: 1, LineEnd: 5,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := a.EmbeddingsForFiles(ctx, []int64{fid})
-	if err != nil {
-		t.Fatalf("EmbeddingsForFiles: %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("expected empty map for file with no embeddings, got %d", len(got))
-	}
-}
-
 func TestSubstringSearch(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -713,5 +682,40 @@ func TestSubstringSearch(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for nonexistent, got %d", len(results))
+	}
+}
+
+// TestSearchQueriesErrorOnClosedAdapter drives the query-error branch of each
+// search helper at once: a closed adapter makes every underlying query fail,
+// so each function must surface an error rather than panic or return stale
+// data. Inputs are non-empty so the early empty-input returns are skipped.
+func TestSearchQueriesErrorOnClosedAdapter(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	_ = a.Close()
+
+	ids := []int64{1, 2}
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{"SymbolCount", func() error { _, e := a.SymbolCount(ctx); return e }},
+		{"DocumentFrequency", func() error { _, e := a.DocumentFrequency(ctx, []string{"x"}); return e }},
+		{"LoadEmbeddings", func() error { _, e := a.LoadEmbeddings(ctx); return e }},
+		{"SymbolsByIDs", func() error { _, e := a.SymbolsByIDs(ctx, ids); return e }},
+		{"InboundEdgeCounts", func() error { _, e := a.InboundEdgeCounts(ctx, ids); return e }},
+		{"CalleeIDs", func() error { _, e := a.CalleeIDs(ctx, ids); return e }},
+		{"FilePathsByIDs", func() error { _, e := a.FilePathsByIDs(ctx, ids); return e }},
+		{"ParentSymbols", func() error { _, e := a.ParentSymbols(ctx, ids); return e }},
+		{"KeywordSearch", func() error { _, e := a.KeywordSearch(ctx, "x", "", 5); return e }},
+		{"SubstringSearch", func() error { _, e := a.SubstringSearch(ctx, "x", "", 5); return e }},
+	}
+	for _, c := range checks {
+		if err := c.call(); err == nil {
+			t.Errorf("%s: expected error on closed adapter, got nil", c.name)
+		}
 	}
 }

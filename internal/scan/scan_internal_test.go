@@ -163,7 +163,7 @@ func TestMigrateEmbeddingModelReadMetaError(t *testing.T) {
 	_ = adapter.Close()
 
 	h := &harness{ctx: ctx, idx: adapter, out: io.Discard, warn: io.Discard}
-	if _, err := h.migrateEmbeddingModel(t.TempDir()); err == nil {
+	if _, err := h.migrateEmbeddingModel(); err == nil {
 		t.Fatal("expected error from migrateEmbeddingModel on closed adapter")
 	}
 }
@@ -195,7 +195,7 @@ func TestEmbedPendingNoSymbols(t *testing.T) {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	n, err := EmbedPending(ctx, adapter, tmp, tmp)
+	n, err := EmbedPending(ctx, adapter, tmp)
 	if err != nil {
 		t.Fatalf("EmbedPending: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestEmbedPendingQueryError(t *testing.T) {
 	}
 	_ = adapter.Close()
 
-	if _, err := EmbedPending(ctx, adapter, tmp, tmp); err == nil {
+	if _, err := EmbedPending(ctx, adapter, tmp); err == nil {
 		t.Fatal("expected error from EmbedPending on closed adapter")
 	}
 }

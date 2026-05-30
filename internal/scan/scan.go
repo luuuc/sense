@@ -72,7 +72,6 @@ type PhaseTiming struct {
 	NamingConventions time.Duration
 	Temporal          time.Duration
 	Embed             time.Duration
-	BuildHNSW         time.Duration
 }
 
 // Result summarises one scan invocation.
@@ -264,7 +263,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	var modelMigrated bool
 	if opts.EmbeddingsEnabled {
-		if changed, merr := h.migrateEmbeddingModel(senseDir); merr != nil {
+		if changed, merr := h.migrateEmbeddingModel(); merr != nil {
 			_, _ = fmt.Fprintf(warn, "warn: embedding model migration: %v\n", merr)
 		} else if changed {
 			modelMigrated = true
@@ -281,19 +280,13 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		// Backfill embeddings for symbols indexed in prior scans
 		// that were never embedded (changedFileIDs was empty).
 		if pending, perr := idx.EmbeddingDebtCount(ctx); perr == nil && pending > 0 {
-			n, eerr := EmbedPending(ctx, idx, root, senseDir)
+			n, eerr := EmbedPending(ctx, idx, root)
 			if eerr != nil {
 				return nil, fmt.Errorf("embed pending symbols: %w", eerr)
 			}
 			h.embedded += n
 		}
 		phases.Embed = time.Since(t0)
-
-		t0 = time.Now()
-		if err := h.buildHNSWIndex(senseDir); err != nil {
-			_, _ = fmt.Fprintf(warn, "warn: hnsw index build failed: %v\n", err)
-		}
-		phases.BuildHNSW = time.Since(t0)
 
 		if derr := idx.DeleteMeta(ctx, "embedding_watermark"); derr != nil {
 			_, _ = fmt.Fprintf(warn, "warn: clear embedding watermark: %v\n", derr)
@@ -398,10 +391,8 @@ func printPhaseBreakdown(out io.Writer, total time.Duration, p PhaseTiming) {
 		p.AssociateTests, pct(p.AssociateTests),
 		p.NamingConventions, pct(p.NamingConventions),
 		p.Temporal, pct(p.Temporal))
-	if p.Embed > 0 || p.BuildHNSW > 0 {
-		_, _ = fmt.Fprintf(out, ", embed %s (%d%%), hnsw %s (%d%%)",
-			p.Embed, pct(p.Embed),
-			p.BuildHNSW, pct(p.BuildHNSW))
+	if p.Embed > 0 {
+		_, _ = fmt.Fprintf(out, ", embed %s (%d%%)", p.Embed, pct(p.Embed))
 	}
 	_, _ = fmt.Fprintln(out)
 }
@@ -498,10 +489,6 @@ type harness struct {
 	// changedFileIDs collects file IDs that were re-indexed this scan
 	// (new or hash-changed). Used by pass 3 to scope embedding work.
 	changedFileIDs []int64
-
-	// removedSymbolIDs records symbol IDs from stale files before they
-	// are cascade-deleted. Used for incremental HNSW index updates.
-	removedSymbolIDs []int64
 
 	// Tallies for Result.
 	files          int
@@ -1070,11 +1057,6 @@ func (h *harness) removeStaleFiles() error {
 	if len(stale) == 0 {
 		return nil
 	}
-	symIDs, err := h.idx.SymbolIDsForPaths(h.ctx, stale)
-	if err != nil {
-		return fmt.Errorf("collect stale symbol IDs: %w", err)
-	}
-	h.removedSymbolIDs = symIDs
 	err = h.idx.InTx(h.ctx, func() error {
 		for _, p := range stale {
 			if err := h.idx.DeleteFile(h.ctx, p); err != nil {

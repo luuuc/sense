@@ -14,12 +14,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Reranker scores (query, document) pairs for relevance using a
-// cross-encoder that sees both inputs jointly.
-type Reranker interface {
-	Score(query string, docs []string) ([]float32, error)
-}
-
 // Result is a single fused search hit with metadata from both backends.
 // Source records which retrieval leg surfaced the hit so consumers can
 // tell keyword matches from semantic ones — see the Source* constants.
@@ -38,7 +32,7 @@ type Result struct {
 
 // Source values for Result.Source. They report provenance — which
 // retrieval leg actually surfaced a hit — not where it finally ranked.
-// A hit found by both the keyword (FTS5) and vector (HNSW) legs is
+// A hit found by both the keyword (FTS5) and vector (flat index) legs is
 // SourceHybrid; one injected by graph enrichment is SourceGraph; the
 // substring text-fallback path sets "text" directly (see textresult.go).
 const (
@@ -91,8 +85,8 @@ type Options struct {
 	Mode string
 }
 
-// Engine orchestrates hybrid search: keyword (FTS5) and vector (HNSW)
-// in parallel, fused with reciprocal rank fusion, re-ranked by graph
+// Engine orchestrates hybrid search: keyword (FTS5) and vector (exact flat
+// index) in parallel, fused with reciprocal rank fusion, re-ranked by graph
 // centrality. The vector index can be swapped at runtime (e.g. after
 // background embedding completes) via SetVectors.
 type Engine struct {
@@ -100,7 +94,6 @@ type Engine struct {
 	adapter  *sqlite.Adapter
 	vectors  VectorIndex
 	embedder embed.Embedder
-	reranker Reranker
 }
 
 // NewEngine creates a search engine. When vectors is nil or embedder
@@ -121,14 +114,6 @@ func (e *Engine) SetVectors(v VectorIndex) {
 	e.mu.Unlock()
 }
 
-// SetReranker sets the cross-encoder reranker. When non-nil, search
-// results are reranked after RRF fusion for improved precision.
-func (e *Engine) SetReranker(r Reranker) {
-	e.mu.Lock()
-	e.reranker = r
-	e.mu.Unlock()
-}
-
 const (
 	ModeHybrid  = "hybrid"
 	ModeKeyword = "keyword"
@@ -146,7 +131,6 @@ type SearchMeta struct {
 	Shape         string
 	KeywordWeight float64
 	VectorWeight  float64
-	Reranked      bool
 }
 
 // Search runs hybrid search and returns fused, re-ranked results.
@@ -171,7 +155,6 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 
 	e.mu.RLock()
 	vectors := e.vectors
-	reranker := e.reranker
 	e.mu.RUnlock()
 
 	canVector := vectors != nil && vectors.Len() > 0 && e.embedder != nil
@@ -286,26 +269,6 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
 	}
 
-	// Cross-encoder reranking: replace RRF scores with joint relevance scores.
-	reranked := false
-	if reranker != nil && len(fused) > 0 {
-		docs := make([]string, len(fused))
-		for i, r := range fused {
-			docs[i] = r.Kind + " " + r.Qualified
-			if r.Snippet != "" {
-				docs[i] += "\n" + r.Snippet
-			}
-		}
-		scores, rerankErr := reranker.Score(opts.Query, docs)
-		if rerankErr != nil {
-			return nil, SearchMeta{}, fmt.Errorf("search rerank: %w", rerankErr)
-		}
-		for i := range fused {
-			fused[i].Score = float64(scores[i])
-		}
-		reranked = true
-	}
-
 	// Graph centrality re-ranking.
 	symbolIDs := make([]int64, len(fused))
 	for i, r := range fused {
@@ -338,9 +301,8 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	// reason: the fused RRF scores of single-term keyword matches are
 	// tightly clustered, so the multiplier is decisive *here* but would be
 	// neutralized post-normalize whenever the genuine domain match happens
-	// to be the rescale floor (pinned to 0). It runs after any reranking,
-	// so a cross-encoder cannot silently erase it. No-op for Identifier
-	// queries (nonGenericQueryTerms is nil).
+	// to be the rescale floor (pinned to 0). No-op for Identifier queries
+	// (nonGenericQueryTerms is nil).
 	genericTokenPenalty(fused, nonGenericQueryTerms)
 
 	normalizeScores(fused)
@@ -394,7 +356,6 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		Shape:         shape.String(),
 		KeywordWeight: kwWeight,
 		VectorWeight:  vecWeight,
-		Reranked:      reranked,
 	}, nil
 }
 
@@ -423,6 +384,12 @@ func fusionWeights(vecConfidence float64) (keyword, vector float64) {
 // fuseRRF merges keyword and vector result lists using reciprocal rank
 // fusion with configurable weights: score(symbol) = Σ weight/(k + rank).
 // Symbols appearing in both lists get contributions from both.
+//
+// The returned slice is sorted by fused score descending (ties broken by
+// ascending symbol ID for determinism). This ordering is part of the
+// contract: callers such as mergeMultiQuery treat each result's slice
+// position as its fusion rank, so returning map-iteration order would feed
+// noise into the next RRF stage instead of the weighted fusion ranking.
 func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vecWeight float64) []Result {
 	type entry struct {
 		result Result
@@ -480,6 +447,14 @@ func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vec
 		e.result.Source = sourceLabel(e.kw, e.vec)
 		results = append(results, e.result)
 	}
+	// Sort by fused score so callers can consume rank order (see contract
+	// in the doc comment). Tie-break by symbol ID for deterministic output.
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		return results[i].SymbolID < results[j].SymbolID
+	})
 	return results
 }
 
@@ -554,6 +529,22 @@ const (
 
 var testNamePrefixes = []string{"Test", "Mock", "Fake", "Stub"}
 
+// demote applies a multiplicative penalty (expected in [0,1]) that lowers a
+// result's rank. It guards the demotion invariant against a signed score ever
+// re-entering the pipeline: on a positive score it returns score*penalty (a
+// demotion), but a negative score — where ×penalty would raise the value
+// toward zero and silently invert the demotion into a promotion — is returned
+// unchanged. Today every score reaching these passes is non-negative (RRF is a
+// sum of positive reciprocals, and the cross-encoder that once produced
+// negative logits has been removed), so this is cheap insurance, not a live
+// fix. A zero score is also returned unchanged (0*penalty == 0).
+func demote(score, penalty float64) float64 {
+	if score <= 0 {
+		return score
+	}
+	return score * penalty
+}
+
 // applyKindWeights demotes modules (namespaces, rarely the search target)
 // and applies a pre-normalization test-name penalty. This pre-norm pass
 // is NOT redundant with applyTestDemotion (which runs post-norm): it
@@ -566,11 +557,11 @@ var testNamePrefixes = []string{"Test", "Mock", "Fake", "Stub"}
 func applyKindWeights(results []Result) {
 	for i := range results {
 		if results[i].Kind == "module" {
-			results[i].Score *= 0.5
+			results[i].Score = demote(results[i].Score, 0.5)
 		}
 		for _, prefix := range testNamePrefixes {
 			if strings.HasPrefix(results[i].Name, prefix) {
-				results[i].Score *= testNameDemotion
+				results[i].Score = demote(results[i].Score, testNameDemotion)
 				break
 			}
 		}
@@ -639,7 +630,7 @@ func applyPathWeights(results []Result, pathByID map[int64]string) {
 		demoted := false
 		for _, d := range demotedPathPrefixes {
 			if strings.HasPrefix(path, d.prefix) {
-				results[i].Score *= d.penalty
+				results[i].Score = demote(results[i].Score, d.penalty)
 				demoted = true
 				break
 			}
@@ -647,7 +638,7 @@ func applyPathWeights(results []Result, pathByID map[int64]string) {
 		if !demoted {
 			for _, d := range demotedPathSegments {
 				if strings.Contains(path, d.segment) {
-					results[i].Score *= d.penalty
+					results[i].Score = demote(results[i].Score, d.penalty)
 					demoted = true
 					break
 				}
@@ -690,7 +681,7 @@ func applyTestDemotion(results []Result, pathByID map[int64]string, query string
 	}
 	for i := range results {
 		if isTestSymbol(results[i].Name) || isTestPath(pathByID[results[i].FileID]) {
-			results[i].Score *= testRankPenalty
+			results[i].Score = demote(results[i].Score, testRankPenalty)
 		}
 	}
 }

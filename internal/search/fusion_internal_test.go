@@ -112,6 +112,64 @@ func TestFuseRRFKeywordOnly(t *testing.T) {
 	}
 }
 
+func TestFuseRRFReturnsSortedByScore(t *testing.T) {
+	// Keyword rank determines RRF score (1/(k+rank+1)), strictly decreasing
+	// with position. fuseRRF must return results already sorted by score —
+	// callers consume slice position as rank, so map-iteration order would be
+	// noise. The test does NOT sort: it asserts the production sort holds.
+	const n = 12
+	kw := make([]sqlite.SearchResult, n)
+	for i := range kw {
+		kw[i] = sqlite.SearchResult{SymbolID: int64(i + 1), Name: "s"}
+	}
+
+	got := fuseRRF(kw, nil, 1.0, 0.0)
+	if len(got) != n {
+		t.Fatalf("fuseRRF returned %d, want %d", len(got), n)
+	}
+	// Strictly descending by score, and rank-0 symbol (id=1) leads.
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Score < got[i].Score {
+			t.Fatalf("not sorted at %d: %v >= %v expected (order %v)",
+				i, got[i-1].Score, got[i].Score, ids(got))
+		}
+	}
+	if got[0].SymbolID != 1 {
+		t.Errorf("top result = symbol %d, want symbol 1 (keyword rank 0)", got[0].SymbolID)
+	}
+}
+
+func TestMergeMultiQueryRanksByPosition(t *testing.T) {
+	// mergeMultiQuery uses each input's slice position as its RRF rank. A
+	// symbol at rank 0 in both sub-queries must outscore one at rank 5 in
+	// both — proving position, not map order, drives the merged score.
+	mk := func(early, late int64) []Result {
+		out := []Result{{SymbolID: early, Name: "early"}}
+		for i := 0; i < 4; i++ {
+			out = append(out, Result{SymbolID: int64(100 + i), Name: "filler"})
+		}
+		out = append(out, Result{SymbolID: late, Name: "late"})
+		return out
+	}
+	got := mergeMultiQuery([][]Result{mk(1, 2), mk(1, 2)})
+
+	score := map[int64]float64{}
+	for _, r := range got {
+		score[r.SymbolID] = r.Score
+	}
+	if score[1] <= score[2] {
+		t.Errorf("rank-0 symbol (%.5f) should outscore rank-5 symbol (%.5f)", score[1], score[2])
+	}
+}
+
+func ids(rs []Result) []int64 {
+	out := make([]int64, len(rs))
+	for i, r := range rs {
+		out[i] = r.SymbolID
+	}
+	return out
+}
+
 func TestFuseRRFBothSources(t *testing.T) {
 	kw := []sqlite.SearchResult{
 		{SymbolID: 1, Name: "shared"},

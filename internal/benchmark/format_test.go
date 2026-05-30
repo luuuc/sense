@@ -183,7 +183,6 @@ func TestWriteHuman(t *testing.T) {
 		ColdStartLatency:   500 * time.Millisecond,
 		Index: IndexMetrics{
 			DatabaseBytes:  10485760,
-			EmbeddingBytes: 2097152,
 			BytesPerSymbol: 10240,
 		},
 		Memory: MemoryMetrics{
@@ -215,7 +214,6 @@ func TestWriteHuman(t *testing.T) {
 		"mcp launch to ready",
 		"Index",
 		"database size",
-		"embeddings",
 		"Memory",
 		"RSS (query serving)",
 	}

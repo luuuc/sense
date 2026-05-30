@@ -19,9 +19,26 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-func saveHNSWFor(t *testing.T, dir string, embeddings map[int64][]float32) error {
-	t.Helper()
-	return search.SaveHNSWIndex(filepath.Join(dir, ".sense", "hnsw.bin"), embeddings)
+func TestRunSearch_whenEmbedderInitFails_returnsError(t *testing.T) {
+	// Embeddings are present, so BuildEngine creates the bundled embedder.
+	// Pointing the ORT cache at a regular file makes library extraction fail,
+	// driving RunSearch's BuildEngine error branch.
+	dir := seedSearchProjectWithEmbeddings(t)
+	t.Setenv("SENSE_EMBEDDINGS", "true")
+	badCache := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(badCache, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed bad cache: %v", err)
+	}
+	t.Setenv("SENSE_CACHE_DIR", badCache)
+
+	var stdout, stderr bytes.Buffer
+	code := RunSearch([]string{"payment", "--json"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Fatalf("exit = %d, want %d; stderr: %s", code, ExitGeneralError, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "sense search:") {
+		t.Errorf("expected error message on stderr, got: %s", stderr.String())
+	}
 }
 
 func seedSearchProject(t *testing.T) string {
@@ -297,59 +314,10 @@ func TestRunSearch_whenEmbeddingsAvailable_usesVectorIndex(t *testing.T) {
 	}
 }
 
-func TestRunSearch_whenPrebuiltHNSWPresent_loadsFromDisk(t *testing.T) {
-	// When .sense/hnsw.bin exists and loads cleanly, RunSearch must
-	// use the prebuilt index instead of calling adapter.LoadEmbeddings
-	// to rebuild from scratch.
-	probe, err := embed.NewBundledEmbedder(0)
-	if err != nil {
-		t.Skipf("bundled embedder unavailable in this build: %v", err)
-	}
-	_ = probe.Close()
-
-	dir := seedSearchProjectWithEmbeddings(t)
-
-	// Pre-save an HNSW index built from the same embeddings the seed wrote.
-	// We import the search package indirectly via the public Save API.
-	ctx := context.Background()
-	adapter, err := sqlite.Open(ctx, filepath.Join(dir, ".sense", "index.db"))
-	if err != nil {
-		t.Fatalf("open adapter: %v", err)
-	}
-	embeddings, err := adapter.LoadEmbeddings(ctx)
-	if err != nil {
-		_ = adapter.Close()
-		t.Fatalf("LoadEmbeddings: %v", err)
-	}
-	_ = adapter.Close()
-
-	if err := saveHNSWFor(t, dir, embeddings); err != nil {
-		t.Fatalf("save prebuilt hnsw: %v", err)
-	}
-
-	t.Setenv("SENSE_EMBEDDINGS", "true")
-
-	var stdout, stderr bytes.Buffer
-	cio := IO{Stdout: &stdout, Stderr: &stderr, Dir: dir}
-
-	code := RunSearch([]string{"payment", "--json"}, cio)
-	if code != ExitSuccess {
-		t.Fatalf("exit = %d, want %d; stderr: %s", code, ExitSuccess, stderr.String())
-	}
-
-	var resp mcpio.SearchResponse
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
-		t.Fatalf("invalid JSON: %v\nraw: %s", err, stdout.String())
-	}
-	if len(resp.Results) == 0 {
-		t.Fatal("expected results from prebuilt HNSW path")
-	}
-}
-
 func TestRunSearch_whenEmbeddingsEnabledButNoVectors_fallsBackToKeyword(t *testing.T) {
 	// Embeddings flag stays enabled (the default) but no embeddings have
-	// been written to the index. RunSearch must skip the embedder/reranker
-	// init path and fall back to keyword-only search without errors.
+	// been written to the index. RunSearch must fall back to keyword-only
+	// search without errors.
 	dir := seedSearchProject(t)
 	t.Setenv("SENSE_EMBEDDINGS", "true")
 
@@ -439,4 +407,3 @@ func TestRunSearchEmptyQuery(t *testing.T) {
 		t.Errorf("expected 'missing query' in stderr, got: %s", stderr.String())
 	}
 }
-

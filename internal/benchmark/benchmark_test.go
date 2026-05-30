@@ -513,3 +513,26 @@ func TestRunWithColdStart(t *testing.T) {
 		t.Error("ColdStartLatency should be > 0")
 	}
 }
+
+// TestBuildSearchEngineDegradesOnError exercises the keyword-only fallback:
+// a closed adapter makes BuildEngine fail, and buildSearchEngine must still
+// return a usable (keyword-only) engine with a no-op cleanup rather than nil.
+func TestBuildSearchEngineDegradesOnError(t *testing.T) {
+	t.Setenv("SENSE_EMBEDDINGS", "true")
+	ctx := context.Background()
+	dir := t.TempDir()
+	adapter, err := sqlite.Open(ctx, filepath.Join(dir, "index.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	_ = adapter.Close() // closed → BuildEngine's LoadEmbeddings fails
+
+	engine, embedder, cleanup := buildSearchEngine(ctx, adapter, dir)
+	defer cleanup()
+	if engine == nil {
+		t.Fatal("expected non-nil keyword-only engine on construction failure")
+	}
+	if embedder != nil {
+		t.Error("expected nil embedder on construction failure")
+	}
+}

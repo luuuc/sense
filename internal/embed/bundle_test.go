@@ -38,38 +38,6 @@ func TestNewBundledEmbedder(t *testing.T) {
 	}
 }
 
-func TestNewBundledReranker(t *testing.T) {
-	if len(rerankerBytes) == 0 {
-		t.Skip("reranker model not bundled; run scripts/fetch-deps.sh --local")
-	}
-	if len(vocabBytes) == 0 {
-		t.Skip("vocab not bundled; run scripts/fetch-deps.sh --local")
-	}
-	if len(ortLibData) == 0 {
-		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")
-	}
-
-	r, err := NewBundledReranker(0)
-	if err != nil {
-		t.Fatalf("NewBundledReranker: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-
-	scores, err := r.Score("user authentication", []string{
-		"method Auth::Login#call\ndef call(email, password)",
-		"method CSV::Parser#parse\ndef parse(input)",
-	})
-	if err != nil {
-		t.Fatalf("score: %v", err)
-	}
-	if len(scores) != 2 {
-		t.Fatalf("expected 2 scores, got %d", len(scores))
-	}
-	if scores[0] <= scores[1] {
-		t.Errorf("auth doc (%.4f) should score higher than csv doc (%.4f)", scores[0], scores[1])
-	}
-}
-
 func TestEnsureORTLibCacheInvalidation(t *testing.T) {
 	if len(ortLibData) == 0 {
 		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")
@@ -255,21 +223,6 @@ func TestNewBundledEmbedderEnsureORTLibError(t *testing.T) {
 	t.Setenv("SENSE_CACHE_DIR", filePath)
 
 	_, err := NewBundledEmbedder(0)
-	if err == nil {
-		t.Fatal("expected error when ensureORTLib fails")
-	}
-}
-
-func TestNewBundledRerankerEnsureORTLibError(t *testing.T) {
-	// Point cache dir at a file so ensureORTLib fails
-	tmp := t.TempDir()
-	filePath := filepath.Join(tmp, "notadir")
-	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SENSE_CACHE_DIR", filePath)
-
-	_, err := NewBundledReranker(0)
 	if err == nil {
 		t.Fatal("expected error when ensureORTLib fails")
 	}

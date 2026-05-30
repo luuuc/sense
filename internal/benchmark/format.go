@@ -56,7 +56,6 @@ type JSONColdStart struct {
 
 type JSONIndex struct {
 	DatabaseBytes  int64   `json:"database_bytes"`
-	EmbeddingBytes int64   `json:"embedding_bytes"`
 	BytesPerSymbol float64 `json:"bytes_per_symbol"`
 }
 
@@ -89,7 +88,6 @@ func MarshalJSON(r *Report) ([]byte, error) {
 		},
 		Index: JSONIndex{
 			DatabaseBytes:  r.Index.DatabaseBytes,
-			EmbeddingBytes: r.Index.EmbeddingBytes,
 			BytesPerSymbol: r.Index.BytesPerSymbol,
 		},
 		Memory: JSONMemory{
@@ -148,9 +146,6 @@ func WriteHuman(w io.Writer, r *Report) {
 		_, _ = fmt.Fprintf(w, " (%.1f KB/symbol)", r.Index.BytesPerSymbol/1024)
 	}
 	_, _ = fmt.Fprintln(w)
-	if r.Index.EmbeddingBytes > 0 {
-		_, _ = fmt.Fprintf(w, "  embeddings ............. %s\n", fmtBytes(r.Index.EmbeddingBytes))
-	}
 
 	_, _ = fmt.Fprintf(w, "\nMemory\n")
 	_, _ = fmt.Fprintf(w, "  RSS (query serving) .... %s\n", fmtBytes(int64(r.Memory.QueryAllocBytes)))

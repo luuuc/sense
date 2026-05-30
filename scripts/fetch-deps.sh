@@ -50,17 +50,6 @@ if [ ! -f "$BUNDLE/vocab.txt" ]; then
     curl -fSL "https://huggingface.co/$MODEL_REPO/resolve/main/vocab.txt" -o "$BUNDLE/vocab.txt"
 fi
 
-RERANKER_REPO="cross-encoder/ms-marco-MiniLM-L-6-v2"
-if [ ! -f "$BUNDLE/reranker.onnx" ]; then
-    echo "Downloading reranker model..."
-    # Try quantized INT8 first, then unquantized.
-    if ! curl -fSL "https://huggingface.co/$RERANKER_REPO/resolve/main/onnx/model_qint8_arm64.onnx" -o "$BUNDLE/reranker.onnx" 2>/dev/null; then
-        if ! curl -fSL "https://huggingface.co/$RERANKER_REPO/resolve/main/onnx/model_quantized.onnx" -o "$BUNDLE/reranker.onnx" 2>/dev/null; then
-            curl -fSL "https://huggingface.co/$RERANKER_REPO/resolve/main/onnx/model.onnx" -o "$BUNDLE/reranker.onnx"
-        fi
-    fi
-fi
-
 # ── ONNX Runtime shared libraries ───────────────────────────────────
 
 fetch_ort() {

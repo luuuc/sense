@@ -605,55 +605,6 @@ func seedSymbolWithParent(t *testing.T, a *sqlite.Adapter, fid int64, name, qual
 	return sid
 }
 
-func TestSymbolIDsForPaths(t *testing.T) {
-	a := openTestDB(t)
-	ctx := context.Background()
-
-	fid1 := seedFile(t, a, "src/main.go", "go", "h1")
-	fid2 := seedFile(t, a, "src/util.go", "go", "h2")
-	seedSymbol(t, a, fid1, "Main", "pkg.Main", "function")
-	seedSymbol(t, a, fid1, "Init", "pkg.Init", "function")
-	seedSymbol(t, a, fid2, "Helper", "pkg.Helper", "function")
-
-	// Query both paths
-	ids, err := a.SymbolIDsForPaths(ctx, []string{"src/main.go", "src/util.go"})
-	if err != nil {
-		t.Fatalf("SymbolIDsForPaths: %v", err)
-	}
-	if len(ids) != 3 {
-		t.Fatalf("SymbolIDsForPaths len = %d, want 3", len(ids))
-	}
-
-	// Query single path
-	ids, err = a.SymbolIDsForPaths(ctx, []string{"src/main.go"})
-	if err != nil {
-		t.Fatalf("SymbolIDsForPaths single: %v", err)
-	}
-	if len(ids) != 2 {
-		t.Fatalf("SymbolIDsForPaths single len = %d, want 2", len(ids))
-	}
-
-	// Empty input
-	ids, err = a.SymbolIDsForPaths(ctx, nil)
-	if err != nil {
-		t.Fatalf("SymbolIDsForPaths empty: %v", err)
-	}
-	if len(ids) != 0 {
-		t.Errorf("SymbolIDsForPaths empty len = %d, want 0", len(ids))
-	}
-
-	// Non-existent path
-	ids, err = a.SymbolIDsForPaths(ctx, []string{"nonexistent.go"})
-	if err != nil {
-		t.Fatalf("SymbolIDsForPaths nonexistent: %v", err)
-	}
-	if len(ids) != 0 {
-		t.Errorf("SymbolIDsForPaths nonexistent len = %d, want 0", len(ids))
-	}
-
-	_ = fid2 // used via seedSymbol
-}
-
 func TestSymbolsByIDs(t *testing.T) {
 	a := openTestDB(t)
 	ctx := context.Background()
@@ -1009,44 +960,6 @@ func TestLoadEmbeddings(t *testing.T) {
 	}
 	if len(result[s1]) != 3 {
 		t.Errorf("result[s1] len = %d, want 3", len(result[s1]))
-	}
-}
-
-func TestEmbeddingsForFiles(t *testing.T) {
-	a := openTestDB(t)
-	ctx := context.Background()
-
-	fid1 := seedFile(t, a, "a.go", "go", "h1")
-	fid2 := seedFile(t, a, "b.go", "go", "h2")
-	s1 := seedSymbol(t, a, fid1, "A", "pkg.A", "class")
-	s2 := seedSymbol(t, a, fid2, "B", "pkg.B", "class")
-
-	if err := a.WriteEmbedding(ctx, s1, floatVec(1.0, 2.0)); err != nil {
-		t.Fatalf("WriteEmbedding s1: %v", err)
-	}
-	if err := a.WriteEmbedding(ctx, s2, floatVec(3.0, 4.0)); err != nil {
-		t.Fatalf("WriteEmbedding s2: %v", err)
-	}
-
-	// Query for fid1 only
-	result, err := a.EmbeddingsForFiles(ctx, []int64{fid1})
-	if err != nil {
-		t.Fatalf("EmbeddingsForFiles: %v", err)
-	}
-	if len(result) != 1 {
-		t.Fatalf("EmbeddingsForFiles len = %d, want 1", len(result))
-	}
-	if _, ok := result[s1]; !ok {
-		t.Error("EmbeddingsForFiles should contain s1")
-	}
-
-	// Empty input
-	result, err = a.EmbeddingsForFiles(ctx, nil)
-	if err != nil {
-		t.Fatalf("EmbeddingsForFiles empty: %v", err)
-	}
-	if result != nil {
-		t.Errorf("EmbeddingsForFiles empty = %v, want nil", result)
 	}
 }
 

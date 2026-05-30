@@ -97,7 +97,10 @@ func splitCamelCase(s string) []string {
 }
 
 // mergeMultiQuery merges per-query result lists using RRF. Symbols that
-// appear in multiple sub-query results get boosted.
+// appear in multiple sub-query results get boosted. Each input list is
+// consumed in rank order — slice position is the RRF rank — so callers must
+// pass score-sorted lists (fuseRRF guarantees this); unsorted input would
+// fuse on map-iteration noise instead of the weighted fusion ranking.
 func mergeMultiQuery(queryResults [][]Result) []Result {
 	type entry struct {
 		result Result

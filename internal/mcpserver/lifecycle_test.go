@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
 )
@@ -262,4 +263,44 @@ func TestRunWithOptionsEmptyDirDefaultsToCWD(t *testing.T) {
 			t.Fatal("expected error for directory without .sense")
 		}
 	}
+}
+
+// TestBuildMCPServerWithEmbeddingDebt exercises buildMCPServer's
+// embeddings-enabled path: a stale embedding-model meta triggers the
+// model-changed warning, and a symbol with no embedding gives the server
+// outstanding debt, so it starts the background embed goroutine and creates
+// the bundled embedder. cleanup() drains the goroutine.
+func TestBuildMCPServerWithEmbeddingDebt(t *testing.T) {
+	probe, err := embed.NewBundledEmbedder(0)
+	if err != nil {
+		t.Skipf("bundled embedder unavailable: %v", err)
+	}
+	_ = probe.Close()
+
+	dir := setupTestProject(t)
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// Stale model → warning branch; watermark+debt already present (no embeddings).
+	if err := a.WriteMeta(ctx, "embedding_model", "stale-model-v0"); err != nil {
+		_ = a.Close()
+		t.Fatalf("write meta: %v", err)
+	}
+	_ = a.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "true")
+	s, _, cleanup, err := buildMCPServer(RunOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("buildMCPServer: %v", err)
+	}
+	if s == nil {
+		t.Fatal("expected non-nil server")
+	}
+	// cleanup() cancels the embed context and blocks on the background
+	// goroutine's done channel, so it drains deterministically — no sleep,
+	// no flake. This covers the debt/warning/goroutine-start branches; the
+	// post-embed SetVectors upgrade is timing-dependent and not asserted.
+	cleanup()
 }

@@ -118,60 +118,26 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 		fmt.Fprintf(os.Stderr, "sense mcp: embedding model changed (index: %s, binary: %s). Search results may be degraded. Run `sense scan --force` to re-embed.\n", storedModel, embed.ModelID)
 	}
 
-	var vectorIdx search.VectorIndex
-	var embedder embed.Embedder
-	var hasDebt bool
-
-	embeddingsEnabled := cli.EmbeddingsEnabled(dir)
-	if embeddingsEnabled {
-		hnswPath := filepath.Join(dir, ".sense", "hnsw.bin")
-		idx, loadErr := search.LoadHNSWIndex(hnswPath)
-		if loadErr == nil && idx != nil {
-			vectorIdx = idx
-		} else {
-			embeddings, err := adapter.LoadEmbeddings(ctx)
-			if err != nil {
-				_ = adapter.Close()
-				return nil, nil, nil, fmt.Errorf("sense mcp: load embeddings: %w", err)
-			}
-			if len(embeddings) > 0 {
-				vectorIdx = search.BuildHNSWIndex(embeddings)
-			}
-		}
-
-		debtCount, _ := adapter.EmbeddingDebtCount(ctx)
-		hasDebt = debtCount > 0
-
-		if (vectorIdx != nil && vectorIdx.Len() > 0) || hasDebt {
-			embedder, err = embed.NewBundledEmbedder(0)
-			if err != nil {
-				_ = adapter.Close()
-				return nil, nil, nil, fmt.Errorf("sense mcp: init embedder: %w", err)
-			}
-		}
+	engine, embedder, err := search.BuildEngine(ctx, adapter, dir)
+	if err != nil {
+		_ = adapter.Close()
+		return nil, nil, nil, fmt.Errorf("sense mcp: %w", err)
 	}
 
-	engine := search.NewEngine(adapter, vectorIdx, embedder)
-
-	var reranker *embed.ONNXReranker
-	if embedder != nil {
-		r, err := embed.NewBundledReranker(0)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "sense mcp: init reranker: %v\n", err)
-		} else {
-			reranker = r
-			engine.SetReranker(reranker)
-		}
+	embeddingsEnabled := cli.EmbeddingsEnabled(dir)
+	var hasDebt bool
+	if embeddingsEnabled {
+		debtCount, _ := adapter.EmbeddingDebtCount(ctx)
+		hasDebt = debtCount > 0
 	}
 
 	embedCtx, cancelEmbed := context.WithCancel(ctx)
 	embedDone := make(chan struct{})
 
 	if embeddingsEnabled && hasDebt && opts.WatchState == nil {
-		senseDir := filepath.Join(dir, ".sense")
 		go func() {
 			defer close(embedDone)
-			n, err := scan.EmbedPending(embedCtx, adapter, dir, senseDir)
+			n, err := scan.EmbedPending(embedCtx, adapter, dir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "sense mcp: background embed failed: %v\n", err)
 				return
@@ -179,13 +145,14 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 			if n == 0 {
 				return
 			}
-			hnswPath := filepath.Join(senseDir, "hnsw.bin")
-			newIdx, loadErr := search.LoadHNSWIndex(hnswPath)
-			if loadErr != nil {
-				fmt.Fprintf(os.Stderr, "sense mcp: load hnsw after embed: %v\n", loadErr)
+			// Rebuild the flat index from the freshly written embeddings so
+			// search upgrades from keyword-only to hybrid in place.
+			embeddings, lerr := adapter.LoadEmbeddings(embedCtx)
+			if lerr != nil {
+				fmt.Fprintf(os.Stderr, "sense mcp: reload embeddings after embed: %v\n", lerr)
 				return
 			}
-			engine.SetVectors(newIdx)
+			engine.SetVectors(search.BuildFlatIndex(embeddings))
 			fmt.Fprintf(os.Stderr, "sense mcp: embeddings complete (%d symbols) — search upgraded to hybrid mode\n", n)
 		}()
 	} else {
@@ -218,9 +185,6 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 		<-embedDone
 		if embedder != nil {
 			_ = embedder.Close()
-		}
-		if reranker != nil {
-			_ = reranker.Close()
 		}
 		tracker.Close()
 		_ = adapter.Close()

@@ -49,7 +49,6 @@ type ScanMetrics struct {
 
 type IndexMetrics struct {
 	DatabaseBytes  int64
-	EmbeddingBytes int64
 	SymbolCount    int
 	BytesPerSymbol float64
 }
@@ -331,42 +330,14 @@ func benchStatus(ctx context.Context, db *sql.DB, n int) Latency {
 }
 
 func buildSearchEngine(ctx context.Context, adapter *sqlite.Adapter, dir string) (*search.Engine, embed.Embedder, func()) {
-	var vectorIdx search.VectorIndex
-	var embedder embed.Embedder
-
-	hnswPath := filepath.Join(dir, ".sense", "hnsw.bin")
-	idx, loadErr := search.LoadHNSWIndex(hnswPath)
-	if loadErr == nil && idx != nil {
-		vectorIdx = idx
-	} else {
-		embeddings, err := adapter.LoadEmbeddings(ctx)
-		if err == nil && len(embeddings) > 0 {
-			vectorIdx = search.BuildHNSWIndex(embeddings)
-		}
+	engine, embedder, err := search.BuildEngine(ctx, adapter, dir)
+	if err != nil {
+		// Construction failure degrades to keyword-only so the benchmark
+		// still measures the keyword path rather than aborting.
+		engine = search.NewEngine(adapter, nil, nil)
+		embedder = nil
 	}
-
-	if vectorIdx != nil && vectorIdx.Len() > 0 {
-		e, err := embed.NewBundledEmbedder(0)
-		if err == nil {
-			embedder = e
-		}
-	}
-
-	engine := search.NewEngine(adapter, vectorIdx, embedder)
-
-	var reranker *embed.ONNXReranker
-	if embedder != nil {
-		r, err := embed.NewBundledReranker(0)
-		if err == nil {
-			reranker = r
-			engine.SetReranker(r)
-		}
-	}
-
 	return engine, embedder, func() {
-		if reranker != nil {
-			_ = reranker.Close()
-		}
 		if embedder != nil {
 			_ = embedder.Close()
 		}
@@ -418,11 +389,6 @@ func measureIndex(dir string, symbolCount int) IndexMetrics {
 	walPath := dbPath + "-wal"
 	if info, err := os.Stat(walPath); err == nil {
 		m.DatabaseBytes += info.Size()
-	}
-
-	embPath := filepath.Join(dir, ".sense", "hnsw.bin")
-	if info, err := os.Stat(embPath); err == nil {
-		m.EmbeddingBytes = info.Size()
 	}
 
 	if m.DatabaseBytes > 0 && m.SymbolCount > 0 {

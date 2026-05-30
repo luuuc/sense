@@ -37,18 +37,14 @@ func TestPrintPhaseBreakdown(t *testing.T) {
 func TestPrintPhaseBreakdownWithEmbeddings(t *testing.T) {
 	var buf bytes.Buffer
 	phases := PhaseTiming{
-		Walk:      500 * time.Millisecond,
-		Embed:     300 * time.Millisecond,
-		BuildHNSW: 200 * time.Millisecond,
+		Walk:  500 * time.Millisecond,
+		Embed: 300 * time.Millisecond,
 	}
 	printPhaseBreakdown(&buf, time.Second, phases)
 	out := buf.String()
 
 	if !strings.Contains(out, "embed") {
 		t.Errorf("output should contain embed phase: %q", out)
-	}
-	if !strings.Contains(out, "hnsw") {
-		t.Errorf("output should contain hnsw phase: %q", out)
 	}
 }
 
