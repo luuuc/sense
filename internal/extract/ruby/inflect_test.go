@@ -53,3 +53,12 @@ func TestClassify(t *testing.T) {
 		}
 	}
 }
+
+func TestExportedInflectionWrappers(t *testing.T) {
+	if got := Singularize("orders"); got != "order" {
+		t.Errorf("Singularize(orders) = %q, want order", got)
+	}
+	if got := Classify("line_items"); got != "LineItem" {
+		t.Errorf("Classify(line_items) = %q, want LineItem", got)
+	}
+}

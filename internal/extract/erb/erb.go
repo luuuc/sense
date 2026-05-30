@@ -79,6 +79,22 @@ var (
 	// render(template: "x"). Captures the first partial-path string literal.
 	reRender = regexp.MustCompile(`\brender\b\s*\(?\s*(?:partial:|template:|layout:)?\s*["']([\w./-]+)["']`)
 
+	// render @posts / render collection: @posts / render(@posts) — an implicit
+	// collection render with no explicit partial. Captures the ivar name; the
+	// partial path is derived by Rails' to_partial_path convention.
+	reRenderCollection = regexp.MustCompile(`\brender\b\s*\(?\s*(?:collection:\s*)?@([a-z_][a-zA-Z0-9_]*)`)
+
+	// An explicit partial:/template: keyword means the render path is given
+	// literally (handled by reRender); the collection convention must not also
+	// guess a path from the ivar, which would be a phantom.
+	reRenderPartialKw = regexp.MustCompile(`\b(?:partial|template):`)
+
+	// form_with / form_for context, and the two shapes that name a model:
+	// `form_for @order` (positional) and `model: @order` (keyword).
+	reFormTag    = regexp.MustCompile(`\bform_(?:with|for)\b`)
+	reFormForArg = regexp.MustCompile(`\bform_for\s*\(?\s*@([a-z_][a-zA-Z0-9_]*)`)
+	reModelArg   = regexp.MustCompile(`\bmodel:\s*@([a-z_][a-zA-Z0-9_]*)`)
+
 	// t(".key") / t("a.b.c") / translate("...") / I18n.t("..."). Keys with
 	// interpolation (#{...}) are skipped — the literal isn't a stable key.
 	reI18n = regexp.MustCompile(`\b(?:I18n\.)?(?:t|translate)\b\s*\(?\s*["']([a-zA-Z0-9_.]+)["']`)
@@ -342,6 +358,12 @@ func (w *walker) extractTemplateRuby(line string, lineNum int) error {
 		if err := w.extractRender(inner, lineNum); err != nil {
 			return err
 		}
+		if err := w.extractRenderCollection(inner, lineNum); err != nil {
+			return err
+		}
+		if err := w.extractFormModel(inner, lineNum); err != nil {
+			return err
+		}
 		if err := w.extractI18n(inner, lineNum); err != nil {
 			return err
 		}
@@ -409,6 +431,79 @@ func (w *walker) extractRender(inner string, lineNum int) error {
 			Line:            &ln,
 			Confidence:      extract.ConfidenceConvention,
 		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractRenderCollection emits a calls edge for an implicit collection render
+// (`render @posts`, `render collection: @posts`) to the partial that Rails'
+// to_partial_path convention resolves it to: `posts/_post`, i.e. the render
+// path `posts/post`. The directory is the (plural) ivar name; the partial name
+// is its singular form. Only plural ivars are handled — a singular ivar
+// (`render @post`) would need pluralization to build the directory, and
+// guessing wrong is a phantom, so it is skipped. A render with an explicit
+// partial:/template: keyword is left to extractRender; the convention does not
+// override a literal path.
+func (w *walker) extractRenderCollection(inner string, lineNum int) error {
+	if reRenderPartialKw.MatchString(inner) {
+		return nil
+	}
+	for _, m := range reRenderCollection.FindAllStringSubmatch(inner, -1) {
+		ivar := m[1]
+		singular := ruby.Singularize(ivar)
+		if singular == ivar {
+			continue // singular ivar — cannot build the plural directory safely
+		}
+		ln := lineNum
+		if err := w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: w.filePath,
+			TargetQualified: extract.PrefixPartial + ivar + "/" + singular,
+			Kind:            model.EdgeCalls,
+			Line:            &ln,
+			Confidence:      extract.ConfidenceConvention,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractFormModel emits a references edge from the view to the model a form
+// binds to: `form_with model: @order` / `form_for @order` → `Order`, by
+// classifying the ivar name. The edge resolves only if that model class is
+// indexed (unresolved edges are dropped at write time), so a form for a model
+// that does not exist emits nothing downstream. Both the positional
+// (`form_for @x`) and keyword (`model: @x`) shapes are covered; the keyword
+// scan is gated on form context so a stray `model:` elsewhere can't match.
+func (w *walker) extractFormModel(inner string, lineNum int) error {
+	if !reFormTag.MatchString(inner) {
+		return nil
+	}
+	seen := map[string]bool{}
+	emitModel := func(ivar string) error {
+		class := ruby.Classify(ivar) // never empty: the ivar regex guarantees a name
+		if seen[class] {
+			return nil
+		}
+		seen[class] = true
+		ln := lineNum
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: w.filePath,
+			TargetQualified: class,
+			Kind:            model.EdgeReferences,
+			Line:            &ln,
+			Confidence:      extract.ConfidenceConvention,
+		})
+	}
+	for _, m := range reFormForArg.FindAllStringSubmatch(inner, -1) {
+		if err := emitModel(m[1]); err != nil {
+			return err
+		}
+	}
+	for _, m := range reModelArg.FindAllStringSubmatch(inner, -1) {
+		if err := emitModel(m[1]); err != nil {
 			return err
 		}
 	}
