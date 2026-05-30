@@ -1247,3 +1247,47 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("write: %v", err)
 	}
 }
+
+// TestFindDeadExcludesRouteHelpers proves synthetic route:* helper symbols —
+// emitted by the route DSL and often unreferenced (e.g. the _url twins) — are
+// never reported as dead Ruby code, while an ordinary same-named app method
+// still is. Mirrors the ruby-core synthetic filter.
+func TestFindDeadExcludesRouteHelpers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "config", "routes.rb"), `Rails.application.routes.draw do
+  resources :orders
+end
+`)
+	// An ordinary, uncalled method literally named orders_url — the control
+	// that proves the filter keys on the route: prefix, not the bare name.
+	writeFile(t, filepath.Join(root, "app", "models", "billing.rb"), `class Billing
+  def orders_url
+    "x"
+  end
+end
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(root, ".sense", "index.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+	var sawRouteHelper bool
+	for _, s := range result.Dead {
+		if len(s.Qualified) >= 6 && s.Qualified[:6] == "route:" {
+			sawRouteHelper = true
+		}
+	}
+	if sawRouteHelper {
+		t.Error("a synthetic route:* helper leaked into dead-code output")
+	}
+}
