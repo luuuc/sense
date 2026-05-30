@@ -83,16 +83,18 @@ var collectionMethods = map[string]bool{
 // ---- walker ----
 
 type walker struct {
-	source            []byte
-	emit              extract.Emitter
-	filePath          string
-	routeNS           []string                     // namespace stack for route files (e.g. ["Admin"])
-	testScope         []string                     // nested RSpec block descriptions for synthetic scope
-	classInstanceVars map[string]map[string]string // @ivar type map per class
-	returnTypes       map[string]string            // method_qualified → class_name (file-level)
-	emittedCallbacks  map[string]bool              // dedup synthetic callback symbols by qualified name
-	emittedSynthetics map[string]bool              // dedup synthetic base symbols (ruby-core:Struct/Data) per file
-	pkgBindings       map[string]string            // unqualified name → qualified name for file-level constants
+	source             []byte
+	emit               extract.Emitter
+	filePath           string
+	routeNS            []string                     // namespace stack for route files (e.g. ["Admin"])
+	routeNSRaw         []string                     // same stack in snake_case for route-helper names (e.g. ["admin"])
+	routeResourceDepth int                          // resource-block nesting depth; >0 means a nested resource (helper name not derivable confidently)
+	testScope          []string                     // nested RSpec block descriptions for synthetic scope
+	classInstanceVars  map[string]map[string]string // @ivar type map per class
+	returnTypes        map[string]string            // method_qualified → class_name (file-level)
+	emittedCallbacks   map[string]bool              // dedup synthetic callback symbols by qualified name
+	emittedSynthetics  map[string]bool              // dedup synthetic base symbols (ruby-core:Struct/Data) per file
+	pkgBindings        map[string]string            // unqualified name → qualified name for file-level constants
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -864,12 +866,19 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 // edge rather than let the resolver's unqualified fallback bind it to an
 // arbitrary same-named method elsewhere — e.g. `count.zero?` resolving
 // to a `Money.zero` singleton. A missing low-confidence edge is cheaper
-// than a false caller that inflates blast radius.
+// than a false caller that inflates blast radius. The ERB analogue, for
+// framework context accessors referenced bare in a template, is
+// erbHelperSkip in internal/extract/erb/erb.go.
 var coreNoiseMethods = map[string]bool{
 	"zero?": true, "positive?": true, "negative?": true, "nonzero?": true,
 	"present?": true, "blank?": true, "nil?": true, "empty?": true,
 	"to_s": true, "to_i": true, "to_a": true, "to_h": true, "to_sym": true,
 	"freeze": true, "dup": true, "clone": true, "presence": true, "call": true,
+	// Object/reflection methods: a bare `x.is_a?` / `x.respond_to?` on an
+	// unknown receiver otherwise binds to a coincidental same-named app symbol
+	// (e.g. a test fake's `#is_a?`). Never a meaningful caller edge.
+	"is_a?": true, "kind_of?": true, "instance_of?": true, "respond_to?": true,
+	"frozen?": true, "itself": true, "inspect": true, "object_id": true,
 }
 
 // unresolvedCall is the emit decision for a call whose receiver type is
@@ -1329,6 +1338,12 @@ var statementParents = map[string]bool{
 	"else":           true,
 	"begin":          true,
 	"ensure":         true,
+	// program is the root of a parsed fragment (ExtractEmbeddedCalls). Whole-
+	// file walks only ever pass a method/test body_statement to
+	// emitBareIdentifierCalls, never the program root, so listing it here is
+	// inert for file extraction and only catches top-level bare calls in an
+	// embedded `<% current_user %>` fragment.
+	"program": true,
 }
 
 // valueParents is the set of node kinds where a bare identifier sits in a
@@ -2338,11 +2353,102 @@ func (w *walker) handleResources(n *sitter.Node, singular bool) error {
 		}
 	}
 
+	// Route-helper symbols (orders_path → OrdersController#index, …). Only for
+	// top-level / namespaced resources: a nested resource's helper name is
+	// prefixed by its parent's singular (order_items_path), which we can't
+	// reconstruct from the inner declaration alone, so we emit no helper rather
+	// than a wrong one. The controller edges above are still emitted for nested
+	// resources — only the helper naming is skipped.
+	if w.routeResourceDepth == 0 {
+		if err := w.emitResourceRouteHelpers(name, singular, controller, line); err != nil {
+			return err
+		}
+	}
+
 	// If the resource has a block, walk it for nested routes.
 	if block := n.ChildByFieldName("block"); block != nil {
+		w.routeResourceDepth++
+		defer func() { w.routeResourceDepth-- }()
 		return w.walkChildren(block, nil)
 	}
 	return nil
+}
+
+// routeHelper pairs a generated path/url helper base name (without the _path /
+// _url suffix) with the controller action it routes to.
+type routeHelper struct {
+	base   string
+	action string
+}
+
+// emitResourceRouteHelpers emits the synthetic route:* symbols and their
+// helper → controller#action edges for a resources/resource declaration. Each
+// base produces both a _path and a _url helper. The namespace (snake_case)
+// prefixes the resource segment; new_/edit_ prefix the whole helper, matching
+// Rails' generated names (new_admin_order_path).
+func (w *walker) emitResourceRouteHelpers(name string, singular bool, controller string, line int) error {
+	nsPrefix := ""
+	if len(w.routeNSRaw) > 0 {
+		nsPrefix = strings.Join(w.routeNSRaw, "_") + "_"
+	}
+
+	var sing string
+	if singular {
+		sing = name // `resource :profile` — name is already singular
+	} else {
+		sing = singularize(name)
+	}
+
+	helpers := []routeHelper{
+		{nsPrefix + sing, "show"}, // member
+		{"new_" + nsPrefix + sing, "new"},
+		{"edit_" + nsPrefix + sing, "edit"},
+	}
+	if !singular {
+		// Plural resources also generate a collection helper (orders_path).
+		helpers = append([]routeHelper{{nsPrefix + name, "index"}}, helpers...)
+	}
+
+	for _, h := range helpers {
+		for _, suffix := range [...]string{"_path", "_url"} {
+			if err := w.emitRouteHelper(h.base+suffix, controller+"#"+h.action, line); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// emitRouteHelper emits one synthetic route:* symbol (deduped per file) and an
+// edge from it to the controller action it routes to.
+//
+// Note: like any symbol, a route:* symbol enters the resolver's by-name index,
+// so bare unqualified calls elsewhere in the routes file can fall back onto it,
+// giving it spurious sub-floor (<0.5) outgoing edges. Those are filtered from
+// graph/blast output at query time (the confidence floor); the one real,
+// convention-confidence edge is the controller-action edge emitted here.
+func (w *walker) emitRouteHelper(helperName, actionTarget string, line int) error {
+	qualified := extract.PrefixRoute + helperName
+	if !w.emittedSynthetics[qualified] {
+		w.emittedSynthetics[qualified] = true
+		if err := w.emit.Symbol(extract.EmittedSymbol{
+			Name:       helperName,
+			Qualified:  qualified,
+			Kind:       model.KindConstant,
+			Visibility: "public",
+			LineStart:  line,
+			LineEnd:    line,
+		}); err != nil {
+			return err
+		}
+	}
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: qualified,
+		TargetQualified: actionTarget,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      extract.ConfidenceConvention,
+	})
 }
 
 // handleVerbRoute handles `get "/path", to: "controller#action"` style routes.
@@ -2366,13 +2472,54 @@ func (w *walker) handleVerbRoute(n *sitter.Node) error {
 	resolved := controller + "#" + parts[1]
 
 	line := extract.Line(n.StartPosition())
-	return w.emit.Edge(extract.EmittedEdge{
+	if err := w.emit.Edge(extract.EmittedEdge{
 		SourceQualified: "routes",
 		TargetQualified: resolved,
 		Kind:            model.EdgeCalls,
 		Line:            &line,
 		Confidence:      extract.ConfidenceConvention,
-	})
+	}); err != nil {
+		return err
+	}
+
+	// `as: :foo` names a route helper (foo_path / foo_url) pointing at the same
+	// action. Without `as:`, a verb route's helper name is derived from the
+	// path and is too irregular to reconstruct safely, so we emit none.
+	if as := keywordSymbolOrString(args, "as", w.source); as != "" {
+		nsPrefix := ""
+		if len(w.routeNSRaw) > 0 {
+			nsPrefix = strings.Join(w.routeNSRaw, "_") + "_"
+		}
+		for _, suffix := range [...]string{"_path", "_url"} {
+			if err := w.emitRouteHelper(nsPrefix+as+suffix, resolved, line); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// keywordSymbolOrString reads a keyword argument whose value is a simple symbol
+// (`as: :foo`) or a string (`as: "foo"`), returning the bare name. Unlike
+// findKeywordArg it accepts symbol values, which is the common form for `as:`.
+func keywordSymbolOrString(args *sitter.Node, key string, source []byte) string {
+	count := args.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		arg := args.NamedChild(i)
+		if arg == nil || arg.Kind() != "pair" {
+			continue
+		}
+		k := arg.ChildByFieldName("key")
+		v := arg.ChildByFieldName("value")
+		if k == nil || v == nil || extract.Text(k, source) != key {
+			continue
+		}
+		if v.Kind() == "simple_symbol" {
+			return strings.TrimPrefix(extract.Text(v, source), ":")
+		}
+		return extractStringValue(v, source)
+	}
+	return ""
 }
 
 // handleRouteNamespace processes `namespace :admin do ... end` by pushing
@@ -2386,10 +2533,15 @@ func (w *walker) handleRouteNamespace(n *sitter.Node) error {
 	if first == nil || first.Kind() != "simple_symbol" {
 		return nil
 	}
-	ns := pascalCase(strings.TrimPrefix(extract.Text(first, w.source), ":"))
+	raw := strings.TrimPrefix(extract.Text(first, w.source), ":")
+	ns := pascalCase(raw)
 
 	w.routeNS = append(w.routeNS, ns)
-	defer func() { w.routeNS = w.routeNS[:len(w.routeNS)-1] }()
+	w.routeNSRaw = append(w.routeNSRaw, raw)
+	defer func() {
+		w.routeNS = w.routeNS[:len(w.routeNS)-1]
+		w.routeNSRaw = w.routeNSRaw[:len(w.routeNSRaw)-1]
+	}()
 
 	if block := n.ChildByFieldName("block"); block != nil {
 		return w.walkChildren(block, nil)

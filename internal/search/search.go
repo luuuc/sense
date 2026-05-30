@@ -344,7 +344,8 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		if r.Score < opts.MinScore {
 			continue
 		}
-		if strings.HasPrefix(r.Qualified, extract.PrefixRubyCore) {
+		if strings.HasPrefix(r.Qualified, extract.PrefixRubyCore) ||
+			strings.HasPrefix(r.Qualified, extract.PrefixRoute) {
 			continue
 		}
 		results = append(results, r)

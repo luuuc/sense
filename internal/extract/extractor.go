@@ -30,11 +30,17 @@ const (
 	TierFull     Tier = "full"
 )
 
+// ERB is Full, not Basic: it has a dedicated extractor doing cross-language
+// Stimulus/Turbo resolution AND parses the embedded Ruby of every <% %> tag
+// with the Ruby grammar (calls, chains, blocks, render-collection, form model,
+// and the view → route-helper → controller chain) — strictly more than the
+// Standard langspec languages.
 var languageTiers = map[string]Tier{
 	"ruby":       TierFull,
 	"go":         TierFull,
 	"typescript": TierFull,
 	"javascript": TierFull,
+	"erb":        TierFull,
 	"python":     TierStandard,
 	"java":       TierStandard,
 	"rust":       TierStandard,
@@ -124,6 +130,15 @@ const (
 	// (e.g. "i18n:users.show.title"). Emitted as a symbol so semantic search
 	// can surface the view that renders a given piece of copy.
 	PrefixI18n = "i18n:"
+	// PrefixRoute qualifies a synthetic Rails route-helper symbol (e.g.
+	// "route:orders_path", "route:edit_order_url"). The route DSL emits one per
+	// generated path/url helper, with an edge to the controller action it
+	// routes to; a `*_path`/`*_url` reference in a view emits an edge to the
+	// prefixed name, so View → route:helper → Controller#action is a connected
+	// chain. The reserved prefix guarantees the view edge can never collide
+	// with a same-named application method (e.g. a model's own `foo_path`).
+	// These symbols are plumbing — filtered out of dead-code and search output.
+	PrefixRoute = "route:"
 	// PrefixRubyCore qualifies a synthetic stand-in for a Ruby core class
 	// that is never defined in any indexed source file (Struct, Data). A
 	// `CONST = Struct.new(...)` value object emits an `inherits` edge to the

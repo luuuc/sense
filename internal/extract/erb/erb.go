@@ -15,11 +15,13 @@ import (
 	"bytes"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/luuuc/sense/internal/extract"
+	"github.com/luuuc/sense/internal/extract/ruby"
 	"github.com/luuuc/sense/internal/model"
 )
 
@@ -36,7 +38,7 @@ func (Extractor) Extract(_ *sitter.Tree, source []byte, filePath string, emit ex
 }
 
 func (Extractor) ExtractRaw(source []byte, filePath string, emit extract.Emitter) error {
-	w := &walker{source: source, filePath: filePath, emit: emit}
+	w := &walker{source: source, filePath: filePath, emit: emit, embedSeen: map[string]bool{}}
 	return w.walk()
 }
 
@@ -77,6 +79,22 @@ var (
 	// render(template: "x"). Captures the first partial-path string literal.
 	reRender = regexp.MustCompile(`\brender\b\s*\(?\s*(?:partial:|template:|layout:)?\s*["']([\w./-]+)["']`)
 
+	// render @posts / render collection: @posts / render(@posts) — an implicit
+	// collection render with no explicit partial. Captures the ivar name; the
+	// partial path is derived by Rails' to_partial_path convention.
+	reRenderCollection = regexp.MustCompile(`\brender\b\s*\(?\s*(?:collection:\s*)?@([a-z_][a-zA-Z0-9_]*)`)
+
+	// An explicit partial:/template: keyword means the render path is given
+	// literally (handled by reRender); the collection convention must not also
+	// guess a path from the ivar, which would be a phantom.
+	reRenderPartialKw = regexp.MustCompile(`\b(?:partial|template):`)
+
+	// form_with / form_for context, and the two shapes that name a model:
+	// `form_for @order` (positional) and `model: @order` (keyword).
+	reFormTag    = regexp.MustCompile(`\bform_(?:with|for)\b`)
+	reFormForArg = regexp.MustCompile(`\bform_for\s*\(?\s*@([a-z_][a-zA-Z0-9_]*)`)
+	reModelArg   = regexp.MustCompile(`\bmodel:\s*@([a-z_][a-zA-Z0-9_]*)`)
+
 	// t(".key") / t("a.b.c") / translate("...") / I18n.t("..."). Keys with
 	// interpolation (#{...}) are skipped — the literal isn't a stable key.
 	reI18n = regexp.MustCompile(`\b(?:I18n\.)?(?:t|translate)\b\s*\(?\s*["']([a-zA-Z0-9_.]+)["']`)
@@ -103,12 +121,24 @@ var erbHelperSkip = map[string]bool{
 	"super": true, "render": true, "t": true, "translate": true,
 	// Turbo/Stimulus DSL helpers handled by the dedicated passes above.
 	"turbo_stream_from": true, "turbo_frame_tag": true,
+	// ActionView / ActionController context accessors. These are framework
+	// objects, never application methods, so a bare reference (request.path,
+	// params[:id]) must not emit a self-call that the resolver then binds to a
+	// coincidental same-named app symbol (e.g. a test fake's #request). The
+	// receiver-unknown analogue for the Ruby fragment walker is
+	// coreNoiseMethods in internal/extract/ruby/ruby.go.
+	"request": true, "response": true, "params": true, "session": true,
+	"cookies": true, "flash": true, "controller": true,
 }
 
 type walker struct {
 	source   []byte
 	filePath string
 	emit     extract.Emitter
+	// embedSeen is the dedup key set shared by the two passes that parse a
+	// tag's embedded Ruby — the regex helper pass and the tree-sitter walker.
+	// A call both find collapses to one edge (see dedupEmitter).
+	embedSeen map[string]bool
 }
 
 func (w *walker) walk() error {
@@ -145,6 +175,65 @@ func (w *walker) walk() error {
 		}
 	}
 	return nil
+}
+
+// dedupEmitter wraps the real emitter for the two passes that parse a tag's
+// embedded Ruby — the regex helper pass and the tree-sitter fragment walker.
+// The two overlap on plain receiverless calls; dedupEmitter collapses a call
+// both find (keyed by target/kind/line — the source is always this file) so it
+// is emitted once. It also drops a `self.<name>` edge whose name is in
+// erbHelperSkip: a Ruby keyword the fragment walker mis-parsed as a bare call
+// in a split tag (`<% end %>` → `self.end`), or a helper that has a dedicated
+// cross-language pass (render → partial:, turbo_stream_from → turbo-channel:,
+// …). Symbols pass through untouched.
+type dedupEmitter struct {
+	inner extract.Emitter
+	seen  map[string]bool
+}
+
+func (d dedupEmitter) Symbol(s extract.EmittedSymbol) error { return d.inner.Symbol(s) }
+
+func (d dedupEmitter) Edge(e extract.EmittedEdge) error {
+	name, isSelf := strings.CutPrefix(e.TargetQualified, "self.")
+	if isSelf && erbHelperSkip[name] {
+		return nil
+	}
+	// A *_path / *_url reference is a Rails route helper: retarget it at the
+	// reserved route: symbol so it chains view → route-helper → controller and
+	// can never phantom-match an application method of the same name (e.g. a
+	// model's own verifications_path). Applies whether the walker emitted it as
+	// a receiverless self-call (self.orders_path) or a bare unresolved call.
+	if isRouteHelperName(name) {
+		e.TargetQualified = extract.PrefixRoute + name
+		e.Confidence = extract.ConfidenceConvention
+	}
+	line := 0
+	if e.Line != nil {
+		line = *e.Line
+	}
+	key := e.TargetQualified + "\x00" + string(e.Kind) + "\x00" + strconv.Itoa(line)
+	if d.seen[key] {
+		return nil
+	}
+	d.seen[key] = true
+	return d.inner.Edge(e)
+}
+
+// isRouteHelperName reports whether a target name is a bare Rails route-helper
+// identifier — an identifier ending in _path or _url with no receiver dot.
+// `orders_path` qualifies; `Money.orders_path` (a real method on a constant)
+// does not, so a genuine method call is never mistaken for a route helper.
+func isRouteHelperName(s string) bool {
+	if !strings.HasSuffix(s, "_path") && !strings.HasSuffix(s, "_url") {
+		return false
+	}
+	for _, r := range s {
+		valid := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !valid {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *walker) extractControllers(line string, lineNum int) error {
@@ -304,14 +393,62 @@ func (w *walker) extractTemplateRuby(line string, lineNum int) error {
 		if err := w.extractRender(inner, lineNum); err != nil {
 			return err
 		}
+		if err := w.extractRenderCollection(inner, lineNum); err != nil {
+			return err
+		}
+		if err := w.extractFormModel(inner, lineNum); err != nil {
+			return err
+		}
 		if err := w.extractI18n(inner, lineNum); err != nil {
 			return err
 		}
+		// Helper pass first: it claims the bare receiverless calls (and
+		// receiver-position helpers the walker can't see) at convention
+		// confidence; the embedded walker then adds the calls the regex misses
+		// (chains, blocks, args), skipping anything the helper pass already
+		// recorded via the shared dedup set.
 		if err := w.extractHelperCalls(inner, lineNum); err != nil {
+			return err
+		}
+		if err := w.extractEmbeddedRuby(inner, lineNum); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// extractEmbeddedRuby parses the inner Ruby of one ERB tag with the Ruby
+// grammar itself, so receivers, method chains, and block bodies resolve —
+// `@cart.items.each { |i| i.listing.title }` emits its chain of calls, none of
+// which the receiver-stripping regex pass below can see. Edges are routed
+// through the dedup buffer, so the plain calls this and the regex pass both
+// find collapse to one; the regex pass survives only for the receiver-position
+// helpers (`current_user` in `current_user.email`) the walker doesn't emit.
+//
+// lineNum-1 is the line offset: the tag's content lives on ERB line lineNum,
+// so a fragment-line-1 call maps back to lineNum.
+func (w *walker) extractEmbeddedRuby(inner string, lineNum int) error {
+	code := embeddedRubyCode(inner)
+	if code == "" {
+		return nil
+	}
+	emit := dedupEmitter{inner: w.emit, seen: w.embedSeen}
+	return ruby.ExtractEmbeddedCalls([]byte(code), lineNum-1, w.filePath, emit)
+}
+
+// embeddedRubyCode strips a tag's ERB output/trim markers to leave parseable
+// Ruby. The leading `=` (output, `<%=`) or flush `-` (whitespace trim, `<%-`)
+// marker is dropped; a `-` that follows whitespace is a unary minus in code
+// (`<% -1 %>`), not a marker, so the check runs on the untrimmed input.
+func embeddedRubyCode(inner string) string {
+	s := inner
+	switch {
+	case strings.HasPrefix(s, "="):
+		s = s[1:]
+	case strings.HasPrefix(s, "-"):
+		s = s[1:]
+	}
+	return strings.TrimSpace(s)
 }
 
 // extractRender emits a calls edge to each rendered partial. The target is the
@@ -329,6 +466,79 @@ func (w *walker) extractRender(inner string, lineNum int) error {
 			Line:            &ln,
 			Confidence:      extract.ConfidenceConvention,
 		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractRenderCollection emits a calls edge for an implicit collection render
+// (`render @posts`, `render collection: @posts`) to the partial that Rails'
+// to_partial_path convention resolves it to: `posts/_post`, i.e. the render
+// path `posts/post`. The directory is the (plural) ivar name; the partial name
+// is its singular form. Only plural ivars are handled — a singular ivar
+// (`render @post`) would need pluralization to build the directory, and
+// guessing wrong is a phantom, so it is skipped. A render with an explicit
+// partial:/template: keyword is left to extractRender; the convention does not
+// override a literal path.
+func (w *walker) extractRenderCollection(inner string, lineNum int) error {
+	if reRenderPartialKw.MatchString(inner) {
+		return nil
+	}
+	for _, m := range reRenderCollection.FindAllStringSubmatch(inner, -1) {
+		ivar := m[1]
+		singular := ruby.Singularize(ivar)
+		if singular == ivar {
+			continue // singular ivar — cannot build the plural directory safely
+		}
+		ln := lineNum
+		if err := w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: w.filePath,
+			TargetQualified: extract.PrefixPartial + ivar + "/" + singular,
+			Kind:            model.EdgeCalls,
+			Line:            &ln,
+			Confidence:      extract.ConfidenceConvention,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractFormModel emits a references edge from the view to the model a form
+// binds to: `form_with model: @order` / `form_for @order` → `Order`, by
+// classifying the ivar name. The edge resolves only if that model class is
+// indexed (unresolved edges are dropped at write time), so a form for a model
+// that does not exist emits nothing downstream. Both the positional
+// (`form_for @x`) and keyword (`model: @x`) shapes are covered; the keyword
+// scan is gated on form context so a stray `model:` elsewhere can't match.
+func (w *walker) extractFormModel(inner string, lineNum int) error {
+	if !reFormTag.MatchString(inner) {
+		return nil
+	}
+	seen := map[string]bool{}
+	emitModel := func(ivar string) error {
+		class := ruby.Classify(ivar) // never empty: the ivar regex guarantees a name
+		if seen[class] {
+			return nil
+		}
+		seen[class] = true
+		ln := lineNum
+		return w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: w.filePath,
+			TargetQualified: class,
+			Kind:            model.EdgeReferences,
+			Line:            &ln,
+			Confidence:      extract.ConfidenceConvention,
+		})
+	}
+	for _, m := range reFormForArg.FindAllStringSubmatch(inner, -1) {
+		if err := emitModel(m[1]); err != nil {
+			return err
+		}
+	}
+	for _, m := range reModelArg.FindAllStringSubmatch(inner, -1) {
+		if err := emitModel(m[1]); err != nil {
 			return err
 		}
 	}
@@ -363,6 +573,7 @@ func (w *walker) extractI18n(inner string, lineNum int) error {
 // defined symbol, so unknown framework helpers fall away.
 func (w *walker) extractHelperCalls(inner string, lineNum int) error {
 	stripped := reRubyLiteral.ReplaceAllString(inner, " ")
+	emit := dedupEmitter{inner: w.emit, seen: w.embedSeen}
 	seen := map[string]bool{}
 	for _, m := range reHelperName.FindAllStringSubmatch(stripped, -1) {
 		name := m[1]
@@ -371,7 +582,7 @@ func (w *walker) extractHelperCalls(inner string, lineNum int) error {
 		}
 		seen[name] = true
 		ln := lineNum
-		if err := w.emit.Edge(extract.EmittedEdge{
+		if err := emit.Edge(extract.EmittedEdge{
 			SourceQualified: w.filePath,
 			TargetQualified: "self." + name,
 			Kind:            model.EdgeCalls,

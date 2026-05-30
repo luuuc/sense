@@ -22,6 +22,13 @@ const defaultLimit = 100
 // contains no LIKE metacharacters, so no ESCAPE clause is needed.
 const syntheticPrefixPattern = extract.PrefixRubyCore + "%"
 
+// routePrefixPattern matches the synthetic route:* helper symbols the route
+// DSL emits (route:orders_path → OrdersController#index). They are plumbing
+// for the view → route-helper → controller chain; a rarely-referenced one
+// (e.g. an `*_url` variant) has no incoming edge and would otherwise read as a
+// dead Ruby constant, so it is excluded from dead-code analysis like ruby-core.
+const routePrefixPattern = extract.PrefixRoute + "%"
+
 type Options struct {
 	Language        string
 	Domain          string
@@ -173,7 +180,8 @@ func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
 	q := `SELECT COUNT(*) FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
 		WHERE s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')
-		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'`
+		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'
+		AND s.qualified NOT LIKE '` + routePrefixPattern + `'`
 	var args []any
 
 	if opts.Language != "" {
@@ -217,7 +225,8 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 		JOIN sense_files f ON s.file_id = f.id
 		WHERE NOT EXISTS (` + edgeFilter + `)
 		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')
-		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'`
+		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'
+		AND s.qualified NOT LIKE '` + routePrefixPattern + `'`
 	var args []any
 
 	if opts.Language != "" {

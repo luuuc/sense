@@ -115,6 +115,7 @@ func TestLanguageTier(t *testing.T) {
 		{"python", "standard"},
 		{"javascript", "full"},
 		{"typescript", "full"},
+		{"erb", "full"},
 		{"rust", "standard"},
 		{"java", "standard"},
 		{"kotlin", "standard"},

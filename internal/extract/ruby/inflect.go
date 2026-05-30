@@ -2,6 +2,16 @@ package ruby
 
 import "strings"
 
+// Singularize is the exported form of singularize for cross-package callers —
+// the ERB extractor's render-collection convention (`render @posts` →
+// `posts/post`). It applies the same minimal Rails suffix rules.
+func Singularize(s string) string { return singularize(s) }
+
+// Classify is the exported form of classify: a snake_case plural or singular
+// name to its PascalCase class name ("orders" → "Order"), used by the ERB
+// extractor's form-model convention (`form_with model: @order` → `Order`).
+func Classify(s string) string { return classify(s) }
+
 // classify converts a snake_case plural or singular symbol name to a
 // PascalCase class name: "line_items" → "LineItem", "user" → "User".
 // It singularizes first (for has_many / habtm), then PascalCases.

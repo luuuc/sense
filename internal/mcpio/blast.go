@@ -204,6 +204,11 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 
 	if subjectFile, ok := files(r.Symbol.FileID); ok {
 		resp.IndexCaveat = IndexCaveat(subjectFile)
+		// view_edges comes from the engine's ViewReached flag, not from
+		// DirectCallers: a view edge has a NULL source_id, so the view never
+		// appears as a caller symbol — only the engine's direct edge-table
+		// check sees it.
+		resp.ViewEdges = viewEdgesSignal(subjectFile, r.ViewReached)
 	}
 
 	uniqueFiles := countUniqueBlastFiles(resp)

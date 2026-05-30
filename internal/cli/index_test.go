@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,5 +99,69 @@ func TestOpenIndexNotRebuiltWhenCurrent(t *testing.T) {
 	}
 	if len(paths) != 1 {
 		t.Errorf("expected 1 file preserved, got %d", len(paths))
+	}
+}
+
+func TestLoadFilePaths(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.ExecContext(ctx, `CREATE TABLE sense_files (id INTEGER PRIMARY KEY, path TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty input short-circuits to an empty map without querying.
+	if got, err := LoadFilePaths(ctx, db, nil); err != nil || len(got) != 0 {
+		t.Fatalf("LoadFilePaths(nil) = %v, %v; want empty map, nil", got, err)
+	}
+
+	// Seed more than one chunk (chunk size is 500) so the batching loop runs
+	// for multiple iterations.
+	const n = 600
+	ids := make([]int64, n)
+	for i := 0; i < n; i++ {
+		id := int64(i + 1)
+		ids[i] = id
+		if _, err := db.ExecContext(ctx, `INSERT INTO sense_files (id, path) VALUES (?, ?)`, id, fmt.Sprintf("app/f%d.rb", id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := LoadFilePaths(ctx, db, ids)
+	if err != nil {
+		t.Fatalf("LoadFilePaths: %v", err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d paths, want %d (multi-chunk)", len(got), n)
+	}
+	if got[1] != "app/f1.rb" || got[600] != "app/f600.rb" {
+		t.Errorf("path mismatch: [1]=%q [600]=%q", got[1], got[600])
+	}
+}
+
+func TestLoadFilePathsQueryError(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	// No sense_files table — the query fails and the error must propagate.
+	if _, err := LoadFilePaths(ctx, db, []int64{1, 2}); err == nil {
+		t.Fatal("expected an error when sense_files is missing")
+	}
+}
+
+func TestOpenIndexMissing(t *testing.T) {
+	// A directory with no .sense/index.db returns ErrIndexMissing.
+	_, err := OpenIndex(context.Background(), t.TempDir())
+	if !errors.Is(err, ErrIndexMissing) {
+		t.Fatalf("OpenIndex on empty dir = %v, want ErrIndexMissing", err)
+	}
+	// Empty dir defaults to "." — also missing an index here.
+	if _, err := OpenIndex(context.Background(), ""); !errors.Is(err, ErrIndexMissing) {
+		t.Fatalf("OpenIndex(\"\") = %v, want ErrIndexMissing", err)
 	}
 }

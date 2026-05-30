@@ -67,17 +67,22 @@ func OpenIndex(ctx context.Context, dir string) (*sqlite.Adapter, error) {
 func CollectFileIDs(sc *model.SymbolContext) []int64 {
 	seen := map[int64]struct{}{sc.File.ID: {}}
 	ids := []int64{sc.File.ID}
-	for _, e := range sc.Outbound {
-		if _, ok := seen[e.Target.FileID]; !ok {
-			seen[e.Target.FileID] = struct{}{}
-			ids = append(ids, e.Target.FileID)
+	add := func(id int64) {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
 		}
 	}
+	for _, e := range sc.Outbound {
+		add(e.Target.FileID)
+		// The edge's own file — for an ERB view edge this is the template,
+		// distinct from the (absent, NULL-source) caller symbol's file. Needed
+		// so the file lookup can resolve it for view_edges and call-site snippets.
+		add(e.Edge.FileID)
+	}
 	for _, e := range sc.Inbound {
-		if _, ok := seen[e.Target.FileID]; !ok {
-			seen[e.Target.FileID] = struct{}{}
-			ids = append(ids, e.Target.FileID)
-		}
+		add(e.Target.FileID)
+		add(e.Edge.FileID)
 	}
 	return ids
 }
@@ -90,18 +95,20 @@ func CollectGraphFileIDs(gr *model.GraphResult) []int64 {
 	for _, id := range ids {
 		seen[id] = struct{}{}
 	}
+	add := func(id int64) {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
 	for _, layer := range gr.Layers {
 		for _, e := range layer.Outbound {
-			if _, ok := seen[e.Target.FileID]; !ok {
-				seen[e.Target.FileID] = struct{}{}
-				ids = append(ids, e.Target.FileID)
-			}
+			add(e.Target.FileID)
+			add(e.Edge.FileID)
 		}
 		for _, e := range layer.Inbound {
-			if _, ok := seen[e.Target.FileID]; !ok {
-				seen[e.Target.FileID] = struct{}{}
-				ids = append(ids, e.Target.FileID)
-			}
+			add(e.Target.FileID)
+			add(e.Edge.FileID)
 		}
 	}
 	return ids
