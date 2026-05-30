@@ -1329,6 +1329,12 @@ var statementParents = map[string]bool{
 	"else":           true,
 	"begin":          true,
 	"ensure":         true,
+	// program is the root of a parsed fragment (ExtractEmbeddedCalls). Whole-
+	// file walks only ever pass a method/test body_statement to
+	// emitBareIdentifierCalls, never the program root, so listing it here is
+	// inert for file extraction and only catches top-level bare calls in an
+	// embedded `<% current_user %>` fragment.
+	"program": true,
 }
 
 // valueParents is the set of node kinds where a bare identifier sits in a
