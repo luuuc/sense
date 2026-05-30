@@ -30,11 +30,17 @@ const (
 	TierFull     Tier = "full"
 )
 
+// ERB is Full, not Basic: it has a dedicated extractor doing cross-language
+// Stimulus/Turbo resolution AND parses the embedded Ruby of every <% %> tag
+// with the Ruby grammar (calls, chains, blocks, render-collection, form model,
+// and the view → route-helper → controller chain) — strictly more than the
+// Standard langspec languages.
 var languageTiers = map[string]Tier{
 	"ruby":       TierFull,
 	"go":         TierFull,
 	"typescript": TierFull,
 	"javascript": TierFull,
+	"erb":        TierFull,
 	"python":     TierStandard,
 	"java":       TierStandard,
 	"rust":       TierStandard,
