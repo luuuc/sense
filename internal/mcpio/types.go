@@ -115,6 +115,11 @@ type GraphResponse struct {
 	CoverageNote       string                 `json:"coverage_note,omitempty"`
 	VerifyHint         string                 `json:"verify_hint,omitempty"`
 	IndexCaveat        string                 `json:"index_caveat,omitempty"`
+	// ViewEdges is the per-subject view-reachability signal: "present" when a
+	// view template reaches this symbol, "none" when view-dispatch is a live
+	// question for it but no view edge exists, "" (omitted) otherwise. See
+	// viewedges.go for the full contract.
+	ViewEdges          string                 `json:"view_edges,omitempty"`
 	SenseMetrics       GraphMetrics           `json:"-"`
 	Freshness          *Freshness             `json:"freshness,omitempty"`
 	NextSteps          []NextStep             `json:"next_steps"`
@@ -309,6 +314,11 @@ type BlastResponse struct {
 
 	VerifyHint   string       `json:"verify_hint,omitempty"`
 	IndexCaveat  string       `json:"index_caveat,omitempty"`
+	// ViewEdges is the per-subject view-reachability signal: "present" when a
+	// view template reaches this symbol, "none" when view-dispatch is a live
+	// question for it but no view edge exists, "" (omitted) otherwise. See
+	// viewedges.go for the full contract.
+	ViewEdges    string       `json:"view_edges,omitempty"`
 	SenseMetrics BlastMetrics `json:"-"`
 	Freshness    *Freshness   `json:"freshness,omitempty"`
 	NextSteps    []NextStep   `json:"next_steps"`

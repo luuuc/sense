@@ -206,6 +206,7 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 
 	resp.VerifyHint = graphVerifyHint(resp)
 	resp.IndexCaveat = graphIndexCaveat(resp)
+	resp.ViewEdges = graphViewEdges(resp)
 
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) + len(testCallers) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
@@ -562,6 +563,20 @@ func graphIndexCaveat(resp GraphResponse) string {
 		return ""
 	}
 	return IndexCaveat(resp.Symbol.File)
+}
+
+// graphViewEdges derives the view_edges signal from the subject's defining
+// file and the files of its direct callers (called_by). Only depth-1 callers
+// count — view_edges is a "directly reached from a view" signal, not a
+// transitive one.
+func graphViewEdges(resp GraphResponse) string {
+	callerFiles := make([]string, 0, len(resp.Edges.CalledBy))
+	for _, c := range resp.Edges.CalledBy {
+		if c.File != nil {
+			callerFiles = append(callerFiles, *c.File)
+		}
+	}
+	return viewEdgesSignal(resp.Symbol.File, callerFiles)
 }
 
 func graphVerifyHint(resp GraphResponse) string {

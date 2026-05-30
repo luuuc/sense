@@ -71,10 +71,13 @@ func deadCodeNote(frameworks []string) string {
 		if f == "Rails" {
 			return deadNotePrefix +
 				"(1) routing — controller actions are dispatched by config/routes, never called from Ruby; " +
-				"(2) view & Hotwire dispatch — methods reached from ERB or Stimulus data-controller/data-action/data-*-target attributes; " +
-				"(3) ActiveSupport::Concern mixins — methods defined in an included module become instance methods of the includer; " +
-				"(4) callbacks & metaprogramming — before_action/after_action by symbol, define_method, const_get/constantize, STI; and " +
-				"(5) framework lifecycle hooks invoked by Rails rather than application code."
+				"(2) ActiveSupport::Concern mixins — methods defined in an included module become instance methods of the includer; " +
+				"(3) callbacks & metaprogramming — before_action/after_action by symbol, define_method, const_get/constantize, STI; " +
+				"(4) framework lifecycle hooks invoked by Rails rather than application code; and " +
+				"(5) view templates that produced no indexed edges — a pure-markup or otherwise unmodeled ERB file. " +
+				"View & Hotwire dispatch is NOT a blind spot: methods reached from ERB or Stimulus " +
+				"data-controller/data-action/data-*-target attributes, rendered partials, i18n keys, and embedded-Ruby " +
+				"helper/route calls ARE extracted and resolve, so a symbol reached only from a view is not dead."
 		}
 	}
 	return deadNotePrefix +

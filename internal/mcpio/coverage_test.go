@@ -135,8 +135,21 @@ func TestBuildDeadCodeResponse_TooCommonFlag(t *testing.T) {
 
 func TestDeadCodeNoteIsFrameworkAware(t *testing.T) {
 	rails := deadCodeNote([]string{"Sidekiq", "Rails"})
-	if !strings.Contains(rails, "routing") || !strings.Contains(rails, "Concern") || !strings.Contains(rails, "Stimulus") {
-		t.Errorf("Rails note should cover routing/concerns/Stimulus, got: %s", rails)
+	if !strings.Contains(rails, "routing") || !strings.Contains(rails, "Concern") {
+		t.Errorf("Rails note should cover routing/concerns, got: %s", rails)
+	}
+	// Honesty fix (pitch 25-12): view/Hotwire dispatch is NOT listed as an
+	// untracked blind spot — those edges are extracted and resolve. Assert the
+	// positive statement is present and the stale "dispatch is a blind spot"
+	// list-item phrasing is gone, both directions.
+	if !strings.Contains(rails, "NOT a blind spot") {
+		t.Errorf("Rails note must affirm view/Hotwire dispatch is tracked, got: %s", rails)
+	}
+	if !strings.Contains(rails, "view templates that produced no indexed edges") {
+		t.Errorf("Rails note must name the real residual blind spot (zero-edge view files), got: %s", rails)
+	}
+	if strings.Contains(rails, "dispatch — methods reached") {
+		t.Errorf("Rails note must not list view/Hotwire dispatch as a blind spot, got: %s", rails)
 	}
 	if strings.Contains(rails, "ServiceLoader") || strings.Contains(rails, "blank identifier") {
 		t.Error("Rails note must not carry Go-specific blind spots")

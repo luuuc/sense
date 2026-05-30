@@ -204,6 +204,16 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 
 	if subjectFile, ok := files(r.Symbol.FileID); ok {
 		resp.IndexCaveat = IndexCaveat(subjectFile)
+		// Compute view_edges from the raw direct callers (not resp.DirectCallers,
+		// which holds only the tier-1 slice) so a view edge counts regardless of
+		// the relevance tier it landed in.
+		callerFiles := make([]string, 0, len(r.DirectCallers))
+		for _, c := range r.DirectCallers {
+			if path, ok := files(c.FileID); ok {
+				callerFiles = append(callerFiles, path)
+			}
+		}
+		resp.ViewEdges = viewEdgesSignal(subjectFile, callerFiles)
 	}
 
 	uniqueFiles := countUniqueBlastFiles(resp)
