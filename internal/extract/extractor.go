@@ -249,6 +249,19 @@ type Emitter interface {
 	Edge(EmittedEdge) error
 }
 
+// DispatchEmitter is an optional Emitter extension for streaming the literal
+// names a file reflectively dispatches on (the symbol/string arguments to
+// send/public_send/__send__/define_method/respond_to?/method/const_get and
+// the receiver of constantize). An extractor that detects such names probes
+// for this interface with a type assertion; an Emitter that does not
+// implement it simply receives no dispatch names. The names feed a
+// project-global set in sense_meta so the dead-code arbiter can keep a
+// reflectively-reachable symbol open-world instead of falsely calling it
+// dead. Returning an error aborts extraction like the core Emitter methods.
+type DispatchEmitter interface {
+	DispatchName(name string) error
+}
+
 // Extractor walks a parsed tree and emits symbols + edges for one language.
 // Implementations are stateless — the same instance handles every file in
 // that language. Any per-file state lives on the call stack.

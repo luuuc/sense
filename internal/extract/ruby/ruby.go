@@ -64,9 +64,23 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit
 		emittedCallbacks:  make(map[string]bool),
 		emittedSynthetics: make(map[string]bool),
 		pkgBindings:       make(map[string]string),
+		methodVisibility:  make(map[string]string),
 	}
 	w.collectConstants(tree.RootNode(), nil)
-	return w.walk(tree.RootNode(), nil)
+	if err := w.walk(tree.RootNode(), nil); err != nil {
+		return err
+	}
+	// Stream the file's reflective dispatch-target names to the emitter when
+	// it accepts them. The names feed a project-global set in sense_meta so
+	// the dead-code arbiter keeps reflectively-reachable symbols open-world.
+	if de, ok := emit.(extract.DispatchEmitter); ok {
+		for _, name := range collectDispatchNames(tree.RootNode(), source) {
+			if err := de.DispatchName(name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func init() { extract.Register(Extractor{}) }
@@ -95,6 +109,7 @@ type walker struct {
 	emittedCallbacks   map[string]bool              // dedup synthetic callback symbols by qualified name
 	emittedSynthetics  map[string]bool              // dedup synthetic base symbols (ruby-core:Struct/Data) per file
 	pkgBindings        map[string]string            // unqualified name → qualified name for file-level constants
+	methodVisibility   map[string]string            // method_qualified → public/private/protected, from the per-class pre-pass
 }
 
 // walk visits node and its children under the given class/module scope.
@@ -628,6 +643,10 @@ func (w *walker) handleClassOrModule(n *sitter.Node, scope []string, kind model.
 	if body := n.ChildByFieldName("body"); body != nil {
 		ivarTypes := buildInstanceVarTypeMap(body, w.source)
 		w.classInstanceVars[qualified] = ivarTypes
+		// Pre-pass: record each direct instance method's visibility before the
+		// methods are emitted, so handleMethod can attach it. Mirrors the
+		// ivar-type pre-pass above.
+		w.recordBodyVisibility(body, qualified)
 		if err := w.walkChildren(body, newScope); err != nil {
 			return err
 		}
@@ -674,11 +693,21 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 		receiver = extract.ReceiverInstance
 	}
 
+	// Visibility comes from the per-class pre-pass (instance methods only).
+	// Anything not recorded — singleton methods, top-level defs, methods the
+	// pre-pass could not classify — defaults to public, which is the safe
+	// direction: a public method can never earn a `dead` verdict.
+	visibility := "public"
+	if v, ok := w.methodVisibility[qualified]; ok {
+		visibility = v
+	}
+
 	if err := w.emit.Symbol(extract.EmittedSymbol{
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindMethod,
 		Receiver:        receiver,
+		Visibility:      visibility,
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),

@@ -223,6 +223,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		_ = idx.DeleteMeta(ctx, "frameworks")
 	}
 
+	if err := writeDispatchNames(ctx, idx, h.dispatchNames); err != nil {
+		_, _ = fmt.Fprintf(warn, "warn: write dispatch-names meta: %v\n", err)
+	}
+
 	t0 = time.Now()
 	if err := h.removeStaleFiles(); err != nil {
 		return nil, err
@@ -486,6 +490,14 @@ type harness struct {
 	// entries can be detected and removed after the walk.
 	seenPaths map[string]bool
 
+	// dispatchNames accumulates the project-wide set of reflective
+	// dispatch-target names streamed by extractors during the walk. Written
+	// to sense_meta after the walk so the dead-code arbiter can keep a
+	// reflectively-reachable symbol open-world. Only populated for changed
+	// files this scan; merged with the persisted set so an unchanged file's
+	// names are not lost on an incremental scan.
+	dispatchNames map[string]struct{}
+
 	// changedFileIDs collects file IDs that were re-indexed this scan
 	// (new or hash-changed). Used by pass 3 to scope embedding work.
 	changedFileIDs []int64
@@ -668,6 +680,13 @@ func (h *harness) walkTree(root string) error {
 			continue
 		}
 
+		for _, name := range fr.DispatchNames {
+			if h.dispatchNames == nil {
+				h.dispatchNames = map[string]struct{}{}
+			}
+			h.dispatchNames[name] = struct{}{}
+		}
+
 		batch = append(batch, fr)
 		if len(batch) >= batchSize {
 			if err := h.flushBatch(batch); err != nil {
@@ -734,12 +753,13 @@ func (h *harness) flushBatch(batch []*fileResult) error {
 // fileResult holds the output of parseFile — everything needed to
 // persist a file's symbols and edges without re-reading or re-parsing.
 type fileResult struct {
-	Rel       string
-	Language  string
-	Source    []byte
-	Hash     string
-	Symbols  []extract.EmittedSymbol
-	Edges    []extract.EmittedEdge
+	Rel           string
+	Language      string
+	Source        []byte
+	Hash          string
+	Symbols       []extract.EmittedSymbol
+	Edges         []extract.EmittedEdge
+	DispatchNames []string
 }
 
 // 100 files per SQLite transaction amortizes BEGIN/COMMIT overhead (~10x
@@ -849,12 +869,13 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 	})
 
 	return &fileResult{
-		Rel:      rel,
-		Language: ex.Language(),
-		Source:   source,
-		Hash:     newHash,
-		Symbols:  collected.symbols,
-		Edges:    collected.edges,
+		Rel:           rel,
+		Language:      ex.Language(),
+		Source:        source,
+		Hash:          newHash,
+		Symbols:       collected.symbols,
+		Edges:         collected.edges,
+		DispatchNames: collected.dispatchNames,
 	}
 }
 
@@ -1184,12 +1205,22 @@ func safeExtractRaw(ex extract.RawExtractor, source []byte, rel string, c *colle
 // ---- collector (per-file Emitter) ----
 
 type collector struct {
-	symbols []extract.EmittedSymbol
-	edges   []extract.EmittedEdge
+	symbols       []extract.EmittedSymbol
+	edges         []extract.EmittedEdge
+	dispatchNames []string
 }
 
 func (c *collector) Symbol(s extract.EmittedSymbol) error { c.symbols = append(c.symbols, s); return nil }
 func (c *collector) Edge(e extract.EmittedEdge) error     { c.edges = append(c.edges, e); return nil }
+
+// DispatchName implements extract.DispatchEmitter: an extractor that detects a
+// reflective dispatch target (a send/const_get/define_method literal name)
+// streams it here. The names are aggregated project-wide into sense_meta so
+// the dead-code arbiter can keep a reflectively-reachable symbol open-world.
+func (c *collector) DispatchName(name string) error {
+	c.dispatchNames = append(c.dispatchNames, name)
+	return nil
+}
 
 // ---- helpers ----
 
