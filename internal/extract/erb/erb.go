@@ -186,8 +186,18 @@ type dedupEmitter struct {
 func (d dedupEmitter) Symbol(s extract.EmittedSymbol) error { return d.inner.Symbol(s) }
 
 func (d dedupEmitter) Edge(e extract.EmittedEdge) error {
-	if name, ok := strings.CutPrefix(e.TargetQualified, "self."); ok && erbHelperSkip[name] {
+	name, isSelf := strings.CutPrefix(e.TargetQualified, "self.")
+	if isSelf && erbHelperSkip[name] {
 		return nil
+	}
+	// A *_path / *_url reference is a Rails route helper: retarget it at the
+	// reserved route: symbol so it chains view → route-helper → controller and
+	// can never phantom-match an application method of the same name (e.g. a
+	// model's own verifications_path). Applies whether the walker emitted it as
+	// a receiverless self-call (self.orders_path) or a bare unresolved call.
+	if isRouteHelperName(name) {
+		e.TargetQualified = extract.PrefixRoute + name
+		e.Confidence = extract.ConfidenceConvention
 	}
 	line := 0
 	if e.Line != nil {
@@ -199,6 +209,22 @@ func (d dedupEmitter) Edge(e extract.EmittedEdge) error {
 	}
 	d.seen[key] = true
 	return d.inner.Edge(e)
+}
+
+// isRouteHelperName reports whether a target name is a bare Rails route-helper
+// identifier — an identifier ending in _path or _url with no receiver dot.
+// `orders_path` qualifies; `Money.orders_path` (a real method on a constant)
+// does not, so a genuine method call is never mistaken for a route helper.
+func isRouteHelperName(s string) bool {
+	if !strings.HasSuffix(s, "_path") && !strings.HasSuffix(s, "_url") {
+		return false
+	}
+	for _, r := range s {
+		if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *walker) extractControllers(line string, lineNum int) error {

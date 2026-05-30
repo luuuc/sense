@@ -519,10 +519,15 @@ func TestExtractHelperCalls(t *testing.T) {
 	r := extractERB(t, `<p><%= current_currency %></p>
 <%= link_to "Edit profile", edit_user_path(user) %>`, "app/views/orders/show.html.erb")
 
-	for _, want := range []string{"self.current_currency", "self.link_to", "self.edit_user_path", "self.user"} {
+	// edit_user_path is a route helper → it targets the reserved route: symbol,
+	// not a bare self.edit_user_path that could phantom-match an app method.
+	for _, want := range []string{"self.current_currency", "self.link_to", "route:edit_user_path", "self.user"} {
 		if !r.hasEdgeTo(want) {
 			t.Errorf("missing helper-call edge %q", want)
 		}
+	}
+	if r.hasEdgeTo("self.edit_user_path") {
+		t.Error("a *_path reference must not emit a bare self.edit_user_path edge")
 	}
 	// Words inside string copy must not become calls.
 	for _, bad := range []string{"self.Edit", "self.profile", "self.edit"} {
