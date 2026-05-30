@@ -15,11 +15,13 @@ import (
 	"bytes"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/luuuc/sense/internal/extract"
+	"github.com/luuuc/sense/internal/extract/ruby"
 	"github.com/luuuc/sense/internal/model"
 )
 
@@ -36,7 +38,7 @@ func (Extractor) Extract(_ *sitter.Tree, source []byte, filePath string, emit ex
 }
 
 func (Extractor) ExtractRaw(source []byte, filePath string, emit extract.Emitter) error {
-	w := &walker{source: source, filePath: filePath, emit: emit}
+	w := &walker{source: source, filePath: filePath, emit: emit, embedSeen: map[string]bool{}}
 	return w.walk()
 }
 
@@ -109,6 +111,10 @@ type walker struct {
 	source   []byte
 	filePath string
 	emit     extract.Emitter
+	// embedSeen is the dedup key set shared by the two passes that parse a
+	// tag's embedded Ruby — the regex helper pass and the tree-sitter walker.
+	// A call both find collapses to one edge (see dedupEmitter).
+	embedSeen map[string]bool
 }
 
 func (w *walker) walk() error {
@@ -145,6 +151,38 @@ func (w *walker) walk() error {
 		}
 	}
 	return nil
+}
+
+// dedupEmitter wraps the real emitter for the two passes that parse a tag's
+// embedded Ruby — the regex helper pass and the tree-sitter fragment walker.
+// The two overlap on plain receiverless calls; dedupEmitter collapses a call
+// both find (keyed by target/kind/line — the source is always this file) so it
+// is emitted once. It also drops a `self.<name>` edge whose name is in
+// erbHelperSkip: a Ruby keyword the fragment walker mis-parsed as a bare call
+// in a split tag (`<% end %>` → `self.end`), or a helper that has a dedicated
+// cross-language pass (render → partial:, turbo_stream_from → turbo-channel:,
+// …). Symbols pass through untouched.
+type dedupEmitter struct {
+	inner extract.Emitter
+	seen  map[string]bool
+}
+
+func (d dedupEmitter) Symbol(s extract.EmittedSymbol) error { return d.inner.Symbol(s) }
+
+func (d dedupEmitter) Edge(e extract.EmittedEdge) error {
+	if name, ok := strings.CutPrefix(e.TargetQualified, "self."); ok && erbHelperSkip[name] {
+		return nil
+	}
+	line := 0
+	if e.Line != nil {
+		line = *e.Line
+	}
+	key := e.TargetQualified + "\x00" + string(e.Kind) + "\x00" + strconv.Itoa(line)
+	if d.seen[key] {
+		return nil
+	}
+	d.seen[key] = true
+	return d.inner.Edge(e)
 }
 
 func (w *walker) extractControllers(line string, lineNum int) error {
@@ -307,11 +345,53 @@ func (w *walker) extractTemplateRuby(line string, lineNum int) error {
 		if err := w.extractI18n(inner, lineNum); err != nil {
 			return err
 		}
+		// Helper pass first: it claims the bare receiverless calls (and
+		// receiver-position helpers the walker can't see) at convention
+		// confidence; the embedded walker then adds the calls the regex misses
+		// (chains, blocks, args), skipping anything the helper pass already
+		// recorded via the shared dedup set.
 		if err := w.extractHelperCalls(inner, lineNum); err != nil {
+			return err
+		}
+		if err := w.extractEmbeddedRuby(inner, lineNum); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// extractEmbeddedRuby parses the inner Ruby of one ERB tag with the Ruby
+// grammar itself, so receivers, method chains, and block bodies resolve —
+// `@cart.items.each { |i| i.listing.title }` emits its chain of calls, none of
+// which the receiver-stripping regex pass below can see. Edges are routed
+// through the dedup buffer, so the plain calls this and the regex pass both
+// find collapse to one; the regex pass survives only for the receiver-position
+// helpers (`current_user` in `current_user.email`) the walker doesn't emit.
+//
+// lineNum-1 is the line offset: the tag's content lives on ERB line lineNum,
+// so a fragment-line-1 call maps back to lineNum.
+func (w *walker) extractEmbeddedRuby(inner string, lineNum int) error {
+	code := embeddedRubyCode(inner)
+	if code == "" {
+		return nil
+	}
+	emit := dedupEmitter{inner: w.emit, seen: w.embedSeen}
+	return ruby.ExtractEmbeddedCalls([]byte(code), lineNum-1, w.filePath, emit)
+}
+
+// embeddedRubyCode strips a tag's ERB output/trim markers to leave parseable
+// Ruby. The leading `=` (output, `<%=`) or flush `-` (whitespace trim, `<%-`)
+// marker is dropped; a `-` that follows whitespace is a unary minus in code
+// (`<% -1 %>`), not a marker, so the check runs on the untrimmed input.
+func embeddedRubyCode(inner string) string {
+	s := inner
+	switch {
+	case strings.HasPrefix(s, "="):
+		s = s[1:]
+	case strings.HasPrefix(s, "-"):
+		s = s[1:]
+	}
+	return strings.TrimSpace(s)
 }
 
 // extractRender emits a calls edge to each rendered partial. The target is the
@@ -363,6 +443,7 @@ func (w *walker) extractI18n(inner string, lineNum int) error {
 // defined symbol, so unknown framework helpers fall away.
 func (w *walker) extractHelperCalls(inner string, lineNum int) error {
 	stripped := reRubyLiteral.ReplaceAllString(inner, " ")
+	emit := dedupEmitter{inner: w.emit, seen: w.embedSeen}
 	seen := map[string]bool{}
 	for _, m := range reHelperName.FindAllStringSubmatch(stripped, -1) {
 		name := m[1]
@@ -371,7 +452,7 @@ func (w *walker) extractHelperCalls(inner string, lineNum int) error {
 		}
 		seen[name] = true
 		ln := lineNum
-		if err := w.emit.Edge(extract.EmittedEdge{
+		if err := emit.Edge(extract.EmittedEdge{
 			SourceQualified: w.filePath,
 			TargetQualified: "self." + name,
 			Kind:            model.EdgeCalls,
