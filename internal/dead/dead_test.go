@@ -335,6 +335,77 @@ end
 	}
 }
 
+// TestNameOccurrencesEstimated proves FindDead fills NameOccurrences from
+// the index: a method name defined on several classes carries an
+// occurrence estimate of at least that many definitions, so the verify-
+// command builder can tell a common name from a unique one.
+func TestNameOccurrencesEstimated(t *testing.T) {
+	root := t.TempDir()
+	// Three classes all defining `ping`, none called — all dead, and the
+	// name is shared three ways.
+	writeFile(t, filepath.Join(root, "pingers.rb"), `class Alpha
+  def ping
+    1
+  end
+end
+
+class Beta
+  def ping
+    2
+  end
+end
+
+class Gamma
+  def ping
+    3
+  end
+end
+`)
+	// A uniquely-named dead method as the contrast.
+	writeFile(t, filepath.Join(root, "lonely.rb"), `class Lonely
+  def quux_only_here
+    9
+  end
+end
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{Root: root, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	result, err := dead.FindDead(ctx, db, dead.Options{Language: "ruby"})
+	if err != nil {
+		t.Fatalf("FindDead: %v", err)
+	}
+
+	var pingOcc, lonelyOcc int
+	var sawPing, sawLonely bool
+	for _, s := range result.Dead {
+		switch s.Qualified {
+		case "Alpha#ping":
+			pingOcc, sawPing = s.NameOccurrences, true
+		case "Lonely#quux_only_here":
+			lonelyOcc, sawLonely = s.NameOccurrences, true
+		}
+	}
+	if !sawPing || !sawLonely {
+		t.Fatalf("expected both dead candidates present (ping=%v lonely=%v)", sawPing, sawLonely)
+	}
+	if pingOcc < 3 {
+		t.Errorf("ping NameOccurrences = %d, want >= 3 (three definitions)", pingOcc)
+	}
+	if lonelyOcc != 1 {
+		t.Errorf("unique-name NameOccurrences = %d, want 1", lonelyOcc)
+	}
+}
+
 func TestExcludeTestRefsChangesResults(t *testing.T) {
 	root := t.TempDir()
 
