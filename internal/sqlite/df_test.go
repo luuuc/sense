@@ -65,3 +65,22 @@ func TestDocumentFrequency(t *testing.T) {
 		t.Errorf("DF(whitespace term) = %d, want 0", df["  "])
 	}
 }
+
+// TestDocumentFrequencyQueryError verifies the MATCH-query error path:
+// a closed database makes the per-term COUNT(*) fail, and the error is
+// wrapped with the offending term.
+func TestDocumentFrequencyQueryError(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "df.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.DocumentFrequency(ctx, []string{"prevent"}); err == nil {
+		t.Fatal("expected error from DocumentFrequency on closed db, got nil")
+	}
+}

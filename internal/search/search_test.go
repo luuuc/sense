@@ -1409,3 +1409,72 @@ func TestRerankerGracefulDegradation(t *testing.T) {
 		t.Fatal("expected results after clearing reranker")
 	}
 }
+
+// errEmbedder always fails, exercising the embed error path in Search.
+type errEmbedder struct{}
+
+func (e *errEmbedder) Embed(_ context.Context, _ []embed.EmbedInput) ([][]float32, error) {
+	return nil, fmt.Errorf("boom")
+}
+
+func (e *errEmbedder) Close() error { return nil }
+
+// TestSearchEmbedError verifies that an embedder failure surfaces as a
+// wrapped "search embed" error rather than silently degrading.
+func TestSearchEmbedError(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(ctx, t, a)
+
+	embeddings, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vectorIdx := search.BuildHNSWIndex(embeddings)
+
+	engine := search.NewEngine(a, vectorIdx, &errEmbedder{})
+
+	_, _, err = engine.Search(ctx, search.Options{Query: "payment", Limit: 10})
+	if err == nil || !strings.Contains(err.Error(), "search embed") {
+		t.Fatalf("expected wrapped embed error, got %v", err)
+	}
+}
+
+// TestSearchDocumentFrequencyError verifies that a DocumentFrequency
+// failure (here, a dropped FTS table) surfaces as a wrapped "search df"
+// error. The semantic mode pins a non-Identifier shape so the DF lookup
+// always runs.
+func TestSearchDocumentFrequencyError(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, err := sqlite.Open(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	seedFusionIndex(ctx, t, a)
+
+	// Drop the FTS table so DocumentFrequency's MATCH query errors while
+	// SymbolCount (which reads sense_symbols) still succeeds.
+	if _, err := a.DB().ExecContext(ctx, "DROP TABLE sense_symbols_fts"); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := search.NewEngine(a, nil, nil)
+
+	_, _, err = engine.Search(ctx, search.Options{
+		Query: "payment",
+		Mode:  search.ModeSemantic,
+		Limit: 10,
+	})
+	if err == nil || !strings.Contains(err.Error(), "search df") {
+		t.Fatalf("expected wrapped df error, got %v", err)
+	}
+}
