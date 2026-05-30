@@ -33,10 +33,10 @@ func TestRubyDynamicTypesTieredUnderFramework(t *testing.T) {
 	}
 }
 
-// Ruby service-object `call` methods and predicate (foo?) methods follow
-// dynamic-dispatch conventions the indexer under-resolves, so with no detected
-// caller they are possibly-dead, not dead — but only under a dynamic framework.
-func TestRubyDynamicMethodTiering(t *testing.T) {
+// Ruby service-object `call` methods follow a dynamic-dispatch convention
+// the indexer under-resolves, so with no detected caller they are
+// possibly-dead, not dead — but only under a dynamic framework.
+func TestRubyDynamicServiceCallTiering(t *testing.T) {
 	cases := []struct {
 		name      string
 		sym       Symbol
@@ -49,35 +49,8 @@ func TestRubyDynamicMethodTiering(t *testing.T) {
 			true, ConfidencePossibly,
 		},
 		{
-			"result predicate under framework",
-			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Payments::Result#success?"},
-			true, ConfidencePossibly,
-		},
-		{
-			// Verified false positive: the inner `Result = Struct.new do def
-			// success? end end` is flattened onto the *Service class, so the
-			// parent name carries no Result suffix — the old narrow rule
-			// hard-flagged it dead.
-			"predicate flattened onto a service class is possibly-dead",
-			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Checkout::ProcessPaymentService#success?"},
-			true, ConfidencePossibly,
-		},
-		{
-			// Verified false positive: dispatched on a rescued `e`
-			// (`raise if e.retriable?`); not a known predicate name, class
-			// matches no suffix — the old rule hard-flagged it dead.
-			"arbitrary predicate on any class is possibly-dead",
-			Symbol{Language: "ruby", Kind: "method", Name: "retriable?", Qualified: "SocialCommerce::Meta::ApiError#retriable?"},
-			true, ConfidencePossibly,
-		},
-		{
 			"plain call on a non-service class stays dead",
 			Symbol{Language: "ruby", Kind: "method", Name: "call", Qualified: "Widget#call"},
-			true, ConfidenceDead,
-		},
-		{
-			"plain non-predicate method stays dead",
-			Symbol{Language: "ruby", Kind: "method", Name: "frobnicate", Qualified: "Widget#frobnicate"},
 			true, ConfidenceDead,
 		},
 		{
@@ -96,6 +69,83 @@ func TestRubyDynamicMethodTiering(t *testing.T) {
 		if got[0].Confidence != c.want {
 			t.Errorf("%s: confidence = %q, want %q", c.name, got[0].Confidence, c.want)
 		}
+	}
+}
+
+// Value-object recognition replaces the old blanket "every `foo?` predicate
+// is possibly-dead" net with a rule keyed on the synthetic Struct/Data
+// inheritance edge. A predicate on a value-object class is soft; the SAME
+// predicate name on an ordinary class — the control — stays hard dead, which
+// proves the rule is targeted, not a blanket mute. This softening is a pure-
+// Ruby idiom, so it does not require a dynamic framework.
+func TestValueObjectMethodTiering(t *testing.T) {
+	const voClassID, plainClassID = int64(42), int64(43)
+	vo := map[int64]struct{}{voClassID: {}}
+	voID, plainID := voClassID, plainClassID
+
+	cases := []struct {
+		name      string
+		sym       Symbol
+		framework bool
+		want      string
+	}{
+		{
+			"value-object predicate is soft (no framework needed)",
+			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Checkout::ProcessPaymentService::Result#success?", ParentID: &voID},
+			false, ConfidencePossibly,
+		},
+		{
+			"value-object non-predicate instance method is soft",
+			Symbol{Language: "ruby", Kind: "method", Name: "amount", Qualified: "Money::Amount#amount", ParentID: &voID},
+			false, ConfidencePossibly,
+		},
+		{
+			// CONTROL: identical predicate name, ordinary parent, no
+			// framework → stays dead. (framework=false isolates the
+			// value-object rule from the framework-gated predicate rule.)
+			"predicate on an ordinary class stays dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "success?", Qualified: "Widget#success?", ParentID: &plainID},
+			false, ConfidenceDead,
+		},
+		{
+			// Singleton methods (`Result.build`) are not the duck-typed
+			// instance surface, so the value-object rule does not soften them.
+			"singleton value-object method stays dead",
+			Symbol{Language: "ruby", Kind: "method", Name: "build", Qualified: "Result.build", ParentID: &voID},
+			false, ConfidenceDead,
+		},
+	}
+	for _, c := range cases {
+		got := annotateConfidence([]Symbol{c.sym}, confidenceInputs{valueObjectClassIDs: vo, dynamicFramework: c.framework})
+		if got[0].Confidence != c.want {
+			t.Errorf("%s: confidence = %q, want %q", c.name, got[0].Confidence, c.want)
+		}
+	}
+}
+
+// Ruby predicate methods stay soft under a dynamic framework: maket
+// validation showed they are pervasively invoked on duck-typed receivers
+// the indexer cannot resolve (pending? had 28 live call sites yet zero
+// static callers), so hard-flagging them dead is a false negative. Without
+// a framework, a zero-caller predicate is plain dead.
+func TestRubyPredicateSoftenedUnderFramework(t *testing.T) {
+	pred := Symbol{Language: "ruby", Kind: "method", Name: "pending?", Qualified: "PaymentTransaction#pending?"}
+
+	got := annotateConfidence([]Symbol{pred}, confidenceInputs{dynamicFramework: true})
+	if got[0].Confidence != ConfidencePossibly {
+		t.Errorf("predicate under framework = %q, want %q", got[0].Confidence, ConfidencePossibly)
+	}
+
+	got = annotateConfidence([]Symbol{pred}, confidenceInputs{dynamicFramework: false})
+	if got[0].Confidence != ConfidenceDead {
+		t.Errorf("predicate without framework = %q, want %q", got[0].Confidence, ConfidenceDead)
+	}
+
+	// A non-predicate method is unaffected by this rule.
+	plain := Symbol{Language: "ruby", Kind: "method", Name: "process", Qualified: "Widget#process"}
+	got = annotateConfidence([]Symbol{plain}, confidenceInputs{dynamicFramework: true})
+	if got[0].Confidence != ConfidenceDead {
+		t.Errorf("non-predicate under framework = %q, want %q", got[0].Confidence, ConfidenceDead)
 	}
 }
 

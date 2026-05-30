@@ -9,10 +9,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
 const defaultLimit = 100
+
+// syntheticPrefixPattern is a SQL LIKE pattern matching the synthetic
+// ruby-core:* base symbols (ruby-core:Struct / ruby-core:Data). These are
+// plumbing for value-object inheritance edges and must never surface as
+// dead candidates or inflate the analysed-symbol denominator. The prefix
+// contains no LIKE metacharacters, so no ESCAPE clause is needed.
+const syntheticPrefixPattern = extract.PrefixRubyCore + "%"
 
 type Options struct {
 	Language        string
@@ -34,6 +42,13 @@ type Symbol struct {
 	ParentID   *int64
 	Visibility string
 	Confidence string
+	// NameOccurrences estimates how common this symbol's bare name is
+	// across the index — symbols sharing the name plus resolved edges
+	// pointing at a symbol of that name. The verify-command builder uses
+	// it to decide whether a text grep would flood the caller (a name like
+	// "success?" appears everywhere) and a manual-inspect hint should
+	// replace it. Estimated from the index, never by shelling out.
+	NameOccurrences int
 }
 
 type Result struct {
@@ -105,6 +120,10 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("dead: included modules: %w", err)
 	}
+	valueObjectClassIDs, err := queryValueObjectClassIDs(ctx, db)
+	if err != nil {
+		return Result{}, fmt.Errorf("dead: value-object classes: %w", err)
+	}
 
 	candidates = excludeEntryPoints(candidates, entryPointFilters{
 		testsTargets:         testsTargets,
@@ -117,14 +136,19 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	})
 
 	candidates = annotateConfidence(candidates, confidenceInputs{
-		interfaceIDs:      interfaceIDs,
-		implementorIDs:    implementorIDs,
-		includedModuleIDs: includedModuleIDs,
-		dynamicFramework:  usesDynamicAutoload(frameworks),
+		interfaceIDs:        interfaceIDs,
+		implementorIDs:      implementorIDs,
+		includedModuleIDs:   includedModuleIDs,
+		valueObjectClassIDs: valueObjectClassIDs,
+		dynamicFramework:    usesDynamicAutoload(frameworks),
 	})
 
 	if len(candidates) > opts.Limit {
 		candidates = candidates[:opts.Limit]
+	}
+
+	if err := populateNameOccurrences(ctx, db, candidates); err != nil {
+		return Result{}, fmt.Errorf("dead: name occurrences: %w", err)
 	}
 
 	return Result{
@@ -148,7 +172,8 @@ func frameworkNames(frameworks map[string]struct{}) []string {
 func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
 	q := `SELECT COUNT(*) FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
-		WHERE s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')`
+		WHERE s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')
+		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'`
 	var args []any
 
 	if opts.Language != "" {
@@ -191,7 +216,8 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 		FROM sense_symbols s
 		JOIN sense_files f ON s.file_id = f.id
 		WHERE NOT EXISTS (` + edgeFilter + `)
-		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')`
+		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')
+		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'`
 	var args []any
 
 	if opts.Language != "" {
@@ -354,6 +380,102 @@ func queryIncludedModuleIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}
 		out[id] = struct{}{}
 	}
 	return out, rows.Err()
+}
+
+// queryValueObjectClassIDs returns IDs of classes that carry an
+// `inherits` edge to a synthetic Ruby-core value-object base
+// (ruby-core:Struct / ruby-core:Data). These are `CONST = Struct.new`/
+// `Data.define` value objects; their public instance methods form a
+// duck-typed API surface reached via `x.method` on a local whose type
+// the static indexer cannot infer — so a zero-caller verdict is
+// uncertain, not dead. Keying on the structural inherits edge (not a
+// `*Result` name suffix) is the whole point of the synthetic base.
+func queryValueObjectClassIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT e.source_id FROM sense_edges e
+		JOIN sense_symbols t ON t.id = e.target_id
+		WHERE e.kind = 'inherits' AND e.source_id IS NOT NULL
+		  AND t.qualified IN (?, ?)`,
+		extract.RubyCoreStruct, extract.RubyCoreData)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// populateNameOccurrences fills Symbol.NameOccurrences for each candidate
+// with an index-derived estimate of how common its bare name is: the
+// number of symbols sharing the name plus the number of resolved edges
+// pointing at a symbol of that name. This proxies textual frequency
+// without shelling out — a name defined and called many times is one a
+// text grep would flood the caller with. Two batched queries (GROUP BY
+// name over the candidate set), so cost is independent of repo size.
+func populateNameOccurrences(ctx context.Context, db *sql.DB, candidates []Symbol) error {
+	if len(candidates) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, s := range candidates {
+		if _, ok := seen[s.Name]; ok {
+			continue
+		}
+		seen[s.Name] = struct{}{}
+		names = append(names, s.Name)
+	}
+
+	counts := make(map[string]int, len(names))
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
+	args := make([]any, len(names))
+	for i, n := range names {
+		args[i] = n
+	}
+
+	symQ := `SELECT name, COUNT(*) FROM sense_symbols WHERE name IN (` + placeholders + `) GROUP BY name`
+	if err := accumulateCounts(ctx, db, symQ, args, counts); err != nil {
+		return err
+	}
+
+	edgeQ := `SELECT s.name, COUNT(*) FROM sense_edges e
+		JOIN sense_symbols s ON s.id = e.target_id
+		WHERE s.name IN (` + placeholders + `) GROUP BY s.name`
+	if err := accumulateCounts(ctx, db, edgeQ, args, counts); err != nil {
+		return err
+	}
+
+	for i := range candidates {
+		candidates[i].NameOccurrences = counts[candidates[i].Name]
+	}
+	return nil
+}
+
+// accumulateCounts runs a `SELECT name, COUNT(*) … GROUP BY name` query
+// and adds each row's count into the shared totals map.
+func accumulateCounts(ctx context.Context, db *sql.DB, q string, args []any, totals map[string]int) error {
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			return err
+		}
+		totals[name] += n
+	}
+	return rows.Err()
 }
 
 func hasMainFunction(ctx context.Context, db *sql.DB, opts Options) (bool, error) {
@@ -746,10 +868,11 @@ func isGoConstructor(s Symbol) bool {
 }
 
 type confidenceInputs struct {
-	interfaceIDs      map[int64]struct{}
-	implementorIDs    map[int64]struct{}
-	includedModuleIDs map[int64]struct{}
-	dynamicFramework  bool
+	interfaceIDs        map[int64]struct{}
+	implementorIDs      map[int64]struct{}
+	includedModuleIDs   map[int64]struct{}
+	valueObjectClassIDs map[int64]struct{}
+	dynamicFramework    bool
 }
 
 func annotateConfidence(candidates []Symbol, in confidenceInputs) []Symbol {
@@ -771,11 +894,21 @@ func annotateConfidence(candidates []Symbol, in confidenceInputs) []Symbol {
 				continue
 			}
 		}
+		// A value object's public instance methods are duck-typed API
+		// (`result.success?` on a local of unknown type). This is a
+		// pure-Ruby idiom, not Rails-specific, so it softens regardless
+		// of framework — and it makes the value-object nature queryable
+		// (the inherits→ruby-core:Struct edge) rather than guessed from a
+		// `?` suffix.
+		if isValueObjectMethod(*s, in.valueObjectClassIDs) {
+			s.Confidence = ConfidencePossibly
+			continue
+		}
 		if isGoConstructor(*s) {
 			s.Confidence = ConfidencePossibly
 			continue
 		}
-		if in.dynamicFramework && (isDynamicallyReferenceable(*s) || isDynamicRubyMethod(*s)) {
+		if in.dynamicFramework && (isDynamicallyReferenceable(*s) || isDynamicServiceCall(*s) || isDynamicRubyPredicate(*s)) {
 			s.Confidence = ConfidencePossibly
 			continue
 		}
@@ -816,29 +949,64 @@ var serviceClassSuffixes = []string{
 	"Service", "Command", "Query", "Interactor", "Operation", "Job", "Worker",
 }
 
-// isDynamicRubyMethod flags Ruby methods that follow a dynamic-dispatch
-// convention the static indexer routinely under-resolves, so a zero-caller
-// result can't justify a hard "dead" verdict:
-//
-//   - Predicate methods (foo?) — almost always invoked on a duck-typed
-//     receiver (`if result.success?`, `raise if e.retriable?`) or implicitly
-//     on self (`return false unless retriable?`), paths the indexer frequently
-//     can't tie back to the definition. This covers result/value-object
-//     predicates whose inner Struct is flattened onto a *Service class, where
-//     the parent name carries no Result/Response suffix to key off.
-//   - The service-object `call` entry point — reached through `Klass.new.call`,
-//     a `.()` shorthand, or a duck-typed handler.
-//
-// They are reported possibly-dead rather than dead.
-func isDynamicRubyMethod(s Symbol) bool {
+// isDynamicServiceCall flags the service-object `call` entry point —
+// reached through `Klass.new.call`, a `.()` shorthand, or a duck-typed
+// handler the static indexer can't tie back to the definition. Reported
+// possibly-dead rather than dead.
+func isDynamicServiceCall(s Symbol) bool {
 	if s.Language != "ruby" || s.Kind != "method" {
 		return false
 	}
-	if strings.HasSuffix(s.Name, "?") {
-		return true
-	}
 	parent := rubyMethodParentName(s.Qualified)
 	return s.Name == "call" && hasAnySuffix(parent, serviceClassSuffixes)
+}
+
+// isDynamicRubyPredicate flags Ruby predicate methods (`foo?`) under a
+// dynamic framework as uncertain. Validation against a real Rails app
+// (maket) showed predicates are pervasively invoked on duck-typed
+// receivers the indexer can't resolve — `@transaction.pending?` in a view,
+// `record.cancelled?` on an association — so hard-flagging a zero-static-
+// caller predicate as `dead` produced confident false negatives on live
+// methods (pending? alone had 28 call sites). A false "dead" erodes trust
+// far more than a conservative "possibly_dead", so this residual
+// softening stays — gated on a dynamic framework, where the dispatch the
+// indexer misses actually happens.
+//
+// The narrower, framework-independent win this pitch adds is
+// isValueObjectMethod: value-object members soften by their structural
+// inheritance edge, so a pure-Ruby gem (no framework) gets correct
+// verdicts that this framework-gated rule would not reach.
+func isDynamicRubyPredicate(s Symbol) bool {
+	return s.Language == "ruby" && s.Kind == "method" && strings.HasSuffix(s.Name, "?")
+}
+
+// isValueObjectMethod reports whether s is a public instance method of a
+// Struct.new / Data.define value object (its parent class is in
+// valueObjectClassIDs). Instance methods are reached via duck-typed
+// `x.method` on a local whose type the indexer cannot infer, so a
+// zero-caller verdict is uncertain. Singleton methods (`Result.build`) are
+// excluded — they are not the duck-typed instance surface.
+//
+// Visibility is not gated: the Ruby extractor does not record method
+// visibility, so public and private cannot be distinguished here. That is
+// safe — a private struct method can't be called with an explicit receiver
+// anyway, so if one is genuinely dead, softening it to `possibly_dead` is
+// merely conservative, and private methods on a value object are rare.
+func isValueObjectMethod(s Symbol, valueObjectClassIDs map[int64]struct{}) bool {
+	if s.Language != "ruby" || s.Kind != "method" || s.ParentID == nil {
+		return false
+	}
+	if _, ok := valueObjectClassIDs[*s.ParentID]; !ok {
+		return false
+	}
+	return rubyInstanceMethod(s.Qualified)
+}
+
+// rubyInstanceMethod reports whether a Ruby method's qualified name is an
+// instance method (`Parent#name`) rather than a singleton (`Parent.name`).
+func rubyInstanceMethod(qualified string) bool {
+	sep := strings.LastIndexAny(qualified, "#.")
+	return sep >= 0 && qualified[sep] == '#'
 }
 
 // rubyMethodParentName returns the unqualified parent class/module name from

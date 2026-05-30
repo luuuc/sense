@@ -62,6 +62,7 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit
 		classInstanceVars: make(map[string]map[string]string),
 		returnTypes:       returnTypes,
 		emittedCallbacks:  make(map[string]bool),
+		emittedSynthetics: make(map[string]bool),
 		pkgBindings:       make(map[string]string),
 	}
 	w.collectConstants(tree.RootNode(), nil)
@@ -90,6 +91,7 @@ type walker struct {
 	classInstanceVars map[string]map[string]string // @ivar type map per class
 	returnTypes       map[string]string            // method_qualified → class_name (file-level)
 	emittedCallbacks  map[string]bool              // dedup synthetic callback symbols by qualified name
+	emittedSynthetics map[string]bool              // dedup synthetic base symbols (ruby-core:Struct/Data) per file
 	pkgBindings       map[string]string            // unqualified name → qualified name for file-level constants
 }
 
@@ -111,6 +113,17 @@ func (w *walker) walk(n *sitter.Node, scope []string) error {
 	case "singleton_method":
 		return w.handleMethod(n, scope, true)
 	case "assignment":
+		// `CONST = Struct.new(...) do … end` and friends define a nested
+		// class, not a flat constant — the block's `def`s belong to the
+		// struct, not the enclosing scope. handleClassBuilderAssignment
+		// consumes those; ordinary `CONST = value` falls through.
+		consumed, err := w.handleClassBuilderAssignment(n, scope)
+		if err != nil {
+			return err
+		}
+		if consumed {
+			return nil
+		}
 		if err := w.handleConstantAssignment(n, scope); err != nil {
 			return err
 		}
@@ -1789,6 +1802,159 @@ func isInsideNestedDef(n, root *sitter.Node) bool {
 		}
 	}
 	return false
+}
+
+// classBuilder describes a `CONST = <builder>` right-hand side that
+// defines a class rather than a plain value: `Struct.new`, `Data.define`,
+// or `Class.new`. baseTarget is the qualified name for the constant's
+// `inherits` edge ("" when there is no statically-known superclass, e.g.
+// a bare `Class.new`). valueObject is true only for Struct/Data — the
+// duck-typed value-object idiom dead-code recognition keys on. block is
+// the do…end / {} body, or nil.
+type classBuilder struct {
+	baseTarget  string
+	valueObject bool
+	block       *sitter.Node
+}
+
+// detectClassBuilder classifies the RHS of a constant assignment. It
+// returns ok=false for anything that is not a recognised class builder,
+// so the caller falls back to plain-constant handling.
+func detectClassBuilder(rhs *sitter.Node, source []byte) (classBuilder, bool) {
+	if rhs == nil || rhs.Kind() != "call" {
+		return classBuilder{}, false
+	}
+	recv := rhs.ChildByFieldName("receiver")
+	method := rhs.ChildByFieldName("method")
+	if recv == nil || method == nil {
+		return classBuilder{}, false
+	}
+	recvText := extract.Text(recv, source)
+	methodText := extract.Text(method, source)
+	cb := classBuilder{block: getBlockChild(rhs)}
+	switch {
+	case recvText == "Struct" && methodText == "new":
+		cb.baseTarget = extract.RubyCoreStruct
+		cb.valueObject = true
+	case recvText == "Data" && methodText == "define":
+		cb.baseTarget = extract.RubyCoreData
+		cb.valueObject = true
+	case recvText == "Class" && methodText == "new":
+		// The superclass is the first constant argument, if any.
+		// `Class.new` with no constant argument has no known parent.
+		cb.baseTarget = firstConstantArg(rhs, source)
+	default:
+		return classBuilder{}, false
+	}
+	return cb, true
+}
+
+// firstConstantArg returns the surface text of the first constant /
+// scope-resolution argument of a call, or "" when there is none.
+func firstConstantArg(call *sitter.Node, source []byte) string {
+	args := call.ChildByFieldName("arguments")
+	if args == nil {
+		return ""
+	}
+	for i := uint(0); i < args.NamedChildCount(); i++ {
+		c := args.NamedChild(i)
+		if c == nil {
+			continue
+		}
+		switch c.Kind() {
+		case "constant", "scope_resolution":
+			return extract.Text(c, source)
+		}
+	}
+	return ""
+}
+
+// handleClassBuilderAssignment handles `CONST = Struct.new(...)`,
+// `CONST = Data.define(...)`, and `CONST = Class.new(Super)` — with or
+// without a do…end / {} block. The constant becomes a nested CLASS
+// symbol (qualified scope::CONST), the builder's base class becomes an
+// `inherits` edge, and any block body is walked with CONST pushed onto
+// the scope so its members qualify as `…::CONST#method` rather than
+// inheriting the enclosing class scope. Returns true when the node was
+// consumed (caller must not fall through to constant/child handling).
+func (w *walker) handleClassBuilderAssignment(n *sitter.Node, scope []string) (bool, error) {
+	lhs := n.ChildByFieldName("left")
+	if lhs == nil || lhs.Kind() != "constant" {
+		return false, nil
+	}
+	cb, ok := detectClassBuilder(n.ChildByFieldName("right"), w.source)
+	if !ok {
+		return false, nil
+	}
+	name := extract.Text(lhs, w.source)
+	if name == "" {
+		return false, nil
+	}
+	parent := strings.Join(scope, "::")
+	qualified := name
+	if parent != "" {
+		qualified = parent + "::" + name
+	}
+	line := extract.Line(n.StartPosition())
+
+	if err := w.emit.Symbol(extract.EmittedSymbol{
+		Name:            name,
+		Qualified:       qualified,
+		Kind:            model.KindClass,
+		ParentQualified: parent,
+		LineStart:       line,
+		LineEnd:         extract.Line(n.EndPosition()),
+		Docstring:       docstringFor(n, w.source),
+	}); err != nil {
+		return false, err
+	}
+
+	if cb.baseTarget != "" {
+		if cb.valueObject {
+			if err := w.emitSyntheticBase(cb.baseTarget, line); err != nil {
+				return false, err
+			}
+		}
+		if err := w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: qualified,
+			TargetQualified: cb.baseTarget,
+			Kind:            model.EdgeInherits,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		}); err != nil {
+			return false, err
+		}
+	}
+
+	if cb.block != nil {
+		body := getBlockBody(cb.block)
+		if body != nil {
+			newScope := append(slices.Clone(scope), name)
+			if err := w.walkChildren(body, newScope); err != nil {
+				return false, err
+			}
+		}
+	}
+	return true, nil
+}
+
+// emitSyntheticBase emits a synthetic stand-in symbol for a Ruby core
+// class (ruby-core:Struct / ruby-core:Data) so that `inherits` edges
+// pointing at it resolve and persist (target_id is NOT NULL). Deduped
+// per file: many value objects in one file share a single base symbol.
+func (w *walker) emitSyntheticBase(qualified string, line int) error {
+	if w.emittedSynthetics[qualified] {
+		return nil
+	}
+	w.emittedSynthetics[qualified] = true
+	return w.emit.Symbol(extract.EmittedSymbol{
+		Name:       strings.TrimPrefix(qualified, extract.PrefixRubyCore),
+		Qualified:  qualified,
+		Kind:       model.KindClass,
+		Visibility: "public",
+		LineStart:  line,
+		LineEnd:    line,
+	})
 }
 
 // handleConstantAssignment emits a KindConstant symbol when the LHS of

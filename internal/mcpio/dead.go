@@ -2,9 +2,20 @@ package mcpio
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/luuuc/sense/internal/dead"
 )
+
+// verifyTooCommonThreshold is the index-occurrence count above which a
+// name is considered too common to auto-verify by grep. Above it, a text
+// search for the name floods the caller (a predicate like "success?" is
+// defined and called all over a Rails app), so the verify hint points at
+// the definition site for manual inspection instead. Estimated from the
+// index (symbols + resolved edges sharing the name); see
+// dead.Symbol.NameOccurrences. Tuned against maket, where the
+// mis-attributed Checkout predicates sit well above it.
+const verifyTooCommonThreshold = 25
 
 // BuildDeadCodeResponse assembles a wire DeadCodeResponse from the dead
 // package's result plus a rolled-up symbol list. Matches the
@@ -19,15 +30,17 @@ func BuildDeadCodeResponse(symbols []dead.Symbol, totalSymbols int, frameworks [
 		if confidence == "" {
 			confidence = dead.ConfidenceDead
 		}
+		cmd, tooCommon := deadVerifyCmd(s.Name, s.File, s.LineStart, s.NameOccurrences)
 		entries[i] = DeadSymbolEntry{
-			Symbol:     s.Name,
-			Qualified:  s.Qualified,
-			File:       s.File,
-			LineStart:  s.LineStart,
-			LineEnd:    s.LineEnd,
-			Kind:       s.Kind,
-			Confidence: confidence,
-			VerifyCmd:  deadVerifyCmd(s.Name),
+			Symbol:          s.Name,
+			Qualified:       s.Qualified,
+			File:            s.File,
+			LineStart:       s.LineStart,
+			LineEnd:         s.LineEnd,
+			Kind:            s.Kind,
+			Confidence:      confidence,
+			VerifyCmd:       cmd,
+			VerifyTooCommon: tooCommon,
 		}
 		uniqueFiles[s.File] = struct{}{}
 	}
@@ -72,12 +85,49 @@ func deadCodeNote(frameworks []string) string {
 		"(5) exported symbols consumed by downstream packages outside the indexed tree."
 }
 
-// deadVerifyCmd builds a copy-paste grep that lists every textual occurrence of
-// a candidate's name across the tree — the definition plus any call sites the
-// static index missed (duck-typed dispatch, metaprogramming). Fixed-string (-F)
-// so predicate names ending in `?` aren't interpreted as a regex. The VCS and
-// index directories are excluded as guaranteed noise; every source extension is
-// still searched, since a predicate may be called from a view or template.
-func deadVerifyCmd(name string) string {
-	return fmt.Sprintf("grep -rFn --exclude-dir=.git --exclude-dir=.sense %q .", name)
+// deadVerifyCmd builds the verify hint for one dead candidate. It returns
+// the hint string and whether the name was too common to auto-verify.
+//
+// Normally it emits a copy-paste grep scoped to CALL syntax — `\.name`,
+// the receiver-dot form a missed dynamic dispatch (`result.success?`)
+// takes — rather than the bare name, which on a common predicate floods
+// the caller with hundreds of unrelated definitions and comments. The
+// definition's own file:line is filtered out with a trailing `grep -v`,
+// so a single surviving hit means a genuinely missed call site, not the
+// definition echoing back.
+//
+// When the name's index-occurrence estimate exceeds the threshold, even a
+// call-scoped grep would return too much to be useful, so the hint points
+// at the definition site for manual inspection instead and tooCommon is
+// true.
+func deadVerifyCmd(name, file string, line, occurrences int) (cmd string, tooCommon bool) {
+	if occurrences > verifyTooCommonThreshold {
+		return fmt.Sprintf("name %q too common to auto-verify (%d index occurrences) — inspect %s:%d and its call sites manually",
+			name, occurrences, file, line), true
+	}
+
+	// Scope to call syntax: a leading receiver dot, the name with any `?`/`!`
+	// predicate/bang suffix escaped for the regex engine. The pattern is
+	// wrapped in literal shell double quotes — %q would Go-escape the
+	// backslash and hand grep `\\.` (a literal backslash) instead of `\.`.
+	pattern := `\.` + escapeForERE(name)
+	grep := `grep -rEn --exclude-dir=.git --exclude-dir=.sense "` + pattern + `" .`
+	// Exclude the definition's own file:line. `grep -rEn` prefixes each hit
+	// with `./path:line:`; a fixed-string (-F) match on that prefix drops the
+	// def line without the `.`s acting as wildcards.
+	exclude := fmt.Sprintf(`grep -vF "./%s:%d:"`, file, line)
+	return grep + " | " + exclude, false
+}
+
+// escapeForERE escapes the ERE metacharacters that occur in Ruby method
+// names — `?` (predicate), `!` (bang), and `.` — so the call-scoped grep
+// pattern matches the literal name. Other identifier characters are
+// regex-safe.
+func escapeForERE(name string) string {
+	r := strings.NewReplacer(
+		`.`, `\.`,
+		`?`, `\?`,
+		`!`, `\!`,
+	)
+	return r.Replace(name)
 }

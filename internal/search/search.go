@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/sqlite"
 	"golang.org/x/sync/errgroup"
 )
@@ -334,10 +335,16 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		return nil, SearchMeta{}, fmt.Errorf("search promote: %w", err)
 	}
 
-	// Apply min_score filter and limit.
+	// Apply min_score filter and limit. Synthetic plumbing symbols
+	// (ruby-core:Struct / ruby-core:Data, emitted only so value-object
+	// inherits edges resolve) are never user-facing — drop them here, the
+	// single chokepoint every retrieval leg funnels through.
 	var results []Result
 	for _, r := range fused {
 		if r.Score < opts.MinScore {
+			continue
+		}
+		if strings.HasPrefix(r.Qualified, extract.PrefixRubyCore) {
 			continue
 		}
 		results = append(results, r)
@@ -774,8 +781,8 @@ func applyGraphCentrality(results []Result, centrality map[int64]int) {
 }
 
 const (
-	enrichTopN     = 3
-	enrichBoost    = 0.15
+	enrichTopN      = 3
+	enrichBoost     = 0.15
 	enrichBaseScore = 0.05
 )
 
@@ -843,7 +850,7 @@ func (e *Engine) enrichFromGraph(ctx context.Context, results []Result) ([]Resul
 				Qualified: sym.Qualified,
 				Kind:      sym.Kind,
 				FileID:    sym.FileID,
-				LineStart:  sym.LineStart,
+				LineStart: sym.LineStart,
 				Snippet:   sym.Snippet,
 				Score:     enrichBaseScore,
 				Source:    SourceGraph,
