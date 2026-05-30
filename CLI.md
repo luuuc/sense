@@ -94,10 +94,30 @@ sense blast --diff HEAD~1              # diff-based
 
 ### `sense dead`
 
-Find dead code (symbols with no incoming references).
+Find unreferenced symbols (zero incoming references), split into honest
+verdicts rather than a flat "dead" list:
+
+- **`dead`** — safe to remove. Reserved for the rare symbol Sense can reason
+  about *closed-world*: every possible caller is visible to the indexer (e.g. a
+  private Ruby method whose name is never a reflection-dispatch target), so a
+  zero-reference result is a real zero, not a gap in the graph. Each still
+  carries a per-symbol `verify` grep — a final cheap check against the live
+  tree, since the index can lag the working copy and a name can be reached
+  through text (a string, `eval`) that no call graph captures.
+- **`possibly_dead`** — unreferenced, but a hidden caller could exist
+  (duck-typed dispatch, routes, views, public API, …). The default and
+  majority verdict, grouped by reason, each group with a `verify` recipe.
+
+A symbol earns `dead` only when a language voice can prove closed-world for
+its language; a stack with no voice (today: anything but Ruby) is always
+`possibly_dead`, so Sense never emits a confident lie on an unsupported stack.
 
 ```bash
-sense dead
+sense dead                     # human-readable verdicts
+sense dead --language ruby     # filter by language
+sense dead --domain services   # filter by path substring
+sense dead --json              # JSON matching the sense_graph dead_code schema
+sense dead --limit 50          # cap reported symbols (dead is never truncated)
 ```
 
 ### `sense conventions`
