@@ -206,7 +206,7 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 
 	resp.VerifyHint = graphVerifyHint(resp)
 	resp.IndexCaveat = graphIndexCaveat(resp)
-	resp.ViewEdges = graphViewEdges(resp)
+	resp.ViewEdges = viewEdgesSignal(sc.File.Path, anyViewTemplate(inboundEdgeFiles(sc.Inbound, files)))
 
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) + len(testCallers) +
 		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
@@ -565,18 +565,23 @@ func graphIndexCaveat(resp GraphResponse) string {
 	return IndexCaveat(resp.Symbol.File)
 }
 
-// graphViewEdges derives the view_edges signal from the subject's defining
-// file and the files of its direct callers (called_by). Only depth-1 callers
-// count — view_edges is a "directly reached from a view" signal, not a
-// transitive one.
-func graphViewEdges(resp GraphResponse) string {
-	callerFiles := make([]string, 0, len(resp.Edges.CalledBy))
-	for _, c := range resp.Edges.CalledBy {
-		if c.File != nil {
-			callerFiles = append(callerFiles, *c.File)
+// inboundEdgeFiles returns the file each inbound usage edge was emitted from.
+// This is the edge's own file_id, NOT the caller symbol's file: a view edge
+// (ERB → Ruby/JS) is stored with source_id NULL — the source is a template,
+// not a symbol — so the caller-symbol file is absent, but the edge's file_id
+// is the ERB template. Checking the edge file is the only way view-reach
+// surfaces. Only usage edges (calls / references) count.
+func inboundEdgeFiles(inbound []model.EdgeRef, files FileLookup) []string {
+	out := make([]string, 0, len(inbound))
+	for _, e := range inbound {
+		if e.Edge.Kind != model.EdgeCalls && e.Edge.Kind != model.EdgeReferences {
+			continue
+		}
+		if p, ok := files(e.Edge.FileID); ok {
+			out = append(out, p)
 		}
 	}
-	return viewEdgesSignal(resp.Symbol.File, callerFiles)
+	return out
 }
 
 func graphVerifyHint(resp GraphResponse) string {

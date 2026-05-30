@@ -171,6 +171,12 @@ type Result struct {
 
 	EdgesTraversed    int
 	SubjectHasCallees bool
+	// ViewReached is true when a view template (ERB) reaches the subject via a
+	// calls/references edge. Such edges have a NULL source_id (the source is a
+	// template, not a symbol), so they never appear in DirectCallers — the BFS
+	// only traverses symbol→symbol edges. ViewReached is the only place a
+	// view-helper or Stimulus-dispatched symbol's view reachability surfaces.
+	ViewReached bool
 
 	// Edge-kind groups: filtered views over the same nodes that appear
 	// in DirectCallers/IndirectCallers. A node appears in at most one
@@ -213,6 +219,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 
 	hasCallees := subjectHasCallees(ctx, db, symbolIDs)
+	viewReached := subjectViewReached(ctx, db, symbolIDs)
 
 	visited := map[int64]int{}
 	predecessor := map[int64]int64{}
@@ -510,6 +517,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		TotalAffected:          totalAffectedCount,
 		EdgesTraversed:         edgesTraversed,
 		SubjectHasCallees:      hasCallees,
+		ViewReached:            viewReached,
 		DirectTemporalIDs:      directTemporalIDs,
 		DirectEdgeSites:        directEdgeSites,
 		AffectedSubclasses:     subclasses,
@@ -536,6 +544,26 @@ func subjectHasCallees(ctx context.Context, db *sql.DB, symbolIDs []int64) bool 
 	placeholders := strings.Repeat("?,", len(symbolIDs))
 	placeholders = placeholders[:len(placeholders)-1]
 	q := `SELECT 1 FROM sense_edges WHERE source_id IN (` + placeholders + `) AND kind = 'calls' LIMIT 1`
+	args := make([]any, len(symbolIDs))
+	for i, id := range symbolIDs {
+		args[i] = id
+	}
+	var one int
+	return db.QueryRowContext(ctx, q, args...).Scan(&one) == nil
+}
+
+// subjectViewReached reports whether a view template (ERB) reaches any of the
+// subject symbols via a calls/references edge. These edges carry a NULL
+// source_id, so they are invisible to the symbol→symbol BFS; this direct
+// edge-table check is the only way the subject's view reachability surfaces.
+func subjectViewReached(ctx context.Context, db *sql.DB, symbolIDs []int64) bool {
+	placeholders := strings.Repeat("?,", len(symbolIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := `SELECT 1 FROM sense_edges e
+		JOIN sense_files f ON e.file_id = f.id
+		WHERE e.target_id IN (` + placeholders + `)
+		AND e.kind IN ('calls', 'references')
+		AND f.path LIKE '%.erb' LIMIT 1`
 	args := make([]any, len(symbolIDs))
 	for i, id := range symbolIDs {
 		args[i] = id

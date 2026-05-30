@@ -52,17 +52,27 @@ func viewReachQuestionRelevant(file string) bool {
 	return false
 }
 
-// viewEdgesSignal classifies a subject's view reachability from its defining
-// file and the files of its direct (depth-1) incoming callers. See the
+// viewEdgesSignal classifies a subject's view reachability. present is whether
+// a view template reaches the subject directly (depth-1); subjectFile decides
+// whether a non-present answer is reported as "none" or omitted. See the
 // view_edges doc comment for the three-way contract.
-func viewEdgesSignal(subjectFile string, callerFiles []string) string {
-	for _, f := range callerFiles {
-		if isViewTemplate(f) {
-			return viewEdgesPresent
-		}
+func viewEdgesSignal(subjectFile string, present bool) string {
+	if present {
+		return viewEdgesPresent
 	}
 	if viewReachQuestionRelevant(subjectFile) {
 		return viewEdgesNone
 	}
 	return ""
+}
+
+// anyViewTemplate reports whether any of the given files is a view template —
+// the "present" input to viewEdgesSignal.
+func anyViewTemplate(files []string) bool {
+	for _, f := range files {
+		if isViewTemplate(f) {
+			return true
+		}
+	}
+	return false
 }
