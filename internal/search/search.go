@@ -85,6 +85,10 @@ type Options struct {
 	Language    string
 	MinScore    float64
 	KeywordBias float64
+	// Mode is the optional query-shape override: "" or ModeHybrid runs the
+	// classifier, ModeSemantic pins NaturalLanguage (floors the vector
+	// leg), ModeKeyword pins Identifier (reproduces pre-shape ranking).
+	Mode string
 }
 
 // Engine orchestrates hybrid search: keyword (FTS5) and vector (HNSW)
@@ -128,12 +132,18 @@ func (e *Engine) SetReranker(r Reranker) {
 const (
 	ModeHybrid  = "hybrid"
 	ModeKeyword = "keyword"
+	// ModeSemantic is a request-mode value for Options.Mode that pins the
+	// query shape to NaturalLanguage. ModeHybrid and ModeKeyword double as
+	// request-mode values; SearchMeta.Mode reuses the same strings to
+	// report which retrieval legs actually ran.
+	ModeSemantic = "semantic"
 )
 
 // SearchMeta carries non-result metadata from a search invocation.
 type SearchMeta struct {
 	SymbolCount   int
 	Mode          string
+	Shape         string
 	KeywordWeight float64
 	VectorWeight  float64
 	Reranked      bool
@@ -167,6 +177,26 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	canVector := vectors != nil && vectors.Len() > 0 && e.embedder != nil
 
 	queries := expandQuery(opts.Query)
+
+	// Classify the ORIGINAL query once and propagate the shape to every
+	// sub-query: expandQuery's identifier-split sub-queries would otherwise
+	// re-classify as Identifier and silently re-introduce keyword bias on
+	// an NL search.
+	shape := resolveShape(opts.Mode, opts.Query)
+
+	// Generic-token analysis: for non-Identifier queries, look up the
+	// corpus document frequency of each query term so generic-only keyword
+	// hits can be demoted later. Skipped for Identifier queries — the
+	// keyword leg is authoritative there — which also avoids the DF lookups.
+	var nonGenericQueryTerms map[string]struct{}
+	if shape != ShapeIdentifier {
+		terms := queryTermSet(opts.Query)
+		df, dfErr := e.adapter.DocumentFrequency(ctx, terms)
+		if dfErr != nil {
+			return nil, SearchMeta{}, fmt.Errorf("search df: %w", dfErr)
+		}
+		nonGenericQueryTerms = nonGenericTerms(terms, df, symbolCount)
+	}
 
 	// Batch-embed all sub-queries in one call when in hybrid mode.
 	var queryVecs [][]float32
@@ -227,7 +257,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		qKwWeight, qVecWeight := 1.0, 0.0
 		if canVector {
 			vecConf := vectorConfidence(vecResults)
-			qKwWeight, qVecWeight = fusionWeights(vecConf)
+			qKwWeight, qVecWeight = shapeWeights(shape, vecConf)
 		}
 
 		// Report primary query's weights in metadata.
@@ -302,6 +332,17 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	}
 	applyPathWeights(fused, pathByID)
 
+	// Generic-token demotion: a keyword-only hit that matched the query
+	// solely on high-frequency tokens (e.g. "prevent" → preventClose) is
+	// noise. Applied pre-normalize, like applyKindWeights and for the same
+	// reason: the fused RRF scores of single-term keyword matches are
+	// tightly clustered, so the multiplier is decisive *here* but would be
+	// neutralized post-normalize whenever the genuine domain match happens
+	// to be the rescale floor (pinned to 0). It runs after any reranking,
+	// so a cross-encoder cannot silently erase it. No-op for Identifier
+	// queries (nonGenericQueryTerms is nil).
+	genericTokenPenalty(fused, nonGenericQueryTerms)
+
 	normalizeScores(fused)
 	applyGraphCentrality(fused, centrality)
 
@@ -350,6 +391,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	return results, SearchMeta{
 		SymbolCount:   symbolCount,
 		Mode:          mode,
+		Shape:         shape.String(),
 		KeywordWeight: kwWeight,
 		VectorWeight:  vecWeight,
 		Reranked:      reranked,

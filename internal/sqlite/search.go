@@ -116,6 +116,35 @@ func (a *Adapter) SymbolCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// DocumentFrequency returns, for each distinct term, the number of
+// symbols whose FTS5 row matches that term in any indexed column (name,
+// qualified, docstring, snippet, name_parts). It runs one COUNT(*) MATCH
+// query per distinct term. A term that sanitizes to empty is reported
+// with count 0. Used to identify high-frequency "generic" query tokens
+// (e.g. "prevent", "handle") that should not, on their own, rank a hit.
+func (a *Adapter) DocumentFrequency(ctx context.Context, terms []string) (map[string]int, error) {
+	df := make(map[string]int, len(terms))
+	for _, term := range terms {
+		if _, done := df[term]; done {
+			continue
+		}
+		sanitized := sanitizeFTS5Query(term)
+		if strings.TrimSpace(sanitized) == "" {
+			df[term] = 0
+			continue
+		}
+		var count int
+		err := a.db.QueryRowContext(ctx,
+			`SELECT count(*) FROM sense_symbols_fts WHERE sense_symbols_fts MATCH ?`,
+			sanitized).Scan(&count)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite DocumentFrequency %q: %w", term, err)
+		}
+		df[term] = count
+	}
+	return df, nil
+}
+
 // LoadEmbeddings returns all embeddings as a map from symbol ID to
 // float32 vector. Used at startup to populate the in-memory HNSW index.
 func (a *Adapter) LoadEmbeddings(ctx context.Context) (map[int64][]float32, error) {
