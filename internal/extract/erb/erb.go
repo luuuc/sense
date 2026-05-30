@@ -220,7 +220,8 @@ func isRouteHelperName(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') {
+		valid := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !valid {
 			return false
 		}
 	}
