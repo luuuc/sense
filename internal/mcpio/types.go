@@ -587,11 +587,16 @@ type DeadSymbolEntry struct {
 	LineEnd    int    `json:"line_end"`
 	Kind       string `json:"kind"`
 	Confidence string `json:"confidence"`
-	// VerifyCmd is a ready-to-run grep that lists every textual occurrence of
-	// the symbol's name — the definition plus any call sites the static index
-	// missed (duck-typed dispatch, metaprogramming). One hit means truly
-	// unreferenced; extra hits mean it's reachable and should not be deleted.
+	// VerifyCmd is a copy-paste command to confirm the verdict: a call-scoped
+	// grep (`\.name`) for call sites the static index missed (duck-typed
+	// dispatch, metaprogramming), excluding the definition's own file:line so
+	// a surviving hit is a real missed call. When VerifyTooCommon is true it
+	// carries a manual-inspect hint instead — the name is too common across
+	// the index for a grep to be useful.
 	VerifyCmd string `json:"verify_cmd,omitempty"`
+	// VerifyTooCommon is true when the name is too common to auto-verify by
+	// grep; VerifyCmd then points at the definition site to inspect manually.
+	VerifyTooCommon bool `json:"verify_too_common,omitempty"`
 }
 
 // DeadCodeMetrics is the observability footer for dead code analysis.

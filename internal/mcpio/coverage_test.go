@@ -69,20 +69,67 @@ func TestBuildDeadCodeResponse(t *testing.T) {
 		t.Errorf("EstimatedFileReadsAvoided = %d, want 2", resp.SenseMetrics.EstimatedFileReadsAvoided)
 	}
 
-	// Every entry carries a ready-to-run verify grep.
-	if got := resp.DeadSymbols[0].VerifyCmd; got != `grep -rFn --exclude-dir=.git --exclude-dir=.sense "Unused" .` {
-		t.Errorf("VerifyCmd = %q, want %q", got, `grep -rFn --exclude-dir=.git --exclude-dir=.sense "Unused" .`)
+	// Every entry carries a call-scoped verify grep that excludes its own
+	// def site, not a bare-text grep.
+	want0 := `grep -rEn --exclude-dir=.git --exclude-dir=.sense "\.Unused" . | grep -vF "./pkg/unused.go:10:"`
+	if got := resp.DeadSymbols[0].VerifyCmd; got != want0 {
+		t.Errorf("VerifyCmd = %q, want %q", got, want0)
 	}
 }
 
-// A predicate name ending in `?` must be emitted as a fixed-string grep so the
-// `?` is matched literally rather than interpreted as a regex quantifier.
-func TestDeadVerifyCmdEscapesPredicate(t *testing.T) {
+// The verify command scopes to CALL syntax (`\.name`), escapes the `?`
+// predicate suffix for the regex engine, and excludes the definition's own
+// file:line — so a surviving hit is a missed call, not the def echoing back.
+func TestDeadVerifyCmd_CallScopedPredicate(t *testing.T) {
+	cmd, tooCommon := deadVerifyCmd("retriable?", "api_error.rb", 7, 3)
+	if tooCommon {
+		t.Fatal("3 occurrences is under the threshold; should not be flagged too common")
+	}
+	want := `grep -rEn --exclude-dir=.git --exclude-dir=.sense "\.retriable\?" . | grep -vF "./api_error.rb:7:"`
+	if cmd != want {
+		t.Errorf("verify cmd = %q, want %q", cmd, want)
+	}
+	// The bare predicate text must NOT appear unanchored — that was the
+	// flood-the-caller bug.
+	if strings.Contains(cmd, `"retriable?"`) {
+		t.Error("verify cmd uses bare-text grep, not call-scoped")
+	}
+}
+
+// The too-common flag flips exactly at the threshold boundary: a name at
+// the threshold still gets a grep; one occurrence past it gets the
+// manual-inspect hint.
+func TestDeadVerifyCmd_TooCommonBoundary(t *testing.T) {
+	atBoundary, tooCommon := deadVerifyCmd("success?", "result.rb", 17, verifyTooCommonThreshold)
+	if tooCommon {
+		t.Errorf("at threshold (%d) should still grep, not flag too common", verifyTooCommonThreshold)
+	}
+	if !strings.HasPrefix(atBoundary, "grep -rEn") {
+		t.Errorf("at-threshold cmd should be a grep, got %q", atBoundary)
+	}
+
+	over, tooCommon := deadVerifyCmd("success?", "result.rb", 17, verifyTooCommonThreshold+1)
+	if !tooCommon {
+		t.Errorf("past threshold (%d) should flag too common", verifyTooCommonThreshold+1)
+	}
+	if strings.HasPrefix(over, "grep") {
+		t.Errorf("too-common cmd should be a manual-inspect hint, not a grep: %q", over)
+	}
+	// The hint points at the def site so the reader can inspect by hand.
+	if !strings.Contains(over, "result.rb:17") {
+		t.Errorf("too-common hint should name the def site, got %q", over)
+	}
+}
+
+// The too-common flag is plumbed onto the wire entry, not just returned
+// from the helper.
+func TestBuildDeadCodeResponse_TooCommonFlag(t *testing.T) {
 	resp := BuildDeadCodeResponse([]dead.Symbol{
-		{Name: "retriable?", Qualified: "ApiError#retriable?", File: "api_error.rb", Kind: "method", Confidence: dead.ConfidencePossibly},
+		{Name: "success?", Qualified: "Result#success?", File: "result.rb", LineStart: 17, Kind: "method",
+			Confidence: dead.ConfidencePossibly, NameOccurrences: verifyTooCommonThreshold + 50},
 	}, 1, nil)
-	if got := resp.DeadSymbols[0].VerifyCmd; got != `grep -rFn --exclude-dir=.git --exclude-dir=.sense "retriable?" .` {
-		t.Errorf("VerifyCmd = %q, want %q", got, `grep -rFn --exclude-dir=.git --exclude-dir=.sense "retriable?" .`)
+	if !resp.DeadSymbols[0].VerifyTooCommon {
+		t.Error("entry for a very common name should set VerifyTooCommon")
 	}
 }
 
