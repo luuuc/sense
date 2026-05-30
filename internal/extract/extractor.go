@@ -124,6 +124,25 @@ const (
 	// (e.g. "i18n:users.show.title"). Emitted as a symbol so semantic search
 	// can surface the view that renders a given piece of copy.
 	PrefixI18n = "i18n:"
+	// PrefixRubyCore qualifies a synthetic stand-in for a Ruby core class
+	// that is never defined in any indexed source file (Struct, Data). A
+	// `CONST = Struct.new(...)` value object emits an `inherits` edge to the
+	// matching synthetic symbol so dead-code analysis can recognise the
+	// value object structurally rather than by a fragile name suffix. The
+	// synthetic stand-in exists only because sense_edges.target_id is NOT
+	// NULL: an `inherits → Struct` edge whose target resolves to nothing is
+	// dropped at write time, so the target must be a real emitted row. These
+	// symbols are plumbing — filtered out of dead-code and search output.
+	PrefixRubyCore = "ruby-core:"
+)
+
+// RubyCoreStruct and RubyCoreData are the qualified names of the synthetic
+// base symbols a Ruby value object inherits from. They live here (not in the
+// ruby package) so the dead package can key its value-object query on the
+// exact same strings the extractor emits, without importing the extractor.
+const (
+	RubyCoreStruct = PrefixRubyCore + "Struct"
+	RubyCoreData   = PrefixRubyCore + "Data"
 )
 
 // StimulusControllerQualified converts a kebab-case Stimulus controller name
