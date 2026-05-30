@@ -64,3 +64,15 @@ func TestIsRouteHelperName(t *testing.T) {
 		}
 	}
 }
+
+// Framework context accessors (request/params/session/…) are never application
+// methods — a bare reference must not emit a self-call that the resolver then
+// binds to a coincidental same-named symbol (e.g. a test fake's #request).
+func TestFrameworkAccessorsNotEmitted(t *testing.T) {
+	r := extractERB(t, `<%= form_with url: request.path, method: :get %><%= params[:q] %>`, "v.erb")
+	for _, bad := range []string{"self.request", "self.params"} {
+		if findEdgeKind(r, bad, model.EdgeCalls) != nil {
+			t.Errorf("framework accessor %q must not be emitted, got %v", bad, erbTargets(r))
+		}
+	}
+}

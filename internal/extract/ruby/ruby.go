@@ -872,6 +872,11 @@ var coreNoiseMethods = map[string]bool{
 	"present?": true, "blank?": true, "nil?": true, "empty?": true,
 	"to_s": true, "to_i": true, "to_a": true, "to_h": true, "to_sym": true,
 	"freeze": true, "dup": true, "clone": true, "presence": true, "call": true,
+	// Object/reflection methods: a bare `x.is_a?` / `x.respond_to?` on an
+	// unknown receiver otherwise binds to a coincidental same-named app symbol
+	// (e.g. a test fake's `#is_a?`). Never a meaningful caller edge.
+	"is_a?": true, "kind_of?": true, "instance_of?": true, "respond_to?": true,
+	"frozen?": true, "itself": true, "inspect": true, "object_id": true,
 }
 
 // unresolvedCall is the emit decision for a call whose receiver type is

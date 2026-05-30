@@ -121,6 +121,12 @@ var erbHelperSkip = map[string]bool{
 	"super": true, "render": true, "t": true, "translate": true,
 	// Turbo/Stimulus DSL helpers handled by the dedicated passes above.
 	"turbo_stream_from": true, "turbo_frame_tag": true,
+	// ActionView / ActionController context accessors. These are framework
+	// objects, never application methods, so a bare reference (request.path,
+	// params[:id]) must not emit a self-call that the resolver then binds to a
+	// coincidental same-named app symbol (e.g. a test fake's #request).
+	"request": true, "response": true, "params": true, "session": true,
+	"cookies": true, "flash": true, "controller": true,
 }
 
 type walker struct {
