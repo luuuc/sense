@@ -1746,6 +1746,50 @@ func (f *failAfterN) Edge(_ extract.EmittedEdge) error {
 	return nil
 }
 
+// nameStreamEmitter also implements DispatchEmitter and MentionEmitter, failing
+// the selected name-stream method. It proves the extractor surfaces a failure
+// from streaming reflective-dispatch names or the broad mention set, rather than
+// swallowing it — the same contract the Symbol/Edge error tests pin.
+type nameStreamEmitter struct {
+	failDispatch bool
+	failMention  bool
+}
+
+func (nameStreamEmitter) Symbol(extract.EmittedSymbol) error { return nil }
+func (nameStreamEmitter) Edge(extract.EmittedEdge) error     { return nil }
+func (e nameStreamEmitter) DispatchName(string) error {
+	if e.failDispatch {
+		return errForced
+	}
+	return nil
+}
+func (e nameStreamEmitter) MentionName(string) error {
+	if e.failMention {
+		return errForced
+	}
+	return nil
+}
+
+func TestDispatchNameEmitErrorRuby(t *testing.T) {
+	// `send(:foo)` produces a dispatch-target name; a DispatchName emit failure
+	// must propagate out of Extract.
+	err := parseWithEmitter(t, "class Foo\n  def go\n    send(:foo)\n  end\nend\n",
+		nameStreamEmitter{failDispatch: true})
+	if err == nil {
+		t.Error("expected error from DispatchName emit to propagate")
+	}
+}
+
+func TestMentionNameEmitErrorRuby(t *testing.T) {
+	// A bare identifier produces a mention; a MentionName emit failure must
+	// propagate out of Extract (dispatch streams cleanly first).
+	err := parseWithEmitter(t, "class Foo\n  def go\n    helper\n  end\nend\n",
+		nameStreamEmitter{failMention: true})
+	if err == nil {
+		t.Error("expected error from MentionName emit to propagate")
+	}
+}
+
 func parseWithEmitter(t *testing.T, src string, emit extract.Emitter) error {
 	t.Helper()
 	ex := Extractor{}

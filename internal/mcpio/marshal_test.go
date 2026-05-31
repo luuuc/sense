@@ -714,6 +714,34 @@ func statusFixture() StatusResponse {
 	}
 }
 
+// TestNormalizeUnreferencedFillsNilSlices pins the wire-shape contract: nil
+// slices normalize to empty arrays so the JSON is stable (`[]`, never `null`)
+// for the consuming agent. The per-group loop is exercised by a PossiblyDead
+// group whose Symbols slice is nil.
+func TestNormalizeUnreferencedFillsNilSlices(t *testing.T) {
+	r := UnreferencedResponse{
+		Unreferenced: UnreferencedSymbols{
+			Dead: nil,
+			PossiblyDead: []PossiblyDeadGroup{{
+				Reason:  ReasonInfo{Code: "ruby_public_method"},
+				Symbols: nil,
+			}},
+		},
+		NextSteps: nil,
+	}
+	normalizeUnreferencedResponse(&r)
+
+	if r.Unreferenced.Dead == nil {
+		t.Error("nil Dead should normalize to a non-nil empty slice")
+	}
+	if r.Unreferenced.PossiblyDead[0].Symbols == nil {
+		t.Error("nil group Symbols should normalize to a non-nil empty slice")
+	}
+	if r.NextSteps == nil {
+		t.Error("nil NextSteps should normalize to a non-nil empty slice")
+	}
+}
+
 func unreferencedFixture() UnreferencedResponse {
 	return UnreferencedResponse{
 		Unreferenced: UnreferencedSymbols{
