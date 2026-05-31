@@ -100,10 +100,14 @@ verdicts rather than a flat "dead" list:
 - **`dead`** — safe to remove. Reserved for the rare symbol Sense can reason
   about *closed-world*: every possible caller is visible to the indexer (e.g. a
   private Ruby method whose name is never a reflection-dispatch target), so a
-  zero-reference result is a real zero, not a gap in the graph. Each still
-  carries a per-symbol `verify` grep — a final cheap check against the live
-  tree, since the index can lag the working copy and a name can be reached
-  through text (a string, `eval`) that no call graph captures.
+  zero-reference result is a real zero, not a gap in the graph. As a soundness
+  guard against an incomplete resolver, `dead` is withheld unless the symbol's
+  bare name is also *mentioned nowhere* in the index it could be an unresolved
+  caller — an inherited bare call, a `**splat`, a chain receiver, or a
+  `validate :sym`-style symbol argument all leave a textual mention that keeps
+  the symbol `possibly_dead` instead. Each `dead` still carries a per-symbol
+  `verify` grep — a final cheap check against the live tree, since the index can
+  lag the working copy.
 - **`possibly_dead`** — unreferenced, but a hidden caller could exist
   (duck-typed dispatch, routes, views, public API, …). The default and
   majority verdict, grouped by reason, each group with a `verify` recipe.

@@ -16,6 +16,25 @@ All notable changes to Sense.
   ships a voice, so all other stacks report `possibly_dead`. This makes a
   confident-but-wrong `dead` impossible on unsupported stacks.
 
+### Fixed
+
+- Dead-code `dead` precision on real-world Ruby. The closed-world proof assumed
+  the resolver binds every call, which is false on a dynamic language (inherited
+  bare calls, `**splat` args, chain receivers, `validate :sym` symbol arguments
+  all go unbound), so live methods were falsely reported `dead` (0.22 precision
+  on a real Rails app). A soundness gate now withholds `dead` unless the symbol's
+  name is absent from a project-wide *mention set* harvested at scan time —
+  mentioned nowhere it could be an unresolved caller. A live-but-unbindable call
+  still leaves a textual mention, so the symbol stays `possibly_dead` (new reason
+  `core_name_mentioned`) instead of becoming a false `dead`. This raised
+  precision to 1.00 on the same app while preserving the genuinely-dead findings.
+  The gate fails closed: if the mention harvest is unavailable (a pre-feature
+  index), no symbol earns `dead` until the next full rescan.
+- `validate :method` custom-validation callbacks now emit a `calls` edge to the
+  named predicate (added to the Rails callback set), so validation methods
+  resolve to their framework caller in `sense_graph`/`sense_blast` instead of
+  reading as unreferenced.
+
 ## [0.43.0] - 2026-05-01
 
 ### Features
