@@ -18,6 +18,13 @@ const (
 	// ReasonReflection marks a symbol whose name is a literal reflection /
 	// metaprogramming dispatch target — reachable dynamically.
 	ReasonReflection = "core_reflection"
+	// ReasonNameMentioned is the soundness-gate reason: the symbol would
+	// otherwise earn `dead`, but its bare name is mentioned somewhere the
+	// resolver could not bind to an edge (an inherited bare call, a `**splat`,
+	// a chain receiver, a `validate :sym` symbol arg) — or the mention harvest
+	// was unavailable. Either way closed-world is not proven, so it stays
+	// open-world. This is what makes `dead` sound against an incomplete resolver.
+	ReasonNameMentioned = "core_name_mentioned"
 
 	// Ruby-voice reason codes (voice_ruby.go owns their catalog specs).
 	ReasonRubyValueObject  = "ruby_value_object"
@@ -73,6 +80,14 @@ var reasonCatalog = map[string]reasonSpec{
 		priority: 30,
 		hint:     "name is a dynamic dispatch target (send/const_get/define_method); grep for it as a symbol/string before removing",
 		verify:   "These names appear as dynamic-dispatch targets. For each, grep for it as a string/symbol literal (send/public_send/const_get/define_method arguments) before removing.",
+	},
+	// Name mentioned where the resolver could not bind it: very likely a real
+	// (just unresolved) caller, so this sorts near the bottom — least likely
+	// to be genuinely removable.
+	ReasonNameMentioned: {
+		priority: 15,
+		hint:     "name appears in a call or symbol position Sense could not bind to this definition; grep for it before removing",
+		verify:   "These names are mentioned somewhere Sense could not resolve to a caller (an inherited bare call, a `**splat`, a chain receiver, or a `validate :sym`/`delegate`-style symbol argument). For each, grep the repo for its bare name and as a `:symbol` before removing.",
 	},
 }
 

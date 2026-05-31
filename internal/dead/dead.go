@@ -165,6 +165,7 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 		Frameworks:           frameworks,
 		IsLibrary:            !hasMain,
 		DispatchNames:        readDispatchNames(ctx, db),
+		MentionedNames:       readMentionedNames(ctx, db),
 		ValueObjectClassIDs:  valueObjectClassIDs,
 		IncludedModuleIDs:    includedModuleIDs,
 		ControllerConcernIDs: controllerConcernIDs,
@@ -706,15 +707,34 @@ func readFrameworks(ctx context.Context, db *sql.DB) map[string]struct{} {
 // corrupt value yields an empty set — degrading to recall loss, never a crash
 // or a false `dead`.
 func readDispatchNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readNameSetMeta(ctx, db, "dispatch_names")
+}
+
+// readMentionedNames returns the project-wide broad mention set persisted to
+// sense_meta by the scan layer (every identifier/symbol token except definition
+// names). The arbiter's soundness gate earns `dead` only when a candidate's
+// name is absent from a NON-EMPTY mention set — mentioned nowhere a hidden
+// caller could be. An absent or corrupt value yields an empty set, which the
+// gate treats as "harvest unavailable, cannot prove closed-world" and blocks
+// `dead` entirely (fail-closed toward caution). This is the opposite default
+// from dispatch_names: there an empty set only loses recall, here it would
+// re-admit false `dead`, so the gate refuses rather than risk the lie.
+func readMentionedNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readNameSetMeta(ctx, db, "mentioned_names")
+}
+
+// readNameSetMeta reads a JSON string-array sense_meta value into a set,
+// treating an absent or corrupt value as empty.
+func readNameSetMeta(ctx context.Context, db *sql.DB, key string) map[string]struct{} {
 	out := map[string]struct{}{}
 	var raw string
-	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = 'dispatch_names'`).Scan(&raw)
+	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = ?`, key).Scan(&raw)
 	if err != nil || raw == "" {
 		return out
 	}
 	var names []string
 	if err := json.Unmarshal([]byte(raw), &names); err != nil {
-		log.Printf("dead: corrupt dispatch_names meta: %v", err)
+		log.Printf("dead: corrupt %s meta: %v", key, err)
 		return out
 	}
 	for _, n := range names {

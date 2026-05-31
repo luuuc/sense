@@ -81,6 +81,13 @@ type Facts struct {
 	// whose name is in this set could be invoked dynamically. Populated from
 	// sense_meta at scan time (see the Ruby visibility card).
 	DispatchNames map[string]struct{}
+	// MentionedNames is the broad set of every bare name the code mentions —
+	// every identifier/symbol token except definition names. It drives the
+	// arbiter's soundness gate: a candidate earns `dead` only when its name is
+	// absent from this set (mentioned nowhere a hidden caller could be) AND the
+	// set is non-empty (proving the harvest ran). This makes `dead` sound even
+	// where the resolver could not bind every call. Populated from sense_meta.
+	MentionedNames map[string]struct{}
 	// InterfaceIDs are symbol IDs of interfaces; a method whose parent is one
 	// is part of a contract and reachable through any implementor.
 	InterfaceIDs map[int64]struct{}
@@ -166,6 +173,33 @@ func (a *Arbiter) decideOne(s Symbol, f Facts) Finding {
 	// closed-world and must stay honest.
 	if _, ok := a.langVoices[s.Language]; !ok {
 		r := newReason(ReasonNoLanguageVoice)
+		return Finding{Symbol: s, Verdict: VerdictPossiblyDead, Reason: &r}
+	}
+
+	// Soundness gate. A language voice's closed-world proof rests on "zero
+	// resolved incoming edges == no caller", which is only true if the resolver
+	// bound every call — and on a dynamic language it does not (inherited bare
+	// calls, `**splat`s, chain receivers, `validate :sym` symbol args all go
+	// unbound). So `dead` is earned only when the candidate's bare name is
+	// absent from the broad mention set: mentioned nowhere a hidden caller could
+	// be. A live-but-unbindable call still left a textual mention, which keeps
+	// the symbol open-world instead of falsely dead.
+	//
+	// An empty mention set fails closed: it means the harvest was unavailable
+	// (a pre-feature index or corrupt meta), so the gate cannot prove the name
+	// is unmentioned and stays honest. The gate assumes the mention harvest ran
+	// over the same tree the candidates came from — its soundness depends on
+	// that coupling, so a partial-tree harvest must not be trusted here.
+	//
+	// NOTE (per-language scope): the mention set is project-GLOBAL, not
+	// per-language. With only the Ruby voice registered this is correct, because
+	// every name that could reach a Ruby symbol is harvested from Ruby files. A
+	// future language voice (Go/TS/…) MUST ship its own mention harvest before
+	// its symbols may earn `dead` here — otherwise it would earn `dead` off
+	// another language's mentions. TestSoundnessGateIsRubyOnlyToday pins this.
+	_, mentioned := f.MentionedNames[s.Name]
+	if len(f.MentionedNames) == 0 || mentioned {
+		r := newReason(ReasonNameMentioned)
 		return Finding{Symbol: s, Verdict: VerdictPossiblyDead, Reason: &r}
 	}
 	return Finding{Symbol: s, Verdict: VerdictDead}

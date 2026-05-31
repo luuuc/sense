@@ -98,7 +98,10 @@ func TestArbiterEarnedDeadForPrivate(t *testing.T) {
 	priv := rubySym("orphan", "Report#orphan", "method", "private", id(1))
 	pub := rubySym("render", "Report#render", "method", "public", id(1))
 
-	got := a.Decide([]Symbol{priv, pub}, Facts{})
+	// The soundness gate needs a non-empty mention set that does not contain
+	// "orphan" to prove the private method is mentioned nowhere a caller could be.
+	f := Facts{MentionedNames: map[string]struct{}{"render": {}}}
+	got := a.Decide([]Symbol{priv, pub}, f)
 	if got[0].Verdict != VerdictDead {
 		t.Errorf("private orphan verdict = %q, want dead", got[0].Verdict)
 	}
@@ -121,5 +124,90 @@ func TestArbiterReflectionKeepsPrivateAlive(t *testing.T) {
 	}
 	if got[0].Reason.Code != ReasonReflection {
 		t.Errorf("reason = %q, want %q", got[0].Reason.Code, ReasonReflection)
+	}
+}
+
+// TestSoundnessGateMentionedNameStaysPossiblyDead proves the soundness gate:
+// a private method no voice flags, which would otherwise earn `dead`, stays
+// possibly_dead when its bare name is mentioned somewhere the resolver could
+// not bind (an inherited bare call, a `**splat`, a chain receiver, a
+// `validate :sym` symbol arg). This is the maket false-dead class (a live
+// `validate :amount_meets_minimum_threshold` predicate) made into a unit.
+func TestSoundnessGateMentionedNameStaysPossiblyDead(t *testing.T) {
+	a := NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
+	priv := rubySym("amount_meets_minimum_threshold",
+		"PayoutRequestForm#amount_meets_minimum_threshold", "method", "private", id(1))
+
+	// The name is mentioned (as a `validate :sym` symbol arg the resolver did
+	// not bind to a caller edge), so the gate keeps it open-world.
+	f := Facts{MentionedNames: map[string]struct{}{
+		"amount_meets_minimum_threshold": {},
+		"other":                          {},
+	}}
+	got := a.Decide([]Symbol{priv}, f)
+	if got[0].Verdict != VerdictPossiblyDead {
+		t.Fatalf("mentioned private verdict = %q, want possibly_dead", got[0].Verdict)
+	}
+	if got[0].Reason == nil || got[0].Reason.Code != ReasonNameMentioned {
+		t.Errorf("reason = %+v, want %q", got[0].Reason, ReasonNameMentioned)
+	}
+}
+
+// TestSoundnessGateIsRubyOnlyToday is the per-language tripwire. The mention set
+// is project-GLOBAL, but only Ruby has both a voice and a mention harvest today,
+// so only Ruby symbols may earn `dead`. A non-Ruby symbol must NOT earn `dead`
+// off the global (Ruby-derived) mention set, even when its name is absent from
+// that set. This assertion fails the day a second language voice is registered
+// without its own mention harvest — at which point that voice's symbols would
+// start earning `dead` here off another language's mentions, forcing the
+// harvest question. See decideOne's per-language NOTE.
+func TestSoundnessGateIsRubyOnlyToday(t *testing.T) {
+	a := defaultArbiter()
+	goSym := sym("UnusedGoFunc", "go")
+	// Populated mention set that does NOT contain the Go symbol's name.
+	f := Facts{MentionedNames: map[string]struct{}{"some_ruby_name": {}}}
+
+	got := a.Decide([]Symbol{goSym}, f)
+	if got[0].Verdict != VerdictPossiblyDead {
+		t.Fatalf("non-Ruby symbol earned %q off the global mention set — a new "+
+			"language voice needs its own mention harvest before earning dead", got[0].Verdict)
+	}
+}
+
+// TestSoundnessGateDemotesNameCollision pins the recall trade-off: the broad
+// mention gate is name-based, so a genuinely-dead private method whose name
+// COLLIDES with any unrelated token used elsewhere is demoted to possibly_dead.
+// This is intentional — the safe direction for a trust feature — and pinned
+// here so it is a designed property, not an accident.
+func TestSoundnessGateDemotesNameCollision(t *testing.T) {
+	a := NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
+	priv := rubySym("process", "Worker#process", "method", "private", id(1))
+	// `process` is mentioned elsewhere (an unrelated local/call). The gate cannot
+	// tell it apart from Worker#process, so it stays cautious.
+	f := Facts{MentionedNames: map[string]struct{}{"process": {}, "other": {}}}
+
+	got := a.Decide([]Symbol{priv}, f)
+	if got[0].Verdict != VerdictPossiblyDead {
+		t.Fatalf("name-collision verdict = %q, want possibly_dead (recall trade-off)", got[0].Verdict)
+	}
+	if got[0].Reason == nil || got[0].Reason.Code != ReasonNameMentioned {
+		t.Errorf("reason = %+v, want %q", got[0].Reason, ReasonNameMentioned)
+	}
+}
+
+// TestSoundnessGateEmptySetFailsClosed proves the fail-closed default: when the
+// mention harvest is unavailable (an empty set — a pre-feature index or corrupt
+// meta), the gate cannot prove the name is unmentioned, so it refuses `dead`
+// rather than risk re-admitting a false one.
+func TestSoundnessGateEmptySetFailsClosed(t *testing.T) {
+	a := NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
+	priv := rubySym("orphan", "Report#orphan", "method", "private", id(1))
+
+	got := a.Decide([]Symbol{priv}, Facts{}) // no MentionedNames
+	if got[0].Verdict != VerdictPossiblyDead {
+		t.Fatalf("empty-mention-set verdict = %q, want possibly_dead (fail-closed)", got[0].Verdict)
+	}
+	if got[0].Reason == nil || got[0].Reason.Code != ReasonNameMentioned {
+		t.Errorf("reason = %+v, want %q", got[0].Reason, ReasonNameMentioned)
 	}
 }

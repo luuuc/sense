@@ -31,7 +31,10 @@ func TestArbiterTwoSidedGate(t *testing.T) {
 	voice := fakeVoice{lang: "ruby", code: ReasonReflection, raiseFor: map[string]struct{}{"flagged": {}}}
 	a := NewArbiter(voice)
 
-	got := a.Decide([]Symbol{sym("flagged", "ruby"), sym("clean", "ruby")}, Facts{})
+	// A non-empty mention set that does NOT contain "clean" lets the soundness
+	// gate prove "clean" is mentioned nowhere a hidden caller could be.
+	f := Facts{MentionedNames: map[string]struct{}{"flagged": {}}}
+	got := a.Decide([]Symbol{sym("flagged", "ruby"), sym("clean", "ruby")}, f)
 
 	if got[0].Verdict != VerdictPossiblyDead {
 		t.Errorf("flagged symbol: got %q, want possibly_dead", got[0].Verdict)
