@@ -72,8 +72,11 @@ type Voice interface {
 type Facts struct {
 	// Frameworks is the set of detected frameworks (e.g. "Rails").
 	Frameworks map[string]struct{}
-	// IsLibrary is true when the project has no main entry point, so its
-	// public symbols may be consumed by code outside the indexed tree.
+	// IsLibrary is true when the tree has no application entry point — no main
+	// function AND no detected framework — so its public symbols may be an API
+	// surface consumed from outside. A framework application (Rails, etc.) has
+	// no main yet is not a library: its public methods are internal, so a
+	// detected framework makes IsLibrary false. See buildFacts.
 	IsLibrary bool
 	// DispatchNames is the set of literal names that appear as reflection /
 	// metaprogramming dispatch targets (send/public_send/__send__/
