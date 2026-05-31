@@ -942,16 +942,20 @@ func (a *Adapter) Query(ctx context.Context, f index.Filter) ([]model.Symbol, er
 	return out, nil
 }
 
-// SymbolRefs returns every symbol's (id, qualified, file_id) ordered
-// by ascending id. It exists so resolution passes that build an
-// in-memory qualified-name index can avoid hydrating Snippet /
-// Docstring / Visibility fields that they immediately discard — about
-// a 5× reduction in bytes loaded on a real-sized repo. The ascending
-// id guarantee lets callers build multi-value maps without a
-// follow-up sort: the first id under each key is deterministically
-// the earliest written.
+// SymbolRefs returns every symbol's (id, qualified, file_id, receiver,
+// language) ordered by ascending id. It exists so resolution passes that build
+// an in-memory qualified-name index can avoid hydrating Snippet / Docstring /
+// Visibility fields that they immediately discard — about a 5× reduction in
+// bytes loaded on a real-sized repo. The ascending id guarantee lets callers
+// build multi-value maps without a follow-up sort: the first id under each key
+// is deterministically the earliest written. The language is left-joined from
+// sense_files so the resolver can gate cross-language bare-name matches; a
+// symbol whose file row is missing returns an empty language.
 func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
-	const q = `SELECT id, qualified, file_id, receiver FROM sense_symbols ORDER BY id ASC`
+	const q = `SELECT s.id, s.qualified, s.file_id, s.receiver, COALESCE(f.language, '')
+		FROM sense_symbols s
+		LEFT JOIN sense_files f ON f.id = s.file_id
+		ORDER BY s.id ASC`
 	rows, err := a.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite SymbolRefs: %w", err)
@@ -961,7 +965,7 @@ func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
 	var refs []model.SymbolRef
 	for rows.Next() {
 		var r model.SymbolRef
-		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Receiver); err != nil {
+		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Receiver, &r.Language); err != nil {
 			return nil, fmt.Errorf("sqlite SymbolRefs scan: %w", err)
 		}
 		refs = append(refs, r)

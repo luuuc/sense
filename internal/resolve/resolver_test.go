@@ -481,3 +481,118 @@ func TestResolveImplicitSelfReachesInstanceConcernMethod(t *testing.T) {
 		t.Errorf("SymbolID = %d, want 1 (CurrencyContext#current_currency)", r.SymbolID)
 	}
 }
+
+func TestResolveDropsCodeToCodeCrossLanguageFallback(t *testing.T) {
+	// A Ruby file's bare `application` call must not bind to a JS symbol named
+	// `application` (the Stimulus entrypoint). Cross-language code-to-code
+	// bare-name matches are coincidences, so the edge drops to unresolved.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "StripeClient#charge", FileID: 10, Language: "ruby"},
+		{ID: 2, Qualified: "application", FileID: 60, Language: "javascript"},
+	}
+	ix := resolve.NewIndex(rs)
+	// `Rails.application` misses exact lookup, so resolution falls back to the
+	// leaf `application`, whose only candidate is the JS symbol. The language
+	// gate must drop it (Ruby source, JS candidate) so the edge stays unresolved
+	// rather than becoming a cross-language phantom.
+	_, ok := ix.Resolve(resolve.Request{
+		Target:         "Rails.application",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10, // ruby file
+		BaseConfidence: 1.0,
+	})
+	if ok {
+		t.Error("expected no resolution: a Ruby source must not bind a same-named JS symbol")
+	}
+}
+
+func TestResolveKeepsSameLanguageFallback(t *testing.T) {
+	// Ruby → Ruby bare-name fallback is the intended path and must survive the
+	// language gate, keeping the 0.8 ambiguous clamp.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "A#caller", FileID: 10, Language: "ruby"},
+		{ID: 2, Qualified: "Helpers.format_money", FileID: 11, Language: "ruby"},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "x.format_money",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected ruby→ruby fallback to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+	if r.Confidence != 0.8 {
+		t.Errorf("Confidence = %v, want 0.8 (same-language `.` fallback not demoted)", r.Confidence)
+	}
+}
+
+func TestResolveViewSourceKeepsCrossLanguageHelperCall(t *testing.T) {
+	// An ERB template calling a Ruby helper (`current_user`) by bare name is a
+	// legitimate cross-language view edge. The gate is OFF for view-language
+	// sources, so it must still resolve. Symbol id 2 anchors the erb file's
+	// language so fileLang[50] == "erb".
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "ApplicationController#current_user", FileID: 11, Language: "ruby", Receiver: extract.ReceiverInstance},
+		{ID: 2, Qualified: "turbo-frame:cart", FileID: 50, Language: "erb"},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "current_user",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   50, // erb template
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 1 {
+		t.Fatalf("expected erb→ruby helper edge to id 1, got id=%d ok=%v", r.SymbolID, ok)
+	}
+}
+
+func TestResolveViewSourceKeepsCrossLanguageStimulusCall(t *testing.T) {
+	// The headline case from the report: an ERB template referencing a Stimulus
+	// JS controller by bare name (data-controller="photo-upload"). The source is
+	// a view language, so the gate is OFF and the cross-language ERB→JS edge must
+	// survive. Symbol id 2 anchors the erb file's language so fileLang[50]=="erb".
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "PhotoUploadController", FileID: 60, Language: "javascript"},
+		{ID: 2, Qualified: "turbo-frame:cart", FileID: 50, Language: "erb"},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "x.PhotoUploadController",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   50, // erb template
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 1 {
+		t.Fatalf("expected erb→js Stimulus edge to id 1, got id=%d ok=%v", r.SymbolID, ok)
+	}
+}
+
+func TestResolveCrossNamespaceColonColonDemotedBelowFloor(t *testing.T) {
+	// `Stripe::Checkout::Session` misses exact lookup; only its leaf `Session`
+	// matches an unrelated `User::Session`. Binding the leaf while discarding an
+	// unverified namespace is a guess, so it lands below blast's 0.5 floor even
+	// as a single match (it still counts for dead-code liveness).
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "StripeClient#charge", FileID: 10, Language: "ruby"},
+		{ID: 2, Qualified: "User::Session", FileID: 11, Language: "ruby"},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Stripe::Checkout::Session",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected leaf fallback to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 (cross-namespace :: guess below blast floor)", r.Confidence)
+	}
+	if r.Ambiguous {
+		t.Error("single match should not be flagged ambiguous")
+	}
+}
