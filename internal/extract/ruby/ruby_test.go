@@ -455,6 +455,27 @@ end
 	}
 }
 
+func TestValidateCallbackEdge(t *testing.T) {
+	// `validate :method` is a custom-validation callback: it must emit a calls
+	// edge to the predicate so the method does not read as zero-edge (and thus
+	// falsely dead). A block-form `validate do ... end` carries no symbol and
+	// must emit no spurious edge.
+	r := parseRuby(t, `class PayoutRequestForm
+  validate :amount_meets_minimum_threshold
+  validate do
+    errors.add(:base, "x")
+  end
+
+  private
+
+  def amount_meets_minimum_threshold; end
+end
+`)
+	if findEdge(r, "PayoutRequestForm", "amount_meets_minimum_threshold", "calls") == nil {
+		t.Error("missing calls edge PayoutRequestForm -> amount_meets_minimum_threshold from validate")
+	}
+}
+
 func TestMultipleCallbackArgs(t *testing.T) {
 	r := parseRuby(t, `class Order
   before_action :authenticate, :authorize
