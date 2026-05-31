@@ -98,7 +98,7 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 	// RunGraph for the cancellation-deferred-to-01-05 rationale.
 	ctx := context.Background()
 
-	paths, err := GitDiffFiles(ctx, cio.Dir, opts.Diff)
+	hunks, err := GitDiffHunks(ctx, cio.Dir, opts.Diff)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
@@ -110,7 +110,7 @@ func runBlastDiff(cio IO, opts blastOptions) int {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	symbolIDs, err := SymbolsInFiles(ctx, adapter.DB(), paths)
+	symbolIDs, err := SymbolsInChangedLines(ctx, adapter.DB(), hunks)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError

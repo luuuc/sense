@@ -183,9 +183,11 @@ func TestResolveReceiverRewriteSkippedWithoutParent(t *testing.T) {
 
 func TestResolveUnqualifiedFallbackForCalls(t *testing.T) {
 	ix := resolve.NewIndex(refs())
-	// Bare `Sprintf` doesn't exist as a qualified name but `fmt.Sprintf`
-	// does, and its unqualified segment is `Sprintf`. The fallback
-	// fires for calls, with confidence clamped to 0.8.
+	// `whatever.Sprintf` misses exact lookup; only its leaf `Sprintf` matches
+	// `fmt.Sprintf`. The fallback fires for calls edges (the point of this
+	// test), but `whatever` is not an indexed receiver type, so binding the
+	// leaf is an unverified cross-scope guess: confidence lands below blast's
+	// floor while the edge still resolves for dead-code liveness.
 	r, ok := ix.Resolve(resolve.Request{
 		Target:         "whatever.Sprintf",
 		Kind:           model.EdgeCalls,
@@ -198,8 +200,8 @@ func TestResolveUnqualifiedFallbackForCalls(t *testing.T) {
 	if r.SymbolID != 9 {
 		t.Errorf("SymbolID = %d, want 9 (fmt.Sprintf)", r.SymbolID)
 	}
-	if r.Confidence != 0.8 {
-		t.Errorf("Confidence = %v, want 0.8", r.Confidence)
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 (unverified receiver prefix demoted)", r.Confidence)
 	}
 }
 
@@ -217,8 +219,8 @@ func TestResolveUnqualifiedFallbackForTests(t *testing.T) {
 	if r.SymbolID != 9 {
 		t.Errorf("SymbolID = %d, want 9 (fmt.Sprintf)", r.SymbolID)
 	}
-	if r.Confidence != 0.8 {
-		t.Errorf("Confidence = %v, want 0.8", r.Confidence)
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 (unverified receiver prefix demoted)", r.Confidence)
 	}
 }
 
@@ -506,25 +508,125 @@ func TestResolveDropsCodeToCodeCrossLanguageFallback(t *testing.T) {
 	}
 }
 
-func TestResolveKeepsSameLanguageFallback(t *testing.T) {
-	// Ruby → Ruby bare-name fallback is the intended path and must survive the
-	// language gate, keeping the 0.8 ambiguous clamp.
+func TestResolveKeepsFallbackWhenReceiverTypeIsIndexed(t *testing.T) {
+	// The inheritance case the demotion must NOT break: `Child#describe` misses
+	// exact lookup because `describe` is defined on its parent, but `Child` is
+	// an indexed type, so an inherited (or reopened) method is plausible. The
+	// leaf bind keeps the 0.8 ambiguous clamp rather than being demoted.
 	rs := []model.SymbolRef{
-		{ID: 1, Qualified: "A#caller", FileID: 10, Language: "ruby"},
-		{ID: 2, Qualified: "Helpers.format_money", FileID: 11, Language: "ruby"},
+		{ID: 1, Qualified: "Child", FileID: 10, Language: "ruby"},
+		{ID: 2, Qualified: "Parent#describe", FileID: 11, Language: "ruby", Receiver: extract.ReceiverInstance},
 	}
 	ix := resolve.NewIndex(rs)
 	r, ok := ix.Resolve(resolve.Request{
-		Target:         "x.format_money",
+		Target:         "Child#describe",
 		Kind:           model.EdgeCalls,
 		SourceFileID:   10,
 		BaseConfidence: 1.0,
 	})
 	if !ok || r.SymbolID != 2 {
-		t.Fatalf("expected ruby→ruby fallback to id 2, got id=%d ok=%v", r.SymbolID, ok)
+		t.Fatalf("expected fallback to id 2 (Parent#describe), got id=%d ok=%v", r.SymbolID, ok)
 	}
 	if r.Confidence != 0.8 {
-		t.Errorf("Confidence = %v, want 0.8 (same-language `.` fallback not demoted)", r.Confidence)
+		t.Errorf("Confidence = %v, want 0.8 (indexed receiver type — inherited method kept)", r.Confidence)
+	}
+}
+
+func TestResolveDemotesBareUnresolvedGuess(t *testing.T) {
+	// A Ruby call on an unknown receiver (`x.body`) is emitted bare at
+	// ConfidenceUnresolved. Its only same-named match is a coincidental test
+	// method. With no receiver type to verify, the bare guess must land below
+	// blast's floor — it still resolves for dead-code liveness.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Hub2Client#post", FileID: 10, Language: "ruby"},
+		{ID: 2, Qualified: "TranslationServiceTest.body", FileID: 20, Language: "ruby", Receiver: extract.ReceiverSingleton},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "body",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: extract.ConfidenceUnresolved,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected bare fallback to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 (bare unresolved guess demoted)", r.Confidence)
+	}
+}
+
+func TestResolveDemotesFallbackWhenReceiverTypeIsExternal(t *testing.T) {
+	// The headline residual bug: a rescue variable typed to an external gem
+	// class — `Stripe::StripeError#message` — misses exact lookup (the gem is
+	// not indexed) and its leaf `message` binds to a coincidental same-named
+	// test method. The receiver type is not indexed, so this is an unverified
+	// cross-type guess and must land below blast's floor while still resolving.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "StripeClient#charge", FileID: 10, Language: "ruby"},
+		{ID: 2, Qualified: "TranslationServiceTest.message", FileID: 20, Language: "ruby", Receiver: extract.ReceiverSingleton},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Stripe::StripeError#message",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: extract.ConfidenceDynamic,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected leaf fallback to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 (external receiver type — cross-type guess demoted)", r.Confidence)
+	}
+}
+
+func TestResolveDemotesReceiverKindContradiction(t *testing.T) {
+	// Even when the receiver type IS indexed, a dispatch-kind contradiction is
+	// evidence of a wrong bind: an instance call `Widget#size` whose only
+	// same-named candidate is a singleton method cannot be that method. It
+	// resolves (the set is kept as a tie-break) but is demoted below the floor.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Widget", FileID: 10, Language: "ruby"},
+		{ID: 2, Qualified: "Catalog.size", FileID: 11, Language: "ruby", Receiver: extract.ReceiverSingleton},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Widget#size",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected fallback to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 (instance call vs singleton-only candidate demoted)", r.Confidence)
+	}
+}
+
+func TestResolveViewSourceKeepsReceiverDispatchFallback(t *testing.T) {
+	// View templates dispatch into helpers loosely, so the receiver-dispatch
+	// demotion is off for view-language sources (mirroring the language gate's
+	// view carve-out). An ERB source's `helper.format` keeps base confidence
+	// even though `helper` is not an indexed type. Symbol id 2 anchors the erb
+	// file's language so fileLang[50] == "erb".
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "MoneyHelper.format", FileID: 11, Language: "ruby", Receiver: extract.ReceiverSingleton},
+		{ID: 2, Qualified: "turbo-frame:cart", FileID: 50, Language: "erb"},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "helper.format",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   50,
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 1 {
+		t.Fatalf("expected erb→ruby fallback to id 1, got id=%d ok=%v", r.SymbolID, ok)
+	}
+	if r.Confidence != 0.8 {
+		t.Errorf("Confidence = %v, want 0.8 (view source exempt from receiver-dispatch demotion)", r.Confidence)
 	}
 }
 
