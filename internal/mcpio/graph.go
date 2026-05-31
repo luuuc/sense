@@ -347,13 +347,36 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 					hidden++
 					continue
 				}
+				sym := qualifiedOrName(e.Target)
 				fp := fileRefOrNil(e.Target.FileID, files)
+				lineStart, lineEnd := e.Target.LineStart, e.Target.LineEnd
+				if e.Target.ID == 0 {
+					// The source didn't resolve to an indexed symbol, so the
+					// LEFT-joined source columns are empty. In practice this is a
+					// view-origin edge — a template (ERB data-controller /
+					// data-action / render / i18n) calling into the subject — but
+					// the branch fires for ANY unresolved-source calls/references
+					// edge. The edge's own file id always points at the true
+					// emitting file, so surface it (and the call-site line) instead
+					// of a blank {symbol:"", file:null} stub. Note this means
+					// Symbol may carry a file path rather than a qualified name for
+					// such callers.
+					if path, ok := files(e.Edge.FileID); ok {
+						sym = path
+						fp = fileRefOrNil(e.Edge.FileID, files)
+						// An unresolved target already carries zero lines; lift the
+						// edge's own call-site line when it has one.
+						if e.Edge.Line != nil {
+							lineStart, lineEnd = *e.Edge.Line, *e.Edge.Line
+						}
+					}
+				}
 				edges.CalledBy = append(edges.CalledBy, CallEdgeRef{
-					Symbol:     qualifiedOrName(e.Target),
+					Symbol:     sym,
 					File:       fp,
-					LineStart:  e.Target.LineStart,
-					LineEnd:    e.Target.LineEnd,
-					Ref:        FormatRefPtr(fp, e.Target.LineStart),
+					LineStart:  lineStart,
+					LineEnd:    lineEnd,
+					Ref:        FormatRefPtr(fp, lineStart),
 					Confidence: Confidence(e.Edge.Confidence),
 					CallSite:   readSnippet(e),
 				})

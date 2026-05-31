@@ -3,6 +3,7 @@ package mcpio
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/luuuc/sense/internal/model"
@@ -161,6 +162,110 @@ func TestBuildGraphResponseComposesEdges(t *testing.T) {
 	}
 	if resp.Edges.Composes[0].File == nil {
 		t.Error("Composes[0].File = nil, want non-nil")
+	}
+}
+
+func TestBuildGraphResponseViewOriginInboundEdgeSurfacesTemplate(t *testing.T) {
+	// A Stimulus controller's inbound calls originate in ERB templates whose
+	// source is not a named symbol (source_id == 0), so the LEFT-joined source
+	// columns come back empty. The edge's own file id carries the template, so
+	// the caller must surface the template path instead of a blank
+	// {symbol:"", file:null} stub.
+	const erbFileID = 7
+	const tmpl = "app/views/marketplace/photo_upload/_form.html.erb"
+	files := func(id int64) (string, bool) {
+		if id == erbFileID {
+			return tmpl, true
+		}
+		return "", false
+	}
+	const callLine = 12
+	line := callLine
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{ID: 1, Name: "PhotoUploadController", Qualified: "Marketplace::PhotoUploadController", Kind: "class", FileID: 1},
+		File:   model.File{Path: "app/javascript/controllers/marketplace/photo_upload_controller.js"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 0.9, FileID: erbFileID, Line: &line},
+				Target: model.Symbol{ID: 0}, // unresolved view source
+			},
+		},
+	}
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	got := resp.Edges.CalledBy[0]
+	if got.Symbol != tmpl {
+		t.Errorf("Symbol = %q, want template path %q", got.Symbol, tmpl)
+	}
+	if got.File == nil || *got.File != tmpl {
+		t.Errorf("File = %v, want %q", got.File, tmpl)
+	}
+	// The call-site line is half of "where is this used?" — it must be lifted
+	// from the edge onto the recovered ref, including the formatted Ref.
+	if got.LineStart != callLine || got.LineEnd != callLine {
+		t.Errorf("LineStart/LineEnd = %d/%d, want %d/%d", got.LineStart, got.LineEnd, callLine, callLine)
+	}
+	wantRef := tmpl + ":" + strconv.Itoa(callLine)
+	if got.Ref != wantRef {
+		t.Errorf("Ref = %q, want %q", got.Ref, wantRef)
+	}
+}
+
+func TestBuildGraphResponseViewOriginInboundEdgeWithoutLine(t *testing.T) {
+	// A view-origin edge whose call site carries no line (e.Edge.Line == nil)
+	// still recovers the template path; the line fields stay zero rather than
+	// inheriting stale values from the unresolved target.
+	const erbFileID = 7
+	const tmpl = "app/views/marketplace/photo_upload/_index.html.erb"
+	files := func(id int64) (string, bool) {
+		if id == erbFileID {
+			return tmpl, true
+		}
+		return "", false
+	}
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{ID: 1, Qualified: "Marketplace::PhotoUploadController", Kind: "class", FileID: 1},
+		File:   model.File{Path: "app/javascript/controllers/marketplace/photo_upload_controller.js"},
+		Inbound: []model.EdgeRef{
+			{
+				Edge:   model.Edge{Kind: model.EdgeCalls, Confidence: 0.9, FileID: erbFileID}, // Line nil
+				Target: model.Symbol{ID: 0},
+			},
+		},
+	}
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	got := resp.Edges.CalledBy[0]
+	if got.Symbol != tmpl || got.File == nil || *got.File != tmpl {
+		t.Errorf("want template path recovered, got symbol=%q file=%v", got.Symbol, got.File)
+	}
+	if got.LineStart != 0 || got.LineEnd != 0 {
+		t.Errorf("LineStart/LineEnd = %d/%d, want 0/0 (no call-site line)", got.LineStart, got.LineEnd)
+	}
+}
+
+func TestBuildGraphResponseUnresolvedInboundWithoutFileStaysBlank(t *testing.T) {
+	// Guard: when the source is unresolved AND the edge's file id is unknown,
+	// keep the prior (blank) behavior rather than crashing.
+	files := func(int64) (string, bool) { return "", false }
+	sc := &model.SymbolContext{
+		Symbol: model.Symbol{ID: 1, Qualified: "X", Kind: "class"},
+		File:   model.File{Path: "x.js"},
+		Inbound: []model.EdgeRef{
+			{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.9, FileID: 99}, Target: model.Symbol{ID: 0}},
+		},
+	}
+	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
+	if len(resp.Edges.CalledBy) != 1 {
+		t.Fatalf("CalledBy = %d, want 1", len(resp.Edges.CalledBy))
+	}
+	if resp.Edges.CalledBy[0].Symbol != "" || resp.Edges.CalledBy[0].File != nil {
+		t.Errorf("want blank stub when no file to recover, got symbol=%q file=%v",
+			resp.Edges.CalledBy[0].Symbol, resp.Edges.CalledBy[0].File)
 	}
 }
 
