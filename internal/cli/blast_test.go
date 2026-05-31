@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +21,9 @@ import (
 // richer caller graph so the direct/indirect/tests sections all
 // populate. Shape:
 //
-//   OrdersController#create → CheckoutService
-//   WebhookJob#process      → OrdersController#create   (indirect → CheckoutService)
-//   CheckoutServiceTest     → CheckoutService            (tests edge)
+//	OrdersController#create → CheckoutService
+//	WebhookJob#process      → OrdersController#create   (indirect → CheckoutService)
+//	CheckoutServiceTest     → CheckoutService            (tests edge)
 func seedBlastProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -280,10 +281,12 @@ func seedBlastGitProject(t *testing.T) (dir, pastRef string) {
 	}
 
 	run("init", "--quiet", "-b", "main")
-	// First commit: empty source file matching the indexed path so
-	// the working tree matches the file paths sense already knows.
+	// First commit: source files matching the indexed paths so the working
+	// tree matches the paths sense already knows. The CheckoutService file is
+	// padded past the indexed symbol's span (lines 12-85) so the second
+	// commit's edit lands *inside* that span — diff-blast now seeds by changed
+	// line range, not whole file, so the edit must overlap the symbol.
 	for _, rel := range []string{
-		"app/services/checkout_service.rb",
 		"app/controllers/orders_controller.rb",
 		"app/jobs/webhook_job.rb",
 		"test/services/checkout_service_test.rb",
@@ -296,19 +299,41 @@ func seedBlastGitProject(t *testing.T) (dir, pastRef string) {
 			t.Fatalf("write: %v", err)
 		}
 	}
+	checkout := filepath.Join(dir, "app/services/checkout_service.rb")
+	if err := os.MkdirAll(filepath.Dir(checkout), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	v1 := checkoutServiceBody("original")
+	if err := os.WriteFile(checkout, []byte(v1), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
 	run("add", ".")
 	run("commit", "--quiet", "-m", "v1")
 
-	// Second commit: edit the CheckoutService file so HEAD~1..HEAD
-	// shows it as changed.
-	changed := filepath.Join(dir, "app/services/checkout_service.rb")
-	if err := os.WriteFile(changed, []byte("# v2\n"), 0o644); err != nil {
+	// Second commit: edit a line within the CheckoutService span (12-85) so
+	// HEAD~1..HEAD shows the symbol's body as changed.
+	if err := os.WriteFile(checkout, []byte(checkoutServiceBody("edited")), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	run("add", changed)
+	run("add", checkout)
 	run("commit", "--quiet", "-m", "v2")
 
 	return dir, "HEAD~1"
+}
+
+// checkoutServiceBody builds a 90-line file whose body covers the indexed
+// CheckoutService span (lines 12-85). The marker is placed at line 40, well
+// inside the span, so editing it produces a hunk that overlaps the symbol.
+func checkoutServiceBody(marker string) string {
+	var b strings.Builder
+	for i := 1; i <= 90; i++ {
+		if i == 40 {
+			fmt.Fprintf(&b, "  # body %d (%s)\n", i, marker)
+			continue
+		}
+		fmt.Fprintf(&b, "  # body %d\n", i)
+	}
+	return b.String()
 }
 
 func TestRunBlastDiffHuman(t *testing.T) {
@@ -400,7 +425,7 @@ func TestRunBlastDiffEmptyWhenNoIndexedFiles(t *testing.T) {
 // git's complaint when the ref doesn't resolve. Uses the tempdir
 // from seedBlastProject which is not a git repo — so `git diff`
 // fails at the "not a git repository" level, exercising the
-// gitDiffFiles error path.
+// GitDiffHunks error path.
 func TestRunBlastDiffBadRefErrors(t *testing.T) {
 	dir := seedBlastProject(t)
 	var stdout, stderr bytes.Buffer

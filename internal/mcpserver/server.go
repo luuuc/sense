@@ -1139,12 +1139,12 @@ func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Op
 }
 
 func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
-	paths, err := cli.GitDiffFiles(ctx, h.dir, ref)
+	hunks, err := cli.GitDiffHunks(ctx, h.dir, ref)
 	if err != nil {
 		return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: %w", err)
 	}
 
-	symbolIDs, err := cli.SymbolsInFiles(ctx, h.db, paths)
+	symbolIDs, err := cli.SymbolsInChangedLines(ctx, h.db, hunks)
 	if err != nil {
 		return mcpio.BlastResponse{}, fmt.Errorf("sense_blast: %w", err)
 	}

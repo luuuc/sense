@@ -107,8 +107,10 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //     unqualified-name match via byName. Candidates in a different code
 //     language than the source are dropped (filterByLanguage); same
 //     scope preference applies; confidence is clamped to
-//     ambiguousConfidence, and a `::`-qualified target that matched only
-//     its leaf is demoted below blast's floor as a cross-namespace guess.
+//     ambiguousConfidence. A qualified target that matched only its leaf
+//     (the namespace or receiver type was discarded) is demoted below
+//     blast's floor as an unverified cross-scope guess unless the
+//     qualifier can be verified — see isUnverifiedCrossScope.
 //  4. No match ⇒ ok=false.
 func (ix *Index) Resolve(req Request) (Result, bool) {
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)
@@ -136,7 +138,7 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 			}
 			matches := ix.byName[name]
 			matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
-			matches = filterByReceiver(matches, sep)
+			matches, receiverContradicted := filterByReceiver(matches, sep)
 			if len(matches) > 0 {
 				r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
 				if r.Confidence > ambiguousConfidence {
@@ -149,13 +151,14 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 					// it still counts for dead-code liveness.
 					r.Confidence = nameCollisionConfidence
 				}
-				if sep == "::" && r.Confidence > nameCollisionConfidence {
-					// A `::`-qualified target that missed exact lookup and matched
-					// only its trailing segment is a cross-namespace guess: the leaf
-					// bound but the namespace we couldn't verify was discarded
-					// (`Stripe::Checkout::Session` ⇒ a local `User::Session`). Demote
-					// below blast's floor even on a single match, so impact analysis
-					// ignores it while it still counts for dead-code liveness.
+				if r.Confidence > nameCollisionConfidence &&
+					ix.isUnverifiedCrossScope(target, name, sep, req.SourceFileID, req.BaseConfidence, receiverContradicted) {
+					// The leaf bound but the qualifier (namespace or receiver type)
+					// could not be verified — a cross-scope guess such as
+					// `Stripe::StripeError#message` landing on a same-named test
+					// method. Demote below blast's floor even on a single match, so
+					// impact analysis ignores it while it still counts for dead-code
+					// liveness. See isUnverifiedCrossScope for the per-separator rule.
 					r.Confidence = nameCollisionConfidence
 				}
 				return r, true
@@ -164,6 +167,48 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 	}
 
 	return Result{}, false
+}
+
+// isUnverifiedCrossScope reports whether a successful unqualified-fallback
+// match is a cross-scope guess that resolution could not verify, and so must
+// be demoted below blast's floor. The fallback only runs after exact lookup
+// missed, so a qualified target (sep != "") here matched on its trailing leaf
+// alone — the qualifier (namespace or receiver type) was discarded.
+//
+//   - Bare target (sep ""): no qualifier to verify. A bare call the extractor
+//     emitted with confidence above ConfidenceUnresolved is trustworthy — a
+//     Go/Python top-level function (base 1.0) resolves legitimately by name. A
+//     bare call emitted *at* ConfidenceUnresolved means the extractor could not
+//     determine the receiver type at all (Ruby's `x.m` with unknown `x`), so
+//     binding the leaf to a coincidental same-named symbol is a guess.
+//   - "::" namespace: the full path already missed exact lookup, so the
+//     namespace cannot be confirmed to contain this leaf
+//     (`Stripe::Checkout::Session` landing on a local `User::Session`). Always
+//     a guess.
+//   - "#"/"." receiver dispatch: verifiable only if the receiver type itself
+//     is an indexed symbol — then an inherited or reopened method is plausible
+//     (`Child#m` resolving to `Parent#m`). An external or unknown receiver type
+//     (a gem class like `Stripe::StripeError`, a stdlib package) is a
+//     coincidence, as is a dispatch kind that contradicted every candidate.
+//
+// View-language sources are exempt from the receiver-dispatch check: templates
+// dispatch into helpers and controllers loosely by leaf name, mirroring
+// filterByLanguage's view carve-out.
+func (ix *Index) isUnverifiedCrossScope(target, leaf, sep string, srcFileID int64, baseConfidence float64, receiverContradicted bool) bool {
+	switch sep {
+	case "":
+		return baseConfidence <= extract.ConfidenceUnresolved
+	case "::":
+		return true
+	}
+	if isViewLanguage(ix.fileLang[srcFileID]) {
+		return false
+	}
+	if receiverContradicted {
+		return true
+	}
+	prefix := strings.TrimSuffix(target, sep+leaf)
+	return len(ix.byQualified[prefix]) == 0
 }
 
 // pickBest selects a winner among one or more candidates. A single
@@ -281,11 +326,13 @@ func unqualifiedNameSep(qualified string) (name, sep string) {
 // always kept, so resolution for languages that don't populate receiver is
 // unchanged. If filtering would remove every candidate, the original set is
 // returned rather than dropping the edge — the dispatch hint is a tie-break,
-// not a hard gate.
-func filterByReceiver(matches []model.SymbolRef, sep string) []model.SymbolRef {
+// not a hard gate — and the second return value reports that contradiction so
+// the caller can demote the result: an instance call that finds only singleton
+// candidates (or vice-versa) is a kind-mismatched guess, not a confident edge.
+func filterByReceiver(matches []model.SymbolRef, sep string) (kept []model.SymbolRef, contradicted bool) {
 	want := receiverForSeparator(sep)
 	if want == "" {
-		return matches
+		return matches, false
 	}
 	declared := false
 	for _, m := range matches {
@@ -295,18 +342,18 @@ func filterByReceiver(matches []model.SymbolRef, sep string) []model.SymbolRef {
 		}
 	}
 	if !declared {
-		return matches
+		return matches, false
 	}
-	kept := make([]model.SymbolRef, 0, len(matches))
+	kept = make([]model.SymbolRef, 0, len(matches))
 	for _, m := range matches {
 		if m.Receiver == "" || m.Receiver == want {
 			kept = append(kept, m)
 		}
 	}
 	if len(kept) == 0 {
-		return matches
+		return matches, true
 	}
-	return kept
+	return kept, false
 }
 
 // receiverForSeparator maps a call separator to the dispatch kind it implies:

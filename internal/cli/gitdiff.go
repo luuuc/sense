@@ -6,31 +6,39 @@ import (
 	"database/sql"
 	"fmt"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 )
 
-// gitDiffFiles runs `git diff --name-only <ref>` inside dir and
-// returns the paths it prints. One path per line, blanks skipped.
-// Errors fire for: not a git repo, bad ref, git exec failure — the
-// underlying stderr message is preserved so the CLI can surface
-// git's actual complaint ("bad revision 'foo'") instead of a
-// generic wrapper.
+// LineRange is an inclusive [Start, End] span of 1-based line numbers in a
+// file's post-diff (new) state.
+type LineRange struct {
+	Start int
+	End   int
+}
+
+// GitDiffHunks runs `git diff -U0 <ref>` inside dir and returns, per changed
+// file path, the line ranges that the diff touched in the file's new state.
+// Seeding a diff-blast from these ranges scopes it to the symbols that overlap
+// a change, rather than every symbol in a touched file — so a one-line edit to
+// a 400-symbol routes file no longer drags all 400 into the blast.
 //
-// The ref argument is passed as a positional arg to argv, not
-// through a shell — no quoting concerns, no injection surface.
-// `--end-of-options` precedes the ref so a ref starting with `-`
-// cannot be interpreted as a git option. Defence-in-depth against
-// an untrusted caller (future MCP server, git hook, CI job) passing
-// e.g. `--upload-pack=...` as a "ref." Available since git 2.24.
-func GitDiffFiles(ctx context.Context, dir, ref string) ([]string, error) {
-	// Pre-check git availability so a missing binary produces a
-	// clear "git not in PATH" error instead of an opaque
-	// exec.ErrNotFound wrapped in the generic git-diff message. A
-	// user on a system without git sees the cause, not the symptom.
+// Zero context (`-U0`) keeps each hunk tight to its edited lines. Paths are the
+// new-side (`+++ b/<path>`) names with the `b/` prefix stripped, matching the
+// repo-relative paths stored in sense_files. Pure deletions (`+++ /dev/null`)
+// contribute no ranges — the symbols are gone from the index anyway.
+//
+// The git invocation is hardened: git is located via LookPath for a clear
+// error, the ref is passed positionally after `--end-of-options` so a ref
+// starting with `-` cannot be read as an option (defence-in-depth against an
+// untrusted caller passing e.g. `--upload-pack=...`; available since git
+// 2.24), and git's own stderr is preserved on failure.
+func GitDiffHunks(ctx context.Context, dir, ref string) (map[string][]LineRange, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil, fmt.Errorf("sense blast --diff requires git in PATH: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "--end-of-options", ref)
+	cmd := exec.CommandContext(ctx, "git", "diff", "-U0", "--end-of-options", ref)
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -42,27 +50,99 @@ func GitDiffFiles(ctx context.Context, dir, ref string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("git diff %s: %s", ref, msg)
 	}
-	var paths []string
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		if p := strings.TrimSpace(line); p != "" {
-			paths = append(paths, p)
-		}
-	}
-	return paths, nil
+	return parseDiffHunks(stdout.String()), nil
 }
 
-// symbolsInFiles returns symbol ids for every sense_symbols row
-// whose file's path is in paths. Unindexed paths (docs, YAML,
-// anything Sense has no extractor for) are silently absent from
-// the result — a diff that touches only Markdown produces an
-// empty blast, not an error.
+// parseDiffHunks turns unified-diff text (as produced by `git diff -U0`) into
+// the per-file changed line ranges. It tracks the current file from `+++`
+// header lines and reads each `@@ -a,b +c,d @@` hunk's new-side span.
+func parseDiffHunks(diff string) map[string][]LineRange {
+	hunks := make(map[string][]LineRange)
+	current := ""
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++ "):
+			current = newFilePath(line)
+		case strings.HasPrefix(line, "@@ ") && current != "":
+			if r, ok := newSideRange(line); ok {
+				hunks[current] = append(hunks[current], r)
+			}
+		}
+	}
+	return hunks
+}
+
+// newFilePath extracts the repo-relative path from a `+++ b/<path>` header.
+// `+++ /dev/null` (a deletion) yields "" so its hunks are skipped — the file's
+// symbols no longer exist in the index. A leading `a/` or `b/` prefix is
+// stripped to match the paths stored in sense_files.
+func newFilePath(header string) string {
+	p := strings.TrimPrefix(header, "+++ ")
+	if p == "/dev/null" {
+		return ""
+	}
+	// Trailing tab-separated metadata (rare, e.g. timestamps) is dropped.
+	if i := strings.IndexByte(p, '\t'); i >= 0 {
+		p = p[:i]
+	}
+	p = strings.TrimPrefix(p, "b/")
+	p = strings.TrimPrefix(p, "a/")
+	return p
+}
+
+// newSideRange parses the new-side span from a hunk header
+// `@@ -oldStart,oldCount +newStart,newCount @@`. newCount defaults to 1 when
+// omitted. A pure deletion (newCount 0) is widened to the two lines bracketing
+// the gap so the enclosing symbol is still caught.
+func newSideRange(header string) (LineRange, bool) {
+	for _, field := range strings.Fields(header) {
+		if !strings.HasPrefix(field, "+") {
+			continue
+		}
+		spec := strings.TrimPrefix(field, "+")
+		startStr, countStr, hasCount := strings.Cut(spec, ",")
+		start, err := strconv.Atoi(startStr)
+		if err != nil {
+			return LineRange{}, false
+		}
+		count := 1
+		if hasCount {
+			count, err = strconv.Atoi(countStr)
+			if err != nil {
+				return LineRange{}, false
+			}
+		}
+		if start < 1 {
+			start = 1
+		}
+		if count == 0 {
+			// Deletion: the change sits between new-side lines start and start+1.
+			// Cover both so a removal inside a symbol still seeds that symbol.
+			return LineRange{Start: start, End: start + 1}, true
+		}
+		return LineRange{Start: start, End: start + count - 1}, true
+	}
+	return LineRange{}, false
+}
+
+// SymbolsInChangedLines returns the ids of symbols whose line span overlaps a
+// changed hunk range in their file. It is the line-granular seed selector for
+// diff-blast: only symbols touched by the diff are returned, not every symbol
+// in a touched file.
 //
-// The query chunks on SQLITE_MAX_VARIABLE_NUMBER (999) so a diff
-// covering hundreds of files stays in one pass of small queries.
-func SymbolsInFiles(ctx context.Context, db *sql.DB, paths []string) ([]int64, error) {
-	if len(paths) == 0 {
+// The query chunks paths on SQLITE_MAX_VARIABLE_NUMBER headroom (500). Overlap
+// is computed in Go against the per-file ranges; ids are returned ascending for
+// deterministic downstream ordering.
+func SymbolsInChangedLines(ctx context.Context, db *sql.DB, hunks map[string][]LineRange) ([]int64, error) {
+	if len(hunks) == 0 {
 		return nil, nil
 	}
+	paths := make([]string, 0, len(hunks))
+	for p := range hunks {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
 	var ids []int64
 	const chunk = 500
 	for start := 0; start < len(paths); start += chunk {
@@ -73,26 +153,32 @@ func SymbolsInFiles(ctx context.Context, db *sql.DB, paths []string) ([]int64, e
 		batch := paths[start:end]
 		placeholders := strings.Repeat("?,", len(batch))
 		placeholders = placeholders[:len(placeholders)-1]
-		q := `SELECT s.id
+		q := `SELECT s.id, f.path, s.line_start, s.line_end
 		      FROM sense_symbols s
 		      JOIN sense_files   f ON f.id = s.file_id
-		      WHERE f.path IN (` + placeholders + `)
-		      ORDER BY s.id`
+		      WHERE f.path IN (` + placeholders + `)`
 		args := make([]any, len(batch))
 		for i, p := range batch {
 			args[i] = p
 		}
 		rows, err := db.QueryContext(ctx, q, args...)
 		if err != nil {
-			return nil, fmt.Errorf("symbols in files: %w", err)
+			return nil, fmt.Errorf("symbols in changed lines: %w", err)
 		}
 		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
+			var (
+				id        int64
+				path      string
+				lineStart int
+				lineEnd   int
+			)
+			if err := rows.Scan(&id, &path, &lineStart, &lineEnd); err != nil {
 				_ = rows.Close()
-				return nil, fmt.Errorf("scan symbol id: %w", err)
+				return nil, fmt.Errorf("scan symbol row: %w", err)
 			}
-			ids = append(ids, id)
+			if overlapsAny(lineStart, lineEnd, hunks[path]) {
+				ids = append(ids, id)
+			}
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -100,5 +186,22 @@ func SymbolsInFiles(ctx context.Context, db *sql.DB, paths []string) ([]int64, e
 		}
 		_ = rows.Close()
 	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	return ids, nil
+}
+
+// overlapsAny reports whether the inclusive symbol span [symStart, symEnd]
+// intersects any of the changed line ranges. A symbol with an unknown end
+// (symEnd < symStart, e.g. a zero line_end) is treated as the single line
+// symStart so it can still match.
+func overlapsAny(symStart, symEnd int, ranges []LineRange) bool {
+	if symEnd < symStart {
+		symEnd = symStart
+	}
+	for _, r := range ranges {
+		if r.Start <= symEnd && symStart <= r.End {
+			return true
+		}
+	}
+	return false
 }
