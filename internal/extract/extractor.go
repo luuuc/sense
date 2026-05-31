@@ -249,6 +249,35 @@ type Emitter interface {
 	Edge(EmittedEdge) error
 }
 
+// DispatchEmitter is an optional Emitter extension for streaming the literal
+// names a file reflectively dispatches on (the symbol/string arguments to
+// send/public_send/__send__/define_method/respond_to?/method/const_get and
+// the receiver of constantize). An extractor that detects such names probes
+// for this interface with a type assertion; an Emitter that does not
+// implement it simply receives no dispatch names. The names feed a
+// project-global set in sense_meta so the dead-code arbiter can keep a
+// reflectively-reachable symbol open-world instead of falsely calling it
+// dead. Returning an error aborts extraction like the core Emitter methods.
+type DispatchEmitter interface {
+	DispatchName(name string) error
+}
+
+// MentionEmitter is an optional Emitter extension for streaming every bare
+// name a file *mentions* — every identifier or symbol-literal token that
+// appears in any position other than a definition's own name. Unlike
+// DispatchEmitter (a small, targeted reflection set), this is the broad set:
+// the project-global union feeds the dead-code arbiter's soundness gate, which
+// earns `dead` for a symbol only when its name is mentioned nowhere it could be
+// an unresolved caller. This makes `dead` robust to resolver incompleteness —
+// a live-but-unbindable call (an inherited bare call, a `**splat`, a chain
+// receiver, a `validate :sym` symbol arg) still leaves a textual mention, so
+// the symbol stays open-world instead of being falsely called dead. An
+// extractor probes for this interface with a type assertion; an Emitter that
+// does not implement it simply receives no mention names.
+type MentionEmitter interface {
+	MentionName(name string) error
+}
+
 // Extractor walks a parsed tree and emits symbols + edges for one language.
 // Implementations are stateless — the same instance handles every file in
 // that language. Any per-file state lives on the call stack.

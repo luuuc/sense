@@ -121,20 +121,6 @@ func MarshalSearchCompact(r SearchResponse) ([]byte, error) {
 	return marshalCompact(r)
 }
 
-// MarshalDeadCode renders a DeadCodeResponse with the same
-// normalization + pretty-print contract as MarshalGraph.
-func MarshalDeadCode(r DeadCodeResponse) ([]byte, error) {
-	normalizeDeadCodeResponse(&r)
-	return marshalPretty(r)
-}
-
-// MarshalDeadCodeCompact is MarshalDeadCode's compact-JSON sibling for
-// MCP transport.
-func MarshalDeadCodeCompact(r DeadCodeResponse) ([]byte, error) {
-	normalizeDeadCodeResponse(&r)
-	return marshalCompact(r)
-}
-
 // marshalPretty is the shared CLI encoder: SetEscapeHTML(false) keeps
 // identifier characters like `<`, `>`, `&` literal so goldens pin the
 // documented examples byte-for-byte. Two-space indent matches the
@@ -322,10 +308,35 @@ func normalizeStatusResponse(r *StatusResponse) {
 	}
 }
 
-// normalizeDeadCodeResponse fills the slice fields on DeadCodeResponse.
-func normalizeDeadCodeResponse(r *DeadCodeResponse) {
-	if r.DeadSymbols == nil {
-		r.DeadSymbols = []DeadSymbolEntry{}
+
+// MarshalUnreferenced renders an UnreferencedResponse with the shared
+// CLI pretty-print contract.
+func MarshalUnreferenced(r UnreferencedResponse) ([]byte, error) {
+	normalizeUnreferencedResponse(&r)
+	return marshalPretty(r)
+}
+
+// MarshalUnreferencedCompact is MarshalUnreferenced's compact-JSON sibling
+// for MCP transport.
+func MarshalUnreferencedCompact(r UnreferencedResponse) ([]byte, error) {
+	normalizeUnreferencedResponse(&r)
+	return marshalCompact(r)
+}
+
+// normalizeUnreferencedResponse fills every slice on UnreferencedResponse and
+// its nested groups so the wire always emits `[]` rather than `null` for an
+// empty list (the "Sense looked, found nothing" invariant).
+func normalizeUnreferencedResponse(r *UnreferencedResponse) {
+	if r.Unreferenced.Dead == nil {
+		r.Unreferenced.Dead = []DeadEntry{}
+	}
+	if r.Unreferenced.PossiblyDead == nil {
+		r.Unreferenced.PossiblyDead = []PossiblyDeadGroup{}
+	}
+	for i := range r.Unreferenced.PossiblyDead {
+		if r.Unreferenced.PossiblyDead[i].Symbols == nil {
+			r.Unreferenced.PossiblyDead[i].Symbols = []PossiblyDeadSymbol{}
+		}
 	}
 	if r.NextSteps == nil {
 		r.NextSteps = []NextStep{}

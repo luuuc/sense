@@ -586,11 +586,13 @@ func TestResponseCapsNextSteps(t *testing.T) {
 }
 
 func TestDeadCodeHintsWithDead(t *testing.T) {
-	resp := mcpio.DeadCodeResponse{
-		DeadCount: 3,
-		DeadSymbols: []mcpio.DeadSymbolEntry{
-			{Symbol: "Order", Qualified: "model.Order", File: "internal/model/order.go"},
-			{Symbol: "Unused", Qualified: "pkg.Unused", File: "internal/pkg/unused.go"},
+	resp := mcpio.UnreferencedResponse{
+		DeadCount: 2,
+		Unreferenced: mcpio.UnreferencedSymbols{
+			Dead: []mcpio.DeadEntry{
+				{Qualified: "model.Order", File: "internal/model/order.go"},
+				{Qualified: "pkg.Unused", File: "internal/pkg/unused.go"},
+			},
 		},
 	}
 	hints := deadCodeHints(resp)
@@ -606,9 +608,11 @@ func TestDeadCodeHintsWithDead(t *testing.T) {
 }
 
 func TestDeadCodeHintsEmpty(t *testing.T) {
-	resp := mcpio.DeadCodeResponse{
-		DeadCount:   0,
-		DeadSymbols: []mcpio.DeadSymbolEntry{},
+	resp := mcpio.UnreferencedResponse{
+		DeadCount: 0,
+		Unreferenced: mcpio.UnreferencedSymbols{
+			Dead: []mcpio.DeadEntry{},
+		},
 	}
 	hints := deadCodeHints(resp)
 	if hints != nil {
@@ -617,13 +621,15 @@ func TestDeadCodeHintsEmpty(t *testing.T) {
 }
 
 func TestDeadCodeHintsCountMismatch(t *testing.T) {
-	resp := mcpio.DeadCodeResponse{
-		DeadCount:   5,
-		DeadSymbols: []mcpio.DeadSymbolEntry{},
+	resp := mcpio.UnreferencedResponse{
+		DeadCount: 5,
+		Unreferenced: mcpio.UnreferencedSymbols{
+			Dead: []mcpio.DeadEntry{},
+		},
 	}
 	hints := deadCodeHints(resp)
 	if hints != nil {
-		t.Fatalf("want nil hints when DeadSymbols is empty despite DeadCount>0, got %d", len(hints))
+		t.Fatalf("want nil hints when Dead is empty despite DeadCount>0, got %d", len(hints))
 	}
 }
 

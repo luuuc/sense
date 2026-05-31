@@ -75,7 +75,7 @@ func TestMarshalBlastRoundTrip(t *testing.T) {
 		AffectedViaComposition: []BlastCaller{},
 		AffectedViaIncludes:    []BlastCaller{},
 		References:             BlastTierSummary{Count: 0, Examples: []BlastCaller{}},
-		NextSteps: []NextStep{},
+		NextSteps:              []NextStep{},
 	}
 
 	raw, err := MarshalBlast(in)
@@ -214,18 +214,20 @@ func TestResponseOmitsMetrics(t *testing.T) {
 		t.Errorf("conventions response should not contain sense_metrics:\n%s", convBytes)
 	}
 
-	dc := DeadCodeResponse{
-		DeadSymbols:  []DeadSymbolEntry{{Symbol: "W", Qualified: "W", File: "w.go", Kind: "function"}},
+	dc := UnreferencedResponse{
+		Unreferenced: UnreferencedSymbols{
+			Dead: []DeadEntry{{Qualified: "W", File: "w.go", Kind: "function", Verify: "grep W"}},
+		},
 		TotalSymbols: 100,
 		DeadCount:    1,
 		SenseMetrics: DeadCodeMetrics{SymbolsAnalyzed: 100, EstimatedFileReadsAvoided: 1, EstimatedTokensSaved: 800},
 	}
-	dcBytes, err := MarshalDeadCode(dc)
+	dcBytes, err := MarshalUnreferenced(dc)
 	if err != nil {
-		t.Fatalf("MarshalDeadCode: %v", err)
+		t.Fatalf("MarshalUnreferenced: %v", err)
 	}
 	if strings.Contains(string(dcBytes), "sense_metrics") {
-		t.Errorf("dead code response should not contain sense_metrics:\n%s", dcBytes)
+		t.Errorf("unreferenced response should not contain sense_metrics:\n%s", dcBytes)
 	}
 }
 
@@ -294,8 +296,8 @@ func TestMarshalLineNumbers(t *testing.T) {
 	t.Run("blast response includes line numbers", func(t *testing.T) {
 		in := BlastResponse{
 			Symbol:      "User#email_verified?",
-			Risk:         "medium",
-			RiskFactors:  []string{"4 direct callers"},
+			Risk:        "medium",
+			RiskFactors: []string{"4 direct callers"},
 			DirectCallers: []BlastCaller{
 				{Symbol: "SessionsController#create", File: filePath, LineStart: 12, LineEnd: 24},
 			},
@@ -308,7 +310,7 @@ func TestMarshalLineNumbers(t *testing.T) {
 			AffectedViaComposition: []BlastCaller{},
 			AffectedViaIncludes:    []BlastCaller{},
 			References:             BlastTierSummary{Count: 0, Examples: []BlastCaller{}},
-			NextSteps:             []NextStep{},
+			NextSteps:              []NextStep{},
 		}
 		raw, err := MarshalBlast(in)
 		if err != nil {
@@ -325,11 +327,11 @@ func TestMarshalLineNumbers(t *testing.T) {
 
 	t.Run("zero line numbers are omitted", func(t *testing.T) {
 		in := BlastResponse{
-			Symbol:         "X",
-			Risk:           "low",
-			RiskFactors:    []string{"1 direct caller"},
-			DirectCallers:  []BlastCaller{{Symbol: "Y", File: "y.rb"}},
-			NextSteps:      []NextStep{},
+			Symbol:        "X",
+			Risk:          "low",
+			RiskFactors:   []string{"1 direct caller"},
+			DirectCallers: []BlastCaller{{Symbol: "Y", File: "y.rb"}},
+			NextSteps:     []NextStep{},
 		}
 		raw, err := MarshalBlast(in)
 		if err != nil {
@@ -398,28 +400,6 @@ func TestSearchScoreMarshalJSON(t *testing.T) {
 		if string(got) != tt.expect {
 			t.Errorf("SearchScore(%v).MarshalJSON = %q, want %q", tt.score, got, tt.expect)
 		}
-	}
-}
-
-func TestMarshalDeadCodeEmpty(t *testing.T) {
-	resp := DeadCodeResponse{
-		DeadSymbols:  []DeadSymbolEntry{},
-		TotalSymbols: 0,
-		DeadCount:    0,
-	}
-	raw, err := MarshalDeadCode(resp)
-	if err != nil {
-		t.Fatalf("MarshalDeadCode: %v", err)
-	}
-	s := string(raw)
-	if !strings.Contains(s, `"dead_symbols": []`) {
-		t.Errorf("expected dead_symbols: [] in output:\n%s", s)
-	}
-	if !strings.Contains(s, `"total_symbols": 0`) {
-		t.Errorf("expected total_symbols: 0 in output:\n%s", s)
-	}
-	if !strings.Contains(s, `"dead_count": 0`) {
-		t.Errorf("expected dead_count: 0 in output:\n%s", s)
 	}
 }
 
@@ -494,7 +474,7 @@ func TestMarshalGraphWithDispatchInferred(t *testing.T) {
 
 func TestMarshalGraphWithTestCallerSummary(t *testing.T) {
 	resp := GraphResponse{
-		Symbol:       GraphSymbol{Name: "X", Qualified: "X", File: "x.go", Kind: "class"},
+		Symbol:            GraphSymbol{Name: "X", Qualified: "X", File: "x.go", Kind: "class"},
 		TestCallerSummary: &TestCallerSummary{Count: 5, Examples: []string{"spec/a_spec.rb", "test/b_test.rb"}},
 	}
 	raw, err := MarshalGraph(resp)
@@ -509,9 +489,9 @@ func TestMarshalGraphWithTestCallerSummary(t *testing.T) {
 
 // TestMarshalCompactEquivalence covers pitch 25-05 pattern 1:
 // for every Marshal*Compact variant, the compact bytes must
-//   1. decode back to a Go value equal to the pretty bytes' decode,
-//   2. shrink relative to the pretty bytes on a non-trivial fixture,
-//   3. contain no JSON indentation whitespace ("\n  ").
+//  1. decode back to a Go value equal to the pretty bytes' decode,
+//  2. shrink relative to the pretty bytes on a non-trivial fixture,
+//  3. contain no JSON indentation whitespace ("\n  ").
 //
 // The decoded-equality check is the load-bearing one: it proves the
 // MCP wire change is semantically invisible to consumers.
@@ -564,10 +544,10 @@ func TestMarshalCompactEquivalence(t *testing.T) {
 			into:    func() any { return &StatusResponse{} },
 		},
 		{
-			name:    "dead_code",
-			pretty:  func() ([]byte, error) { return MarshalDeadCode(deadCodeFixture()) },
-			compact: func() ([]byte, error) { return MarshalDeadCodeCompact(deadCodeFixture()) },
-			into:    func() any { return &DeadCodeResponse{} },
+			name:    "unreferenced",
+			pretty:  func() ([]byte, error) { return MarshalUnreferenced(unreferencedFixture()) },
+			compact: func() ([]byte, error) { return MarshalUnreferencedCompact(unreferencedFixture()) },
+			into:    func() any { return &UnreferencedResponse{} },
 		},
 		{
 			name:    "conventions",
@@ -734,11 +714,47 @@ func statusFixture() StatusResponse {
 	}
 }
 
-func deadCodeFixture() DeadCodeResponse {
-	return DeadCodeResponse{
-		DeadSymbols:  []DeadSymbolEntry{{Symbol: "Old", Qualified: "pkg.Old", File: "pkg/old.go", LineStart: 1, LineEnd: 5, Kind: "function", Confidence: "high"}},
-		TotalSymbols: 100,
-		DeadCount:    1,
+// TestNormalizeUnreferencedFillsNilSlices pins the wire-shape contract: nil
+// slices normalize to empty arrays so the JSON is stable (`[]`, never `null`)
+// for the consuming agent. The per-group loop is exercised by a PossiblyDead
+// group whose Symbols slice is nil.
+func TestNormalizeUnreferencedFillsNilSlices(t *testing.T) {
+	r := UnreferencedResponse{
+		Unreferenced: UnreferencedSymbols{
+			Dead: nil,
+			PossiblyDead: []PossiblyDeadGroup{{
+				Reason:  ReasonInfo{Code: "ruby_public_method"},
+				Symbols: nil,
+			}},
+		},
+		NextSteps: nil,
+	}
+	normalizeUnreferencedResponse(&r)
+
+	if r.Unreferenced.Dead == nil {
+		t.Error("nil Dead should normalize to a non-nil empty slice")
+	}
+	if r.Unreferenced.PossiblyDead[0].Symbols == nil {
+		t.Error("nil group Symbols should normalize to a non-nil empty slice")
+	}
+	if r.NextSteps == nil {
+		t.Error("nil NextSteps should normalize to a non-nil empty slice")
+	}
+}
+
+func unreferencedFixture() UnreferencedResponse {
+	return UnreferencedResponse{
+		Unreferenced: UnreferencedSymbols{
+			Dead: []DeadEntry{{Qualified: "pkg.Old", File: "pkg/old.go", Line: 1, Kind: "function", Verify: "grep Old"}},
+			PossiblyDead: []PossiblyDeadGroup{{
+				Reason:  ReasonInfo{Code: "ruby_public_method", Hint: "public method; grep call sites"},
+				Verify:  "grep each name",
+				Symbols: []PossiblyDeadSymbol{{Qualified: "pkg.Maybe", File: "pkg/maybe.rb", Line: 3, Kind: "method"}},
+			}},
+		},
+		TotalSymbols:      100,
+		DeadCount:         1,
+		PossiblyDeadCount: 1,
 	}
 }
 

@@ -48,7 +48,6 @@ type Symbol struct {
 	LineEnd    int
 	ParentID   *int64
 	Visibility string
-	Confidence string
 	// NameOccurrences estimates how common this symbol's bare name is
 	// across the index — symbols sharing the name plus resolved edges
 	// pointing at a symbol of that name. The verify-command builder uses
@@ -59,10 +58,12 @@ type Symbol struct {
 }
 
 type Result struct {
-	Dead         []Symbol
+	// Findings are the classified zero-reference symbols: each carries a
+	// verdict (dead / possibly_dead) and, for possibly_dead, the open-world
+	// reason. The arbiter produces these from the candidate set.
+	Findings     []Finding
 	TotalSymbols int
-	// Frameworks are the detected project frameworks (e.g. "Rails"),
-	// used to tailor the blind-spot caveat to the right ecosystem.
+	// Frameworks are the detected project frameworks (e.g. "Rails").
 	Frameworks []string
 }
 
@@ -81,6 +82,13 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: query candidates: %w", err)
 	}
 
+	// Structural-correctness filters (kept from the old pipeline): these
+	// remove symbols that are provably NOT dead by construction — an
+	// interface method with a live implementor, a container whose children
+	// are alive, a genuine entry point (main/test/constructor). The
+	// judgement-call exclusions (library API, framework hooks, controller
+	// actions) are gone; the arbiter's voices now express those as honest
+	// open-world reasons instead of silently dropping the symbol.
 	ifaceAlive, err := sqlite.InterfaceAliveMethods(ctx, db)
 	if err != nil {
 		return Result{}, fmt.Errorf("dead: interface alive methods: %w", err)
@@ -92,76 +100,75 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("dead: query tests targets: %w", err)
 	}
 
-	interfaceIDs, err := queryInterfaceIDs(ctx, db)
-	if err != nil {
-		return Result{}, fmt.Errorf("dead: query interface IDs: %w", err)
-	}
-
-	frameworks := readFrameworks(ctx, db)
-	hasMain, err := hasMainFunction(ctx, db, opts)
-	if err != nil {
-		return Result{}, err
-	}
-	isLibrary := !hasMain
-	interfaceMethodNames, err := queryInterfaceMethodNames(ctx, db)
-	if err != nil {
-		return Result{}, fmt.Errorf("dead: query interface method names: %w", err)
-	}
-
 	liveContainers, err := findLiveContainers(ctx, db, candidates)
 	if err != nil {
 		return Result{}, fmt.Errorf("dead: live containers: %w", err)
 	}
 	candidates = excludeIDs(candidates, liveContainers)
 
-	implementorIDs, err := queryInterfaceImplementors(ctx, db)
+	candidates = excludeEntryPoints(candidates, entryPointFilters{testsTargets: testsTargets})
+
+	// Collapse parent-child before classifying: a dead class with dead
+	// methods reports as the class alone.
+	candidates = Rollup(candidates)
+
+	// Gather the index facts the voices read, then classify every candidate
+	// through the open/closed-world arbiter.
+	facts, err := buildFacts(ctx, db)
 	if err != nil {
-		return Result{}, fmt.Errorf("dead: interface implementors: %w", err)
+		return Result{}, err
 	}
+	findings := defaultArbiter().Decide(candidates, facts)
 
-	controllerConcernIDs, err := queryControllerConcernModuleIDs(ctx, db)
-	if err != nil {
-		return Result{}, fmt.Errorf("dead: controller concern modules: %w", err)
-	}
-	includedModuleIDs, err := queryIncludedModuleIDs(ctx, db)
-	if err != nil {
-		return Result{}, fmt.Errorf("dead: included modules: %w", err)
-	}
-	valueObjectClassIDs, err := queryValueObjectClassIDs(ctx, db)
-	if err != nil {
-		return Result{}, fmt.Errorf("dead: value-object classes: %w", err)
-	}
-
-	candidates = excludeEntryPoints(candidates, entryPointFilters{
-		testsTargets:         testsTargets,
-		interfaceIDs:         interfaceIDs,
-		frameworks:           frameworks,
-		isLibrary:            isLibrary,
-		interfaceMethodNames: interfaceMethodNames,
-		implementorIDs:       implementorIDs,
-		controllerConcernIDs: controllerConcernIDs,
-	})
-
-	candidates = annotateConfidence(candidates, confidenceInputs{
-		interfaceIDs:        interfaceIDs,
-		implementorIDs:      implementorIDs,
-		includedModuleIDs:   includedModuleIDs,
-		valueObjectClassIDs: valueObjectClassIDs,
-		dynamicFramework:    usesDynamicAutoload(frameworks),
-	})
-
-	if len(candidates) > opts.Limit {
-		candidates = candidates[:opts.Limit]
-	}
-
-	if err := populateNameOccurrences(ctx, db, candidates); err != nil {
+	if err := populateFindingNameOccurrences(ctx, db, findings); err != nil {
 		return Result{}, fmt.Errorf("dead: name occurrences: %w", err)
 	}
 
 	return Result{
-		Dead:         candidates,
+		Findings:     findings,
 		TotalSymbols: totalSymbols,
-		Frameworks:   frameworkNames(frameworks),
+		Frameworks:   frameworkNames(facts.Frameworks),
+	}, nil
+}
+
+// defaultArbiter is the registered voice stack for this build: the generic
+// core voice plus the Ruby and Rails language voices. Adding a language voice
+// (Go, TS, Python) is a one-line change here once it exists.
+func defaultArbiter() *Arbiter {
+	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
+}
+
+// buildFacts gathers the project-wide index facts the voices consume. It is
+// computed once per analysis so voices stay database-free.
+func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
+	frameworks := readFrameworks(ctx, db)
+
+	hasMain, err := hasMainFunction(ctx, db, Options{})
+	if err != nil {
+		return Facts{}, err
+	}
+
+	valueObjectClassIDs, err := queryValueObjectClassIDs(ctx, db)
+	if err != nil {
+		return Facts{}, fmt.Errorf("dead: value-object classes: %w", err)
+	}
+	includedModuleIDs, err := queryIncludedModuleIDs(ctx, db)
+	if err != nil {
+		return Facts{}, fmt.Errorf("dead: included modules: %w", err)
+	}
+	controllerConcernIDs, err := queryControllerConcernModuleIDs(ctx, db)
+	if err != nil {
+		return Facts{}, fmt.Errorf("dead: controller concern modules: %w", err)
+	}
+
+	return Facts{
+		Frameworks:           frameworks,
+		IsLibrary:            !hasMain,
+		DispatchNames:        readDispatchNames(ctx, db),
+		MentionedNames:       readMentionedNames(ctx, db),
+		ValueObjectClassIDs:  valueObjectClassIDs,
+		IncludedModuleIDs:    includedModuleIDs,
+		ControllerConcernIDs: controllerConcernIDs,
 	}, nil
 }
 
@@ -284,67 +291,6 @@ func queryTestsTargets(ctx context.Context, db *sql.DB) (map[int64]struct{}, err
 	return out, rows.Err()
 }
 
-func queryInterfaceIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT id FROM sense_symbols WHERE kind = 'interface'`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := make(map[int64]struct{})
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out[id] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
-func queryInterfaceMethodNames(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT DISTINCT s.name FROM sense_symbols s
-		JOIN sense_symbols p ON s.parent_id = p.id AND p.kind = 'interface'
-		WHERE s.kind = 'method'`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := make(map[string]struct{})
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		out[name] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
-func queryInterfaceImplementors(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT DISTINCT e.source_id FROM sense_edges e
-		JOIN sense_symbols s ON s.id = e.target_id AND s.kind = 'interface'
-		WHERE e.kind = 'inherits' AND e.source_id IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := make(map[int64]struct{})
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out[id] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
 // queryControllerConcernModuleIDs returns IDs of modules included into a
 // class whose name ends in "Controller". Their instance methods become
 // routed controller actions (ActiveSupport::Concern mixed into a
@@ -421,25 +367,26 @@ func queryValueObjectClassIDs(ctx context.Context, db *sql.DB) (map[int64]struct
 	return out, rows.Err()
 }
 
-// populateNameOccurrences fills Symbol.NameOccurrences for each candidate
-// with an index-derived estimate of how common its bare name is: the
+// populateFindingNameOccurrences fills NameOccurrences on each finding's
+// Symbol with an index-derived estimate of how common its bare name is: the
 // number of symbols sharing the name plus the number of resolved edges
-// pointing at a symbol of that name. This proxies textual frequency
-// without shelling out — a name defined and called many times is one a
-// text grep would flood the caller with. Two batched queries (GROUP BY
-// name over the candidate set), so cost is independent of repo size.
-func populateNameOccurrences(ctx context.Context, db *sql.DB, candidates []Symbol) error {
-	if len(candidates) == 0 {
+// pointing at a symbol of that name. This proxies textual frequency without
+// shelling out — a name defined and called many times is one a text grep
+// would flood the caller with, so the verify-recipe builder swaps in a
+// manual-inspect hint. Two batched queries (GROUP BY name over the finding
+// set), so cost is independent of repo size.
+func populateFindingNameOccurrences(ctx context.Context, db *sql.DB, findings []Finding) error {
+	if len(findings) == 0 {
 		return nil
 	}
-	names := make([]string, 0, len(candidates))
-	seen := make(map[string]struct{}, len(candidates))
-	for _, s := range candidates {
-		if _, ok := seen[s.Name]; ok {
+	names := make([]string, 0, len(findings))
+	seen := make(map[string]struct{}, len(findings))
+	for _, f := range findings {
+		if _, ok := seen[f.Symbol.Name]; ok {
 			continue
 		}
-		seen[s.Name] = struct{}{}
-		names = append(names, s.Name)
+		seen[f.Symbol.Name] = struct{}{}
+		names = append(names, f.Symbol.Name)
 	}
 
 	counts := make(map[string]int, len(names))
@@ -462,8 +409,8 @@ func populateNameOccurrences(ctx context.Context, db *sql.DB, candidates []Symbo
 		return err
 	}
 
-	for i := range candidates {
-		candidates[i].NameOccurrences = counts[candidates[i].Name]
+	for i := range findings {
+		findings[i].Symbol.NameOccurrences = counts[findings[i].Symbol.Name]
 	}
 	return nil
 }
@@ -515,16 +462,13 @@ func hasMainFunction(ctx context.Context, db *sql.DB, opts Options) (bool, error
 	return true, nil
 }
 
+// entryPointFilters carries the structural-correctness inputs for
+// excludeEntryPoints. Only testsTargets remains: the judgement-call
+// exclusions (library API, interface methods, controller actions, framework
+// hooks) are now expressed as open-world voice reasons by the arbiter, not
+// silently dropped here.
 type entryPointFilters struct {
-	testsTargets         map[int64]struct{}
-	interfaceIDs         map[int64]struct{}
-	frameworks           map[string]struct{}
-	isLibrary            bool
-	interfaceMethodNames map[string]struct{}
-	implementorIDs       map[int64]struct{}
-	// controllerConcernIDs are module IDs included into a *Controller —
-	// their methods are routed actions. Populated only for Rails projects.
-	controllerConcernIDs map[int64]struct{}
+	testsTargets map[int64]struct{}
 }
 
 func excludeEntryPoints(candidates []Symbol, filters entryPointFilters) []Symbol {
@@ -639,50 +583,12 @@ func isEntryPoint(s Symbol, f entryPointFilters) bool {
 	if isConstructor(s) {
 		return true
 	}
-	if isFrameworkHook(s, f.frameworks) {
-		return true
-	}
-	if isStimulusController(s) {
-		return true
-	}
-	if _, rails := f.frameworks["Rails"]; rails {
-		if isRailsControllerClass(s) || isRailsControllerAction(s, f.controllerConcernIDs) {
-			return true
-		}
-	}
-	if isInterfaceMethod(s, f.interfaceIDs) {
-		return true
-	}
-	if isLibraryPublicAPI(s, f.isLibrary) {
-		return true
-	}
-	if mightBeTraitImplMethod(s, f.interfaceMethodNames, f.implementorIDs) {
-		return true
-	}
 	if s.Kind != "constant" {
 		if _, ok := f.testsTargets[s.ID]; ok {
 			return true
 		}
 	}
 	return false
-}
-
-func mightBeTraitImplMethod(s Symbol, interfaceMethodNames map[string]struct{}, implementorIDs map[int64]struct{}) bool {
-	if s.Kind != "method" || s.ParentID == nil {
-		return false
-	}
-	if _, ok := implementorIDs[*s.ParentID]; !ok {
-		return false
-	}
-	_, ok := interfaceMethodNames[s.Name]
-	return ok
-}
-
-func isLibraryPublicAPI(s Symbol, isLibrary bool) bool {
-	if !isLibrary {
-		return false
-	}
-	return s.Visibility == "public" && (s.Kind == "function" || s.Kind == "method" || s.Kind == "class" || s.Kind == "type")
 }
 
 func isMainFunction(s Symbol) bool {
@@ -737,45 +643,9 @@ var frameworkHooks = map[string]struct{}{
 	"onCreate": {}, "onResume": {}, "onDestroy": {}, "onBind": {}, "onStartCommand": {},
 }
 
-// jvmFrameworkHooks are entry points too generic for all languages
-// but valid in Java/Kotlin/Scala. Includes functional interface
-// method names and common SAM type names (SAM detection was cut
-// because the graph lacks abstract method tagging).
-var jvmFrameworkHooks = map[string]struct{}{
-	"handle": {}, "create": {}, "configure": {}, "routes": {}, "addEndpoints": {}, "register": {},
-	"accept": {}, "apply": {}, "run": {}, "get": {}, "test": {}, "compare": {},
-	"Runnable": {}, "Callable": {}, "Supplier": {}, "Consumer": {}, "Function": {}, "Predicate": {},
-	"EndpointGroup": {}, "ExceptionHandler": {}, "ThrowingConsumer": {}, "ThrowingRunnable": {},
-	"RequestLogger": {},
-}
-
 var railsHooks = map[string]struct{}{
 	"after_commit": {}, "included": {}, "class_methods": {},
 	"before_commit": {}, "after_rollback": {},
-}
-
-func isJVMLanguage(lang string) bool {
-	return lang == "java" || lang == "kotlin" || lang == "scala"
-}
-
-func isFrameworkHook(s Symbol, frameworks map[string]struct{}) bool {
-	if s.Language == "python" && strings.HasPrefix(s.Name, "__") && strings.HasSuffix(s.Name, "__") {
-		return true
-	}
-	if _, ok := frameworkHooks[s.Name]; ok {
-		return true
-	}
-	if isJVMLanguage(s.Language) {
-		if _, ok := jvmFrameworkHooks[s.Name]; ok {
-			return true
-		}
-	}
-	if _, ok := frameworks["Rails"]; ok {
-		if _, ok := railsHooks[s.Name]; ok {
-			return true
-		}
-	}
-	return false
 }
 
 // isRailsControllerClass reports whether s is a Rails controller class.
@@ -812,19 +682,6 @@ func isRailsControllerAction(s Symbol, controllerConcernIDs map[int64]struct{}) 
 	return false
 }
 
-// isStimulusController reports whether s belongs to a Stimulus controller.
-// Stimulus dispatches lifecycle callbacks (connect/disconnect), action
-// methods, and target getters through the runtime and HTML data-*
-// attributes — none are static JS call edges. The *_controller.js
-// convention is the signal; no framework flag is required because the
-// filename is unambiguous.
-func isStimulusController(s Symbol) bool {
-	if s.Language != "javascript" && s.Language != "typescript" {
-		return false
-	}
-	return strings.HasSuffix(s.File, "_controller.js") || strings.HasSuffix(s.File, "_controller.ts")
-}
-
 func readFrameworks(ctx context.Context, db *sql.DB) map[string]struct{} {
 	out := map[string]struct{}{}
 	var raw string
@@ -843,12 +700,47 @@ func readFrameworks(ctx context.Context, db *sql.DB) map[string]struct{} {
 	return out
 }
 
-func isInterfaceMethod(s Symbol, interfaceIDs map[int64]struct{}) bool {
-	if s.ParentID == nil {
-		return false
+// readDispatchNames returns the project-wide set of reflective dispatch-target
+// names persisted to sense_meta by the scan layer (send/const_get/define_method
+// literals, constantize receivers). A symbol whose name is in this set could be
+// invoked dynamically, so the core voice keeps it open-world. A missing or
+// corrupt value yields an empty set — degrading to recall loss, never a crash
+// or a false `dead`.
+func readDispatchNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readNameSetMeta(ctx, db, "dispatch_names")
+}
+
+// readMentionedNames returns the project-wide broad mention set persisted to
+// sense_meta by the scan layer (every identifier/symbol token except definition
+// names). The arbiter's soundness gate earns `dead` only when a candidate's
+// name is absent from a NON-EMPTY mention set — mentioned nowhere a hidden
+// caller could be. An absent or corrupt value yields an empty set, which the
+// gate treats as "harvest unavailable, cannot prove closed-world" and blocks
+// `dead` entirely (fail-closed toward caution). This is the opposite default
+// from dispatch_names: there an empty set only loses recall, here it would
+// re-admit false `dead`, so the gate refuses rather than risk the lie.
+func readMentionedNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readNameSetMeta(ctx, db, "mentioned_names")
+}
+
+// readNameSetMeta reads a JSON string-array sense_meta value into a set,
+// treating an absent or corrupt value as empty.
+func readNameSetMeta(ctx context.Context, db *sql.DB, key string) map[string]struct{} {
+	out := map[string]struct{}{}
+	var raw string
+	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = ?`, key).Scan(&raw)
+	if err != nil || raw == "" {
+		return out
 	}
-	_, ok := interfaceIDs[*s.ParentID]
-	return ok
+	var names []string
+	if err := json.Unmarshal([]byte(raw), &names); err != nil {
+		log.Printf("dead: corrupt %s meta: %v", key, err)
+		return out
+	}
+	for _, n := range names {
+		out[n] = struct{}{}
+	}
+	return out
 }
 
 func excludeInterfaceImplementors(candidates []Symbol, alive map[sqlite.InterfaceMethodKey]struct{}) []Symbol {
@@ -867,126 +759,12 @@ func excludeInterfaceImplementors(candidates []Symbol, alive map[sqlite.Interfac
 	return out
 }
 
-const (
-	ConfidenceDead     = "dead"
-	ConfidencePossibly = "possibly_dead"
-)
-
-func isGoConstructor(s Symbol) bool {
-	return s.Language == "go" && strings.HasPrefix(s.Name, "New") && s.Kind == "function"
-}
-
-type confidenceInputs struct {
-	interfaceIDs        map[int64]struct{}
-	implementorIDs      map[int64]struct{}
-	includedModuleIDs   map[int64]struct{}
-	valueObjectClassIDs map[int64]struct{}
-	dynamicFramework    bool
-}
-
-func annotateConfidence(candidates []Symbol, in confidenceInputs) []Symbol {
-	for i := range candidates {
-		s := &candidates[i]
-		if s.ParentID != nil {
-			if _, ok := in.interfaceIDs[*s.ParentID]; ok {
-				s.Confidence = ConfidencePossibly
-				continue
-			}
-			if _, ok := in.implementorIDs[*s.ParentID]; ok {
-				s.Confidence = ConfidencePossibly
-				continue
-			}
-			// A method on a module included somewhere is reachable through
-			// the including type, so a zero-caller verdict is uncertain.
-			if _, ok := in.includedModuleIDs[*s.ParentID]; ok {
-				s.Confidence = ConfidencePossibly
-				continue
-			}
-		}
-		// A value object's public instance methods are duck-typed API
-		// (`result.success?` on a local of unknown type). This is a
-		// pure-Ruby idiom, not Rails-specific, so it softens regardless
-		// of framework — and it makes the value-object nature queryable
-		// (the inherits→ruby-core:Struct edge) rather than guessed from a
-		// `?` suffix.
-		if isValueObjectMethod(*s, in.valueObjectClassIDs) {
-			s.Confidence = ConfidencePossibly
-			continue
-		}
-		if isGoConstructor(*s) {
-			s.Confidence = ConfidencePossibly
-			continue
-		}
-		if in.dynamicFramework && (isDynamicallyReferenceable(*s) || isDynamicServiceCall(*s) || isDynamicRubyPredicate(*s)) {
-			s.Confidence = ConfidencePossibly
-			continue
-		}
-		s.Confidence = ConfidenceDead
-	}
-	return candidates
-}
-
-// usesDynamicAutoload reports whether the project relies on a framework
-// whose autoloading / const_get / constantize / STI conventions make a
-// statically-unreferenced type genuinely uncertain rather than dead.
-func usesDynamicAutoload(frameworks map[string]struct{}) bool {
-	_, ok := frameworks["Rails"]
-	return ok
-}
-
-// isDynamicallyReferenceable flags Ruby types and constants that are
-// commonly reached through paths the indexer cannot see — autoloading,
-// const_get / constantize, STI, and other metaprogrammed lookups. They
-// are reported as possibly-dead rather than dead so a reader double-
-// checks before deleting.
-func isDynamicallyReferenceable(s Symbol) bool {
-	if s.Language != "ruby" {
-		return false
-	}
-	switch s.Kind {
-	case "class", "module", "constant":
-		return true
-	}
-	return false
-}
-
 // serviceClassSuffixes name the command-object conventions whose entry
 // point is a polymorphic `call` — invoked through `Klass.new.call`, a
 // `.()` shorthand, or a duck-typed handler the static indexer often can't
 // tie back to the definition.
 var serviceClassSuffixes = []string{
 	"Service", "Command", "Query", "Interactor", "Operation", "Job", "Worker",
-}
-
-// isDynamicServiceCall flags the service-object `call` entry point —
-// reached through `Klass.new.call`, a `.()` shorthand, or a duck-typed
-// handler the static indexer can't tie back to the definition. Reported
-// possibly-dead rather than dead.
-func isDynamicServiceCall(s Symbol) bool {
-	if s.Language != "ruby" || s.Kind != "method" {
-		return false
-	}
-	parent := rubyMethodParentName(s.Qualified)
-	return s.Name == "call" && hasAnySuffix(parent, serviceClassSuffixes)
-}
-
-// isDynamicRubyPredicate flags Ruby predicate methods (`foo?`) under a
-// dynamic framework as uncertain. Validation against a real Rails app
-// (maket) showed predicates are pervasively invoked on duck-typed
-// receivers the indexer can't resolve — `@transaction.pending?` in a view,
-// `record.cancelled?` on an association — so hard-flagging a zero-static-
-// caller predicate as `dead` produced confident false negatives on live
-// methods (pending? alone had 28 call sites). A false "dead" erodes trust
-// far more than a conservative "possibly_dead", so this residual
-// softening stays — gated on a dynamic framework, where the dispatch the
-// indexer misses actually happens.
-//
-// The narrower, framework-independent win this pitch adds is
-// isValueObjectMethod: value-object members soften by their structural
-// inheritance edge, so a pure-Ruby gem (no framework) gets correct
-// verdicts that this framework-gated rule would not reach.
-func isDynamicRubyPredicate(s Symbol) bool {
-	return s.Language == "ruby" && s.Kind == "method" && strings.HasSuffix(s.Name, "?")
 }
 
 // isValueObjectMethod reports whether s is a public instance method of a

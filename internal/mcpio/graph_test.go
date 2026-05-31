@@ -1280,8 +1280,8 @@ func TestGraphSnippetsTruncated(t *testing.T) {
 	}
 
 	sc := &model.SymbolContext{
-		Symbol: model.Symbol{Name: "target", Qualified: "target", Kind: "function"},
-		File:   model.File{Path: "target.go"},
+		Symbol:  model.Symbol{Name: "target", Qualified: "target", Kind: "function"},
+		File:    model.File{Path: "target.go"},
 		Inbound: inbound,
 	}
 

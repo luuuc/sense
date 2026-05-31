@@ -10,48 +10,57 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luuuc/sense/internal/dead"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-
-func TestRenderDeadHumanEmpty(t *testing.T) {
+func TestRenderUnreferencedHumanEmpty(t *testing.T) {
 	var buf bytes.Buffer
-	RenderDeadHuman(&buf, nil, 100)
-	if !strings.Contains(buf.String(), "No dead code found.") {
-		t.Errorf("expected 'No dead code found.', got:\n%s", buf.String())
+	RenderUnreferencedHuman(&buf, mcpio.UnreferencedResponse{})
+	if !strings.Contains(buf.String(), "No unreferenced symbols found.") {
+		t.Errorf("expected 'No unreferenced symbols found.', got:\n%s", buf.String())
 	}
 }
 
-func TestRenderDeadHumanWithSymbols(t *testing.T) {
-	syms := []dead.Symbol{
-		{Qualified: "App::OldService", Kind: "class", File: "app/services/old_service.rb", LineStart: 1, LineEnd: 50},
-		{Qualified: "App::OldService#run", Kind: "method", File: "app/services/old_service.rb", LineStart: 10, LineEnd: 20},
-		{Qualified: "App::Util#helper", Kind: "method", File: "app/util.rb", LineStart: 5, LineEnd: 8},
+func TestRenderUnreferencedHumanWithSymbols(t *testing.T) {
+	resp := mcpio.UnreferencedResponse{
+		Unreferenced: mcpio.UnreferencedSymbols{
+			Dead: []mcpio.DeadEntry{
+				{Qualified: "App::OldService#run", Kind: "method", File: "app/services/old_service.rb", Line: 10, Verify: "grep run"},
+			},
+			PossiblyDead: []mcpio.PossiblyDeadGroup{
+				{
+					Reason:  mcpio.ReasonInfo{Code: "ruby_public_method", Hint: "public method; a hidden caller may exist"},
+					Verify:  "grep each name as a call",
+					Symbols: []mcpio.PossiblyDeadSymbol{{Qualified: "App::Util#helper", Kind: "method", File: "app/util.rb", Line: 5}},
+				},
+			},
+		},
+		TotalSymbols:      200,
+		DeadCount:         1,
+		PossiblyDeadCount: 1,
 	}
 	var buf bytes.Buffer
-	RenderDeadHuman(&buf, syms, 200)
+	RenderUnreferencedHuman(&buf, resp)
 	out := buf.String()
 
-	// Header
-	if !strings.Contains(out, "Dead code: 3 symbols with no incoming references") {
-		t.Errorf("missing header, got:\n%s", out)
+	// Dead section: header + the earned-dead symbol + its verify recipe.
+	if !strings.Contains(out, "Dead (1)") {
+		t.Errorf("missing dead header, got:\n%s", out)
 	}
-	// File grouping: two files should appear
-	if !strings.Contains(out, "app/services/old_service.rb") {
-		t.Error("missing file header for old_service.rb")
+	if !strings.Contains(out, "App::OldService#run") || !strings.Contains(out, "verify: grep run") {
+		t.Errorf("missing dead entry/verify, got:\n%s", out)
 	}
-	if !strings.Contains(out, "app/util.rb") {
-		t.Error("missing file header for util.rb")
+	// Possibly-dead section: reason code, hint, the grouped symbol.
+	if !strings.Contains(out, "Possibly dead (1)") {
+		t.Errorf("missing possibly-dead header, got:\n%s", out)
 	}
-	// Symbol entries with kind and line range
-	if !strings.Contains(out, "App::OldService (class, lines 1-50)") {
-		t.Errorf("missing symbol entry, got:\n%s", out)
+	if !strings.Contains(out, "[ruby_public_method]") || !strings.Contains(out, "App::Util#helper") {
+		t.Errorf("missing possibly-dead group, got:\n%s", out)
 	}
-	// Percentage footer
-	if !strings.Contains(out, "3 dead symbols out of 200 total (1.5%)") {
+	// Footer counts.
+	if !strings.Contains(out, "1 dead, 1 possibly dead, out of 200 total symbols") {
 		t.Errorf("missing footer, got:\n%s", out)
 	}
 }
@@ -175,7 +184,7 @@ func TestRenderStatusHuman(t *testing.T) {
 			EmbeddingModelCurrent: true,
 		},
 		Lifetime: &mcpio.StatusLifetime{
-			Queries:            42,
+			Queries:              42,
 			EstimatedTokensSaved: 150000,
 		},
 	}
@@ -826,11 +835,13 @@ func TestRunDeadHumanSuccess(t *testing.T) {
 		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "Dead code:") {
-		t.Errorf("expected dead code header, got:\n%s", out)
+	// Seeded data is Go, which has no language voice, so the unreferenced
+	// symbols are possibly_dead (core_no_language_voice), never earned dead.
+	if !strings.Contains(out, "Possibly dead") {
+		t.Errorf("expected possibly-dead section, got:\n%s", out)
 	}
 	if !strings.Contains(out, "OldService") {
-		t.Errorf("expected OldService in dead code, got:\n%s", out)
+		t.Errorf("expected OldService in unreferenced output, got:\n%s", out)
 	}
 }
 
@@ -845,7 +856,7 @@ func TestRunDeadJSONSuccess(t *testing.T) {
 	if !json.Valid(raw) {
 		t.Fatalf("stdout is not valid JSON:\n%s", raw)
 	}
-	var parsed mcpio.DeadCodeResponse
+	var parsed mcpio.UnreferencedResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, raw)
 	}
@@ -861,9 +872,9 @@ func TestRunDeadWithLanguageFilter(t *testing.T) {
 	if code != ExitSuccess {
 		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
 	}
-	// All symbols are Go, so filtering by Ruby should find no dead code
-	if !strings.Contains(stdout.String(), "No dead code found.") {
-		t.Errorf("expected no dead code for ruby filter, got:\n%s", stdout.String())
+	// All symbols are Go, so filtering by Ruby should find nothing.
+	if !strings.Contains(stdout.String(), "No unreferenced symbols found.") {
+		t.Errorf("expected no unreferenced symbols for ruby filter, got:\n%s", stdout.String())
 	}
 }
 
@@ -876,8 +887,8 @@ func TestRunDeadWithDomainFilter(t *testing.T) {
 	}
 	// Domain "services" matches "app/services/old.go"
 	out := stdout.String()
-	if strings.Contains(out, "No dead code found.") {
-		t.Errorf("expected dead code for services domain, got:\n%s", out)
+	if strings.Contains(out, "No unreferenced symbols found.") {
+		t.Errorf("expected unreferenced symbols for services domain, got:\n%s", out)
 	}
 }
 
@@ -991,8 +1002,8 @@ func TestRunDeadWithLimit(t *testing.T) {
 		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "Dead code:") {
-		t.Errorf("expected dead code header, got:\n%s", out)
+	if !strings.Contains(out, "Possibly dead") {
+		t.Errorf("expected possibly-dead section, got:\n%s", out)
 	}
 }
 
@@ -1009,6 +1020,14 @@ func TestRunDeadCorruptIndex(t *testing.T) {
 	code := RunDead(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
 	if code != ExitIndexCorrupt {
 		t.Errorf("exit = %d, want %d", code, ExitIndexCorrupt)
+	}
+}
+
+func TestRunDeadBadFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := RunDead([]string{"--nope"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()})
+	if code != ExitGeneralError {
+		t.Errorf("exit = %d, want %d for an unknown flag", code, ExitGeneralError)
 	}
 }
 

@@ -30,8 +30,8 @@ import (
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
-	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/metrics"
+	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/profile"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/search"
@@ -649,8 +649,7 @@ func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) 
 		return nil, fmt.Errorf("sense_graph dead_code: %w", err)
 	}
 
-	rolled := dead.Rollup(result.Dead)
-	resp := mcpio.BuildDeadCodeResponse(rolled, result.TotalSymbols, result.Frameworks)
+	resp := mcpio.BuildUnreferencedResponse(result.Findings, result.TotalSymbols, 0)
 	resp.CoverageNote = "Static analysis — does not trace dynamic dispatch, decorator registration, or external API consumers"
 
 	h.tracker.Record("sense_graph", "dead_code",
@@ -658,20 +657,23 @@ func (h *handlers) handleDeadCode(ctx context.Context, req mcp.CallToolRequest) 
 
 	resp.NextSteps = deadCodeHints(resp)
 
-	out, err := mcpio.MarshalDeadCodeCompact(resp)
+	out, err := mcpio.MarshalUnreferencedCompact(resp)
 	if err != nil {
 		return nil, fmt.Errorf("sense_graph dead_code: marshal: %w", err)
 	}
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func deadCodeHints(resp mcpio.DeadCodeResponse) []mcpio.NextStep {
+// deadCodeHints suggests confirming the top earned-`dead` symbol before
+// removal. The possibly_dead groups carry their own verify recipes, so a hint
+// is only added when there is an actionable dead entry.
+func deadCodeHints(resp mcpio.UnreferencedResponse) []mcpio.NextStep {
 	var hints []mcpio.NextStep
 
-	if resp.DeadCount > 0 && len(resp.DeadSymbols) > 0 {
+	if resp.DeadCount > 0 && len(resp.Unreferenced.Dead) > 0 {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense_graph",
-			Args:   map[string]any{"symbol": resp.DeadSymbols[0].Qualified},
+			Args:   map[string]any{"symbol": resp.Unreferenced.Dead[0].Qualified},
 			Reason: "inspect the top dead symbol's relationships to confirm it's truly unused",
 		})
 	}
@@ -1760,7 +1762,6 @@ func capitalizeFirst(s string) string {
 // Language tier breakdown
 // ---------------------------------------------------------------
 
-
 func queryLanguageBreakdown(ctx context.Context, db *sql.DB) (map[string]mcpio.StatusLanguage, error) {
 	const q = `SELECT f.language, COUNT(DISTINCT f.id), COUNT(s.id)
 	           FROM sense_files f
@@ -1875,4 +1876,3 @@ func readMeta(ctx context.Context, db *sql.DB, key string) string {
 	}
 	return value
 }
-

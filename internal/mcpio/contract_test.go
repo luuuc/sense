@@ -258,8 +258,8 @@ func fixtureBlastUserEmailVerified() BlastResponse {
 		AffectedFiles:       10,
 		GraphEdgesTraversed: 91,
 		TotalAffected:       11,
-		ProductionAffected: 5,
-		TestAffected:       6,
+		ProductionAffected:  5,
+		TestAffected:        6,
 		SenseMetrics: BlastMetrics{
 			SymbolsTraversed:          47,
 			EstimatedFileReadsAvoided: 10,
