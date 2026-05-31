@@ -163,6 +163,24 @@ func TestResolveReceiverRewriteHashRuby(t *testing.T) {
 	}
 }
 
+func TestResolveReceiverRewriteNoOpForNonSelfTarget(t *testing.T) {
+	ix := resolve.NewIndex(refs())
+	// The source has a parent, but the target is an ordinary qualified name,
+	// not a `self.`/`Self::` reference — the receiver rewrite must leave it
+	// untouched and exact resolution proceeds normally.
+	r, ok := ix.Resolve(resolve.Request{
+		Target:                "app.User.email",
+		Kind:                  model.EdgeCalls,
+		SourceFileID:          10,
+		SourceQualified:       "app.User.profile",
+		SourceParentQualified: "app.User",
+		BaseConfidence:        1.0,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected unchanged target to resolve to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+}
+
 func TestResolveReceiverRewriteSkippedWithoutParent(t *testing.T) {
 	ix := resolve.NewIndex(refs())
 	// Top-level function has no parent — self rewrites must no-op.
@@ -669,6 +687,149 @@ func TestResolveViewSourceKeepsCrossLanguageStimulusCall(t *testing.T) {
 	})
 	if !ok || r.SymbolID != 1 {
 		t.Fatalf("expected erb→js Stimulus edge to id 1, got id=%d ok=%v", r.SymbolID, ok)
+	}
+}
+
+func TestResolveExactMatchDroppedWhenCrossLanguage(t *testing.T) {
+	// A Ruby production call to `I18n.t` exact-matches a JS test-helper symbol
+	// of the same qualified name. The exact byQualified path now applies the
+	// language gate too, so the cross-language coincidence is dropped rather
+	// than returned at full confidence — and it does not leaf-fall-back into a
+	// further coincidence.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "LafricaClient#handle", FileID: 10, Language: "ruby", Path: "app/clients/lafrica_client.rb"},
+		{ID: 2, Qualified: "I18n.t", FileID: 60, Language: "javascript", Path: "test/system/support/i18n.js"},
+	}
+	ix := resolve.NewIndex(rs)
+	if _, ok := ix.Resolve(resolve.Request{
+		Target:         "I18n.t",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: 1.0,
+	}); ok {
+		t.Error("expected no resolution: a Ruby source must not exact-bind a same-named JS symbol")
+	}
+}
+
+func TestResolveExactMatchKeepsSyntheticCrossLanguageTarget(t *testing.T) {
+	// A Ruby controller rendering a partial emits the synthetic `partial:` target
+	// that resolves to an ERB symbol. This cross-language edge is intentional, so
+	// the exact-path language gate must exempt synthetic-prefix targets.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "OrdersController#show", FileID: 10, Language: "ruby", Path: "app/controllers/orders_controller.rb"},
+		{ID: 2, Qualified: "partial:orders/line_item", FileID: 50, Language: "erb", Path: "app/views/orders/_line_item.html.erb"},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "partial:orders/line_item",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected synthetic cross-language edge to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+}
+
+func TestResolveProductionDoesNotBindTestSymbol(t *testing.T) {
+	// A production helper's `url_for` (really ActionView's, unindexed) misses
+	// exact lookup and its only same-named candidate is a test helper method.
+	// Production code never has a real calls edge into a test file, so the edge
+	// drops to unresolved rather than binding the coincidence.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "FiltersHelper#filter_url", FileID: 10, Language: "ruby", Path: "app/helpers/filters_helper.rb"},
+		{ID: 2, Qualified: "FiltersHelperTest#url_for", FileID: 20, Language: "ruby", Path: "test/helpers/filters_helper_test.rb", Receiver: extract.ReceiverInstance},
+	}
+	ix := resolve.NewIndex(rs)
+	if _, ok := ix.Resolve(resolve.Request{
+		Target:         "FiltersHelper#url_for",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: extract.ConfidenceDynamic,
+	}); ok {
+		t.Error("expected no resolution: production code must not bind a test-file symbol")
+	}
+}
+
+func TestResolveProductionPrefersNonTestCandidate(t *testing.T) {
+	// When a production call has both a production and a test candidate of the
+	// same name, the test candidate is excluded and the production one wins.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Caller#act", FileID: 10, Language: "ruby", Path: "app/caller.rb"},
+		{ID: 2, Qualified: "Worker#process", FileID: 11, Language: "ruby", Path: "app/worker.rb", Receiver: extract.ReceiverInstance},
+		{ID: 3, Qualified: "FakeTest#process", FileID: 20, Language: "ruby", Path: "test/fake_test.rb", Receiver: extract.ReceiverInstance},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Unknown#process",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: extract.ConfidenceDynamic,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected production candidate id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+}
+
+func TestResolveTestSourceKeepsTestCandidate(t *testing.T) {
+	// The gate is one-directional: a test-file source legitimately calls a test
+	// helper, so test candidates are kept when the source itself is a test file.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "WidgetTest#setup", FileID: 20, Language: "ruby", Path: "test/models/widget_test.rb"},
+		{ID: 2, Qualified: "TestDataHelpers#build_widget", FileID: 21, Language: "ruby", Path: "test/support/test_data_helpers.rb", Receiver: extract.ReceiverInstance},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Unknown#build_widget",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   20,
+		BaseConfidence: extract.ConfidenceDynamic,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected test->test resolution to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+}
+
+func TestResolveBareGuessRoutedThroughFallbackDemotes(t *testing.T) {
+	// A bare receiver-unknown call (`x.count`, emitted bare at ConfidenceUnresolved)
+	// coincidentally exact-matches a symbol qualified exactly `count`. The bare
+	// guess must skip the exact shortcut and go through the gated fallback, which
+	// demotes it below blast's floor rather than returning the exact match at 0.5.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Client#post", FileID: 10, Language: "ruby", Path: "app/client.rb"},
+		{ID: 2, Qualified: "count", FileID: 11, Language: "ruby", Path: "app/helpers.rb"},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "count",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: extract.ConfidenceUnresolved,
+	})
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("expected fallback resolution to id 2, got id=%d ok=%v", r.SymbolID, ok)
+	}
+	if r.Confidence >= 0.5 {
+		t.Errorf("Confidence = %v, want < 0.5 (bare guess routed through gated fallback)", r.Confidence)
+	}
+}
+
+func TestResolveBareGuessCrossLanguageDropped(t *testing.T) {
+	// The dominant real-world case: a Ruby production `x.count` (bare, receiver
+	// unknown) whose only same-named symbol is a JS spec constant. Routed through
+	// the fallback, the language gate drops it and the edge stays unresolved.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Client#post", FileID: 10, Language: "ruby", Path: "app/client.rb"},
+		{ID: 2, Qualified: "count", FileID: 60, Language: "javascript", Path: "test/system/specs/x.spec.js"},
+	}
+	ix := resolve.NewIndex(rs)
+	if _, ok := ix.Resolve(resolve.Request{
+		Target:         "count",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   10,
+		BaseConfidence: extract.ConfidenceUnresolved,
+	}); ok {
+		t.Error("expected no resolution: bare Ruby guess must not bind a JS spec constant")
 	}
 }
 

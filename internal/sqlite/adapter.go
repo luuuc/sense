@@ -952,7 +952,7 @@ func (a *Adapter) Query(ctx context.Context, f index.Filter) ([]model.Symbol, er
 // sense_files so the resolver can gate cross-language bare-name matches; a
 // symbol whose file row is missing returns an empty language.
 func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
-	const q = `SELECT s.id, s.qualified, s.file_id, s.receiver, COALESCE(f.language, '')
+	const q = `SELECT s.id, s.qualified, s.file_id, s.receiver, COALESCE(f.language, ''), COALESCE(f.path, '')
 		FROM sense_symbols s
 		LEFT JOIN sense_files f ON f.id = s.file_id
 		ORDER BY s.id ASC`
@@ -965,7 +965,7 @@ func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
 	var refs []model.SymbolRef
 	for rows.Next() {
 		var r model.SymbolRef
-		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Receiver, &r.Language); err != nil {
+		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Receiver, &r.Language, &r.Path); err != nil {
 			return nil, fmt.Errorf("sqlite SymbolRefs scan: %w", err)
 		}
 		refs = append(refs, r)

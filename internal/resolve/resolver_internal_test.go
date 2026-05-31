@@ -62,6 +62,88 @@ func TestReceiverForSeparator(t *testing.T) {
 	}
 }
 
+func TestIsTestPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"app/models/user.rb", false},
+		{"app/services/attestation_service.rb", false}, // "test" substring, not a test file
+		{"test/models/user_test.rb", true},
+		{"spec/models/user_spec.rb", true},
+		{"app/foo_test.go", true},
+		{"src/components/Button.test.tsx", true},
+		{"lib/tests/helper.rb", true},
+		{"pkg/testdata/fixture.json", true},
+		{"test_helper.py", true}, // test_ prefix marks a Python test file
+		{"scripts/test_runner.py", true},
+		{"src/WidgetTest.java", true},
+		{"src/WidgetTests.cs", true},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isTestPath(c.path); got != c.want {
+			t.Errorf("isTestPath(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+func TestIsSyntheticTarget(t *testing.T) {
+	cases := []struct {
+		target string
+		want   bool
+	}{
+		{"partial:users/profile", true},
+		{"turbo-channel:notifications", true},
+		{"turbo-frame:cart", true},
+		{"importmap:application", true},
+		{"i18n:account.title", true},
+		{"route:admin_users", true},
+		{"ruby-core:Kernel#puts", true},
+		{"User::Session", false},
+		{"count", false},
+		{"I18n.t", false},
+	}
+	for _, c := range cases {
+		if got := isSyntheticTarget(c.target); got != c.want {
+			t.Errorf("isSyntheticTarget(%q) = %v, want %v", c.target, got, c.want)
+		}
+	}
+}
+
+func TestFilterByTestDirection(t *testing.T) {
+	prod := model.SymbolRef{ID: 1, Qualified: "App::Worker", FileID: 10}
+	test := model.SymbolRef{ID: 2, Qualified: "WorkerTest", FileID: 20}
+	fileIsTest := map[int64]bool{10: false, 20: true}
+
+	t.Run("production source drops test candidates", func(t *testing.T) {
+		got := filterByTestDirection([]model.SymbolRef{prod, test}, false, fileIsTest)
+		if len(got) != 1 || got[0].ID != 1 {
+			t.Fatalf("got %+v, want only id 1 (production)", got)
+		}
+	})
+	t.Run("test source keeps everything", func(t *testing.T) {
+		got := filterByTestDirection([]model.SymbolRef{prod, test}, true, fileIsTest)
+		if len(got) != 2 {
+			t.Fatalf("got %d, want 2 (test source is exempt)", len(got))
+		}
+	})
+	t.Run("no test candidate returns input untouched", func(t *testing.T) {
+		in := []model.SymbolRef{prod, {ID: 3, Qualified: "App::Other", FileID: 11}}
+		got := filterByTestDirection(in, false, fileIsTest)
+		if len(got) != 2 {
+			t.Fatalf("got %d, want 2 (no test candidate to drop)", len(got))
+		}
+	})
+	t.Run("unknown file test-ness is kept (fail open)", func(t *testing.T) {
+		unknown := model.SymbolRef{ID: 4, Qualified: "Mystery", FileID: 99} // not in fileIsTest
+		got := filterByTestDirection([]model.SymbolRef{unknown}, false, fileIsTest)
+		if len(got) != 1 {
+			t.Fatalf("got %d, want 1 (unknown test-ness fails open)", len(got))
+		}
+	})
+}
+
 func TestFilterByReceiver(t *testing.T) {
 	instance := model.SymbolRef{ID: 1, Qualified: "Counter#zero", Receiver: extract.ReceiverInstance}
 	singleton := model.SymbolRef{ID: 2, Qualified: "Money.zero", Receiver: extract.ReceiverSingleton}

@@ -48,6 +48,11 @@ type SymbolRef struct {
 	// a Ruby call must not bind to a same-named JS symbol. Empty when the file
 	// language is unknown, in which case the gate is a no-op.
 	Language string
+	// Path is the symbol's file path (from sense_files). The resolver uses it to
+	// determine test-ness so a production-source calls/references edge cannot
+	// resolve into a test file (production never depends on test code). Empty
+	// when the file path is unknown, in which case that gate is a no-op.
+	Path string
 }
 
 // HydrateSymbolNullables copies the sql.NullXxx carriers scanned from
