@@ -31,6 +31,11 @@ type Index struct {
 	// look up the source edge's language from req.SourceFileID without threading
 	// it through every Request. Built from the same SymbolRefs as the name maps.
 	fileLang map[int64]string
+	// fileIsTest maps a file id to whether its path is a test file, so the
+	// resolver can keep a production-source calls/references edge from binding to
+	// a coincidental same-named symbol that lives in a test file. Built from the
+	// same SymbolRefs; a file id absent from the map is treated as non-test.
+	fileIsTest map[int64]bool
 }
 
 // NewIndex builds an Index from the bulk SymbolRefs output. The input
@@ -41,6 +46,7 @@ func NewIndex(refs []model.SymbolRef) *Index {
 		byQualified: make(map[string][]model.SymbolRef, len(refs)),
 		byName:      make(map[string][]model.SymbolRef, len(refs)),
 		fileLang:    make(map[int64]string),
+		fileIsTest:  make(map[int64]bool),
 	}
 	for _, r := range refs {
 		ix.byQualified[r.Qualified] = append(ix.byQualified[r.Qualified], r)
@@ -48,6 +54,9 @@ func NewIndex(refs []model.SymbolRef) *Index {
 		ix.byName[name] = append(ix.byName[name], r)
 		if r.Language != "" {
 			ix.fileLang[r.FileID] = r.Language
+		}
+		if r.Path != "" {
+			ix.fileIsTest[r.FileID] = isTestPath(r.Path)
 		}
 	}
 	return ix
@@ -102,11 +111,18 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //     when the source symbol has a parent qualified name.
 //  2. Exact match via byQualified. Single hit ⇒ BaseConfidence.
 //     Multiple ⇒ same-file preferred, else lowest-id; confidence
-//     clamped to ambiguousConfidence.
+//     clamped to ambiguousConfidence. For calls/tests/references the
+//     exact match is gated the same way the fallback is — a cross-language
+//     or production-into-test coincidence is dropped (synthetic cross-language
+//     targets like `partial:` are exempt). A bare target the extractor
+//     emitted at ConfidenceUnresolved (receiver unknown) skips the exact
+//     shortcut entirely: its byQualified hit would be a leaf coincidence, so
+//     it goes straight to the gated fallback.
 //  3. For calls, tests, and references edges, fall back to
 //     unqualified-name match via byName. Candidates in a different code
-//     language than the source are dropped (filterByLanguage); same
-//     scope preference applies; confidence is clamped to
+//     language than the source are dropped (filterByLanguage), test-file
+//     candidates are dropped for production sources (filterByTestDirection),
+//     same scope preference applies, confidence is clamped to
 //     ambiguousConfidence. A qualified target that matched only its leaf
 //     (the namespace or receiver type was discarded) is demoted below
 //     blast's floor as an unverified cross-scope guess unless the
@@ -114,12 +130,32 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //  4. No match ⇒ ok=false.
 func (ix *Index) Resolve(req Request) (Result, bool) {
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)
+	gatedKind := req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests || req.Kind == model.EdgeReferences
 
-	if matches := ix.byQualified[target]; len(matches) > 0 {
-		return pickBest(matches, req.SourceFileID, req.BaseConfidence), true
+	// A bare target emitted at ConfidenceUnresolved means the extractor could
+	// not type the receiver, so the name is a leaf, not a qualified name. Any
+	// exact byQualified hit on it is a coincidence with a same-named symbol;
+	// skip the shortcut and let the gated fallback handle (and demote) it.
+	_, targetSep := unqualifiedNameSep(target)
+	bareGuess := targetSep == "" && req.BaseConfidence <= extract.ConfidenceUnresolved
+
+	if !bareGuess {
+		if matches := ix.byQualified[target]; len(matches) > 0 {
+			if gatedKind && !isSyntheticTarget(target) {
+				matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
+				matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
+			}
+			if len(matches) > 0 {
+				return pickBest(matches, req.SourceFileID, req.BaseConfidence), true
+			}
+			// The qualified name matched only cross-language or test-only
+			// symbols: a coincidence, not a real edge. Drop it rather than
+			// leaf-fallback into more coincidences.
+			return Result{}, false
+		}
 	}
 
-	if req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests || req.Kind == model.EdgeReferences {
+	if gatedKind {
 		// Unqualified fallback: find symbols whose trailing segment
 		// matches the target's trailing segment. Applies to bare
 		// targets ("say" ⇒ byName["say"]) as well as dotted targets
@@ -138,6 +174,7 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 			}
 			matches := ix.byName[name]
 			matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
+			matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
 			matches, receiverContradicted := filterByReceiver(matches, sep)
 			if len(matches) > 0 {
 				r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
@@ -435,4 +472,104 @@ func filterByLanguage(matches []model.SymbolRef, srcLang string) []model.SymbolR
 // ERB is the only such language today; add others here as they gain extractors.
 func isViewLanguage(lang string) bool {
 	return lang == "erb"
+}
+
+// filterByTestDirection drops candidates that live in a test file when the
+// source is production code. Production code never has a static calls or
+// references edge into a test file — test files define stubs, doubles, and
+// helpers that shadow real (often framework or gem) names, so a same-named
+// match there is a coincidence (a Ruby helper's `url_for` binding to a
+// `FiltersHelperTest#url_for`, a `count` call binding to a JS spec's `count`).
+//
+// The gate is one-directional: when the source itself is a test file it is a
+// no-op, because tests legitimately reference both production and test symbols.
+// A candidate whose file test-ness is unknown (path absent) is kept, so the
+// gate fails open. Like filterByLanguage and unlike filterByReceiver, this is a
+// hard exclusion: if every candidate is test-only the set empties and the edge
+// drops to unresolved rather than binding to a coincidence.
+func filterByTestDirection(matches []model.SymbolRef, sourceIsTest bool, fileIsTest map[int64]bool) []model.SymbolRef {
+	if sourceIsTest {
+		return matches
+	}
+	// Fast path: most candidates are production, so scan first and avoid
+	// allocating a copy unless a test candidate is actually present.
+	hasTest := false
+	for _, m := range matches {
+		if fileIsTest[m.FileID] {
+			hasTest = true
+			break
+		}
+	}
+	if !hasTest {
+		return matches
+	}
+	kept := make([]model.SymbolRef, 0, len(matches))
+	for _, m := range matches {
+		if !fileIsTest[m.FileID] {
+			kept = append(kept, m)
+		}
+	}
+	return kept
+}
+
+// isTestPath reports whether a file path is a test/spec file. It mirrors
+// mcpio.IsTestPath (kept as a small local copy to avoid a dependency from this
+// low-level package on the presentation layer); the conventions it encodes —
+// `test/`/`spec/` directories, `_test`/`_spec`/`.test.` infixes, a `test_`
+// prefix, and a `Test`/`Tests` filename suffix — are stable across the
+// supported languages.
+func isTestPath(path string) bool {
+	if strings.Contains(path, "_test.") ||
+		strings.Contains(path, ".test.") ||
+		strings.Contains(path, "_spec.") ||
+		strings.Contains(path, "/test/") ||
+		strings.Contains(path, "/tests/") ||
+		strings.Contains(path, "/testdata/") ||
+		strings.Contains(path, "/spec/") ||
+		strings.HasPrefix(path, "test/") ||
+		strings.HasPrefix(path, "tests/") ||
+		strings.HasPrefix(path, "spec/") {
+		return true
+	}
+	base := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		base = path[i+1:]
+	}
+	if strings.HasPrefix(base, "test_") {
+		return true
+	}
+	if dot := strings.LastIndex(base, "."); dot > 0 {
+		name := base[:dot]
+		if strings.HasSuffix(name, "Test") || strings.HasSuffix(name, "Tests") {
+			return true
+		}
+	}
+	return false
+}
+
+// syntheticTargetPrefixes are the qualified-name prefixes the extractors use
+// for intentional cross-language and framework edges (view partials, Turbo
+// channels/frames, importmap entries, i18n keys, route helpers, ruby-core
+// shims). A target carrying one of these is a designed cross-language link, not
+// a same-name coincidence, so the exact-path language gate must not touch it.
+var syntheticTargetPrefixes = []string{
+	extract.PrefixTurboChannel,
+	extract.PrefixTurboFrame,
+	extract.PrefixImportmap,
+	extract.PrefixPartial,
+	extract.PrefixI18n,
+	extract.PrefixRoute,
+	extract.PrefixRubyCore,
+}
+
+// isSyntheticTarget reports whether a target name is one of the synthetic
+// cross-language/framework qualified names that resolve by exact match and are
+// exempt from the cross-language gate.
+func isSyntheticTarget(target string) bool {
+	for _, p := range syntheticTargetPrefixes {
+		if strings.HasPrefix(target, p) {
+			return true
+		}
+	}
+	return false
 }

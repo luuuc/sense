@@ -256,6 +256,61 @@ func TestSymbolRefsCarriesLanguage(t *testing.T) {
 	}
 }
 
+func TestSymbolRefsCarriesPath(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	app := seedFile(t, a, "app/models/user.rb", "ruby", "h1")
+	test := seedFile(t, a, "test/models/user_test.rb", "ruby", "h2")
+	seedSymbol(t, a, app, "User", "User", "class")
+	seedSymbol(t, a, test, "UserTest", "UserTest", "class")
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.Qualified] = r.Path
+	}
+	if got["User"] != "app/models/user.rb" {
+		t.Errorf("User Path = %q, want app/models/user.rb (left-joined from sense_files)", got["User"])
+	}
+	if got["UserTest"] != "test/models/user_test.rb" {
+		t.Errorf("UserTest Path = %q, want test/models/user_test.rb", got["UserTest"])
+	}
+}
+
+func TestSymbolRefsScanError(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "app/x.rb", "ruby", "h1")
+	sid := seedSymbol(t, a, fid, "X", "X", "class")
+	// Corrupt file_id to a non-integer so the row fails to scan into int64
+	// (SQLite is dynamically typed), exercising the scan-error path. The write
+	// is done on a pinned connection with FK enforcement off so the bad value
+	// lands; reads don't check FKs, so SymbolRefs still hits the scan failure.
+	// The connection is released before SymbolRefs — the adapter caps the pool
+	// at one connection, so holding it would deadlock the subsequent read.
+	conn, err := a.DB().Conn(ctx)
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatalf("disable FK: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "UPDATE sense_symbols SET file_id='not-an-int' WHERE id=?", sid); err != nil {
+		t.Fatalf("corrupt file_id: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close conn: %v", err)
+	}
+	if _, err := a.SymbolRefs(ctx); err == nil {
+		t.Error("expected a scan error for a non-integer file_id")
+	}
+}
+
 func TestEdgesOfKind(t *testing.T) {
 	a := openTestDB(t)
 	ctx := context.Background()
