@@ -18,6 +18,7 @@ type captureEmitter struct {
 	symbols  []extract.EmittedSymbol
 	edges    []extract.EmittedEdge
 	dispatch []string
+	mentions []string
 }
 
 func (c *captureEmitter) Symbol(s extract.EmittedSymbol) error {
@@ -28,6 +29,19 @@ func (c *captureEmitter) Edge(e extract.EmittedEdge) error { c.edges = append(c.
 func (c *captureEmitter) DispatchName(name string) error {
 	c.dispatch = append(c.dispatch, name)
 	return nil
+}
+func (c *captureEmitter) MentionName(name string) error {
+	c.mentions = append(c.mentions, name)
+	return nil
+}
+
+func (c *captureEmitter) mentioned(name string) bool {
+	for _, n := range c.mentions {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *captureEmitter) visibilityOf(qualified string) (string, bool) {
@@ -245,6 +259,56 @@ func TestDispatchNamesCaptured(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("dispatch[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+// TestMentionedNamesCapturesUnboundCallForms pins the soundness-gate harvest:
+// every call-position form that the resolver can fail to bind still leaves a
+// mention, so the dead-code gate keeps the target open-world. These are the
+// exact maket false-dead classes (a `validate :sym` symbol arg, a `**splat`
+// arg, a chain receiver, an inherited bare call) reduced to a unit. The method
+// being mentioned is NOT counted as a mention of itself (definition-name
+// exclusion), so a genuinely-unmentioned method can still earn `dead`.
+func TestMentionedNamesCapturesUnboundCallForms(t *testing.T) {
+	src := "class Form\n" +
+		"  validate :amount_ok\n" + // symbol arg to an unrecognized macro
+		"  def run\n" +
+		"    create(**blob_args)\n" + // double-splat arg
+		"    expired_items.find_each\n" + // bare ident as chain receiver
+		"    safe_channel_param\n" + // bare call (may be inherited)
+		"  end\n" +
+		"  def lonely_helper; end\n" + // defined, mentioned nowhere
+		"end\n"
+	ce := extractRubySource(t, src)
+
+	for _, name := range []string{"amount_ok", "blob_args", "expired_items", "safe_channel_param"} {
+		if !ce.mentioned(name) {
+			t.Errorf("%q should be in the mention set (full: %v)", name, ce.mentions)
+		}
+	}
+	// A method defined but mentioned nowhere must NOT appear — otherwise no
+	// method could ever earn `dead`.
+	if ce.mentioned("lonely_helper") {
+		t.Errorf("lonely_helper is only defined, must not be a self-mention (full: %v)", ce.mentions)
+	}
+}
+
+// TestIsDefinitionNameNilParentGuard exercises the defensive nil-parent guard:
+// the root node has no parent, so isDefinitionName must return false rather than
+// panic. WalkNamedDescendants never yields the root in practice, but the guard
+// protects the hot path against a future change to that traversal contract.
+func TestIsDefinitionNameNilParentGuard(t *testing.T) {
+	p := sitter.NewParser()
+	defer p.Close()
+	if err := p.SetLanguage(grammars.Ruby()); err != nil {
+		t.Fatalf("set language: %v", err)
+	}
+	src := []byte("class Foo\n  def a; end\nend\n")
+	tree := p.Parse(src, nil)
+	defer tree.Close()
+
+	if isDefinitionName(tree.RootNode()) {
+		t.Error("root node has no parent and is not a definition name")
 	}
 }
 

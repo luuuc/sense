@@ -80,6 +80,18 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit
 			}
 		}
 	}
+	// Stream the file's broad mention set (every identifier/symbol token except
+	// definition names). The project-global union feeds the arbiter's soundness
+	// gate so a private method earns `dead` only when its name is mentioned
+	// nowhere a hidden caller could be — making `dead` sound even where the
+	// resolver could not bind every call.
+	if me, ok := emit.(extract.MentionEmitter); ok {
+		for _, name := range collectMentionedNames(tree.RootNode(), source) {
+			if err := me.MentionName(name); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

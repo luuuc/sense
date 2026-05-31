@@ -83,6 +83,61 @@ func TestWriteDispatchNamesEmptyNoKey(t *testing.T) {
 	}
 }
 
+func TestWriteReadMentionedNamesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	a := openTempAdapter(t)
+
+	if err := writeMentionedNames(ctx, a, map[string]struct{}{"foo": {}, "bar": {}}); err != nil {
+		t.Fatalf("writeMentionedNames: %v", err)
+	}
+	got, err := readMentionedNames(ctx, a)
+	if err != nil {
+		t.Fatalf("readMentionedNames: %v", err)
+	}
+	for _, want := range []string{"foo", "bar"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("mention set missing %q: %v", want, got)
+		}
+	}
+}
+
+func TestWriteMentionedNamesUnionsWithExisting(t *testing.T) {
+	ctx := context.Background()
+	a := openTempAdapter(t)
+
+	if err := writeMentionedNames(ctx, a, map[string]struct{}{"foo": {}}); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+	if err := writeMentionedNames(ctx, a, map[string]struct{}{"bar": {}}); err != nil {
+		t.Fatalf("write 2: %v", err)
+	}
+	got, err := readMentionedNames(ctx, a)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, want := range []string{"foo", "bar"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("union lost %q: %v", want, got)
+		}
+	}
+}
+
+func TestWriteMentionedNamesEmptyNoKey(t *testing.T) {
+	ctx := context.Background()
+	a := openTempAdapter(t)
+
+	if err := writeMentionedNames(ctx, a, nil); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	raw, err := a.ReadMeta(ctx, mentionedNamesMetaKey)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if raw != "" {
+		t.Errorf("expected no mentioned_names key, got %q", raw)
+	}
+}
+
 func TestReadDispatchNamesCorruptIsEmpty(t *testing.T) {
 	ctx := context.Background()
 	a := openTempAdapter(t)

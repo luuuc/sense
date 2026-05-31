@@ -174,6 +174,67 @@ func collectDispatchNames(root *sitter.Node, source []byte) []string {
 	return out
 }
 
+// collectMentionedNames walks every identifier and symbol-literal token in the
+// file and returns the set of bare names that appear in any position OTHER than
+// a method definition's own name. It is the broad superset of collectDispatchNames:
+// where dispatch capture targets only reflection literals, this captures every
+// name the code mentions — a bare call, the receiver of a chain
+// (`expired_sold_items.find_each`), a double-splat arg (`**blob_args`), a
+// `validate :sym` symbol argument, an inherited bare call.
+//
+// It feeds the dead-code arbiter's soundness gate: a private method earns
+// `dead` only when its name is absent from this project-wide set, i.e. it is
+// mentioned nowhere a hidden caller could be. That is the index equivalent of
+// "grep the name; only the definition matches", and it makes the `dead`
+// verdict sound independent of whether the resolver could bind every call.
+// Definition names are excluded so a method is not cancelled by its own `def`.
+func collectMentionedNames(root *sitter.Node, source []byte) []string {
+	seen := map[string]struct{}{}
+	_ = extract.WalkNamedDescendants(root, "identifier", func(id *sitter.Node) error {
+		if isDefinitionName(id) {
+			return nil
+		}
+		if name := extract.Text(id, source); name != "" {
+			seen[name] = struct{}{}
+		}
+		return nil
+	})
+	_ = extract.WalkNamedDescendants(root, "simple_symbol", func(s *sitter.Node) error {
+		if name := symbolOrStringName(s, source); name != "" {
+			seen[name] = struct{}{}
+		}
+		return nil
+	})
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	return out
+}
+
+// isDefinitionName reports whether id is the `name` field of a method or
+// singleton_method definition (`def foo` / `def self.foo`). Such identifiers
+// are excluded from the mention set so a method's own definition does not
+// count as a mention of itself — otherwise no method could ever earn `dead`.
+func isDefinitionName(id *sitter.Node) bool {
+	// id is reached via WalkNamedDescendants, which never yields the root, so
+	// parent is non-nil today. The guard is cheap insurance against a nil-deref
+	// in the hot path should that traversal contract ever change.
+	parent := id.Parent()
+	if parent == nil {
+		return false
+	}
+	switch parent.Kind() {
+	case "method", "singleton_method":
+		name := parent.ChildByFieldName("name")
+		return name != nil && name.Equals(*id)
+	}
+	return false
+}
+
 // firstArgName returns the literal symbol/string name of a call's first
 // argument, or "" when it is absent or not a literal.
 func firstArgName(call *sitter.Node, source []byte) string {
