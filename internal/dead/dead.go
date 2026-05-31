@@ -162,8 +162,13 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 	}
 
 	return Facts{
-		Frameworks:           frameworks,
-		IsLibrary:            !hasMain,
+		Frameworks: frameworks,
+		// A library is a tree with no application entry point whose public
+		// symbols may be consumed from outside. "No main" alone is not enough:
+		// a framework application (Rails, etc.) also has no main, yet its public
+		// methods are internal, not an exported API. A detected framework means
+		// the tree is an application, so it is not a library.
+		IsLibrary:            !hasMain && len(frameworks) == 0,
 		DispatchNames:        readDispatchNames(ctx, db),
 		MentionedNames:       readMentionedNames(ctx, db),
 		ValueObjectClassIDs:  valueObjectClassIDs,

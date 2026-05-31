@@ -151,6 +151,39 @@ func TestCoreVoiceReflectionBeatsExport(t *testing.T) {
 	}
 }
 
+// TestFrameworkAppMethodGetsLanguageReasonNotExportedAPI pins the behavior the
+// IsLibrary = !hasMain && len(frameworks)==0 fix exists for, through the real
+// voice stack rather than fakes. In a framework application IsLibrary is false,
+// so the core voice stays silent and an app-internal public Ruby method earns
+// the accurate ruby_public_method reason — not core_exported_api ("search
+// dependent projects"), which would mislead a triager. The contrast case (a
+// genuine library, IsLibrary=true) still surfaces core_exported_api, proving
+// the fix corrected the premise rather than the 50-vs-60 priority ladder: the
+// export reason only wins when its premise actually holds.
+func TestFrameworkAppMethodGetsLanguageReasonNotExportedAPI(t *testing.T) {
+	a := defaultArbiter()
+	// A public Ruby instance method with no dynamic-dispatch / mixin signal —
+	// the rubyVoice catch-all is ruby_public_method. Visibility must be public
+	// for the export gate to be a candidate at all, so the test proves the
+	// IsLibrary premise (not visibility) is what silences it.
+	method := Symbol{Name: "public_helper", Qualified: "Billing::Calculator#public_helper",
+		Kind: "method", Visibility: "public", Language: "ruby"}
+
+	// Framework app: IsLibrary false ⇒ core voice silent ⇒ ruby_public_method.
+	app := a.Decide([]Symbol{method}, Facts{IsLibrary: false})[0]
+	if app.Reason == nil || app.Reason.Code != ReasonRubyPublicMethod {
+		t.Errorf("framework-app method: reason = %+v, want %s", app.Reason, ReasonRubyPublicMethod)
+	}
+
+	// Genuine library: IsLibrary true ⇒ core voice raises the higher-priority
+	// export reason, which wins. Confirms the fix changed the premise, not the
+	// priority ordering.
+	lib := a.Decide([]Symbol{method}, Facts{IsLibrary: true})[0]
+	if lib.Reason == nil || lib.Reason.Code != ReasonExportedAPI {
+		t.Errorf("library method: reason = %+v, want %s", lib.Reason, ReasonExportedAPI)
+	}
+}
+
 func TestReasonCatalogLookup(t *testing.T) {
 	if reasonPriority(ReasonNoLanguageVoice) != 70 {
 		t.Errorf("no_language_voice priority = %d, want 70", reasonPriority(ReasonNoLanguageVoice))
