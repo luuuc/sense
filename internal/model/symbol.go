@@ -43,6 +43,11 @@ type SymbolRef struct {
 	// resolver's unqualified fallback filters candidates by dispatch kind
 	// so an instance call cannot bind to a same-named singleton method.
 	Receiver string
+	// Language is the symbol's file language (from sense_files). The resolver's
+	// unqualified fallback uses it to drop code-to-code cross-language matches —
+	// a Ruby call must not bind to a same-named JS symbol. Empty when the file
+	// language is unknown, in which case the gate is a no-op.
+	Language string
 }
 
 // HydrateSymbolNullables copies the sql.NullXxx carriers scanned from

@@ -27,6 +27,10 @@ import (
 type Index struct {
 	byQualified map[string][]model.SymbolRef
 	byName      map[string][]model.SymbolRef
+	// fileLang maps a file id to its language, so the unqualified fallback can
+	// look up the source edge's language from req.SourceFileID without threading
+	// it through every Request. Built from the same SymbolRefs as the name maps.
+	fileLang map[int64]string
 }
 
 // NewIndex builds an Index from the bulk SymbolRefs output. The input
@@ -36,11 +40,15 @@ func NewIndex(refs []model.SymbolRef) *Index {
 	ix := &Index{
 		byQualified: make(map[string][]model.SymbolRef, len(refs)),
 		byName:      make(map[string][]model.SymbolRef, len(refs)),
+		fileLang:    make(map[int64]string),
 	}
 	for _, r := range refs {
 		ix.byQualified[r.Qualified] = append(ix.byQualified[r.Qualified], r)
 		name := unqualifiedName(r.Qualified)
 		ix.byName[name] = append(ix.byName[name], r)
+		if r.Language != "" {
+			ix.fileLang[r.FileID] = r.Language
+		}
 	}
 	return ix
 }
@@ -95,9 +103,12 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //  2. Exact match via byQualified. Single hit ⇒ BaseConfidence.
 //     Multiple ⇒ same-file preferred, else lowest-id; confidence
 //     clamped to ambiguousConfidence.
-//  3. For calls and tests edges, fall back to unqualified-name match
-//     via byName. Same scope preference; confidence clamped to
-//     ambiguousConfidence.
+//  3. For calls, tests, and references edges, fall back to
+//     unqualified-name match via byName. Candidates in a different code
+//     language than the source are dropped (filterByLanguage); same
+//     scope preference applies; confidence is clamped to
+//     ambiguousConfidence, and a `::`-qualified target that matched only
+//     its leaf is demoted below blast's floor as a cross-namespace guess.
 //  4. No match ⇒ ok=false.
 func (ix *Index) Resolve(req Request) (Result, bool) {
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)
@@ -124,6 +135,7 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 				sep = ""
 			}
 			matches := ix.byName[name]
+			matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
 			matches = filterByReceiver(matches, sep)
 			if len(matches) > 0 {
 				r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
@@ -135,6 +147,15 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 					// weakest resolution — no receiver type disambiguates it. Drop
 					// it below blast's floor so impact analysis ignores the guess;
 					// it still counts for dead-code liveness.
+					r.Confidence = nameCollisionConfidence
+				}
+				if sep == "::" && r.Confidence > nameCollisionConfidence {
+					// A `::`-qualified target that missed exact lookup and matched
+					// only its trailing segment is a cross-namespace guess: the leaf
+					// bound but the namespace we couldn't verify was discarded
+					// (`Stripe::Checkout::Session` ⇒ a local `User::Session`). Demote
+					// below blast's floor even on a single match, so impact analysis
+					// ignores it while it still counts for dead-code liveness.
 					r.Confidence = nameCollisionConfidence
 				}
 				return r, true
@@ -309,4 +330,62 @@ func receiverForSeparator(sep string) string {
 		return extract.ReceiverSingleton
 	}
 	return ""
+}
+
+// filterByLanguage drops unqualified-fallback candidates that belong to a
+// different programming language than the source edge. A bare-name match
+// between two distinct code languages (a Ruby `application` call binding to a
+// JS Stimulus `application`) is a same-name coincidence, never a real call.
+//
+// Two carve-outs keep it from dropping legitimate edges:
+//
+//   - When the source is a view/template language (ERB, …) the gate is OFF.
+//     Templates legitimately dispatch into Ruby helpers and JS controllers by
+//     bare name through this very fallback, so their cross-language matches are
+//     real. (Synthetic-prefix view edges resolve via exact byQualified and never
+//     reach here; this carve-out covers the embedded-helper bare-name calls.)
+//   - An unknown language on the source (empty) or on a candidate is kept:
+//     without both languages the gate cannot prove a mismatch, so it stays a
+//     no-op (older indexes and unit tests that don't carry language are
+//     unaffected). The gate fails open: srcLang is "" when the source file
+//     contributed no symbol to fileLang (e.g. a file with zero indexed
+//     symbols), so a real edge is never silently dropped for lack of language.
+//
+// Unlike filterByReceiver, a language mismatch is a hard exclusion, not a
+// tie-break: if every candidate is cross-language the result is empty and the
+// edge drops to unresolved rather than binding to a coincidence. (filterBy
+// receiver, by contrast, returns its input untouched when filtering would
+// empty the set, because dispatch kind is a hint rather than a gate.)
+func filterByLanguage(matches []model.SymbolRef, srcLang string) []model.SymbolRef {
+	if srcLang == "" || isViewLanguage(srcLang) {
+		return matches
+	}
+	// Fast path: the overwhelmingly common case is every candidate sharing the
+	// source language, so scan first and return the input untouched rather than
+	// allocating a copy on every fallback in the hot resolve loop.
+	crossLang := false
+	for _, m := range matches {
+		if m.Language != "" && m.Language != srcLang {
+			crossLang = true
+			break
+		}
+	}
+	if !crossLang {
+		return matches
+	}
+	kept := make([]model.SymbolRef, 0, len(matches))
+	for _, m := range matches {
+		if m.Language == "" || m.Language == srcLang {
+			kept = append(kept, m)
+		}
+	}
+	return kept
+}
+
+// isViewLanguage reports whether a language is a view/template layer that
+// legitimately dispatches into other languages by bare name (so the
+// cross-language fallback gate must not apply to edges originating in it).
+// ERB is the only such language today; add others here as they gain extractors.
+func isViewLanguage(lang string) bool {
+	return lang == "erb"
 }

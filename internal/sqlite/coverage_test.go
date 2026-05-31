@@ -231,6 +231,31 @@ func TestSymbolRefsCarriesReceiver(t *testing.T) {
 	}
 }
 
+func TestSymbolRefsCarriesLanguage(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	rb := seedFile(t, a, "app/models/user.rb", "ruby", "h1")
+	js := seedFile(t, a, "app/javascript/controllers/application.js", "javascript", "h2")
+	seedSymbol(t, a, rb, "User", "User", "class")
+	seedSymbol(t, a, js, "application", "application", "constant")
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.Qualified] = r.Language
+	}
+	if got["User"] != "ruby" {
+		t.Errorf("User Language = %q, want ruby (left-joined from sense_files)", got["User"])
+	}
+	if got["application"] != "javascript" {
+		t.Errorf("application Language = %q, want javascript", got["application"])
+	}
+}
+
 func TestEdgesOfKind(t *testing.T) {
 	a := openTestDB(t)
 	ctx := context.Background()
