@@ -83,6 +83,31 @@ func TestWriteDispatchNamesEmptyNoKey(t *testing.T) {
 	}
 }
 
+// TestWarnMetaWrite pins the graceful-degradation contract: a name-set
+// meta-write failure is reported as a warning and does not abort the scan,
+// while a successful write (nil err) is silent. The scan must keep the index
+// it already wrote even when the dead-code recall signal fails to persist.
+func TestWarnMetaWrite(t *testing.T) {
+	var buf bytes.Buffer
+
+	warnMetaWrite(&buf, "dispatch-names", nil)
+	if buf.Len() != 0 {
+		t.Errorf("a successful write must be silent, got %q", buf.String())
+	}
+
+	warnMetaWrite(&buf, "mentioned-names", errForcedMeta)
+	got := buf.String()
+	if !bytes.Contains(buf.Bytes(), []byte("warn: write mentioned-names meta:")) {
+		t.Errorf("a failed write must warn, got %q", got)
+	}
+}
+
+var errForcedMeta = errForced{}
+
+type errForced struct{}
+
+func (errForced) Error() string { return "forced meta write failure" }
+
 func TestWriteReadMentionedNamesRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	a := openTempAdapter(t)

@@ -3,10 +3,22 @@ package scan
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"sort"
 
 	"github.com/luuuc/sense/internal/sqlite"
 )
+
+// warnMetaWrite reports a name-set meta-write failure to warn without failing
+// the scan. A meta-write failure degrades dead-code recall (a stale or missing
+// dispatch/mention set keeps a symbol open-world), so it is a warning, not a
+// fatal error — the index itself is already written. A nil err is a no-op.
+func warnMetaWrite(warn io.Writer, label string, err error) {
+	if err != nil {
+		_, _ = fmt.Fprintf(warn, "warn: write %s meta: %v\n", label, err)
+	}
+}
 
 // dispatchNamesMetaKey is the sense_meta key holding the project-wide set of
 // reflective dispatch-target names (send/const_get/define_method literals,

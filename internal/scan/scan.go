@@ -224,13 +224,8 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		_ = idx.DeleteMeta(ctx, "frameworks")
 	}
 
-	if err := writeDispatchNames(ctx, idx, h.dispatchNames); err != nil {
-		_, _ = fmt.Fprintf(warn, "warn: write dispatch-names meta: %v\n", err)
-	}
-
-	if err := writeMentionedNames(ctx, idx, h.mentionedNames); err != nil {
-		_, _ = fmt.Fprintf(warn, "warn: write mentioned-names meta: %v\n", err)
-	}
+	warnMetaWrite(warn, "dispatch-names", writeDispatchNames(ctx, idx, h.dispatchNames))
+	warnMetaWrite(warn, "mentioned-names", writeMentionedNames(ctx, idx, h.mentionedNames))
 
 	t0 = time.Now()
 	if err := h.removeStaleFiles(); err != nil {
