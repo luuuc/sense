@@ -695,6 +695,192 @@ func TestComputeNoTemporalEdgesStaysLow(t *testing.T) {
 	}
 }
 
+// addBlastSymbol writes a bare symbol into the index for traversal tests
+// that need a precise edge topology rather than scanned source.
+func addBlastSymbol(t *testing.T, a *sqlite.Adapter, fileID int64, qualified string, kind model.SymbolKind) int64 {
+	t.Helper()
+	id, err := a.WriteSymbol(context.Background(), &model.Symbol{
+		FileID:    fileID,
+		Name:      qualified,
+		Qualified: qualified,
+		Kind:      kind,
+		LineStart: 1,
+		LineEnd:   5,
+	})
+	if err != nil {
+		t.Fatalf("WriteSymbol %q: %v", qualified, err)
+	}
+	return id
+}
+
+func addBlastEdge(t *testing.T, a *sqlite.Adapter, fileID, src, tgt int64, kind model.EdgeKind, conf float64) {
+	t.Helper()
+	line := 1
+	if _, err := a.WriteEdge(context.Background(), &model.Edge{
+		SourceID:   model.Int64Ptr(src),
+		TargetID:   tgt,
+		Kind:       kind,
+		FileID:     fileID,
+		Line:       &line,
+		Confidence: conf,
+	}); err != nil {
+		t.Fatalf("WriteEdge %s %d->%d: %v", kind, src, tgt, err)
+	}
+}
+
+// affectedIDs collects every symbol id in the blast radius (direct + indirect).
+func affectedIDs(res blast.Result) map[int64]bool {
+	ids := map[int64]bool{}
+	for _, c := range res.DirectCallers {
+		ids[c.ID] = true
+	}
+	for _, c := range res.IndirectCallers {
+		ids[c.Symbol.ID] = true
+	}
+	return ids
+}
+
+// TestComputeTemporalIsSinkNotBridge pins the temporal-coupling-bridge bug
+// (pitch 25-14). A temporal edge means "these two co-change", a pairwise
+// signal about a node — not a path to keep walking from. Topology:
+//
+//	Seed ◀temporal─ TPartner ◀temporal─ Hub ◀references─ {Ref1,Ref2,Ref3}
+//
+// TPartner co-changes with both Seed and Hub (the way a shared test file
+// does), so a transitive temporal walk reaches Hub and then fans out across
+// Hub's unrelated `references` callers. None of Ref1-3 can break when Seed
+// changes. TPartner must still appear (hop-1 co-change signal, bumps risk),
+// but the walk must stop there.
+func TestComputeTemporalIsSinkNotBridge(t *testing.T) {
+	db, adapter := setupGraph(t)
+	ctx := context.Background()
+	fid := fileIDOf(t, adapter, "a.rb")
+
+	seed := addBlastSymbol(t, adapter, fid, "Seed#change", model.KindMethod)
+	tpartner := addBlastSymbol(t, adapter, fid, "TPartnerTest", model.KindClass)
+	hub := addBlastSymbol(t, adapter, fid, "Hub", model.KindClass)
+	ref1 := addBlastSymbol(t, adapter, fid, "Ref1#a", model.KindMethod)
+	ref2 := addBlastSymbol(t, adapter, fid, "Ref2#b", model.KindMethod)
+	ref3 := addBlastSymbol(t, adapter, fid, "Ref3#c", model.KindMethod)
+
+	// Reverse-traversal direction: blast walks target_id IN frontier → source.
+	addBlastEdge(t, adapter, fid, tpartner, seed, model.EdgeTemporal, 0.6) // TPartner co-changes with Seed
+	addBlastEdge(t, adapter, fid, hub, tpartner, model.EdgeTemporal, 0.6)  // Hub co-changes with TPartner
+	addBlastEdge(t, adapter, fid, ref1, hub, model.EdgeReferences, 1.0)    // Hub's unrelated callers
+	addBlastEdge(t, adapter, fid, ref2, hub, model.EdgeReferences, 1.0)
+	addBlastEdge(t, adapter, fid, ref3, hub, model.EdgeReferences, 1.0)
+
+	res, err := blast.Compute(ctx, db, []int64{seed}, blast.Options{MaxHops: 3, MinConfidence: 0.3})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	got := affectedIDs(res)
+
+	// TPartner is a legitimate hop-1 co-change signal: it must appear and bump risk.
+	if !got[tpartner] {
+		t.Errorf("TPartner (temporal partner) should be in the radius; got %v", got)
+	}
+	if res.Risk == blast.RiskLow {
+		t.Errorf("Risk = %q, want bumped (temporal coupling present)", res.Risk)
+	}
+
+	// The bug: Hub and its unrelated callers must NOT be pulled in through the
+	// transitive temporal chain. (Fails today; the fix makes temporal a sink.)
+	for name, id := range map[string]int64{"Hub": hub, "Ref1": ref1, "Ref2": ref2, "Ref3": ref3} {
+		if got[id] {
+			t.Errorf("%s reached only through a temporal hop must NOT be in the radius; got %v", name, got)
+		}
+	}
+}
+
+// TestComputeStructuralWinsOverTemporal is the two-sided control for the
+// sink rule: a node reached this hop by BOTH a temporal and a structural
+// edge must still expand (its own callers are pulled), and must not be
+// mislabeled as a temporal arrival. The temporal edge is written first so
+// the test also guards order-independence — the per-node decision must not
+// depend on which edge the hop query returns first.
+//
+//	Seed ◀{temporal,calls}─ Mid ◀calls─ Downstream
+func TestComputeStructuralWinsOverTemporal(t *testing.T) {
+	db, adapter := setupGraph(t)
+	ctx := context.Background()
+	fid := fileIDOf(t, adapter, "a.rb")
+
+	seed := addBlastSymbol(t, adapter, fid, "Seed2#change", model.KindMethod)
+	mid := addBlastSymbol(t, adapter, fid, "Mid2#m", model.KindMethod)
+	downstream := addBlastSymbol(t, adapter, fid, "Downstream2#d", model.KindMethod)
+
+	// Temporal edge written first; the structural one must still win.
+	addBlastEdge(t, adapter, fid, mid, seed, model.EdgeTemporal, 0.9)
+	addBlastEdge(t, adapter, fid, mid, seed, model.EdgeCalls, 0.9)
+	addBlastEdge(t, adapter, fid, downstream, mid, model.EdgeCalls, 0.9)
+
+	res, err := blast.Compute(ctx, db, []int64{seed}, blast.Options{MaxHops: 3, MinConfidence: 0.3})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	got := affectedIDs(res)
+	if !got[mid] {
+		t.Errorf("Mid should be in the radius; got %v", got)
+	}
+	// The whole point: Mid expanded (structural route present), so Downstream
+	// is reached. A blanket temporal-mute would have stopped at Mid.
+	if !got[downstream] {
+		t.Errorf("Downstream (caller of Mid) should be reached because Mid has a structural route; got %v", got)
+	}
+	// Mid must be recorded as a structural caller, not a temporal one.
+	if res.DirectTemporalIDs[mid] {
+		t.Errorf("Mid was reached structurally and must not be flagged temporal")
+	}
+}
+
+// TestComputeTemporalSinkCrossHopIsAccepted pins the one deliberate trade-off
+// of the sink rule: a node first discovered via temporal at a near hop stays a
+// sink even if it is ALSO structurally reachable at a later hop, because the
+// visited-set guard keeps the first (temporal) discovery. Topology:
+//
+//	Seed ◀temporal─ X ◀calls─ Y
+//	Seed ◀calls──── A ◀calls─ X   (X is structurally reachable via A at hop 2)
+//
+// X is reached temporally at hop 1 (sink) before its structural route through
+// A at hop 2, so X never expands and Y is not reported. In the bug this is
+// exactly what we want; in this rare legit shape it is a small, accepted
+// recall trim. This test documents it so a future change is a conscious one.
+func TestComputeTemporalSinkCrossHopIsAccepted(t *testing.T) {
+	db, adapter := setupGraph(t)
+	ctx := context.Background()
+	fid := fileIDOf(t, adapter, "a.rb")
+
+	seed := addBlastSymbol(t, adapter, fid, "Seed3#change", model.KindMethod)
+	a := addBlastSymbol(t, adapter, fid, "A3#a", model.KindMethod)
+	x := addBlastSymbol(t, adapter, fid, "X3#x", model.KindMethod)
+	y := addBlastSymbol(t, adapter, fid, "Y3#y", model.KindMethod)
+
+	addBlastEdge(t, adapter, fid, x, seed, model.EdgeTemporal, 0.9) // X co-changes with Seed (hop 1)
+	addBlastEdge(t, adapter, fid, a, seed, model.EdgeCalls, 0.9)    // A calls Seed (hop 1)
+	addBlastEdge(t, adapter, fid, x, a, model.EdgeCalls, 0.9)       // X calls A (would reach X at hop 2)
+	addBlastEdge(t, adapter, fid, y, x, model.EdgeCalls, 0.9)       // Y calls X
+
+	res, err := blast.Compute(ctx, db, []int64{seed}, blast.Options{MaxHops: 3, MinConfidence: 0.3})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	got := affectedIDs(res)
+	if !got[x] || !got[a] {
+		t.Errorf("X and A should be in the radius; got %v", got)
+	}
+	if !res.DirectTemporalIDs[x] {
+		t.Errorf("X was first reached via temporal at hop 1 and should be flagged temporal")
+	}
+	// Accepted trade-off: X stays a sink, so Y (its caller) is not reported.
+	if got[y] {
+		t.Errorf("Y must NOT be reported: X's temporal hop-1 discovery makes it a sink; got %v", got)
+	}
+}
+
 func fileIDOf(t *testing.T, a *sqlite.Adapter, filename string) int64 {
 	t.Helper()
 	all, err := a.Query(context.Background(), index.Filter{})
@@ -732,9 +918,9 @@ func writeFile(t *testing.T, path, content string) {
 // --- Pitch 13-05 fixture tests ---
 
 type fixtureDB struct {
-	db      *sql.DB
-	adapter *sqlite.Adapter
-	fileID  int64
+	db       *sql.DB
+	adapter  *sqlite.Adapter
+	fileID   int64
 	nextLine int
 }
 
