@@ -407,6 +407,45 @@ func TestHandleGraph(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:    "min_confidence above 1 returns error",
+			args:    map[string]any{"symbol": "auth.Verify", "min_confidence": 1.5},
+			isError: true,
+			checkJSON: func(t *testing.T, text string) {
+				if !strings.Contains(text, "min_confidence must be between") {
+					t.Errorf("expected min_confidence range error, got %q", text)
+				}
+			},
+		},
+		{
+			name: "min_confidence within range is accepted",
+			args: map[string]any{"symbol": "auth.Verify", "direction": "callers", "min_confidence": 0.3},
+			checkJSON: func(t *testing.T, text string) {
+				var resp mcpio.GraphResponse
+				if err := json.Unmarshal([]byte(text), &resp); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				if resp.Symbol.Name != "Verify" {
+					t.Errorf("symbol.name = %q, want Verify", resp.Symbol.Name)
+				}
+			},
+		},
+		{
+			// An explicit 0.0 ("show everything") is clamped to MinGraphConfidence
+			// so the builder's zero-means-default guard doesn't swallow it back to
+			// the 0.5 floor.
+			name: "min_confidence zero is clamped not defaulted",
+			args: map[string]any{"symbol": "auth.Verify", "direction": "callers", "min_confidence": 0.0},
+			checkJSON: func(t *testing.T, text string) {
+				var resp mcpio.GraphResponse
+				if err := json.Unmarshal([]byte(text), &resp); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				if resp.Symbol.Name != "Verify" {
+					t.Errorf("symbol.name = %q, want Verify", resp.Symbol.Name)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

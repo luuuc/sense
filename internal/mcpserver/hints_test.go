@@ -73,6 +73,36 @@ func TestGraphHintsNoCallers(t *testing.T) {
 	}
 }
 
+func TestGraphHintsNoCallersButHiddenLowConfidence(t *testing.T) {
+	// An empty called_by with hidden low-confidence callers must steer the
+	// agent to lower the threshold, not imply the symbol is unused.
+	resp := mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{
+			Name:      "current_user",
+			Qualified: "Authentication#current_user",
+			File:      "app/controllers/concerns/authentication.rb",
+		},
+		Edges:               mcpio.GraphEdges{CalledBy: []mcpio.CallEdgeRef{}},
+		LowConfidenceHidden: 111,
+	}
+	hints := graphHints(resp, "callers")
+	if len(hints) == 0 {
+		t.Fatal("want a hint when low-confidence callers are hidden, got none")
+	}
+	if hints[0].Tool != "sense_graph" {
+		t.Errorf("tool = %q, want sense_graph", hints[0].Tool)
+	}
+	if hints[0].Args["min_confidence"] != 0.3 {
+		t.Errorf("args.min_confidence = %v, want 0.3", hints[0].Args["min_confidence"])
+	}
+	if hints[0].Args["direction"] != "callers" {
+		t.Errorf("args.direction = %v, want callers", hints[0].Args["direction"])
+	}
+	if hints[0].Args["symbol"] != "Authentication#current_user" {
+		t.Errorf("args.symbol = %v, want qualified name", hints[0].Args["symbol"])
+	}
+}
+
 func TestGraphHintsNoCallersTestFile(t *testing.T) {
 	resp := mcpio.GraphResponse{
 		Symbol: mcpio.GraphSymbol{

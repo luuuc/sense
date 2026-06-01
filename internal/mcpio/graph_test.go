@@ -870,6 +870,56 @@ func TestCategorizeEdgesInboundIncludesImportsTests(t *testing.T) {
 	}
 }
 
+func TestBuildGraphResponseMinConfidenceSurfacesHiddenCallers(t *testing.T) {
+	// A method whose name is defined in several classes resolves its
+	// implicit-receiver callers by bare-name fallback, stamped 0.3
+	// (ConfidenceNameCollision) — below the default display floor. The default
+	// request hides them and counts them in LowConfidenceHidden; a lowered
+	// MinConfidence surfaces the same edges so an empty list is never mistaken
+	// for "unused".
+	files := func(id int64) (string, bool) {
+		paths := map[int64]string{2: "app/controllers/posts_controller.rb"}
+		p, ok := paths[id]
+		return p, ok
+	}
+	newSC := func() *model.SymbolContext {
+		return &model.SymbolContext{
+			Symbol: model.Symbol{ID: 1, Name: "current_user", Qualified: "Authentication#current_user", Kind: model.KindMethod, FileID: 1, LineStart: 5},
+			File:   model.File{Path: "app/controllers/concerns/authentication.rb"},
+			Inbound: []model.EdgeRef{
+				{Edge: model.Edge{Kind: model.EdgeCalls, Confidence: 0.3, FileID: 2}, Target: model.Symbol{ID: 7, Qualified: "PostsController#show", FileID: 2, LineStart: 12}},
+			},
+		}
+	}
+
+	// Default floor (0.5): the 0.3 caller is hidden and counted.
+	def := BuildGraphResponse(context.Background(), newSC(), files, BuildGraphRequest{Direction: model.DirectionCallers})
+	if len(def.Edges.CalledBy) != 0 {
+		t.Fatalf("default floor: CalledBy = %d, want 0", len(def.Edges.CalledBy))
+	}
+	if def.LowConfidenceHidden != 1 {
+		t.Fatalf("default floor: LowConfidenceHidden = %d, want 1", def.LowConfidenceHidden)
+	}
+
+	// Lowered floor (0.3): the same caller is surfaced and no longer counted hidden.
+	low := BuildGraphResponse(context.Background(), newSC(), files, BuildGraphRequest{Direction: model.DirectionCallers, MinConfidence: 0.3})
+	if len(low.Edges.CalledBy) != 1 || low.Edges.CalledBy[0].Symbol != "PostsController#show" {
+		t.Fatalf("lowered floor: CalledBy = %+v, want [PostsController#show]", low.Edges.CalledBy)
+	}
+	if low.LowConfidenceHidden != 0 {
+		t.Errorf("lowered floor: LowConfidenceHidden = %d, want 0", low.LowConfidenceHidden)
+	}
+}
+
+func TestBuildGraphRequestEdgeFloorDefaults(t *testing.T) {
+	if got := (BuildGraphRequest{}).edgeFloor(); got != graphConfidenceFloor {
+		t.Errorf("unset MinConfidence: edgeFloor = %g, want default %g", got, graphConfidenceFloor)
+	}
+	if got := (BuildGraphRequest{MinConfidence: 0.3}).edgeFloor(); got != 0.3 {
+		t.Errorf("explicit MinConfidence: edgeFloor = %g, want 0.3", got)
+	}
+}
+
 func TestBuildGraphResponseInboundOnlyTemporal(t *testing.T) {
 	coChanges := 7
 	sc := &model.SymbolContext{
