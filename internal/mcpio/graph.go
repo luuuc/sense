@@ -87,6 +87,20 @@ const (
 // — they're syntactically explicit.
 const graphConfidenceFloor = extract.ConfidenceUnresolved
 
+// GraphConfidenceFloor is the exported default usage-edge floor for
+// sense_graph — the value min_confidence defaults to when the parameter is
+// absent. It mirrors graphConfidenceFloor so callers outside this package
+// (the MCP handler) resolve the same default the builder uses.
+const GraphConfidenceFloor = graphConfidenceFloor
+
+// MinGraphConfidence is the smallest positive floor the MCP handler clamps an
+// explicit min_confidence to. It keeps an explicit 0.0 ("show everything")
+// distinguishable from an unset field in BuildGraphRequest.edgeFloor, whose
+// zero-value guard resolves to the default floor. The lowest real usage-edge
+// confidence is 0.3 (name collision), so any floor at or below it surfaces
+// every stored caller.
+const MinGraphConfidence = 0.01
+
 // FileLookup resolves a sense_files row id to its path. Used by
 // BuildGraphResponse / BuildBlastResponse to hydrate edge endpoints.
 // A miss returns ("", false); the builder then renders `File` as
@@ -102,6 +116,22 @@ type BuildGraphRequest struct {
 	Direction      model.Direction // DirectionBoth, DirectionCallers, DirectionCallees; "" == both
 	SegmentCallers bool
 	Snippets       *SnippetReader
+	// MinConfidence is the floor below which usage edges (calls/references)
+	// are hidden and counted in LowConfidenceHidden. A zero value means
+	// "unset" and resolves to graphConfidenceFloor, so CLI and benchmark
+	// callers that leave it blank keep the default 0.5 floor. The MCP handler
+	// passes an explicit value (default 0.5, lowered via the min_confidence
+	// parameter to surface name-collision and other below-floor callers).
+	MinConfidence float64
+}
+
+// edgeFloor resolves the request's usage-edge confidence floor, treating a
+// zero/unset MinConfidence as the default graphConfidenceFloor.
+func (r BuildGraphRequest) edgeFloor() float64 {
+	if r.MinConfidence <= 0 {
+		return graphConfidenceFloor
+	}
+	return r.MinConfidence
 }
 
 // BuildGraphResponse assembles the wire-shape response from the
@@ -132,7 +162,7 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 	}
 
 	var hidden int
-	resp.Edges, hidden = categorizeEdges(ctx, sc.Outbound, sc.Inbound, files, req.Direction, req.Snippets)
+	resp.Edges, hidden = categorizeEdges(ctx, sc.Outbound, sc.Inbound, files, req.Direction, req.Snippets, req.edgeFloor())
 	resp.LowConfidenceHidden = hidden
 	resp.SnippetsTruncated = req.Snippets.Truncated(len(sc.Outbound) + len(sc.Inbound))
 
@@ -252,7 +282,7 @@ func BuildFullGraphResponse(ctx context.Context, gr *model.GraphResult, files Fi
 // BuildGraphLayer converts a model.HopEdges into a wire-format
 // GraphLayer for the given hop depth.
 func BuildGraphLayer(ctx context.Context, hop model.HopEdges, depth int, files FileLookup, req BuildGraphRequest) GraphLayer {
-	edges, _ := categorizeEdges(ctx, hop.Outbound, hop.Inbound, files, req.Direction, req.Snippets)
+	edges, _ := categorizeEdges(ctx, hop.Outbound, hop.Inbound, files, req.Direction, req.Snippets, req.edgeFloor())
 	return GraphLayer{
 		Depth: depth,
 		Edges: edges,
@@ -263,9 +293,11 @@ func BuildGraphLayer(ctx context.Context, hop model.HopEdges, depth int, files F
 // shape, dispatching each edge kind to the right bucket. Temporal edges
 // and test-caller segmentation are root-only concerns handled by
 // BuildGraphResponse on top of this. Usage edges (calls / references)
-// below graphConfidenceFloor are dropped and counted in the returned
-// hidden total so the caller can report them rather than silently omit.
-func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, files FileLookup, direction model.Direction, snippets *SnippetReader) (GraphEdges, int) {
+// below floor are dropped and counted in the returned hidden total so the
+// caller can report them rather than silently omit. floor is the resolved
+// usage-edge confidence floor (graphConfidenceFloor by default; lower to
+// surface name-collision and other below-floor callers).
+func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, files FileLookup, direction model.Direction, snippets *SnippetReader, floor float64) (GraphEdges, int) {
 	var edges GraphEdges
 	var hidden int
 
@@ -284,7 +316,7 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 		for _, e := range outbound {
 			switch e.Edge.Kind {
 			case model.EdgeCalls, model.EdgeReferences:
-				if e.Edge.Confidence < graphConfidenceFloor {
+				if e.Edge.Confidence < floor {
 					hidden++
 					continue
 				}
@@ -343,7 +375,7 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 		for _, e := range inbound {
 			switch e.Edge.Kind {
 			case model.EdgeCalls, model.EdgeReferences:
-				if e.Edge.Confidence < graphConfidenceFloor {
+				if e.Edge.Confidence < floor {
 					hidden++
 					continue
 				}

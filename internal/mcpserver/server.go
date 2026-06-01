@@ -290,6 +290,13 @@ func graphTool() mcp.Tool {
 		mcp.WithNumber("context_lines",
 			mcp.Description("Lines of source context around each call site (default 2, 0 to suppress snippets)"),
 		),
+		mcp.WithNumber("min_confidence",
+			mcp.Description("Minimum edge confidence 0.0–1.0 for callers/callees (default 0.5). "+
+				"Lower it (e.g. 0.3) to surface low-confidence callers that the default floor hides — "+
+				"implicit-receiver calls to a method whose name is defined in multiple classes resolve by "+
+				"bare-name fallback and are stamped 0.3. When called_by is empty but low_confidence_hidden "+
+				"is non-zero, re-run with a lower min_confidence before concluding a symbol is unused."),
+		),
 	)
 }
 
@@ -402,10 +409,27 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 
 	contextLines := req.GetInt("context_lines", mcpio.DefaultContextLines)
+
+	// min_confidence defaults to the display floor (0.5); a sentinel of -1
+	// lets us tell "absent" from an explicit 0.0. An explicit value is
+	// validated to [0,1] and clamped to a small positive epsilon so the
+	// builder's zero-means-default guard never swallows it.
+	minConfidence := mcpio.GraphConfidenceFloor
+	if v := req.GetFloat("min_confidence", -1); v >= 0 {
+		if v > 1 {
+			return mcp.NewToolResultError(fmt.Sprintf("sense_graph: min_confidence must be between 0.0 and 1.0 (got %g)", v)), nil
+		}
+		minConfidence = v
+		if minConfidence < mcpio.MinGraphConfidence {
+			minConfidence = mcpio.MinGraphConfidence
+		}
+	}
+
 	buildReq := mcpio.BuildGraphRequest{
 		Direction:      direction,
 		SegmentCallers: h.defaults.GraphSegmentCallers,
 		Snippets:       mcpio.NewSnippetReader(h.dir, contextLines),
+		MinConfidence:  minConfidence,
 	}
 	resp := mcpio.BuildFullGraphResponse(ctx, gr, lookup, buildReq)
 
@@ -608,13 +632,28 @@ func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.Nex
 	if resp.TestCallerSummary != nil {
 		totalCallers += resp.TestCallerSummary.Count
 	}
-	if totalCallers >= 5 {
+	switch {
+	case totalCallers >= 5:
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense_blast",
 			Args:   map[string]any{"symbol": resp.Symbol.Qualified},
 			Reason: fmt.Sprintf("%d callers found — check blast radius before changing this symbol", totalCallers),
 		})
-	} else if totalCallers == 0 && !isTestFile(resp.Symbol.File) {
+	case totalCallers == 0 && resp.LowConfidenceHidden > 0:
+		// Callers exist in the index but sit below the display floor — e.g.
+		// implicit-receiver calls to a method whose name is defined in several
+		// classes, stamped 0.3 by name-collision fallback. Surfacing the knob
+		// here stops an agent from reading the empty list as "unused".
+		args := map[string]any{"symbol": resp.Symbol.Qualified, "min_confidence": 0.3}
+		if direction == model.DirectionCallers {
+			args["direction"] = "callers"
+		}
+		hints = append(hints, mcpio.NextStep{
+			Tool:   "sense_graph",
+			Args:   args,
+			Reason: fmt.Sprintf("%d low-confidence callers hidden — re-run with min_confidence=0.3 to view before assuming this is unused", resp.LowConfidenceHidden),
+		})
+	case totalCallers == 0 && !isTestFile(resp.Symbol.File):
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense_search",
 			Args:   map[string]any{"query": resp.Symbol.Name},
