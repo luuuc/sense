@@ -266,6 +266,17 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		}
 		edgesTraversed += len(pairs)
 		var next []int64
+
+		// Group this hop's qualifying edges by source so the expand-vs-sink
+		// and predecessor decisions are made per-node, not per-edge in
+		// iteration order. A node reached this hop ONLY via temporal edges is
+		// a sink: it is recorded (it appears as a co-change caller and feeds
+		// the risk signal) but never expanded, so a temporal hop cannot
+		// launder git co-change into a transitive structural path. A node with
+		// any non-temporal in-edge expands normally, and its predecessor/kind
+		// reflect that structural path.
+		bySource := map[int64][]hopCand{}
+		var order []int64
 		for _, pair := range pairs {
 			if _, seen := visited[pair.source]; seen {
 				continue
@@ -278,16 +289,53 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 			if cumConf < minConf {
 				continue
 			}
-			visited[pair.source] = hop
-			predecessor[pair.source] = pair.target
-			visitedKind[pair.source] = pair.kind
-			pathConf[pair.source] = cumConf
-			edgeSites[pair.source] = EdgeSite{FileID: pair.fileID, Line: pair.line}
-
-			if pair.kind == "temporal" {
-				viaTemporal[pair.source] = true
+			if _, ok := bySource[pair.source]; !ok {
+				order = append(order, pair.source)
 			}
-			next = append(next, pair.source)
+			bySource[pair.source] = append(bySource[pair.source], hopCand{
+				target:  pair.target,
+				kind:    pair.kind,
+				cumConf: cumConf,
+				fileID:  pair.fileID,
+				line:    pair.line,
+			})
+		}
+
+		for _, src := range order {
+			cands := bySource[src]
+			hasStructural := false
+			for _, c := range cands {
+				if c.kind != "temporal" {
+					hasStructural = true
+					break
+				}
+			}
+			// Choose the path into src: prefer a non-temporal edge when one
+			// exists (temporal is only the recorded route when nothing else
+			// reaches the node), then highest cumulative confidence.
+			var chosen hopCand
+			chosenSet := false
+			for _, c := range cands {
+				if hasStructural && c.kind == "temporal" {
+					continue
+				}
+				if !chosenSet || c.cumConf > chosen.cumConf {
+					chosen = c
+					chosenSet = true
+				}
+			}
+
+			visited[src] = hop
+			predecessor[src] = chosen.target
+			visitedKind[src] = chosen.kind
+			pathConf[src] = chosen.cumConf
+			edgeSites[src] = EdgeSite{FileID: chosen.fileID, Line: chosen.line}
+			if chosen.kind == "temporal" {
+				viaTemporal[src] = true
+			}
+			if hasStructural {
+				next = append(next, src)
+			}
 		}
 		// Cap frontier width: evicted nodes are removed from visited so they
 		// may be re-discovered via a stronger path in a later hop. This is
@@ -538,6 +586,17 @@ type edgePair struct {
 	confidence float64
 	fileID     *int64
 	line       *int
+}
+
+// hopCand is a qualifying in-edge to one node within a single BFS hop,
+// carrying the cumulative path confidence (not the raw edge confidence) so
+// the per-node expand-vs-sink decision can pick the strongest route.
+type hopCand struct {
+	target  int64
+	kind    string
+	cumConf float64
+	fileID  *int64
+	line    *int
 }
 
 func subjectHasCallees(ctx context.Context, db *sql.DB, symbolIDs []int64) bool {

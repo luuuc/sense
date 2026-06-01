@@ -18,6 +18,17 @@ All notable changes to Sense.
 
 ### Fixed
 
+- Blast radius no longer fans out across temporal co-change hops. A temporal
+  (git co-change) edge was traversed transitively, so a shared co-changed test
+  file could bridge two unrelated models and then pull in the whole hub's
+  `references` callers — e.g. changing `Shipping::Rate` falsely implicated
+  `Country`'s address-form and geolocation callers. A temporal edge is now a
+  sink: a node reached *only* via temporal coupling is still reported (it stays
+  a co-change caller and still raises risk) but is not expanded, so co-change
+  cannot launder into a transitive structural path. Nodes reached by any real
+  (`calls`/`composes`/`tests`/…) edge are unaffected. On a real Rails app this
+  cut the false-positive radius of a hub-adjacent model by ~40% while retaining
+  every genuine caller.
 - Dead-code `dead` precision on real-world Ruby. The closed-world proof assumed
   the resolver binds every call, which is false on a dynamic language (inherited
   bare calls, `**splat` args, chain receivers, `validate :sym` symbol arguments
