@@ -240,6 +240,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	warnMetaWrite(warn, "rust-allow-dead", writeRustAllowDead(ctx, idx, h.rustAllowDead))
 	warnMetaWrite(warn, "ts-decorated", writeTSDecorated(ctx, idx, h.tsDecorated))
 	warnMetaWrite(warn, "ts-default-exports", writeTSDefaultExports(ctx, idx, h.tsDefaultExports))
+	warnMetaWrite(warn, "py-decorated", writePythonDecorated(ctx, idx, h.pyDecorated))
+	warnMetaWrite(warn, "py-routes", writePythonRoutes(ctx, idx, h.pyRoutes))
+	warnMetaWrite(warn, "py-django", writePythonDjango(ctx, idx, h.pyDjango))
+	warnMetaWrite(warn, "py-all-exports", writePythonAllExports(ctx, idx, h.pyAllExports))
 	// A pre-feature index carried single bare union keys (no language suffix).
 	// The per-language reader globs `*:<lang>` and ignores them, but delete them
 	// on every full scan so an in-place upgrade leaves no stale meta to mislead a
@@ -562,6 +566,17 @@ type harness struct {
 	tsDecorated      map[string]struct{}
 	tsDefaultExports map[string]struct{}
 
+	// pyDecorated / pyRoutes / pyDjango are the Python decorator-reach sets
+	// (any decorator; the route-decorator subset; the Django-dispatch subset),
+	// and pyAllExports is the set of names modules declare public via `__all__`.
+	// All four are written to flat sense_meta keys so the dead-code Python voice
+	// keeps a decorated / routed / Django-dispatched / declared-public symbol
+	// open-world (py_decorator / py_route / py_django / py_all_export).
+	pyDecorated  map[string]struct{}
+	pyRoutes     map[string]struct{}
+	pyDjango     map[string]struct{}
+	pyAllExports map[string]struct{}
+
 	// harvestedLangs is the set of languages whose mention harvest RAN this
 	// scan — every indexed file whose extractor is an extract.MentionHarvester
 	// marks its language here, regardless of how many names it produced. Written
@@ -844,6 +859,38 @@ func (h *harness) walkTree(root string) error {
 				h.tsDefaultExports[n] = struct{}{}
 			}
 		}
+		if len(fr.PyDecorated) > 0 {
+			if h.pyDecorated == nil {
+				h.pyDecorated = map[string]struct{}{}
+			}
+			for _, n := range fr.PyDecorated {
+				h.pyDecorated[n] = struct{}{}
+			}
+		}
+		if len(fr.PyRoutes) > 0 {
+			if h.pyRoutes == nil {
+				h.pyRoutes = map[string]struct{}{}
+			}
+			for _, n := range fr.PyRoutes {
+				h.pyRoutes[n] = struct{}{}
+			}
+		}
+		if len(fr.PyDjango) > 0 {
+			if h.pyDjango == nil {
+				h.pyDjango = map[string]struct{}{}
+			}
+			for _, n := range fr.PyDjango {
+				h.pyDjango[n] = struct{}{}
+			}
+		}
+		if len(fr.PyAllExports) > 0 {
+			if h.pyAllExports == nil {
+				h.pyAllExports = map[string]struct{}{}
+			}
+			for _, n := range fr.PyAllExports {
+				h.pyAllExports[n] = struct{}{}
+			}
+		}
 
 		batch = append(batch, fr)
 		if len(batch) >= batchSize {
@@ -911,14 +958,14 @@ func (h *harness) flushBatch(batch []*fileResult) error {
 // fileResult holds the output of parseFile — everything needed to
 // persist a file's symbols and edges without re-reading or re-parsing.
 type fileResult struct {
-	Rel            string
-	Language       string
-	Source         []byte
-	Hash           string
-	Symbols         []extract.EmittedSymbol
-	Edges           []extract.EmittedEdge
-	DispatchNames   []string
-	MentionedNames  []string
+	Rel              string
+	Language         string
+	Source           []byte
+	Hash             string
+	Symbols          []extract.EmittedSymbol
+	Edges            []extract.EmittedEdge
+	DispatchNames    []string
+	MentionedNames   []string
 	CgoExports       []string
 	RustExports      []string
 	RustTestSymbols  []string
@@ -926,6 +973,10 @@ type fileResult struct {
 	RustAllowDead    []string
 	TSDecorated      []string
 	TSDefaultExports []string
+	PyDecorated      []string
+	PyRoutes         []string
+	PyDjango         []string
+	PyAllExports     []string
 }
 
 // 100 files per SQLite transaction amortizes BEGIN/COMMIT overhead (~10x
@@ -1035,14 +1086,14 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 	})
 
 	return &fileResult{
-		Rel:            rel,
-		Language:       ex.Language(),
-		Source:         source,
-		Hash:           newHash,
-		Symbols:         collected.symbols,
-		Edges:           collected.edges,
-		DispatchNames:   collected.dispatchNames,
-		MentionedNames:  collected.mentionedNames,
+		Rel:              rel,
+		Language:         ex.Language(),
+		Source:           source,
+		Hash:             newHash,
+		Symbols:          collected.symbols,
+		Edges:            collected.edges,
+		DispatchNames:    collected.dispatchNames,
+		MentionedNames:   collected.mentionedNames,
 		CgoExports:       collected.cgoExports,
 		RustExports:      collected.rustExports,
 		RustTestSymbols:  collected.rustTestSymbols,
@@ -1050,6 +1101,10 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 		RustAllowDead:    collected.rustAllowDead,
 		TSDecorated:      collected.tsDecorated,
 		TSDefaultExports: collected.tsDefaultExports,
+		PyDecorated:      collected.pyDecorated,
+		PyRoutes:         collected.pyRoutes,
+		PyDjango:         collected.pyDjango,
+		PyAllExports:     collected.pyAllExports,
 	}
 }
 
@@ -1379,10 +1434,10 @@ func safeExtractRaw(ex extract.RawExtractor, source []byte, rel string, c *colle
 // ---- collector (per-file Emitter) ----
 
 type collector struct {
-	symbols         []extract.EmittedSymbol
-	edges           []extract.EmittedEdge
-	dispatchNames   []string
-	mentionedNames  []string
+	symbols          []extract.EmittedSymbol
+	edges            []extract.EmittedEdge
+	dispatchNames    []string
+	mentionedNames   []string
 	cgoExports       []string
 	rustExports      []string
 	rustTestSymbols  []string
@@ -1390,6 +1445,10 @@ type collector struct {
 	rustAllowDead    []string
 	tsDecorated      []string
 	tsDefaultExports []string
+	pyDecorated      []string
+	pyRoutes         []string
+	pyDjango         []string
+	pyAllExports     []string
 }
 
 func (c *collector) Symbol(s extract.EmittedSymbol) error {
@@ -1480,6 +1539,42 @@ func (c *collector) TSDecoratedName(name string) error {
 // ts_default_export reason rather than the generic ts_exported.
 func (c *collector) TSDefaultExportName(name string) error {
 	c.tsDefaultExports = append(c.tsDefaultExports, name)
+	return nil
+}
+
+// PythonDecoratedName implements extract.PythonHarvestEmitter: an extractor
+// streams every decorated Python function/method/class. The project-wide set
+// feeds the dead-code Python voice so a decorator-dispatched symbol stays
+// open-world (py_decorator) instead of being falsely called dead.
+func (c *collector) PythonDecoratedName(name string) error {
+	c.pyDecorated = append(c.pyDecorated, name)
+	return nil
+}
+
+// PythonRouteName implements extract.PythonHarvestEmitter: an extractor streams
+// every handler carrying a route decorator (Flask/FastAPI). The project-wide set
+// feeds the Python voice so a framework-routed handler stays open-world
+// (py_route) instead of being falsely called dead.
+func (c *collector) PythonRouteName(name string) error {
+	c.pyRoutes = append(c.pyRoutes, name)
+	return nil
+}
+
+// PythonDjangoName implements extract.PythonHarvestEmitter: an extractor streams
+// every symbol carrying a Django-dispatch decorator (`@receiver`,
+// `@admin.register`). The project-wide set feeds the Python voice so a
+// signal/admin-dispatched symbol stays open-world (py_django).
+func (c *collector) PythonDjangoName(name string) error {
+	c.pyDjango = append(c.pyDjango, name)
+	return nil
+}
+
+// PythonAllExportName implements extract.PythonHarvestEmitter: an extractor
+// streams every name a module declares public via `__all__`. The project-wide set
+// feeds the Python voice so a declared-public name stays open-world
+// (py_all_export) even when underscore-private.
+func (c *collector) PythonAllExportName(name string) error {
+	c.pyAllExports = append(c.pyAllExports, name)
 	return nil
 }
 

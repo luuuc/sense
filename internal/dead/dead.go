@@ -132,14 +132,15 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 }
 
 // defaultArbiter is the registered voice stack for this build: the generic core
-// voice plus the Ruby, Rails, Go, Rust, and TypeScript/JavaScript language
-// voices. The TS voice is registered once per language string the shared
+// voice plus the Ruby, Rails, Go, Rust, TypeScript/JavaScript, and Python
+// language voices. The TS voice is registered once per language string the shared
 // extractor emits ("typescript", "tsx", "javascript") so each is a language for
 // which closed-world can be proven. Adding a language voice is a one-line change
 // here once it exists.
 func defaultArbiter() *Arbiter {
 	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{}, goVoice{}, rustVoice{},
-		tsVoice{lang: "typescript"}, tsVoice{lang: "tsx"}, tsVoice{lang: "javascript"})
+		tsVoice{lang: "typescript"}, tsVoice{lang: "tsx"}, tsVoice{lang: "javascript"},
+		pythonVoice{})
 }
 
 // buildFacts gathers the project-wide index facts the voices consume. It is
@@ -183,18 +184,22 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 		// language that harvested an empty set (present here, absent from
 		// MentionedNames) is still allowed to earn `dead` against its empty set —
 		// distinct from a language that never harvested (absent here → fail closed).
-		HarvestedLangs:       readHarvestedLangs(ctx, db),
-		CgoExportNames:       readCgoExportNames(ctx, db),
+		HarvestedLangs:           readHarvestedLangs(ctx, db),
+		CgoExportNames:           readCgoExportNames(ctx, db),
 		RustExportNames:          readRustExportNames(ctx, db),
 		RustTestSymbolNames:      readRustTestSymbolNames(ctx, db),
 		RustTraitImplMethodNames: readRustTraitImplMethodNames(ctx, db),
 		RustAllowDeadNames:       readRustAllowDeadNames(ctx, db),
 		TSDecoratedNames:         readTSDecoratedNames(ctx, db),
 		TSDefaultExportNames:     readTSDefaultExportNames(ctx, db),
-		ValueObjectClassIDs:  valueObjectClassIDs,
-		IncludedModuleIDs:    includedModuleIDs,
-		ControllerConcernIDs: controllerConcernIDs,
-		InterfaceMethodNames: interfaceMethodNames,
+		PythonDecoratedNames:     readPythonDecoratedNames(ctx, db),
+		PythonRouteNames:         readPythonRouteNames(ctx, db),
+		PythonDjangoNames:        readPythonDjangoNames(ctx, db),
+		PythonAllExportNames:     readPythonAllExportNames(ctx, db),
+		ValueObjectClassIDs:      valueObjectClassIDs,
+		IncludedModuleIDs:        includedModuleIDs,
+		ControllerConcernIDs:     controllerConcernIDs,
+		InterfaceMethodNames:     interfaceMethodNames,
 	}, nil
 }
 
@@ -874,6 +879,38 @@ func readTSDecoratedNames(ctx context.Context, db *sql.DB) map[string]struct{} {
 // corrupt key yields an empty set.
 func readTSDefaultExportNames(ctx context.Context, db *sql.DB) map[string]struct{} {
 	return readStringSetMeta(ctx, db, "ts_default_exports")
+}
+
+// readPythonDecoratedNames returns the set of Python function/method/class names
+// carrying any decorator, persisted to the py_decorated sense_meta key by the
+// scan layer. The Python voice keeps such a name open-world (py_decorator). A
+// missing or corrupt key yields an empty set.
+func readPythonDecoratedNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "py_decorated")
+}
+
+// readPythonRouteNames returns the set of Python handler names carrying a route
+// decorator (Flask/FastAPI), persisted to the py_routes sense_meta key. The
+// Python voice raises py_route for such a name. A missing or corrupt key yields
+// an empty set.
+func readPythonRouteNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "py_routes")
+}
+
+// readPythonDjangoNames returns the set of Python names carrying a Django-dispatch
+// decorator (`@receiver` / `@admin.register`), persisted to the py_django
+// sense_meta key. The Python voice raises py_django for such a name. A missing or
+// corrupt key yields an empty set.
+func readPythonDjangoNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "py_django")
+}
+
+// readPythonAllExportNames returns the set of names Python modules declare public
+// via `__all__`, persisted to the py_all_exports sense_meta key. The Python voice
+// raises py_all_export for such a name (even when underscore-private). A missing
+// or corrupt key yields an empty set.
+func readPythonAllExportNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "py_all_exports")
 }
 
 // readStringSetMeta reads a JSON string-array sense_meta value into a set,

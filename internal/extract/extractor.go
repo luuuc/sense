@@ -345,6 +345,38 @@ type TSHarvestEmitter interface {
 	TSDefaultExportName(name string) error
 }
 
+// PythonHarvestEmitter is an optional Emitter extension for streaming the Python
+// dead-code facts the Python voice reads — names whose reachability the edge
+// graph cannot see because a framework, a decorator, or a declared public API
+// reaches them:
+//
+//   - PythonDecoratedName: a function/method/class carrying any decorator
+//     (`@property`, `@staticmethod`, `@pytest.fixture`, `@click.command`, …).
+//     The decorator changes the call story (an attribute access, an injected
+//     fixture, a CLI entry), so the voice keeps it open-world (py_decorator).
+//   - PythonRouteName: a handler carrying a route decorator (Flask `@app.route`,
+//     FastAPI `@app.get`/`@router.post`/`@app.websocket`). The framework's router
+//     dispatches it with no source caller (py_route) — the more specific reason.
+//   - PythonDjangoName: a symbol carrying a Django-dispatch decorator (a
+//     `@receiver` signal handler, an `@admin.register`). Django's signal/admin
+//     machinery invokes it invisibly (py_django).
+//   - PythonAllExportName: a name listed in a module's `__all__`. It is declared
+//     public API — re-exported by `from mod import *` — so the voice keeps it
+//     open-world (py_all_export) even when it is underscore-private (the one case
+//     where the underscore convention is overridden, which the broad mention set
+//     does NOT catch because `__all__` lists names as string literals).
+//
+// The name sets feed flat (not per-language) sense_meta keys — these concepts are
+// Python-only. An extractor probes for this interface with a type assertion; an
+// Emitter that does not implement it simply receives no names. Returning an error
+// aborts extraction.
+type PythonHarvestEmitter interface {
+	PythonDecoratedName(name string) error
+	PythonRouteName(name string) error
+	PythonDjangoName(name string) error
+	PythonAllExportName(name string) error
+}
+
 // MentionHarvester marks an Extractor whose Extract streams the broad mention
 // set (via MentionEmitter) for every file it processes. The scan records such a
 // language as harvested even on a scan that yields zero mentions for it, so the

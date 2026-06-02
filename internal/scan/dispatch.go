@@ -195,6 +195,57 @@ func writeTSDefaultExports(ctx context.Context, idx *sqlite.Adapter, collected m
 	return writeNameSet(ctx, idx, tsDefaultExportsMetaKey, collected)
 }
 
+// pythonDecoratedMetaKey is the sense_meta key holding the project-wide set of
+// Python function/method/class names carrying any decorator. The dead-code
+// Python voice reads it: a decorator changes the call story (an attribute access,
+// an injected fixture, a CLI entry), so a decorated symbol stays open-world
+// (py_decorator) rather than earning `dead`. Flat, not per-language — Python-only.
+const pythonDecoratedMetaKey = "py_decorated"
+
+// writePythonDecorated persists the project-wide Python decorated-name set,
+// unioning with the existing set (same self-heals-on-rebuild rationale as above).
+func writePythonDecorated(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, pythonDecoratedMetaKey, collected)
+}
+
+// pythonRoutesMetaKey is the sense_meta key holding the project-wide set of
+// Python handler names carrying a route decorator (Flask `@app.route`, FastAPI
+// `@app.get`/`@router.post`). The Python voice reads it (py_route) so a
+// framework-dispatched handler stays open-world rather than earning `dead`.
+const pythonRoutesMetaKey = "py_routes"
+
+// writePythonRoutes persists the project-wide Python route-handler set, unioning
+// with the existing set (same self-heals-on-rebuild rationale as above).
+func writePythonRoutes(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, pythonRoutesMetaKey, collected)
+}
+
+// pythonDjangoMetaKey is the sense_meta key holding the project-wide set of
+// Python names carrying a Django-dispatch decorator (`@receiver` signal handler,
+// `@admin.register`). The Python voice reads it (py_django) so a symbol Django's
+// signal/admin machinery invokes invisibly stays open-world.
+const pythonDjangoMetaKey = "py_django"
+
+// writePythonDjango persists the project-wide Python Django-dispatch set, unioning
+// with the existing set (same self-heals-on-rebuild rationale as above).
+func writePythonDjango(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, pythonDjangoMetaKey, collected)
+}
+
+// pythonAllExportsMetaKey is the sense_meta key holding the project-wide set of
+// names Python modules declare public via `__all__`. The Python voice reads it
+// (py_all_export): such a name is re-exported by `from mod import *`, so it stays
+// open-world even when underscore-private — the one case overriding the
+// underscore convention, which the identifier mention set misses (`__all__` lists
+// names as string literals).
+const pythonAllExportsMetaKey = "py_all_exports"
+
+// writePythonAllExports persists the project-wide Python `__all__` set, unioning
+// with the existing set (same self-heals-on-rebuild rationale as above).
+func writePythonAllExports(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, pythonAllExportsMetaKey, collected)
+}
+
 // addNamesByLang unions names into byLang[lang], creating the language's set on
 // first use. Both per-language name accumulators (dispatch, mention) share it so
 // the handler keeps each language's names apart for per-language meta writes.
