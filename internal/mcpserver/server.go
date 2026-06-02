@@ -115,7 +115,7 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 	}
 
 	if storedModel, _ := adapter.ReadMeta(ctx, "embedding_model"); storedModel != "" && storedModel != embed.ModelID {
-		fmt.Fprintf(os.Stderr, "sense mcp: embedding model changed (index: %s, binary: %s). Search results may be degraded. Run `sense scan --force` to re-embed.\n", storedModel, embed.ModelID)
+		fmt.Fprintf(os.Stderr, "sense mcp: embedding model changed (index: %s, binary: %s). Search results may be degraded. Run `sense scan --rebuild` to re-embed.\n", storedModel, embed.ModelID)
 	}
 
 	engine, embedder, err := search.BuildEngine(ctx, adapter, dir)

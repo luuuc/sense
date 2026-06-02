@@ -107,7 +107,7 @@ func runDoctorChecks(ctx context.Context, cio IO) doctorResponse {
 			Name:       "schema_version",
 			Status:     "fail",
 			Message:    fmt.Sprintf("Cannot open index: %v", err),
-			Suggestion: "Run `sense scan --force` to rebuild",
+			Suggestion: "Run `rm -rf .sense/ && sense scan` to rebuild (the index can't be opened to reset in place)",
 		})
 		return builddoctorResponse(checks)
 	}
@@ -127,7 +127,7 @@ func runDoctorChecks(ctx context.Context, cio IO) doctorResponse {
 			Name:       "schema_version",
 			Status:     "fail",
 			Message:    fmt.Sprintf("Schema version mismatch (index: v%d, binary: v%d)", schemaVer, sqlite.SchemaVersion),
-			Suggestion: "Run `sense scan --force` to rebuild",
+			Suggestion: "Run `sense scan --rebuild` to rebuild",
 		})
 	}
 
@@ -144,7 +144,7 @@ func runDoctorChecks(ctx context.Context, cio IO) doctorResponse {
 			Name:       "embedding_model",
 			Status:     "fail",
 			Message:    fmt.Sprintf("Embedding model mismatch (index: %s, binary: %s)", storedModel, embed.ModelID),
-			Suggestion: "Run `sense scan --force` to re-embed with the new model",
+			Suggestion: "Run `sense scan --rebuild` to re-embed with the new model",
 		})
 	}
 
@@ -186,7 +186,7 @@ func runDoctorChecks(ctx context.Context, cio IO) doctorResponse {
 			Name:       "orphaned_edges",
 			Status:     "fail",
 			Message:    fmt.Sprintf("%d orphaned edges pointing to missing symbols", orphanCount),
-			Suggestion: "Index may be corrupt, run `sense scan --force`",
+			Suggestion: "Index may be corrupt, run `sense scan --rebuild`",
 		})
 	}
 
