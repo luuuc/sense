@@ -168,9 +168,14 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 		// a framework application (Rails, etc.) also has no main, yet its public
 		// methods are internal, not an exported API. A detected framework means
 		// the tree is an application, so it is not a library.
-		IsLibrary:            !hasMain && len(frameworks) == 0,
-		DispatchNames:        readDispatchNames(ctx, db),
-		MentionedNames:       readMentionedNames(ctx, db),
+		IsLibrary:      !hasMain && len(frameworks) == 0,
+		DispatchNames:  readDispatchNames(ctx, db),
+		MentionedNames: readMentionedNames(ctx, db),
+		// HarvestedLangs comes from its own meta key, not the mention keyset, so a
+		// language that harvested an empty set (present here, absent from
+		// MentionedNames) is still allowed to earn `dead` against its empty set —
+		// distinct from a language that never harvested (absent here → fail closed).
+		HarvestedLangs:       readHarvestedLangs(ctx, db),
 		ValueObjectClassIDs:  valueObjectClassIDs,
 		IncludedModuleIDs:    includedModuleIDs,
 		ControllerConcernIDs: controllerConcernIDs,
@@ -705,45 +710,90 @@ func readFrameworks(ctx context.Context, db *sql.DB) map[string]struct{} {
 	return out
 }
 
-// readDispatchNames returns the project-wide set of reflective dispatch-target
-// names persisted to sense_meta by the scan layer (send/const_get/define_method
-// literals, constantize receivers). A symbol whose name is in this set could be
-// invoked dynamically, so the core voice keeps it open-world. A missing or
-// corrupt value yields an empty set — degrading to recall loss, never a crash
-// or a false `dead`.
-func readDispatchNames(ctx context.Context, db *sql.DB) map[string]struct{} {
-	return readNameSetMeta(ctx, db, "dispatch_names")
+// readDispatchNames returns the per-language sets of reflective dispatch-target
+// names persisted to sense_meta by the scan layer under per-language keys
+// (dispatch_names:<lang>). A symbol whose name is in its own language's set
+// could be invoked dynamically, so the core voice keeps it open-world. A
+// missing or corrupt value yields an empty map — degrading to recall loss,
+// never a crash or a false `dead`.
+func readDispatchNames(ctx context.Context, db *sql.DB) map[string]map[string]struct{} {
+	return readNameSetMetaByLang(ctx, db, "dispatch_names")
 }
 
-// readMentionedNames returns the project-wide broad mention set persisted to
-// sense_meta by the scan layer (every identifier/symbol token except definition
-// names). The arbiter's soundness gate earns `dead` only when a candidate's
-// name is absent from a NON-EMPTY mention set — mentioned nowhere a hidden
-// caller could be. An absent or corrupt value yields an empty set, which the
-// gate treats as "harvest unavailable, cannot prove closed-world" and blocks
-// `dead` entirely (fail-closed toward caution). This is the opposite default
-// from dispatch_names: there an empty set only loses recall, here it would
-// re-admit false `dead`, so the gate refuses rather than risk the lie.
-func readMentionedNames(ctx context.Context, db *sql.DB) map[string]struct{} {
-	return readNameSetMeta(ctx, db, "mentioned_names")
+// readMentionedNames returns the per-language broad mention sets persisted to
+// sense_meta by the scan layer under per-language keys (mentioned_names:<lang>,
+// every identifier/symbol token except definition names). The arbiter's
+// soundness gate earns `dead` only when a candidate's name is absent from a
+// NON-EMPTY set FOR ITS OWN LANGUAGE — mentioned nowhere a hidden caller could
+// be. A language with no key never harvested, which the gate treats as
+// "cannot prove closed-world" and blocks `dead` (core_no_harvest, fail-closed).
+// A pre-feature index carries only the legacy union key `mentioned_names` (no
+// language suffix); it does not match the per-language prefix, so every language
+// reads as un-harvested and the whole index degrades to possibly_dead — never a
+// false `dead` off stale union data.
+func readMentionedNames(ctx context.Context, db *sql.DB) map[string]map[string]struct{} {
+	return readNameSetMetaByLang(ctx, db, "mentioned_names")
 }
 
-// readNameSetMeta reads a JSON string-array sense_meta value into a set,
-// treating an absent or corrupt value as empty.
-func readNameSetMeta(ctx context.Context, db *sql.DB, key string) map[string]struct{} {
+// readNameSetMetaByLang reads every per-language sense_meta key with the given
+// prefix (e.g. mentioned_names:ruby, mentioned_names:go) into a language-keyed
+// map of name sets. A GLOB match on `prefix:*` discovers the languages present;
+// the legacy union key (the bare prefix, no `:lang`) does not match and is
+// ignored, so a pre-feature index reads as no-languages-harvested (fail-closed).
+// An absent or corrupt value for any one language yields an empty set for it,
+// self-healing on the next scan.
+// readHarvestedLangs returns the set of languages whose mention harvest ran,
+// persisted to the harvested_langs sense_meta key by the scan layer. The
+// soundness gate refuses `dead` for a symbol whose language is absent here. A
+// pre-feature index has no such key (the harvest predates it), so every language
+// reads as un-harvested and the index degrades to possibly_dead — the safe
+// direction. An absent or corrupt value yields an empty set.
+func readHarvestedLangs(ctx context.Context, db *sql.DB) map[string]struct{} {
 	out := map[string]struct{}{}
 	var raw string
-	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = ?`, key).Scan(&raw)
+	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = ?`, "harvested_langs").Scan(&raw)
 	if err != nil || raw == "" {
 		return out
 	}
-	var names []string
-	if err := json.Unmarshal([]byte(raw), &names); err != nil {
-		log.Printf("dead: corrupt %s meta: %v", key, err)
+	var langs []string
+	if err := json.Unmarshal([]byte(raw), &langs); err != nil {
+		log.Printf("dead: corrupt harvested_langs meta: %v", err)
 		return out
 	}
-	for _, n := range names {
-		out[n] = struct{}{}
+	for _, l := range langs {
+		out[l] = struct{}{}
+	}
+	return out
+}
+
+func readNameSetMetaByLang(ctx context.Context, db *sql.DB, prefix string) map[string]map[string]struct{} {
+	out := map[string]map[string]struct{}{}
+	rows, err := db.QueryContext(ctx,
+		`SELECT key, value FROM sense_meta WHERE key GLOB ?`, prefix+":*")
+	if err != nil {
+		return out
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var key, raw string
+		if err := rows.Scan(&key, &raw); err != nil {
+			continue
+		}
+		lang := strings.TrimPrefix(key, prefix+":")
+		if lang == "" {
+			continue
+		}
+		set := map[string]struct{}{}
+		var names []string
+		if raw != "" {
+			if err := json.Unmarshal([]byte(raw), &names); err != nil {
+				log.Printf("dead: corrupt %s meta: %v", key, err)
+			}
+		}
+		for _, n := range names {
+			set[n] = struct{}{}
+		}
+		out[lang] = set
 	}
 	return out
 }

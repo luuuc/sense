@@ -53,6 +53,12 @@ func (Extractor) Language() string          { return "ruby" }
 func (Extractor) Extensions() []string      { return []string{".rb", ".rake", ".gemspec"} }
 func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
+// HarvestsMentions reports that the Ruby extractor streams the broad mention set
+// (see Extract's MentionEmitter block), so the scan records `ruby` as harvested
+// even on a scan that yields zero mentions — the dead-code soundness gate then
+// treats a Ruby symbol as proven-against-an-empty-set, not never-harvested.
+func (Extractor) HarvestsMentions() bool { return true }
+
 func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
 	returnTypes := buildFileReturnTypeMap(tree.RootNode(), source)
 	w := &walker{

@@ -98,9 +98,9 @@ func TestArbiterEarnedDeadForPrivate(t *testing.T) {
 	priv := rubySym("orphan", "Report#orphan", "method", "private", id(1))
 	pub := rubySym("render", "Report#render", "method", "public", id(1))
 
-	// The soundness gate needs a non-empty mention set that does not contain
+	// The soundness gate needs a non-empty Ruby mention set that does not contain
 	// "orphan" to prove the private method is mentioned nowhere a caller could be.
-	f := Facts{MentionedNames: map[string]struct{}{"render": {}}}
+	f := Facts{MentionedNames: langNames("ruby", "render"), HarvestedLangs: harvested("ruby")}
 	got := a.Decide([]Symbol{priv, pub}, f)
 	if got[0].Verdict != VerdictDead {
 		t.Errorf("private orphan verdict = %q, want dead", got[0].Verdict)
@@ -116,7 +116,7 @@ func TestArbiterEarnedDeadForPrivate(t *testing.T) {
 func TestArbiterReflectionKeepsPrivateAlive(t *testing.T) {
 	a := NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
 	priv := rubySym("handler", "Dispatcher#handler", "method", "private", id(1))
-	f := Facts{DispatchNames: map[string]struct{}{"handler": {}}}
+	f := Facts{DispatchNames: langNames("ruby", "handler")}
 
 	got := a.Decide([]Symbol{priv}, f)
 	if got[0].Verdict != VerdictPossiblyDead {
@@ -140,10 +140,10 @@ func TestSoundnessGateMentionedNameStaysPossiblyDead(t *testing.T) {
 
 	// The name is mentioned (as a `validate :sym` symbol arg the resolver did
 	// not bind to a caller edge), so the gate keeps it open-world.
-	f := Facts{MentionedNames: map[string]struct{}{
-		"amount_meets_minimum_threshold": {},
-		"other":                          {},
-	}}
+	f := Facts{
+		MentionedNames: langNames("ruby", "amount_meets_minimum_threshold", "other"),
+		HarvestedLangs: harvested("ruby"),
+	}
 	got := a.Decide([]Symbol{priv}, f)
 	if got[0].Verdict != VerdictPossiblyDead {
 		t.Fatalf("mentioned private verdict = %q, want possibly_dead", got[0].Verdict)
@@ -153,24 +153,38 @@ func TestSoundnessGateMentionedNameStaysPossiblyDead(t *testing.T) {
 	}
 }
 
-// TestSoundnessGateIsRubyOnlyToday is the per-language tripwire. The mention set
-// is project-GLOBAL, but only Ruby has both a voice and a mention harvest today,
-// so only Ruby symbols may earn `dead`. A non-Ruby symbol must NOT earn `dead`
-// off the global (Ruby-derived) mention set, even when its name is absent from
-// that set. This assertion fails the day a second language voice is registered
-// without its own mention harvest — at which point that voice's symbols would
-// start earning `dead` here off another language's mentions, forcing the
-// harvest question. See decideOne's per-language NOTE.
-func TestSoundnessGateIsRubyOnlyToday(t *testing.T) {
-	a := defaultArbiter()
-	goSym := sym("UnusedGoFunc", "go")
-	// Populated mention set that does NOT contain the Go symbol's name.
-	f := Facts{MentionedNames: map[string]struct{}{"some_ruby_name": {}}}
+// TestSoundnessGateIsPerLanguage is the cross-language soundness control: the
+// invariant 25-15 exists to guarantee. With a Ruby voice AND a Go voice both
+// registered but only Ruby's mention harvest run, a private Ruby method earns
+// `dead` while a Go symbol of the SAME NAME stays possibly_dead with
+// core_no_harvest. This proves a future language voice can never earn `dead`
+// off another language's mentions: it must ship its own harvest (register in
+// HarvestedLangs) first. The Go voice is registered precisely so the Go symbol
+// clears the no-language-voice gate and actually reaches the soundness gate —
+// the exact scenario the per-language keying must make safe.
+func TestSoundnessGateIsPerLanguage(t *testing.T) {
+	goVoice := fakeVoice{lang: "go"} // stand-in for a future voice; raises nothing
+	a := NewArbiter(coreVoice{}, rubyVoice{}, goVoice)
 
-	got := a.Decide([]Symbol{goSym}, f)
-	if got[0].Verdict != VerdictPossiblyDead {
-		t.Fatalf("non-Ruby symbol earned %q off the global mention set — a new "+
-			"language voice needs its own mention harvest before earning dead", got[0].Verdict)
+	rubyPriv := rubySym("orphan", "Report#orphan", "method", "private", id(1))
+	goSym := sym("orphan", "go") // same bare name, different language
+
+	// Only Ruby harvested; its set does not contain "orphan".
+	f := Facts{
+		MentionedNames: langNames("ruby", "unrelated"),
+		HarvestedLangs: harvested("ruby"),
+	}
+	got := a.Decide([]Symbol{rubyPriv, goSym}, f)
+
+	if got[0].Verdict != VerdictDead {
+		t.Fatalf("ruby private verdict = %q, want dead (own harvest, name absent)", got[0].Verdict)
+	}
+	if got[1].Verdict != VerdictPossiblyDead {
+		t.Fatalf("go symbol earned %q off Ruby mentions — a new voice must harvest "+
+			"its own names before earning dead", got[1].Verdict)
+	}
+	if got[1].Reason == nil || got[1].Reason.Code != ReasonNoHarvest {
+		t.Errorf("go symbol reason = %+v, want %q", got[1].Reason, ReasonNoHarvest)
 	}
 }
 
@@ -184,7 +198,7 @@ func TestSoundnessGateDemotesNameCollision(t *testing.T) {
 	priv := rubySym("process", "Worker#process", "method", "private", id(1))
 	// `process` is mentioned elsewhere (an unrelated local/call). The gate cannot
 	// tell it apart from Worker#process, so it stays cautious.
-	f := Facts{MentionedNames: map[string]struct{}{"process": {}, "other": {}}}
+	f := Facts{MentionedNames: langNames("ruby", "process", "other"), HarvestedLangs: harvested("ruby")}
 
 	got := a.Decide([]Symbol{priv}, f)
 	if got[0].Verdict != VerdictPossiblyDead {
@@ -195,17 +209,37 @@ func TestSoundnessGateDemotesNameCollision(t *testing.T) {
 	}
 }
 
-// TestSoundnessGateEmptySetFailsClosed proves the fail-closed default: when the
-// mention harvest is unavailable (an empty set — a pre-feature index or corrupt
-// meta), the gate cannot prove the name is unmentioned, so it refuses `dead`
-// rather than risk re-admitting a false one.
-func TestSoundnessGateEmptySetFailsClosed(t *testing.T) {
+// TestSoundnessGateNoHarvestFailsClosed proves the fail-closed default for an
+// unavailable harvest: when the symbol's language never harvested mentions (a
+// pre-feature index, corrupt meta, or a voice that did not ship its harvest),
+// the gate has no set to prove the name unmentioned, so it refuses `dead` with
+// core_no_harvest rather than risk re-admitting a false one.
+func TestSoundnessGateNoHarvestFailsClosed(t *testing.T) {
 	a := NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
 	priv := rubySym("orphan", "Report#orphan", "method", "private", id(1))
 
-	got := a.Decide([]Symbol{priv}, Facts{}) // no MentionedNames
+	got := a.Decide([]Symbol{priv}, Facts{}) // no harvest for ruby
 	if got[0].Verdict != VerdictPossiblyDead {
-		t.Fatalf("empty-mention-set verdict = %q, want possibly_dead (fail-closed)", got[0].Verdict)
+		t.Fatalf("no-harvest verdict = %q, want possibly_dead (fail-closed)", got[0].Verdict)
+	}
+	if got[0].Reason == nil || got[0].Reason.Code != ReasonNoHarvest {
+		t.Errorf("reason = %+v, want %q", got[0].Reason, ReasonNoHarvest)
+	}
+}
+
+// TestSoundnessGateHarvestedEmptySetFailsClosed proves the second fail-closed
+// branch: the language DID harvest (it is in HarvestedLangs) but produced an
+// empty set, so the gate still cannot prove the name unmentioned and refuses
+// `dead` with core_name_mentioned. Harvest-ran and set-non-empty are distinct
+// preconditions; both must hold to earn `dead`.
+func TestSoundnessGateHarvestedEmptySetFailsClosed(t *testing.T) {
+	a := NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
+	priv := rubySym("orphan", "Report#orphan", "method", "private", id(1))
+
+	f := Facts{HarvestedLangs: harvested("ruby")} // harvested, but empty mention set
+	got := a.Decide([]Symbol{priv}, f)
+	if got[0].Verdict != VerdictPossiblyDead {
+		t.Fatalf("harvested-empty verdict = %q, want possibly_dead (fail-closed)", got[0].Verdict)
 	}
 	if got[0].Reason == nil || got[0].Reason.Code != ReasonNameMentioned {
 		t.Errorf("reason = %+v, want %q", got[0].Reason, ReasonNameMentioned)

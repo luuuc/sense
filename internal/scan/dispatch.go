@@ -20,24 +20,33 @@ func warnMetaWrite(warn io.Writer, label string, err error) {
 	}
 }
 
-// dispatchNamesMetaKey is the sense_meta key holding the project-wide set of
-// reflective dispatch-target names (send/const_get/define_method literals,
-// constantize receivers) as a JSON string array. The dead-code arbiter reads
-// it so a symbol whose name appears here stays open-world (possibly_dead)
-// rather than being falsely called dead.
+// dispatchNamesMetaKey is the prefix for the per-language sense_meta keys
+// holding each language's reflective dispatch-target names (send/const_get/
+// define_method literals, constantize receivers) as a JSON string array. The
+// actual key is `dispatch_names:<lang>` (see dispatchNamesKey): a symbol whose
+// name appears in its OWN language's set stays open-world (possibly_dead)
+// rather than being falsely called dead. Keying by language keeps one
+// language's reflection literals from muting another's symbol.
 const dispatchNamesMetaKey = "dispatch_names"
 
-// writeDispatchNames persists the dispatch-name set gathered during the walk,
-// unioning with the existing set (see writeNameSet for the union rationale).
-func writeDispatchNames(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
-	return writeNameSet(ctx, idx, dispatchNamesMetaKey, collected)
+// dispatchNamesKey is the per-language sense_meta key for a language's dispatch
+// set (e.g. `dispatch_names:ruby`). The dead-code reader discovers languages by
+// globbing `dispatch_names:*`, so a legacy union key (the bare prefix) is never
+// matched and a pre-feature index reads as no-languages-harvested.
+func dispatchNamesKey(lang string) string { return dispatchNamesMetaKey + ":" + lang }
+
+// writeDispatchNames persists one language's dispatch-name set gathered during
+// the walk, unioning with the existing set (see writeNameSet for the rationale).
+func writeDispatchNames(ctx context.Context, idx *sqlite.Adapter, lang string, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, dispatchNamesKey(lang), collected)
 }
 
-// readDispatchNames returns the persisted dispatch-name set, or an empty set
-// when the key is absent. A corrupt value is treated as empty rather than
-// fatal — a missing reflection signal degrades to recall loss, never a crash.
-func readDispatchNames(ctx context.Context, idx *sqlite.Adapter) (map[string]struct{}, error) {
-	return readNameSet(ctx, idx, dispatchNamesMetaKey)
+// readDispatchNames returns one language's persisted dispatch-name set, or an
+// empty set when the key is absent. A corrupt value is treated as empty rather
+// than fatal — a missing reflection signal degrades to recall loss, never a
+// crash.
+func readDispatchNames(ctx context.Context, idx *sqlite.Adapter, lang string) (map[string]struct{}, error) {
+	return readNameSet(ctx, idx, dispatchNamesKey(lang))
 }
 
 // mentionedNamesMetaKey is the sense_meta key holding the project-wide broad
@@ -57,10 +66,49 @@ func readDispatchNames(ctx context.Context, idx *sqlite.Adapter) (map[string]str
 // therefore refreshes on a full rescan; the set self-heals removed names then.
 const mentionedNamesMetaKey = "mentioned_names"
 
-// writeMentionedNames persists the broad mention set, unioning with the
-// existing set (see writeNameSet for the union rationale).
-func writeMentionedNames(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
-	return writeNameSet(ctx, idx, mentionedNamesMetaKey, collected)
+// mentionedNamesKey is the per-language sense_meta key for a language's mention
+// set (e.g. `mentioned_names:ruby`). The dead-code soundness gate earns `dead`
+// for a symbol only against the mentions harvested from its OWN language, and
+// derives "this language harvested" from the presence of its key — so a
+// language with no key (a pre-feature index's legacy union key does not match
+// the `mentioned_names:*` glob) fails closed to possibly_dead.
+func mentionedNamesKey(lang string) string { return mentionedNamesMetaKey + ":" + lang }
+
+// writeMentionedNames persists one language's broad mention set, unioning with
+// the existing set (see writeNameSet for the union rationale).
+func writeMentionedNames(ctx context.Context, idx *sqlite.Adapter, lang string, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, mentionedNamesKey(lang), collected)
+}
+
+// harvestedLangsMetaKey is the sense_meta key holding the set of languages
+// whose mention harvest RAN for this index, as a JSON string array. The
+// dead-code soundness gate reads it: a symbol whose language is absent earns
+// core_no_harvest (fail closed), so this set — not the mere presence of a
+// mention key — is the explicit record that a language's harvest happened. A
+// language harvests even when a scan yields zero mentions for it, so this set
+// can legitimately contain a language that has no mentioned_names:<lang> key.
+const harvestedLangsMetaKey = "harvested_langs"
+
+// writeHarvestedLangs persists the set of languages whose harvest ran, unioning
+// with the existing set (same self-heals-on-rebuild rationale as the name sets:
+// a language whose files were all removed lingers here until a full rebuild,
+// which only ever keeps a symbol open-world, never falsely `dead`).
+func writeHarvestedLangs(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, harvestedLangsMetaKey, collected)
+}
+
+// addNamesByLang unions names into byLang[lang], creating the language's set on
+// first use. Both per-language name accumulators (dispatch, mention) share it so
+// the handler keeps each language's names apart for per-language meta writes.
+func addNamesByLang(byLang map[string]map[string]struct{}, lang string, names []string) {
+	set := byLang[lang]
+	if set == nil {
+		set = map[string]struct{}{}
+		byLang[lang] = set
+	}
+	for _, n := range names {
+		set[n] = struct{}{}
+	}
 }
 
 // writeNameSet persists a name set to a sense_meta key, UNIONing with the
@@ -97,12 +145,12 @@ func writeNameSet(ctx context.Context, idx *sqlite.Adapter, key string, collecte
 	return idx.WriteMeta(ctx, key, string(b))
 }
 
-// readMentionedNames returns the persisted mention set, or an empty set when
-// the key is absent. A corrupt value is treated as empty — a missing mention
-// signal degrades to recall loss (a would-be `dead` stays open-world), never a
-// crash or a false `dead`.
-func readMentionedNames(ctx context.Context, idx *sqlite.Adapter) (map[string]struct{}, error) {
-	return readNameSet(ctx, idx, mentionedNamesMetaKey)
+// readMentionedNames returns one language's persisted mention set, or an empty
+// set when the key is absent. A corrupt value is treated as empty — a missing
+// mention signal degrades to recall loss (a would-be `dead` stays open-world),
+// never a crash or a false `dead`.
+func readMentionedNames(ctx context.Context, idx *sqlite.Adapter, lang string) (map[string]struct{}, error) {
+	return readNameSet(ctx, idx, mentionedNamesKey(lang))
 }
 
 // readNameSet reads a JSON string-array sense_meta value into a set, treating

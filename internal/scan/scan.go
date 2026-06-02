@@ -224,8 +224,21 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		_ = idx.DeleteMeta(ctx, "frameworks")
 	}
 
-	warnMetaWrite(warn, "dispatch-names", writeDispatchNames(ctx, idx, h.dispatchNames))
-	warnMetaWrite(warn, "mentioned-names", writeMentionedNames(ctx, idx, h.mentionedNames))
+	// Each language is an independent sense_meta key, so map-iteration order is
+	// irrelevant — no write depends on another.
+	for lang, set := range h.dispatchNames {
+		warnMetaWrite(warn, "dispatch-names:"+lang, writeDispatchNames(ctx, idx, lang, set))
+	}
+	for lang, set := range h.mentionedNames {
+		warnMetaWrite(warn, "mentioned-names:"+lang, writeMentionedNames(ctx, idx, lang, set))
+	}
+	warnMetaWrite(warn, "harvested-langs", writeHarvestedLangs(ctx, idx, h.harvestedLangs))
+	// A pre-feature index carried single bare union keys (no language suffix).
+	// The per-language reader globs `*:<lang>` and ignores them, but delete them
+	// on every full scan so an in-place upgrade leaves no stale meta to mislead a
+	// human inspecting sense_meta. Idempotent: absent keys are a no-op.
+	_ = idx.DeleteMeta(ctx, dispatchNamesMetaKey)
+	_ = idx.DeleteMeta(ctx, mentionedNamesMetaKey)
 
 	t0 = time.Now()
 	if err := h.removeStaleFiles(); err != nil {
@@ -490,22 +503,32 @@ type harness struct {
 	// entries can be detected and removed after the walk.
 	seenPaths map[string]bool
 
-	// dispatchNames accumulates the project-wide set of reflective
-	// dispatch-target names streamed by extractors during the walk. Written
-	// to sense_meta after the walk so the dead-code arbiter can keep a
-	// reflectively-reachable symbol open-world. Only populated for changed
-	// files this scan; merged with the persisted set so an unchanged file's
-	// names are not lost on an incremental scan.
-	dispatchNames map[string]struct{}
+	// dispatchNames accumulates each language's set of reflective
+	// dispatch-target names streamed by extractors during the walk, keyed by
+	// language. Written to per-language sense_meta keys after the walk so the
+	// dead-code arbiter keeps a reflectively-reachable symbol open-world only
+	// against its OWN language's literals. Only populated for changed files this
+	// scan; merged with the persisted per-language set so an unchanged file's
+	// names are not lost.
+	dispatchNames map[string]map[string]struct{}
 
-	// mentionedNames accumulates the project-wide broad set of bare names the
-	// code mentions (every identifier/symbol token except definition names),
-	// streamed by extractors during the walk. Written to sense_meta after the
-	// walk so the dead-code arbiter's soundness gate can earn `dead` only when
-	// a symbol's name is mentioned nowhere a hidden caller could be. Merged
-	// with the persisted set so an unchanged file's mentions survive an
-	// incremental scan.
-	mentionedNames map[string]struct{}
+	// mentionedNames accumulates each language's broad set of bare names that
+	// language's code mentions (every identifier/symbol token except definition
+	// names), keyed by language. Written to per-language sense_meta keys after
+	// the walk so the dead-code arbiter's soundness gate earns `dead` for a
+	// symbol only when its name is mentioned nowhere in its OWN language a hidden
+	// caller could be. Merged with the persisted per-language set so an unchanged
+	// file's mentions survive.
+	mentionedNames map[string]map[string]struct{}
+
+	// harvestedLangs is the set of languages whose mention harvest RAN this
+	// scan — every indexed file whose extractor is an extract.MentionHarvester
+	// marks its language here, regardless of how many names it produced. Written
+	// to the harvested_langs sense_meta key so the dead-code gate can refuse
+	// `dead` for a language that never harvested while still allowing it for a
+	// language that harvested an empty set. Distinct from the mentionedNames
+	// keyset precisely so the two can differ.
+	harvestedLangs map[string]struct{}
 
 	// changedFileIDs collects file IDs that were re-indexed this scan
 	// (new or hash-changed). Used by pass 3 to scope embedding work.
@@ -572,6 +595,22 @@ func int64Ptr(v int64) *int64 {
 func (h *harness) addWarning(kind warningKind, format string, args ...any) {
 	h.collector.add(kind, fmt.Sprintf(format, args...))
 	h.progress.incWarnings()
+}
+
+// markHarvested records ex's language as one whose mention harvest ran, when ex
+// is an extract.MentionHarvester. Called for every indexed file (fresh or
+// cached) so the harvested_langs set reflects the index, not just this scan's
+// freshly-parsed files. A non-harvesting extractor (no MentionHarvester) is a
+// no-op, so its language stays absent and its symbols fail closed.
+func (h *harness) markHarvested(ex extract.Extractor) {
+	mh, ok := ex.(extract.MentionHarvester)
+	if !ok || !mh.HarvestsMentions() {
+		return
+	}
+	if h.harvestedLangs == nil {
+		h.harvestedLangs = map[string]struct{}{}
+	}
+	h.harvestedLangs[ex.Language()] = struct{}{}
 }
 
 type walkEntry struct {
@@ -684,23 +723,29 @@ func (h *harness) walkTree(root string) error {
 					h.indexedFiles = append(h.indexedFiles, indexedFile{
 						ID: cached.ID, Path: rel, Language: ex.Language(),
 					})
+					// A cached file is still indexed, so its language's harvest
+					// is still represented in this index.
+					h.markHarvested(ex)
 				}
 			}
 			continue
 		}
+		h.markHarvested(ex)
 
-		for _, name := range fr.DispatchNames {
+		// Partition both name sets by the file's language: the dead-code gates
+		// reason per-language, so a Ruby file's mentions must never land in
+		// another language's set.
+		if len(fr.DispatchNames) > 0 {
 			if h.dispatchNames == nil {
-				h.dispatchNames = map[string]struct{}{}
+				h.dispatchNames = map[string]map[string]struct{}{}
 			}
-			h.dispatchNames[name] = struct{}{}
+			addNamesByLang(h.dispatchNames, fr.Language, fr.DispatchNames)
 		}
-
-		for _, name := range fr.MentionedNames {
+		if len(fr.MentionedNames) > 0 {
 			if h.mentionedNames == nil {
-				h.mentionedNames = map[string]struct{}{}
+				h.mentionedNames = map[string]map[string]struct{}{}
 			}
-			h.mentionedNames[name] = struct{}{}
+			addNamesByLang(h.mentionedNames, fr.Language, fr.MentionedNames)
 		}
 
 		batch = append(batch, fr)

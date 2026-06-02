@@ -29,10 +29,10 @@ func TestWriteReadDispatchNamesRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	a := openTempAdapter(t)
 
-	if err := writeDispatchNames(ctx, a, map[string]struct{}{"foo": {}, "bar": {}}); err != nil {
+	if err := writeDispatchNames(ctx, a, "ruby", map[string]struct{}{"foo": {}, "bar": {}}); err != nil {
 		t.Fatalf("writeDispatchNames: %v", err)
 	}
-	got, err := readDispatchNames(ctx, a)
+	got, err := readDispatchNames(ctx, a, "ruby")
 	if err != nil {
 		t.Fatalf("readDispatchNames: %v", err)
 	}
@@ -41,6 +41,19 @@ func TestWriteReadDispatchNamesRoundTrip(t *testing.T) {
 			t.Errorf("dispatch set missing %q: %v", want, got)
 		}
 	}
+	// The set is persisted under the per-language key, not the bare union key,
+	// so the dead-code reader's glob discovers the language and a legacy index
+	// (bare key only) fails closed.
+	if raw, _ := a.ReadMeta(ctx, "dispatch_names:ruby"); raw == "" {
+		t.Error("expected dispatch_names:ruby key to be written")
+	}
+	if raw, _ := a.ReadMeta(ctx, dispatchNamesMetaKey); raw != "" {
+		t.Errorf("bare union key must not be written, got %q", raw)
+	}
+	// A different language's set is independent.
+	if other, _ := readDispatchNames(ctx, a, "go"); len(other) != 0 {
+		t.Errorf("go dispatch set should be empty, got %v", other)
+	}
 }
 
 func TestWriteDispatchNamesUnionsWithExisting(t *testing.T) {
@@ -48,14 +61,14 @@ func TestWriteDispatchNamesUnionsWithExisting(t *testing.T) {
 	a := openTempAdapter(t)
 
 	// First scan persists {foo}.
-	if err := writeDispatchNames(ctx, a, map[string]struct{}{"foo": {}}); err != nil {
+	if err := writeDispatchNames(ctx, a, "ruby", map[string]struct{}{"foo": {}}); err != nil {
 		t.Fatalf("write 1: %v", err)
 	}
 	// Incremental scan only re-walks a file contributing {bar}; foo must survive.
-	if err := writeDispatchNames(ctx, a, map[string]struct{}{"bar": {}}); err != nil {
+	if err := writeDispatchNames(ctx, a, "ruby", map[string]struct{}{"bar": {}}); err != nil {
 		t.Fatalf("write 2: %v", err)
 	}
-	got, err := readDispatchNames(ctx, a)
+	got, err := readDispatchNames(ctx, a, "ruby")
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -71,15 +84,15 @@ func TestWriteDispatchNamesEmptyNoKey(t *testing.T) {
 	a := openTempAdapter(t)
 
 	// Empty collected + nothing persisted → key stays absent.
-	if err := writeDispatchNames(ctx, a, nil); err != nil {
+	if err := writeDispatchNames(ctx, a, "ruby", nil); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	raw, err := a.ReadMeta(ctx, dispatchNamesMetaKey)
+	raw, err := a.ReadMeta(ctx, dispatchNamesKey("ruby"))
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
 	if raw != "" {
-		t.Errorf("expected no dispatch_names key, got %q", raw)
+		t.Errorf("expected no dispatch_names:ruby key, got %q", raw)
 	}
 }
 
@@ -112,10 +125,10 @@ func TestWriteReadMentionedNamesRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	a := openTempAdapter(t)
 
-	if err := writeMentionedNames(ctx, a, map[string]struct{}{"foo": {}, "bar": {}}); err != nil {
+	if err := writeMentionedNames(ctx, a, "ruby", map[string]struct{}{"foo": {}, "bar": {}}); err != nil {
 		t.Fatalf("writeMentionedNames: %v", err)
 	}
-	got, err := readMentionedNames(ctx, a)
+	got, err := readMentionedNames(ctx, a, "ruby")
 	if err != nil {
 		t.Fatalf("readMentionedNames: %v", err)
 	}
@@ -124,19 +137,25 @@ func TestWriteReadMentionedNamesRoundTrip(t *testing.T) {
 			t.Errorf("mention set missing %q: %v", want, got)
 		}
 	}
+	if raw, _ := a.ReadMeta(ctx, "mentioned_names:ruby"); raw == "" {
+		t.Error("expected mentioned_names:ruby key to be written")
+	}
+	if raw, _ := a.ReadMeta(ctx, mentionedNamesMetaKey); raw != "" {
+		t.Errorf("bare union key must not be written, got %q", raw)
+	}
 }
 
 func TestWriteMentionedNamesUnionsWithExisting(t *testing.T) {
 	ctx := context.Background()
 	a := openTempAdapter(t)
 
-	if err := writeMentionedNames(ctx, a, map[string]struct{}{"foo": {}}); err != nil {
+	if err := writeMentionedNames(ctx, a, "ruby", map[string]struct{}{"foo": {}}); err != nil {
 		t.Fatalf("write 1: %v", err)
 	}
-	if err := writeMentionedNames(ctx, a, map[string]struct{}{"bar": {}}); err != nil {
+	if err := writeMentionedNames(ctx, a, "ruby", map[string]struct{}{"bar": {}}); err != nil {
 		t.Fatalf("write 2: %v", err)
 	}
-	got, err := readMentionedNames(ctx, a)
+	got, err := readMentionedNames(ctx, a, "ruby")
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -151,15 +170,15 @@ func TestWriteMentionedNamesEmptyNoKey(t *testing.T) {
 	ctx := context.Background()
 	a := openTempAdapter(t)
 
-	if err := writeMentionedNames(ctx, a, nil); err != nil {
+	if err := writeMentionedNames(ctx, a, "ruby", nil); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	raw, err := a.ReadMeta(ctx, mentionedNamesMetaKey)
+	raw, err := a.ReadMeta(ctx, mentionedNamesKey("ruby"))
 	if err != nil {
 		t.Fatalf("ReadMeta: %v", err)
 	}
 	if raw != "" {
-		t.Errorf("expected no mentioned_names key, got %q", raw)
+		t.Errorf("expected no mentioned_names:ruby key, got %q", raw)
 	}
 }
 
@@ -167,10 +186,10 @@ func TestReadDispatchNamesCorruptIsEmpty(t *testing.T) {
 	ctx := context.Background()
 	a := openTempAdapter(t)
 
-	if err := a.WriteMeta(ctx, dispatchNamesMetaKey, "{not valid json"); err != nil {
+	if err := a.WriteMeta(ctx, dispatchNamesKey("ruby"), "{not valid json"); err != nil {
 		t.Fatalf("seed corrupt: %v", err)
 	}
-	got, err := readDispatchNames(ctx, a)
+	got, err := readDispatchNames(ctx, a, "ruby")
 	if err != nil {
 		t.Fatalf("readDispatchNames: %v", err)
 	}
@@ -187,13 +206,105 @@ func TestDispatchNamesAdapterErrors(t *testing.T) {
 	a := openTempAdapter(t)
 	_ = a.Close() // force every subsequent query to error
 
-	if _, err := readDispatchNames(ctx, a); err == nil {
+	if _, err := readDispatchNames(ctx, a, "ruby"); err == nil {
 		t.Error("readDispatchNames should surface a closed-adapter error")
 	}
 	// writeDispatchNames reads the existing set first, so the closed adapter
 	// makes it error before any write.
-	if err := writeDispatchNames(ctx, a, map[string]struct{}{"foo": {}}); err == nil {
+	if err := writeDispatchNames(ctx, a, "ruby", map[string]struct{}{"foo": {}}); err == nil {
 		t.Error("writeDispatchNames should surface the existing-read error")
+	}
+}
+
+// TestScanWritesHarvestedLangs proves the harvested-langs capability gate
+// end to end: a Ruby file marks `ruby` harvested (its extractor is a
+// MentionHarvester), while a Go file in the same scan does NOT mark `go` — Go
+// harvests no mentions, so its symbols must fail closed rather than earn `dead`
+// off an absent set. This is what lets HarvestedLangs diverge from the mention
+// keyset for a real, non-harvesting language.
+func TestScanWritesHarvestedLangs(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+
+	if err := os.WriteFile(filepath.Join(root, "thing.rb"),
+		[]byte("class Thing\n  def go\n    helper\n  end\nend\n"), 0o644); err != nil {
+		t.Fatalf("write ruby: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write go: %v", err)
+	}
+
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	a, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	got, err := readNameSet(ctx, a, harvestedLangsMetaKey)
+	if err != nil {
+		t.Fatalf("read harvested_langs: %v", err)
+	}
+	if _, ok := got["ruby"]; !ok {
+		t.Errorf("expected ruby in harvested_langs, got %v", got)
+	}
+	if _, ok := got["go"]; ok {
+		t.Errorf("go harvests no mentions; must be absent from harvested_langs, got %v", got)
+	}
+}
+
+// TestScanDeletesLegacyUnionKeys proves the in-place-upgrade cleanup: a scan
+// removes the stale bare `mentioned_names`/`dispatch_names` union keys a
+// pre-feature index left behind, while the per-language keys survive.
+func TestScanDeletesLegacyUnionKeys(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+	if err := os.WriteFile(filepath.Join(root, "thing.rb"),
+		[]byte("class Thing\n  def go\n    helper\n  end\nend\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan 1: %v", err)
+	}
+
+	// Simulate a pre-feature index leaving bare union keys behind.
+	a, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := a.WriteMeta(ctx, mentionedNamesMetaKey, `["legacy"]`); err != nil {
+		t.Fatalf("seed mentioned: %v", err)
+	}
+	if err := a.WriteMeta(ctx, dispatchNamesMetaKey, `["legacy"]`); err != nil {
+		t.Fatalf("seed dispatch: %v", err)
+	}
+	_ = a.Close()
+
+	// A subsequent scan removes the stale bare keys.
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan 2: %v", err)
+	}
+
+	a2, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = a2.Close() })
+	if raw, _ := a2.ReadMeta(ctx, mentionedNamesMetaKey); raw != "" {
+		t.Errorf("legacy mentioned_names should be deleted, got %q", raw)
+	}
+	if raw, _ := a2.ReadMeta(ctx, dispatchNamesMetaKey); raw != "" {
+		t.Errorf("legacy dispatch_names should be deleted, got %q", raw)
+	}
+	// The per-language key survives the cleanup.
+	if raw, _ := a2.ReadMeta(ctx, mentionedNamesKey("ruby")); raw == "" {
+		t.Error("per-language mentioned_names:ruby should remain")
 	}
 }
 
@@ -229,11 +340,11 @@ func TestScanWritesDispatchNames(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = a.Close() })
 
-	got, err := readDispatchNames(ctx, a)
+	got, err := readDispatchNames(ctx, a, "ruby")
 	if err != nil {
 		t.Fatalf("readDispatchNames: %v", err)
 	}
 	if _, ok := got["hidden_handler"]; !ok {
-		t.Errorf("expected 'hidden_handler' in dispatch_names meta, got %v", got)
+		t.Errorf("expected 'hidden_handler' in dispatch_names:ruby meta, got %v", got)
 	}
 }

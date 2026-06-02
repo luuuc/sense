@@ -278,6 +278,19 @@ type MentionEmitter interface {
 	MentionName(name string) error
 }
 
+// MentionHarvester marks an Extractor whose Extract streams the broad mention
+// set (via MentionEmitter) for every file it processes. The scan records such a
+// language as harvested even on a scan that yields zero mentions for it, so the
+// dead-code soundness gate can tell "harvested, nothing mentioned" (which may
+// still earn `dead`) apart from "this language never harvested" (which must NOT
+// — it would be `dead` off another language's mentions). An extractor opts in by
+// implementing HarvestsMentions; returning false is the same as not
+// implementing it. This is a STATIC capability, independent of how many names a
+// given scan happens to produce, which is exactly why the two facts can differ.
+type MentionHarvester interface {
+	HarvestsMentions() bool
+}
+
 // Extractor walks a parsed tree and emits symbols + edges for one language.
 // Implementations are stateless — the same instance handles every file in
 // that language. Any per-file state lives on the call stack.
