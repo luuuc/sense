@@ -143,6 +143,29 @@ type Facts struct {
 	// Flat, like TSDecoratedNames. Populated from the ts_default_exports sense_meta
 	// key.
 	TSDefaultExportNames map[string]struct{}
+	// PythonDecoratedNames is the set of Python function/method/class names
+	// carrying any decorator. The Python voice keeps such a name open-world
+	// (py_decorator): a decorator changes the call story (an attribute access via
+	// @property, an injected @pytest.fixture, a CLI @click.command) so the static
+	// graph's zero-edge verdict cannot prove it unreachable. Flat, not
+	// per-language — Python-only. Populated from the py_decorated sense_meta key.
+	PythonDecoratedNames map[string]struct{}
+	// PythonRouteNames is the subset of decorated names whose decorator is a web
+	// route (Flask `@app.route`, FastAPI `@app.get`/`@router.post`). The Python
+	// voice raises the more specific py_route. Populated from the py_routes
+	// sense_meta key.
+	PythonRouteNames map[string]struct{}
+	// PythonDjangoNames is the subset of decorated names whose decorator is a
+	// Django-dispatch idiom (`@receiver` signal handler, `@admin.register`). The
+	// Python voice raises py_django. Populated from the py_django sense_meta key.
+	PythonDjangoNames map[string]struct{}
+	// PythonAllExportNames is the set of names Python modules declare public via
+	// `__all__`. The Python voice raises py_all_export — the one signal that
+	// overrides the underscore convention (a `_helper` listed in `__all__` is
+	// re-exported by `from mod import *`), and one the identifier mention set
+	// misses because `__all__` lists names as string literals. Populated from the
+	// py_all_exports sense_meta key.
+	PythonAllExportNames map[string]struct{}
 	// HarvestedLangs is the set of languages whose mention harvest actually ran
 	// for this index. The soundness gate refuses `dead` for a symbol whose
 	// language is absent here (reason core_no_harvest): a missing harvest cannot

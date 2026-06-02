@@ -245,7 +245,7 @@ func TestDeadCLIIntegration(t *testing.T) {
 	// an exported symbol, a JSX component, a Next.js route default, and a
 	// decorator-annotated (module-private) class all stay open-world.
 	for q, wantReason := range map[string]string{
-		"exportedHelper": "core_exported_api", // exported callable in a library
+		"exportedHelper": "core_exported_api",  // exported callable in a library
 		"Badge":          "ts_jsx",             // PascalCase component in a .tsx file
 		"Page":           "ts_framework_route", // app/page.tsx default export
 		"TokenStore":     "ts_decorator",       // @Injectable on a module-private class
@@ -255,11 +255,42 @@ func TestDeadCLIIntegration(t *testing.T) {
 		}
 	}
 
+	// EARNED dead (Python): the underscore-private, zero-edge, unmentioned,
+	// non-dunder, non-decorated function — the one shape Python lets through.
+	if verdict["_orphaned_helper"] != "dead" {
+		t.Errorf("_orphaned_helper verdict = %q, want dead (underscore-private, no caller, no mention)", verdict["_orphaned_helper"])
+	}
+	// SOUNDNESS BACKSTOP (Python): an underscore-private name mentioned where the
+	// resolver could not bind it stays open-world via the mention gate — proving
+	// `dead` rests on the gate, not the underscore alone.
+	if v, r := verdict["_mentioned_private"], reason["_mentioned_private"]; v != "possibly_dead" || r != "core_name_mentioned" {
+		t.Errorf("_mentioned_private = (%q, %q), want (possibly_dead, core_name_mentioned)", v, r)
+	}
+	// POSSIBLY_DEAD (Python), exact reasons — the two-sided control for each
+	// hand-raise: a dunder, a decorated method, and a route handler all stay open.
+	for q, wantReason := range map[string]string{
+		"Account.__repr__": "py_dunder",    // interpreter-invoked protocol method
+		"Account.label":    "py_decorator", // @property — attribute access
+		"health_check":     "py_route",     // @app.route handler
+	} {
+		if v, r := verdict[q], reason[q]; v != "possibly_dead" || r != wantReason {
+			t.Errorf("%s = (%q, %q), want (possibly_dead, %q)", q, v, r, wantReason)
+		}
+	}
+	// SAFETY INVARIANT: no public (non-underscore) Python symbol earns dead —
+	// public Python is always reachable by duck-typed dispatch.
+	for _, e := range g.Findings {
+		if hasSuffix(e.File, ".py") && e.Verdict == "dead" && !startsWithUnderscore(lastSegment(e.Qualified)) {
+			t.Errorf("%s (public Python) was flagged dead; public symbols must stay possibly_dead", e.Qualified)
+		}
+	}
+
 	// Known-live symbols must not be reported at all.
 	for q := range verdict {
 		for _, live := range []string{
 			"smoke.OrderService.Process",
 			"smoke.PaymentGateway.Charge",
+			"_used_private", // underscore-private but CALLED — never a candidate
 		} {
 			if q == live {
 				t.Errorf("%s should be alive, but appears in findings", q)
@@ -291,6 +322,8 @@ func lastSegment(qualified string) string {
 // startsUpper reports whether s begins with an ASCII uppercase letter — Go's
 // exported-visibility rule.
 func startsUpper(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z' }
+
+func startsWithUnderscore(s string) bool { return s != "" && s[0] == '_' }
 
 func hasSuffix(s, suffix string) bool {
 	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix

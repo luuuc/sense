@@ -67,6 +67,16 @@ const (
 	ReasonTSType           = "ts_type"
 	ReasonJSDynamic        = "js_dynamic"
 
+	// Python-voice reason codes (voice_python.go owns their catalog specs).
+	ReasonPythonDunder    = "py_dunder"
+	ReasonPythonDecorator = "py_decorator"
+	ReasonPythonRoute     = "py_route"
+	ReasonPythonDjango    = "py_django"
+	ReasonPythonAllExport = "py_all_export"
+	ReasonPythonPublic    = "py_public"
+	ReasonPythonClass     = "py_class"
+	ReasonPythonConstant  = "py_constant"
+
 	// Rust-voice reason codes (voice_rust.go owns their catalog specs).
 	ReasonRustTraitImpl = "rust_trait_impl"
 	ReasonRustDerive    = "rust_derive"
