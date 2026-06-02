@@ -6,6 +6,34 @@ All notable changes to Sense.
 
 ### Added
 
+- Python is the fifth language whose symbols can earn the `dead` verdict, and
+  `Symbol.Visibility` is now populated for Python. An underscore pre-pass
+  (`internal/extract/python/visibility.go`) marks each symbol `private` (a
+  leading-underscore non-dunder name — `_helper`, `__mangled`) or `public`
+  (a dunder like `__init__`, or any non-underscore name). Python has no enforced
+  privacy, so the underscore is the only structural "not public API" signal, and
+  the `pythonVoice` (`internal/dead/voice_python.go`) earns `dead` only for an
+  **underscore-private function or method** with no caller, no mention, and no
+  invisible-reach idiom — the Ruby rule applied. Everything else stays
+  `possibly_dead` with an exact reason: `py_dunder` (a `__x__` protocol method,
+  matched by pattern so PEP 562 module `__getattr__` and dataclass
+  `__post_init__` are covered), `py_route` (a Flask `@app.route` / FastAPI
+  `@app.get`/`@router.post` handler the framework's router dispatches), `py_django`
+  (a `@receiver` signal handler or `@admin.register`), `py_decorator` (any other
+  decorated symbol — `@property`, `@pytest.fixture`, `@click.command`),
+  `py_all_export` (a name in `__all__`, re-exported by `import *`, overriding the
+  underscore convention), `py_public` (a public function/method reachable by
+  duck-typed dispatch), and `py_class` / `py_constant` (no Python class or
+  constant ever earns `dead`, reachable via importlib / getattr / `__subclasses__`
+  / metaclass registries). The extractor harvests its own mention set, the
+  getattr/setattr/hasattr dispatch set, the decorator/route/Django reach sets, and
+  the `__all__` export set. The binding gate is hand-labeled precision on a
+  synthetic corpus (100%) plus a before/after run on the `flask` benchmark repo
+  (one earned `dead`, verified genuinely unused, zero false `dead`). `py_django`'s
+  model-field/`Meta` cases rest on the synthetic corpus and `py_class` — the
+  benchmark suite has no Django repo, so `py_django` is exercised only
+  synthetically and through its decorator paths.
+
 - TypeScript is the fourth language whose symbols can earn the `dead` verdict,
   and `Symbol.Visibility` is now populated for the whole TS/JS family. The TS/JS
   extractor marks each symbol `public` (exported in any form — `export`, `export
