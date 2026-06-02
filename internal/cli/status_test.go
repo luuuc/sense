@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
 )
@@ -69,6 +71,69 @@ func TestFormatTokens(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("formatTokens(%d) = %q, want %q", tt.n, got, tt.want)
 		}
+	}
+}
+
+// healthTestDB builds an in-memory-equivalent index with the schema
+// computeHealth queries, so the verdict branches can be driven directly.
+func healthTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "health.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE sense_files (id INTEGER PRIMARY KEY, path TEXT UNIQUE, language TEXT, hash TEXT, symbols INTEGER, indexed_at TEXT);
+		CREATE TABLE sense_symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, qualified TEXT, kind TEXT, visibility TEXT, parent_id INTEGER, line_start INTEGER, line_end INTEGER, docstring TEXT, complexity INTEGER, snippet TEXT, UNIQUE(file_id, qualified));
+		CREATE TABLE sense_edges (id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT, file_id INTEGER, line INTEGER, confidence REAL);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func TestComputeHealthOrphanedEdges(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+
+	// A symbol exists, plus an edge whose target_id points to a missing symbol.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'a.go', 'go', 'abc', 1, '2026-01-01T00:00:00Z')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (1, 1, 'Foo', 'Foo', 'function', 'public', NULL, 1, 5, NULL, NULL, NULL)`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_edges VALUES (1, 1, 99, 'calls', 1, 3, 1.0)`)
+
+	resp := mcpio.StatusResponse{
+		Version: &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: true},
+	}
+	h := computeHealth(ctx, db, t.TempDir(), resp)
+
+	if h.verdict != "unhealthy" {
+		t.Errorf("verdict = %q, want %q", h.verdict, "unhealthy")
+	}
+	if h.detail != "orphaned edges — run 'sense scan --rebuild'" {
+		t.Errorf("detail = %q, want orphaned edges message", h.detail)
+	}
+}
+
+func TestComputeHealthEmbeddingModelMismatch(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+
+	// No orphaned edges, schema current, but the embedding model is stale.
+	resp := mcpio.StatusResponse{
+		Version: &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: false},
+	}
+	h := computeHealth(ctx, db, t.TempDir(), resp)
+
+	if h.verdict != "unhealthy" {
+		t.Errorf("verdict = %q, want %q", h.verdict, "unhealthy")
+	}
+	if h.detail != "embedding model mismatch — run 'sense scan --rebuild'" {
+		t.Errorf("detail = %q, want embedding model mismatch message", h.detail)
 	}
 }
 
