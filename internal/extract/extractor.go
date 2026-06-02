@@ -262,6 +262,19 @@ type DispatchEmitter interface {
 	DispatchName(name string) error
 }
 
+// CgoExportEmitter is an optional Emitter extension for streaming the names a
+// Go file marks with a cgo `//export <name>` directive. Such a function is
+// called from C and has no Go caller edge, so it would otherwise look dead. The
+// names feed a project-wide set in sense_meta so the dead-code Go voice keeps a
+// cgo-exported symbol open-world (reason go_cgo) instead of falsely calling it
+// dead. Distinct from DispatchEmitter because its verify recipe differs — the
+// caller lives in C, not in a reflective string literal. An extractor probes for
+// this interface with a type assertion; an Emitter that does not implement it
+// simply receives no cgo names. Returning an error aborts extraction.
+type CgoExportEmitter interface {
+	CgoExportName(name string) error
+}
+
 // MentionEmitter is an optional Emitter extension for streaming every bare
 // name a file *mentions* — every identifier or symbol-literal token that
 // appears in any position other than a definition's own name. Unlike

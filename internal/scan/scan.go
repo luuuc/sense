@@ -233,6 +233,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		warnMetaWrite(warn, "mentioned-names:"+lang, writeMentionedNames(ctx, idx, lang, set))
 	}
 	warnMetaWrite(warn, "harvested-langs", writeHarvestedLangs(ctx, idx, h.harvestedLangs))
+	warnMetaWrite(warn, "cgo-exports", writeCgoExports(ctx, idx, h.cgoExports))
 	// A pre-feature index carried single bare union keys (no language suffix).
 	// The per-language reader globs `*:<lang>` and ignores them, but delete them
 	// on every full scan so an in-place upgrade leaves no stale meta to mislead a
@@ -521,6 +522,14 @@ type harness struct {
 	// file's mentions survive.
 	mentionedNames map[string]map[string]struct{}
 
+	// cgoExports is the project-wide set of Go function names marked with a cgo
+	// `//export` directive. Written to the cgo_exports sense_meta key so the
+	// dead-code Go voice keeps a C-callable function open-world (go_cgo) rather
+	// than earning it `dead` off its absent Go caller. Flat (not per-language):
+	// cgo is Go-only. Only populated for changed files this scan; merged with the
+	// persisted set so an unchanged file's exports are not lost.
+	cgoExports map[string]struct{}
+
 	// harvestedLangs is the set of languages whose mention harvest RAN this
 	// scan — every indexed file whose extractor is an extract.MentionHarvester
 	// marks its language here, regardless of how many names it produced. Written
@@ -747,6 +756,14 @@ func (h *harness) walkTree(root string) error {
 			}
 			addNamesByLang(h.mentionedNames, fr.Language, fr.MentionedNames)
 		}
+		if len(fr.CgoExports) > 0 {
+			if h.cgoExports == nil {
+				h.cgoExports = map[string]struct{}{}
+			}
+			for _, n := range fr.CgoExports {
+				h.cgoExports[n] = struct{}{}
+			}
+		}
 
 		batch = append(batch, fr)
 		if len(batch) >= batchSize {
@@ -822,6 +839,7 @@ type fileResult struct {
 	Edges          []extract.EmittedEdge
 	DispatchNames  []string
 	MentionedNames []string
+	CgoExports     []string
 }
 
 // 100 files per SQLite transaction amortizes BEGIN/COMMIT overhead (~10x
@@ -939,6 +957,7 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 		Edges:          collected.edges,
 		DispatchNames:  collected.dispatchNames,
 		MentionedNames: collected.mentionedNames,
+		CgoExports:     collected.cgoExports,
 	}
 }
 
@@ -1272,6 +1291,7 @@ type collector struct {
 	edges          []extract.EmittedEdge
 	dispatchNames  []string
 	mentionedNames []string
+	cgoExports     []string
 }
 
 func (c *collector) Symbol(s extract.EmittedSymbol) error {
@@ -1296,6 +1316,15 @@ func (c *collector) DispatchName(name string) error {
 // caller could be.
 func (c *collector) MentionName(name string) error {
 	c.mentionedNames = append(c.mentionedNames, name)
+	return nil
+}
+
+// CgoExportName implements extract.CgoExportEmitter: an extractor streams every
+// name marked with a cgo `//export` directive. The project-wide set feeds the
+// dead-code Go voice so a function called only from C stays open-world (go_cgo)
+// instead of being falsely called dead.
+func (c *collector) CgoExportName(name string) error {
+	c.cgoExports = append(c.cgoExports, name)
 	return nil
 }
 

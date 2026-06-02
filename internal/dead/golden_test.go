@@ -153,8 +153,9 @@ func TestDeadCodeGolden(t *testing.T) {
 }
 
 // TestDeadCLIIntegration is the two-sided-gate proof on a real scanned
-// fixture: the genuinely-dead Ruby private earns `dead`; the value-object
-// predicates and every Go symbol (no Go voice) stay `possibly_dead`; and no
+// fixture: a genuinely-dead Ruby private AND an unexported Go helper earn
+// `dead`; the value-object predicates, an `init`, an interface method, and every
+// exported Go symbol stay `possibly_dead` with the exact reason; and no
 // known-live symbol is reported at all.
 func TestDeadCLIIntegration(t *testing.T) {
 	g := smokeGolden(t)
@@ -190,10 +191,23 @@ func TestDeadCLIIntegration(t *testing.T) {
 		}
 	}
 
-	// SAFETY INVARIANT: every Go symbol reported is possibly_dead (no Go voice).
+	// EARNED dead (Go): the unexported, zero-edge, unmentioned helper.
+	if verdict["smoke.reconcileLedger"] != "dead" {
+		t.Errorf("smoke.reconcileLedger verdict = %q, want dead (unexported, no caller, no mention)", verdict["smoke.reconcileLedger"])
+	}
+	// POSSIBLY_DEAD (Go), exact reason: init is runtime-invoked; an interface
+	// method is reachable through any implementor.
+	if v, r := verdict["smoke.init"], reason["smoke.init"]; v != "possibly_dead" || r != "go_init" {
+		t.Errorf("smoke.init = (%q, %q), want (possibly_dead, go_init)", v, r)
+	}
+	if v, r := verdict["smoke.Notifier.Notify"], reason["smoke.Notifier.Notify"]; v != "possibly_dead" || r != "go_interface" {
+		t.Errorf("smoke.Notifier.Notify = (%q, %q), want (possibly_dead, go_interface)", v, r)
+	}
+	// SAFETY INVARIANT: no EXPORTED Go symbol earns dead — staticcheck U1000
+	// flags only unexported symbols, so an exported one must stay possibly_dead.
 	for _, e := range g.Findings {
-		if hasSuffix(e.File, ".go") && e.Verdict == "dead" {
-			t.Errorf("%s (Go) was flagged dead, but Go has no language voice — must be possibly_dead", e.Qualified)
+		if hasSuffix(e.File, ".go") && e.Verdict == "dead" && startsUpper(lastSegment(e.Qualified)) {
+			t.Errorf("%s (exported Go) was flagged dead; exported symbols must stay possibly_dead", e.Qualified)
 		}
 	}
 
@@ -218,6 +232,21 @@ func TestDeadCLIIntegration(t *testing.T) {
 }
 
 func endsWith(s, suffix string) bool { return hasSuffix(s, suffix) }
+
+// lastSegment returns the final dot-separated segment of a qualified name
+// (smoke.PaymentGateway.Refund → Refund), the symbol's own name.
+func lastSegment(qualified string) string {
+	for i := len(qualified) - 1; i >= 0; i-- {
+		if qualified[i] == '.' {
+			return qualified[i+1:]
+		}
+	}
+	return qualified
+}
+
+// startsUpper reports whether s begins with an ASCII uppercase letter — Go's
+// exported-visibility rule.
+func startsUpper(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z' }
 
 func hasSuffix(s, suffix string) bool {
 	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix

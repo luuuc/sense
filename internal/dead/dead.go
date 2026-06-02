@@ -135,7 +135,7 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 // core voice plus the Ruby and Rails language voices. Adding a language voice
 // (Go, TS, Python) is a one-line change here once it exists.
 func defaultArbiter() *Arbiter {
-	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{})
+	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{}, goVoice{})
 }
 
 // buildFacts gathers the project-wide index facts the voices consume. It is
@@ -160,6 +160,10 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 	if err != nil {
 		return Facts{}, fmt.Errorf("dead: controller concern modules: %w", err)
 	}
+	interfaceMethodNames, err := queryInterfaceMethodNames(ctx, db)
+	if err != nil {
+		return Facts{}, fmt.Errorf("dead: interface method names: %w", err)
+	}
 
 	return Facts{
 		Frameworks: frameworks,
@@ -176,9 +180,11 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 		// MentionedNames) is still allowed to earn `dead` against its empty set —
 		// distinct from a language that never harvested (absent here → fail closed).
 		HarvestedLangs:       readHarvestedLangs(ctx, db),
+		CgoExportNames:       readCgoExportNames(ctx, db),
 		ValueObjectClassIDs:  valueObjectClassIDs,
 		IncludedModuleIDs:    includedModuleIDs,
 		ControllerConcernIDs: controllerConcernIDs,
+		InterfaceMethodNames: interfaceMethodNames,
 	}, nil
 }
 
@@ -321,6 +327,33 @@ func queryControllerConcernModuleIDs(ctx context.Context, db *sql.DB) (map[int64
 			return nil, err
 		}
 		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// queryInterfaceMethodNames returns the set of method names declared on any
+// interface (a method symbol whose parent's kind is 'interface'). The Go voice
+// reads it: a concrete method sharing a name with an interface method may be
+// reached only through the interface, where the static graph shows zero direct
+// callers, so it stays open-world (go_interface) rather than earning `dead`. Go
+// interface satisfaction is structural (no `implements` keyword), so name match
+// is the soundest signal the index carries without recomputing satisfaction.
+func queryInterfaceMethodNames(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT s.name FROM sense_symbols s
+		JOIN sense_symbols p ON p.id = s.parent_id
+		WHERE s.kind = 'method' AND p.kind = 'interface'`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = struct{}{}
 	}
 	return out, rows.Err()
 }
@@ -624,15 +657,27 @@ func isInTestFile(s Symbol) bool {
 		strings.Contains(s.File, "/tests/") ||
 		strings.Contains(s.File, "/spec/") ||
 		strings.Contains(s.File, "/__tests__/") ||
+		// `testdata/` is a fixture directory the Go toolchain (go build/vet,
+		// staticcheck) ignores by convention; the same convention is common across
+		// ecosystems. Symbols there are test fixtures, not live code, so an
+		// unreferenced one is expected, not removable — excluding it keeps Sense's
+		// `dead` set aligned with the toolchain's universe and free of fixture noise.
+		strings.Contains(s.File, "/testdata/") ||
+		strings.HasPrefix(s.File, "testdata/") ||
 		strings.HasSuffix(s.File, ".spec.ts") ||
 		strings.HasSuffix(s.File, ".spec.js") ||
 		strings.HasSuffix(s.File, ".test.ts") ||
 		strings.HasSuffix(s.File, ".test.js")
 }
 
+// isConstructor reports whether s is an instance constructor invoked implicitly
+// by object creation (Ruby `initialize`, Python `__init__`, JS `constructor`),
+// which the resolver rarely ties to an explicit call. Go's `func init()` is NOT
+// here: it is a runtime-invoked package initializer, not a constructor, and the
+// Go voice owns it (go_init) so it surfaces as possibly_dead with an accurate
+// "runtime-invoked, never remove" hint rather than being silently excluded.
 func isConstructor(s Symbol) bool {
-	return s.Name == "initialize" || s.Name == "__init__" || s.Name == "constructor" ||
-		s.Name == "init" || s.Name == "Init"
+	return s.Name == "initialize" || s.Name == "__init__" || s.Name == "constructor"
 }
 
 var frameworkHooks = map[string]struct{}{
@@ -749,19 +794,35 @@ func readMentionedNames(ctx context.Context, db *sql.DB) map[string]map[string]s
 // reads as un-harvested and the index degrades to possibly_dead — the safe
 // direction. An absent or corrupt value yields an empty set.
 func readHarvestedLangs(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "harvested_langs")
+}
+
+// readCgoExportNames returns the set of Go function names marked with a cgo
+// `//export` directive, persisted to the cgo_exports sense_meta key by the scan
+// layer. The Go voice keeps a name in this set open-world (go_cgo): it is called
+// from C, never by an indexed Go caller. A missing or corrupt key yields an empty
+// set — degrading to a possible false `dead` for a cgo export only until the next
+// full scan, never a crash.
+func readCgoExportNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "cgo_exports")
+}
+
+// readStringSetMeta reads a JSON string-array sense_meta value into a set,
+// treating an absent or corrupt value as empty.
+func readStringSetMeta(ctx context.Context, db *sql.DB, key string) map[string]struct{} {
 	out := map[string]struct{}{}
 	var raw string
-	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = ?`, "harvested_langs").Scan(&raw)
+	err := db.QueryRowContext(ctx, `SELECT value FROM sense_meta WHERE key = ?`, key).Scan(&raw)
 	if err != nil || raw == "" {
 		return out
 	}
-	var langs []string
-	if err := json.Unmarshal([]byte(raw), &langs); err != nil {
-		log.Printf("dead: corrupt harvested_langs meta: %v", err)
+	var names []string
+	if err := json.Unmarshal([]byte(raw), &names); err != nil {
+		log.Printf("dead: corrupt %s meta: %v", key, err)
 		return out
 	}
-	for _, l := range langs {
-		out[l] = struct{}{}
+	for _, n := range names {
+		out[n] = struct{}{}
 	}
 	return out
 }

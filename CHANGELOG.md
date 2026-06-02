@@ -4,6 +4,24 @@ All notable changes to Sense.
 
 ## [Unreleased]
 
+### Added
+
+- Go is the second language whose symbols can earn the `dead` verdict. The Go
+  voice earns `dead` only for an unexported func / method / type with no caller,
+  no mention, and no invisible-reach idiom; everything else stays `possibly_dead`
+  with an exact reason: `go_init` (runtime-invoked package initializer),
+  `go_interface` (satisfies an indexed or stdlib interface — `String`, `Error`,
+  `MarshalJSON`, …), `go_cgo` (called from C via a `//export` directive),
+  `go_generated` (`*.pb.go` / `*_gen.go` / `*_generated.go`), `go_exported` (an
+  external package may use it), and `go_const` (an unexported const/var may anchor
+  an iota sequence). The Go extractor harvests its own mention set (the
+  per-language soundness gate), reflective dispatch targets
+  (`reflect.MethodByName` / `FieldByName`, struct-tag fields), and cgo `//export`
+  names. The verdict is validated against `staticcheck -checks U1000` as a
+  compiler-grade oracle (binding invariant: Sense `dead` for Go ⊆ U1000 — zero
+  false `dead` on the `gin` and `sense` benchmark repos). `testdata/` fixtures are
+  excluded from dead-code candidacy, matching the Go toolchain's universe.
+
 ### Breaking Changes
 
 - Dead-code analysis now emits honest verdicts. The `sense_graph dead_code=true`
@@ -12,8 +30,8 @@ All notable changes to Sense.
   safe to remove, each with a per-symbol `verify` grep) and `possibly_dead`
   groups (a hidden caller could exist, grouped by reason, each with a `verify`
   recipe). The two-value `confidence` field is removed. A symbol earns `dead`
-  only when a language voice can prove closed-world for its language; only Ruby
-  ships a voice, so all other stacks report `possibly_dead`. This makes a
+  only when a language voice can prove closed-world for its language; Ruby and Go
+  ship voices, so all other stacks report `possibly_dead`. This makes a
   confident-but-wrong `dead` impossible on unsupported stacks.
 
 ### Fixed

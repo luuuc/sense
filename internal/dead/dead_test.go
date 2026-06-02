@@ -626,18 +626,17 @@ func standaloneUnused() {}
 
 	verdict := verdictByQualified(result)
 
-	// Go has no language voice yet, so every Go symbol the arbiter reports is
-	// possibly_dead (core_no_language_voice) — never a confident dead. This is
-	// the safety invariant: an unsupported stack can't produce a false dead.
-	if v, ok := verdict["svc.standaloneUnused"]; ok {
-		if v != dead.VerdictPossiblyDead {
-			t.Errorf("standaloneUnused verdict = %q, want %q (Go has no language voice)", v, dead.VerdictPossiblyDead)
-		}
+	// The Go voice is registered, so the two sides diverge. An unexported func
+	// with no caller and no mention is genuinely dead (the airtight Go verdict).
+	if v, ok := verdict["svc.standaloneUnused"]; !ok {
+		t.Error("standaloneUnused should be reported")
+	} else if v != dead.VerdictDead {
+		t.Errorf("standaloneUnused verdict = %q, want %q (unexported, zero-edge, unmentioned)", v, dead.VerdictDead)
 	}
-	if v, ok := verdict["svc.MyHandler.Handle"]; ok {
-		if v != dead.VerdictPossiblyDead {
-			t.Errorf("MyHandler.Handle verdict = %q, want %q", v, dead.VerdictPossiblyDead)
-		}
+	// A method whose name matches an interface method stays possibly_dead: it may
+	// be invoked through the interface, where the static graph shows no caller.
+	if v, ok := verdict["svc.MyHandler.Handle"]; ok && v != dead.VerdictPossiblyDead {
+		t.Errorf("MyHandler.Handle verdict = %q, want %q (satisfies Handler)", v, dead.VerdictPossiblyDead)
 	}
 }
 
@@ -894,12 +893,13 @@ func TestDeadCodeExcludesDunderMethods(t *testing.T) {
 }
 
 // TestLibraryPublicAPIIsPossiblyDead pins the polarity inversion (pitch 25-13
-// decisions #1 and #6): a library's exported API is no longer silently
-// excluded. It surfaces as possibly_dead with the core_exported_api reason —
-// an external consumer Sense cannot see may exist — and, because Go has no
-// language voice, it can never earn the `dead` verdict. The honest contract
-// reports the fact (zero indexed references) and the reason, rather than
-// dropping the symbol and pretending it was reachable.
+// decisions #1 and #6) AND the Go voice's library rule (25-16): a library's
+// exported API is no longer silently excluded — it surfaces as possibly_dead
+// with the core_exported_api reason, because an external consumer Sense cannot
+// see may exist, and never earns `dead`. An UNEXPORTED library helper, by
+// contrast, has no external reach (staticcheck U1000 flags it) so it does earn
+// `dead`. The two sides together prove the voice is targeted, not a blanket
+// softener.
 func TestLibraryPublicAPIIsPossiblyDead(t *testing.T) {
 	root := t.TempDir()
 
@@ -945,13 +945,10 @@ func (p PublicType) privateMethod() {}
 	byQualified := map[string]dead.Finding{}
 	for _, f := range result.Findings {
 		byQualified[f.Symbol.Qualified] = f
-		// Nothing in a Go library can earn `dead`: Go has no language voice.
-		if f.Verdict == dead.VerdictDead {
-			t.Errorf("%q earned `dead` in a Go library; Go has no language voice so every symbol must stay possibly_dead", f.Symbol.Qualified)
-		}
 	}
 
-	// The exported API is reported (not excluded) and carries core_exported_api.
+	// The exported API is reported (not excluded), carries core_exported_api, and
+	// never earns `dead` — an external consumer may exist.
 	for _, name := range []string{"lib.PublicFunc", "lib.PublicType"} {
 		f, ok := byQualified[name]
 		if !ok {
@@ -964,6 +961,16 @@ func (p PublicType) privateMethod() {}
 		if f.Reason == nil || f.Reason.Code != dead.ReasonExportedAPI {
 			t.Errorf("%q reason = %v, want %q", name, f.Reason, dead.ReasonExportedAPI)
 		}
+	}
+
+	// An unexported library helper has no external reach, so it earns `dead`.
+	// (PublicType.privateMethod is collapsed under its still-reported parent type
+	// by Rollup, so the top-level privateFunc is the clean unexported probe.)
+	f, ok := byQualified["lib.privateFunc"]
+	if !ok {
+		t.Error("lib.privateFunc should be reported")
+	} else if f.Verdict != dead.VerdictDead {
+		t.Errorf("lib.privateFunc verdict = %q, want %q (unexported, no caller, no mention)", f.Verdict, dead.VerdictDead)
 	}
 }
 
