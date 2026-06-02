@@ -375,6 +375,28 @@ func TestDoctorSENSE_DIR(t *testing.T) {
 	}
 }
 
+func TestDoctorOrphanedEdgesFail(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+
+	// One valid symbol, plus an edge whose target_id points to a missing symbol.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'a.go', 'go', 'abc', 1, '2026-01-01T00:00:00Z')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (1, 1, 'Foo', 'Foo', 'function', 'public', NULL, 1, 5, NULL, NULL, NULL)`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_edges VALUES (1, 1, 99, 'calls', 1, 3, 1.0)`)
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Errorf("doctor with orphaned edges: exit=%d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stdout.String(), "orphaned edges") {
+		t.Errorf("expected orphaned edges fail message, got: %s", stdout.String())
+	}
+}
+
 func TestDoctorPassesOnHealthyIndex(t *testing.T) {
 	dir := t.TempDir()
 	senseDir := filepath.Join(dir, ".sense")

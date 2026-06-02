@@ -40,8 +40,8 @@ Exit codes:
   1  general error
   2  symbol not found or ambiguous
   3  index missing (run 'sense scan' first)
-  4  index corrupt (rebuild via 'rm .sense/index.db && sense scan';
-     'sense scan --force' lands in pitch 01-06)
+  4  index corrupt (rebuild via 'rm -rf .sense/ && sense scan';
+     for a version/model-stale index use 'sense scan --rebuild')
 `
 
 // GraphDirection aliases model.Direction so existing callers and tests
@@ -152,8 +152,8 @@ func RunGraph(args []string, cio IO) int {
 }
 
 // handleIndexOpenError maps OpenIndex's sentinels to the right exit
-// code and hint. Missing → 3 ("run sense scan"); corrupt → 4 ("run
-// sense scan --force"); anything else → 1.
+// code and hint. Missing → 3 ("run sense scan"); corrupt → 4 ("rm -rf
+// .sense/ && sense scan"); anything else → 1.
 func handleIndexOpenError(stderr io.Writer, err error) int {
 	switch {
 	case errors.Is(err, ErrIndexMissing):

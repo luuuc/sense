@@ -143,19 +143,19 @@ func computeHealth(ctx context.Context, db *sql.DB, dir string, resp mcpio.Statu
 
 	if resp.Version != nil && !resp.Version.SchemaCurrent {
 		h.verdict = "unhealthy"
-		h.detail = "schema mismatch — run 'sense scan --force'"
+		h.detail = "schema mismatch — run 'sense scan --rebuild'"
 		return h
 	}
 
 	if countOrphanedEdges(ctx, db) > 0 {
 		h.verdict = "unhealthy"
-		h.detail = "orphaned edges — run 'sense scan --force'"
+		h.detail = "orphaned edges — run 'sense scan --rebuild'"
 		return h
 	}
 
 	if resp.Version != nil && !resp.Version.EmbeddingModelCurrent {
 		h.verdict = "unhealthy"
-		h.detail = "embedding model mismatch — run 'sense scan --force'"
+		h.detail = "embedding model mismatch — run 'sense scan --rebuild'"
 		return h
 	}
 
@@ -385,7 +385,7 @@ func renderStatusHuman(cio IO, resp mcpio.StatusResponse, health healthInfo) {
 		if resp.Version.SchemaCurrent {
 			_, _ = fmt.Fprintf(w, " (current)\n")
 		} else {
-			_, _ = fmt.Fprintf(w, " (mismatch — run 'sense scan --force')\n")
+			_, _ = fmt.Fprintf(w, " (mismatch — run 'sense scan --rebuild')\n")
 		}
 		_, _ = fmt.Fprintf(w, "Embedding model: %s", resp.Version.EmbeddingModel)
 		if resp.Version.EmbeddingModelCurrent {

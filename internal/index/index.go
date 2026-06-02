@@ -52,5 +52,4 @@ type Index interface {
 	WriteEdge(ctx context.Context, e *model.Edge) (int64, error)
 	ReadSymbol(ctx context.Context, id int64) (*model.SymbolContext, error)
 	Query(ctx context.Context, f Filter) ([]model.Symbol, error)
-	Clear(ctx context.Context) error
 }

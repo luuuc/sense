@@ -33,7 +33,7 @@ var (
 // locked by another process), that error falls through unwrapped
 // so handleIndexOpenError's default branch maps it to exit 1 — a
 // permission problem is not "corrupt", and the exit-4 hint
-// ("rebuild with sense scan --force") would mislead the user.
+// ("rebuild with rm -rf .sense/ && sense scan") would mislead the user.
 //
 // The caller owns the returned Adapter and must Close it.
 func OpenIndex(ctx context.Context, dir string) (*sqlite.Adapter, error) {

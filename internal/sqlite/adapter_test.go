@@ -161,6 +161,77 @@ func TestSchemaVersionMismatchRebuilds(t *testing.T) {
 	}
 }
 
+// TestSchemaMismatchPreservesMetrics is the metrics-preservation contract:
+// a binary upgrade that bumps SchemaVersion triggers a rebuild on the next
+// Open, and the lifetime counters in sense_metrics survive it while all
+// source-derived data is dropped.
+func TestSchemaMismatchPreservesMetrics(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "index.db")
+
+	// Build a current-schema index with a lifetime metric and some data.
+	a, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := a.DB().ExecContext(ctx,
+		"INSERT INTO sense_metrics(key, value) VALUES ('lifetime_queries', 99)"); err != nil {
+		t.Fatalf("seed metrics: %v", err)
+	}
+	if _, err := a.DB().ExecContext(ctx,
+		"INSERT INTO sense_files(path, language, hash, symbols, indexed_at) VALUES ('old.go','go','h',0,'t')"); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	if err := a.StampSchemaVersion(ctx); err != nil {
+		t.Fatalf("StampSchemaVersion: %v", err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Simulate a binary built against an older schema by rewinding the
+	// stored version, the way an upgrade would surface.
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		fmt.Sprintf("PRAGMA user_version = %d", sqlite.SchemaVersion-1)); err != nil {
+		t.Fatalf("rewind user_version: %v", err)
+	}
+	_ = db.Close()
+
+	// Reopen: mismatch detected, rebuild, metrics preserved.
+	a2, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = a2.Close() }()
+
+	if !a2.Rebuilt {
+		t.Fatal("expected Rebuilt=true after schema version mismatch")
+	}
+
+	var queries int
+	if err := a2.DB().QueryRowContext(ctx,
+		"SELECT value FROM sense_metrics WHERE key='lifetime_queries'").Scan(&queries); err != nil {
+		t.Fatalf("read lifetime_queries after rebuild: %v", err)
+	}
+	if queries != 99 {
+		t.Errorf("lifetime_queries after rebuild = %d, want 99 (metrics must survive)", queries)
+	}
+
+	// Source-derived data is gone — proving the rebuild really happened and
+	// only sense_metrics was spared.
+	paths, err := a2.FilePaths(ctx)
+	if err != nil {
+		t.Fatalf("FilePaths: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("files after rebuild = %d, want 0", len(paths))
+	}
+}
+
 func TestFreshDBNotRebuilt(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "index.db")

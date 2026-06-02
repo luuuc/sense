@@ -32,6 +32,14 @@ var schemaFTSSQL string
 // before a scan completes successfully; see StampSchemaVersion.
 const SchemaVersion = 5
 
+// metricsPreserve is the preserve-set every reset path honors: the lifetime
+// counters in sense_metrics (total queries, estimated tokens saved) survive
+// both an automatic schema-bump rebuild and an explicit `sense scan
+// --rebuild`. They are the only data in the index not re-derivable from source
+// (03-data-model.md), so a reset must not zero them. The shape-stability
+// invariant for excluding a table from the drop lives on resetSenseTables.
+var metricsPreserve = map[string]bool{"sense_metrics": true}
+
 // maxOpenConns is the connection-pool size Open applies. InTx relies on
 // this being 1 — its raw BEGIN/COMMIT approach shares a transaction
 // across Adapter calls by sharing the single pooled connection. If this
@@ -128,33 +136,55 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 	var storedVersion int
 	_ = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&storedVersion)
 	rebuilt := false
+	ftsMigrated := false
 	if storedVersion != 0 && storedVersion != SchemaVersion {
+		// Binary upgraded against an older schema: drop and recreate from
+		// source via the one reset primitive. resetSenseTables resets
+		// user_version to 0 and re-applies the full schema, so the apply
+		// branch below is skipped — the state is indistinguishable from a
+		// fresh DB until StampSchemaVersion is called after scan. The
+		// preserve-set keeps lifetime metrics across the rebuild; everything
+		// else is re-derived by the scan.
 		rebuilt = true
-		if err := dropAllSenseTables(ctx, db); err != nil {
+		if err := resetSenseTables(ctx, db, metricsPreserve); err != nil {
 			_ = db.Close()
 			return nil, err
 		}
-		// Reset user_version so the state is indistinguishable from a
-		// fresh DB until StampSchemaVersion is called after scan.
-		if _, err := db.ExecContext(ctx, "PRAGMA user_version = 0"); err != nil {
+	} else {
+		// Fresh or current DB: apply the schema in place. CREATE ... IF NOT
+		// EXISTS makes this a no-op on an already-current index, and a stale
+		// FTS table is migrated in passing.
+		var err error
+		ftsMigrated, err = applySchema(ctx, db)
+		if err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("sqlite reset user_version: %w", err)
+			return nil, err
 		}
 	}
 
+	return &Adapter{db: db, Rebuilt: rebuilt, FTSMigrated: ftsMigrated}, nil
+}
+
+// applySchema applies the base schema, then the FTS5 virtual table, then its
+// triggers — each as a separate ExecContext because modernc.org/sqlite
+// silently drops virtual-table and trigger DDL embedded after other
+// statements in one multi-statement string. It returns whether a stale FTS
+// table was migrated (dropped and recreated), so the caller can warn that
+// keyword search will repopulate on the next scan.
+//
+// CREATE ... IF NOT EXISTS makes this safe on a fresh, current, or
+// just-reset database alike. The migration path only fires on an in-place
+// upgrade where the FTS table survived but lost columns; after a full reset
+// the table is gone, so ftsMigrated is false.
+func applySchema(ctx context.Context, db *sql.DB) (ftsMigrated bool, err error) {
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("sqlite schema: %w", err)
+		return false, fmt.Errorf("sqlite schema: %w", err)
 	}
 
-	// FTS5 virtual table and triggers are applied separately because
-	// modernc.org/sqlite's ExecContext silently drops virtual-table
-	// statements embedded in a long multi-statement string.
-	//
-	// Migration: if the FTS table exists but is missing the snippet
-	// column (added in search-quality pitch), drop it and its triggers
-	// so the CREATE IF NOT EXISTS below picks up the new schema.
-	ftsMigrated := ftsNeedsMigration(ctx, db)
+	// Migration: if the FTS table exists but is missing the snippet column
+	// (added in the search-quality pitch), drop it and its triggers so the
+	// CREATE IF NOT EXISTS below picks up the new schema.
+	ftsMigrated = ftsNeedsMigration(ctx, db)
 	if ftsMigrated {
 		for _, name := range []string{
 			"sense_symbols_fts_insert", "sense_symbols_fts_delete",
@@ -166,17 +196,27 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 	}
 
 	if _, err := db.ExecContext(ctx, schemaFTSSQL); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("sqlite fts schema: %w", err)
+		return ftsMigrated, fmt.Errorf("sqlite fts schema: %w", err)
 	}
 	for _, stmt := range ftsTriggerStatements {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("sqlite fts trigger: %w", err)
+			return ftsMigrated, fmt.Errorf("sqlite fts trigger: %w", err)
 		}
 	}
+	return ftsMigrated, nil
+}
 
-	return &Adapter{db: db, Rebuilt: rebuilt, FTSMigrated: ftsMigrated}, nil
+// Rebuild drops and recreates every source-derived sense_% table, preserving
+// the lifetime metrics, then leaves an empty current-schema index. It is the
+// explicit counterpart to Open's automatic schema-mismatch rebuild: `sense
+// scan --rebuild` calls it after Open and before the walk, so the emptied
+// sense_files makes the scan's hash-skip miss on every file and re-parse and
+// re-resolve the whole tree (and re-embed, inline with --embed or deferred to
+// the MCP server otherwise). user_version is left at 0 until the scan
+// completes and StampSchemaVersion runs, so a crash mid-rebuild reopens as a
+// fresh index and rescans.
+func (a *Adapter) Rebuild(ctx context.Context) error {
+	return resetSenseTables(ctx, a.db, metricsPreserve)
 }
 
 // ftsNeedsMigration returns true if the FTS5 table exists but is
@@ -1217,27 +1257,31 @@ func (a *Adapter) DeleteMeta(ctx context.Context, key string) error {
 	return nil
 }
 
-func (a *Adapter) Clear(ctx context.Context) error {
-	// Order respects foreign keys even if ON DELETE CASCADE would handle
-	// it — explicit is clearer than clever.
-	for _, tbl := range []string{
-		"sense_edges",
-		"sense_embeddings",
-		"sense_symbols",
-		"sense_files",
-	} {
-		if _, err := a.db.ExecContext(ctx, "DELETE FROM "+tbl); err != nil {
-			return fmt.Errorf("sqlite Clear %s: %w", tbl, err)
-		}
-	}
-	return nil
-}
-
-// dropAllSenseTables discovers and drops every sense_* table/view in the
-// database. Using sqlite_master makes this future-proof — new tables added
-// in later schema versions get dropped automatically without maintaining a
+// resetSenseTables is the single index-reset primitive. It drops every
+// sense_% table/view NOT named in preserve, resets PRAGMA user_version to 0,
+// and re-applies the full schema (base tables, FTS virtual table, triggers)
+// via applySchema. Both reset callers share it: Open's schema-mismatch branch
+// (automatic, on a binary upgrade) and Adapter.Rebuild (explicit, behind
+// `sense scan --rebuild`). They differ only in the preserve-set.
+//
+// DROP (not DELETE) is deliberate. A schema bump changes table *shape*, so the
+// structure must be recreated — DELETE would leave the stale shape. An
+// explicit same-binary rebuild uses the same drop path because it is strictly
+// more thorough (it also heals any structural drift) and repopulates
+// immediately, so index.db self-levels via SQLite page reuse.
+//
+// Preserve-via-exclude invariant: a preserved table keeps both its rows and
+// its existing shape, because it is never dropped and CREATE TABLE IF NOT
+// EXISTS is a no-op on it. This is correct only while the preserved table's
+// shape is stable across schema versions. If a future SchemaVersion ever
+// changes a preserved table (e.g. sense_metrics) itself, that release must
+// ship a hand-written migration for that one table, since it is no longer
+// auto-dropped here.
+//
+// Discovering tables via sqlite_master keeps this future-proof: tables added
+// in later schema versions are dropped automatically without maintaining a
 // parallel list.
-func dropAllSenseTables(ctx context.Context, db *sql.DB) error {
+func resetSenseTables(ctx context.Context, db *sql.DB, preserve map[string]bool) error {
 	rows, err := db.QueryContext(ctx,
 		"SELECT type, name FROM sqlite_master WHERE type IN ('table','view') AND name LIKE 'sense_%'")
 	if err != nil {
@@ -1252,17 +1296,52 @@ func dropAllSenseTables(ctx context.Context, db *sql.DB) error {
 		if err := rows.Scan(&e.typ, &e.name); err != nil {
 			return fmt.Errorf("sqlite list tables scan: %w", err)
 		}
+		if preserve[e.name] {
+			continue
+		}
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("sqlite list tables iterate: %w", err)
 	}
 
+	// Drop with foreign keys disabled so order is irrelevant: sqlite_master
+	// lists tables in creation order (parents first), but ON DELETE CASCADE
+	// makes a FK-enforced DROP of a parent fail once its children's rows are
+	// gone. Every dropped table is recreated by applySchema below, and the
+	// only preserved table (sense_metrics) participates in no FK, so disabling
+	// enforcement for the structural reset is safe. Restored to ON before
+	// returning — the single pooled connection (maxOpenConns) keeps the DSN's
+	// foreign_keys(1) default otherwise. modernc applies PRAGMA foreign_keys
+	// only outside a transaction, which holds here (each Exec autocommits).
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("sqlite disable foreign_keys: %w", err)
+	}
+	// Restore on a non-cancellable context: re-enabling enforcement is a
+	// safety invariant, and with one pooled connection a missed restore would
+	// leave FK checks off for the rest of the process. A cancelled ctx must
+	// not skip it.
+	defer func() {
+		_, _ = db.ExecContext(context.WithoutCancel(ctx), "PRAGMA foreign_keys = ON")
+	}()
+
 	for _, e := range entries {
 		stmt := fmt.Sprintf("DROP %s IF EXISTS %s", strings.ToUpper(e.typ), e.name)
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("sqlite drop %s %s: %w", e.typ, e.name, err)
 		}
+	}
+
+	// Reset user_version so the state is indistinguishable from a fresh DB
+	// until StampSchemaVersion is called after the scan completes.
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 0"); err != nil {
+		return fmt.Errorf("sqlite reset user_version: %w", err)
+	}
+
+	// ftsMigrated is intentionally discarded: after a full drop the FTS table
+	// is gone, so applySchema recreates it fresh and never reports a migration.
+	if _, err := applySchema(ctx, db); err != nil {
+		return err
 	}
 	return nil
 }

@@ -136,11 +136,6 @@ func TestClosedAdapterReturnsErrors(t *testing.T) {
 			t.Error("expected error")
 		}
 	})
-	t.Run("Clear", func(t *testing.T) {
-		if err := a.Clear(ctx); err == nil {
-			t.Error("expected error")
-		}
-	})
 	t.Run("ReadSymbol", func(t *testing.T) {
 		if _, err := a.ReadSymbol(ctx, 1); err == nil {
 			t.Error("expected error")
@@ -148,6 +143,11 @@ func TestClosedAdapterReturnsErrors(t *testing.T) {
 	})
 	t.Run("StampSchemaVersion", func(t *testing.T) {
 		if err := a.StampSchemaVersion(ctx); err == nil {
+			t.Error("expected error")
+		}
+	})
+	t.Run("Rebuild", func(t *testing.T) {
+		if err := a.Rebuild(ctx); err == nil {
 			t.Error("expected error")
 		}
 	})
@@ -180,4 +180,3 @@ func TestInTxPanicsWhenPoolSizeChanges(t *testing.T) {
 	}()
 	_ = a.InTx(ctx, func() error { return nil })
 }
-
