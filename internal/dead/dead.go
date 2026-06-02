@@ -132,15 +132,22 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 }
 
 // defaultArbiter is the registered voice stack for this build: the generic core
-// voice plus the Ruby, Rails, Go, Rust, TypeScript/JavaScript, and Python
-// language voices. The TS voice is registered once per language string the shared
-// extractor emits ("typescript", "tsx", "javascript") so each is a language for
-// which closed-world can be proven. Adding a language voice is a one-line change
-// here once it exists.
+// voice plus the Ruby, Rails, Go, Rust, TypeScript/JavaScript, Python, and
+// langspec (Standard-tier) language voices. The TS and langspec voices are each
+// registered once per language string the shared extractor emits so each is a
+// language for which closed-world can be proven. Adding a language voice is a
+// one-line change here once it exists.
 func defaultArbiter() *Arbiter {
 	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{}, goVoice{}, rustVoice{},
 		tsVoice{lang: "typescript"}, tsVoice{lang: "tsx"}, tsVoice{lang: "javascript"},
-		pythonVoice{})
+		pythonVoice{},
+		// One langspec voice per Standard-tier language the table-driven extractor
+		// emits. Each marks its language one Sense can prove closed-world for, but
+		// only langspecDeadEligible languages let a symbol actually fall through to
+		// `dead` (see voice_langspec.go); the rest ship reasons-only.
+		langspecVoice{lang: "java"}, langspecVoice{lang: "kotlin"}, langspecVoice{lang: "csharp"},
+		langspecVoice{lang: "scala"}, langspecVoice{lang: "cpp"}, langspecVoice{lang: "php"},
+		langspecVoice{lang: "c"})
 }
 
 // buildFacts gathers the project-wide index facts the voices consume. It is
@@ -196,6 +203,7 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 		PythonRouteNames:         readPythonRouteNames(ctx, db),
 		PythonDjangoNames:        readPythonDjangoNames(ctx, db),
 		PythonAllExportNames:     readPythonAllExportNames(ctx, db),
+		LangspecAnnotatedNames:   readLangspecAnnotatedNames(ctx, db),
 		ValueObjectClassIDs:      valueObjectClassIDs,
 		IncludedModuleIDs:        includedModuleIDs,
 		ControllerConcernIDs:     controllerConcernIDs,
@@ -911,6 +919,15 @@ func readPythonDjangoNames(ctx context.Context, db *sql.DB) map[string]struct{} 
 // or corrupt key yields an empty set.
 func readPythonAllExportNames(ctx context.Context, db *sql.DB) map[string]struct{} {
 	return readStringSetMeta(ctx, db, "py_all_exports")
+}
+
+// readLangspecAnnotatedNames returns the set of langspec (Java/Kotlin/C#/Scala/
+// C++/PHP/C) class/method/function names carrying an annotation or attribute,
+// persisted to the langspec_annotated sense_meta key. The langspec voice keeps
+// such a name open-world (ls_annotated). A missing or corrupt key yields an empty
+// set.
+func readLangspecAnnotatedNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "langspec_annotated")
 }
 
 // readStringSetMeta reads a JSON string-array sense_meta value into a set,

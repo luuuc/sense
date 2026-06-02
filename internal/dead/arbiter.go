@@ -166,6 +166,15 @@ type Facts struct {
 	// misses because `__all__` lists names as string literals. Populated from the
 	// py_all_exports sense_meta key.
 	PythonAllExportNames map[string]struct{}
+	// LangspecAnnotatedNames is the set of langspec (Java/Kotlin/C#/Scala/C++/PHP/C)
+	// class/method/function names carrying any annotation or attribute (Java
+	// `@Service`/`@Test`, C# `[Fact]`/`[HttpGet]`, Kotlin/Scala annotations, PHP
+	// `#[Route]`). The langspec voice keeps such a name open-world (ls_annotated):
+	// with no per-framework voice for these languages, a DI container, test runner,
+	// or router may dispatch any annotated symbol with no source caller. Flat, not
+	// per-language — annotations span the shared table-driven extractor. Populated
+	// from the langspec_annotated sense_meta key.
+	LangspecAnnotatedNames map[string]struct{}
 	// HarvestedLangs is the set of languages whose mention harvest actually ran
 	// for this index. The soundness gate refuses `dead` for a symbol whose
 	// language is absent here (reason core_no_harvest): a missing harvest cannot
