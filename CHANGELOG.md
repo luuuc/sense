@@ -6,6 +6,35 @@ All notable changes to Sense.
 
 ### Added
 
+- TypeScript is the fourth language whose symbols can earn the `dead` verdict,
+  and `Symbol.Visibility` is now populated for the whole TS/JS family. The TS/JS
+  extractor marks each symbol `public` (exported in any form — `export`, `export
+  default`, an `export { g }` clause, or a re-export) or `private` (module-local).
+  With no compiler dead-code lint to bind against, the closed-world signal is the
+  module system: the `tsVoice` earns `dead` only for a **module-private `.ts`/`.tsx`
+  function / const / class** with no caller, no mention, and no framework idiom.
+  Everything export- or framework-reachable stays `possibly_dead` with an exact
+  reason: `ts_decorator` (an `@Component`/`@Injectable`/`@Controller` or
+  route-decorated class/method a DI container dispatches), `ts_framework_route` (a
+  Next.js `app/` page/layout/route or any `pages/` export rendered by file-system
+  routing), `ts_jsx` (an exported PascalCase `.tsx`/`.jsx` component used as
+  `<Component/>`), `ts_default_export` (imported by path, not by name), `ts_exported`
+  (a re-export / dynamic `import()` / external consumer may reach it), `ts_method` (a
+  method may satisfy an interface or a framework protocol like React's
+  `componentDidMount`), and `ts_type` (an interface/type reached structurally or by
+  declaration-merging). **Plain JavaScript stays conservative:** a module-private
+  `.js` symbol that would earn `dead` in TypeScript is held `possibly_dead`
+  (`js_dynamic`) instead — CommonJS mutation and the absence of types make the
+  closed-world bet unsound for JS. A symbol earns `dead` only in an ES *module* (a
+  file with a top-level import/export); a global *script* (no module syntax — a
+  bundler runtime, an ambient file) has concatenation-reachable symbols that never
+  earn `dead`. `.d.ts` and test-fixture directories (`testdata/`, `test/`,
+  `__testfixtures__/`) are excluded from candidacy. The extractor harvests its own
+  mention set, computed-property dispatch keys (`obj["render"]`), decorator names,
+  and default-export names. There is no compiler oracle as clean as `staticcheck` /
+  `cargo` here, so the binding gate is hand-labeled precision on a synthetic corpus
+  (100%) plus a before/after run on the `nextjs` benchmark repo (zero false `dead`).
+
 - Rust is the third language whose symbols can earn the `dead` verdict. The Rust
   voice earns `dead` only for a non-`pub` fn / method / type / struct / enum /
   trait with no caller, no mention, and no invisible-reach idiom; everything else
