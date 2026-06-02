@@ -135,7 +135,7 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 // core voice plus the Ruby and Rails language voices. Adding a language voice
 // (Go, TS, Python) is a one-line change here once it exists.
 func defaultArbiter() *Arbiter {
-	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{}, goVoice{})
+	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{}, goVoice{}, rustVoice{})
 }
 
 // buildFacts gathers the project-wide index facts the voices consume. It is
@@ -181,6 +181,10 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 		// distinct from a language that never harvested (absent here → fail closed).
 		HarvestedLangs:       readHarvestedLangs(ctx, db),
 		CgoExportNames:       readCgoExportNames(ctx, db),
+		RustExportNames:          readRustExportNames(ctx, db),
+		RustTestSymbolNames:      readRustTestSymbolNames(ctx, db),
+		RustTraitImplMethodNames: readRustTraitImplMethodNames(ctx, db),
+		RustAllowDeadNames:       readRustAllowDeadNames(ctx, db),
 		ValueObjectClassIDs:  valueObjectClassIDs,
 		IncludedModuleIDs:    includedModuleIDs,
 		ControllerConcernIDs: controllerConcernIDs,
@@ -805,6 +809,40 @@ func readHarvestedLangs(ctx context.Context, db *sql.DB) map[string]struct{} {
 // full scan, never a crash.
 func readCgoExportNames(ctx context.Context, db *sql.DB) map[string]struct{} {
 	return readStringSetMeta(ctx, db, "cgo_exports")
+}
+
+// readRustExportNames returns the set of Rust function/static names whose
+// reachability the edge graph cannot see (`#[no_mangle]` / `#[export_name]`
+// functions, `#[no_mangle]` / `#[used]` statics), persisted to the rust_exports
+// sense_meta key by the scan layer. The Rust voice keeps such a name open-world
+// (rust_ffi / rust_used). A missing or corrupt key yields an empty set — degrading
+// to a possible false `dead` only until the next full scan, never a crash.
+func readRustExportNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "rust_exports")
+}
+
+// readRustTestSymbolNames returns the set of Rust test-only symbol names
+// (`#[test]` / `#[bench]`, or nested under `#[cfg(test)]`), persisted to the
+// rust_test_symbols sense_meta key by the scan layer. The Rust voice keeps them
+// open-world (rust_test). A missing or corrupt key yields an empty set.
+func readRustTestSymbolNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "rust_test_symbols")
+}
+
+// readRustTraitImplMethodNames returns the set of method names defined in
+// `impl Trait for Type` blocks, persisted to the rust_trait_impl_methods
+// sense_meta key by the scan layer. The Rust voice keeps such a name open-world
+// (rust_trait_impl). A missing or corrupt key yields an empty set.
+func readRustTraitImplMethodNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "rust_trait_impl_methods")
+}
+
+// readRustAllowDeadNames returns the set of Rust item names annotated
+// `#[allow(dead_code)]` / `#[allow(unused)]`, persisted to the rust_allow_dead
+// sense_meta key by the scan layer. The Rust voice keeps such a name open-world
+// (rust_allow_dead). A missing or corrupt key yields an empty set.
+func readRustAllowDeadNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "rust_allow_dead")
 }
 
 // readStringSetMeta reads a JSON string-array sense_meta value into a set,

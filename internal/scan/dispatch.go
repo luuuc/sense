@@ -113,6 +113,62 @@ func writeCgoExports(ctx context.Context, idx *sqlite.Adapter, collected map[str
 	return writeNameSet(ctx, idx, cgoExportsMetaKey, collected)
 }
 
+// rustExportsMetaKey is the sense_meta key holding the project-wide set of Rust
+// function/static names whose reachability the edge graph cannot see: functions
+// marked `#[no_mangle]` / `#[export_name]` (called across the FFI boundary) and
+// statics marked `#[no_mangle]` / `#[used]` (kept alive by the linker). The Rust
+// voice reads it (rust_ffi for a function, rust_used for a static) so such a
+// symbol stays open-world rather than earning `dead` off its absent caller. Flat,
+// not per-language — these are Rust-only attributes, like cgo is Go-only.
+const rustExportsMetaKey = "rust_exports"
+
+// writeRustExports persists the project-wide Rust export/`#[used]` set, unioning
+// with the existing set (same self-heals-on-rebuild rationale as the other sets).
+func writeRustExports(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, rustExportsMetaKey, collected)
+}
+
+// rustTestSymbolsMetaKey is the sense_meta key holding the project-wide set of
+// Rust symbol names that are test-only: items marked `#[test]` / `#[bench]` or
+// nested under a `#[cfg(test)]` module. The test harness invokes them and
+// `cargo build` does not compile them, so the Rust voice keeps them open-world
+// (rust_test) rather than earning `dead` off an absent caller. Flat, like the
+// other Rust set.
+const rustTestSymbolsMetaKey = "rust_test_symbols"
+
+// writeRustTestSymbols persists the project-wide Rust test-symbol set, unioning
+// with the existing set (same self-heals-on-rebuild rationale as the other sets).
+func writeRustTestSymbols(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, rustTestSymbolsMetaKey, collected)
+}
+
+// rustTraitImplMethodsMetaKey is the sense_meta key holding the project-wide set
+// of method names defined in `impl Trait for Type` blocks. The Rust voice reads
+// it: such a method satisfies a trait and is reached through it, so it stays
+// open-world (rust_trait_impl) rather than earning `dead` off an absent caller.
+// This is the sound trait-impl signal that covers external traits (serde, std::io)
+// the voice's static method-name table cannot enumerate.
+const rustTraitImplMethodsMetaKey = "rust_trait_impl_methods"
+
+// writeRustTraitImplMethods persists the project-wide Rust trait-impl method set,
+// unioning with the existing set (same self-heals-on-rebuild rationale as above).
+func writeRustTraitImplMethods(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, rustTraitImplMethodsMetaKey, collected)
+}
+
+// rustAllowDeadMetaKey is the sense_meta key holding the project-wide set of Rust
+// item names annotated `#[allow(dead_code)]` / `#[allow(unused)]`. The Rust voice
+// reads it: the author deliberately suppressed the lint, so rustc never warns the
+// item and it is absent from the cargo oracle — the voice keeps it open-world
+// (rust_allow_dead) rather than calling it dead.
+const rustAllowDeadMetaKey = "rust_allow_dead"
+
+// writeRustAllowDead persists the project-wide Rust `#[allow(dead_code)]` set,
+// unioning with the existing set (same self-heals-on-rebuild rationale as above).
+func writeRustAllowDead(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, rustAllowDeadMetaKey, collected)
+}
+
 // addNamesByLang unions names into byLang[lang], creating the language's set on
 // first use. Both per-language name accumulators (dispatch, mention) share it so
 // the handler keeps each language's names apart for per-language meta writes.

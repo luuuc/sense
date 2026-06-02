@@ -6,6 +6,25 @@ All notable changes to Sense.
 
 ### Added
 
+- Rust is the third language whose symbols can earn the `dead` verdict. The Rust
+  voice earns `dead` only for a non-`pub` fn / method / type / struct / enum /
+  trait with no caller, no mention, and no invisible-reach idiom; everything else
+  stays `possibly_dead` with an exact reason: `rust_trait_impl` (a method in an
+  `impl Trait for Type` block, or named on an indexed/std trait like `Display` /
+  `Iterator` / serde's `Deserializer`), `rust_derive` (a `#[derive(...)]`-synthesized
+  method name like `clone` / `fmt` / `eq` / `serialize`), `rust_ffi` (a
+  `#[no_mangle]` / `#[export_name]` function called from C), `rust_used` (a
+  `#[no_mangle]` / `#[used]` static kept alive by the linker), `rust_test` (a
+  `#[test]` / `#[bench]` or `#[cfg(test)]` item, including scoped `#[tokio::test]`),
+  `rust_allow_dead` (an `#[allow(dead_code)]` / `#[allow(unused)]` item the author
+  intentionally retained), `rust_module` (rustc lints items inside a module, never
+  the `mod`), and `rust_pub` (another crate may use it). The Rust extractor harvests
+  its own mention set (the per-language soundness gate), `Any::downcast` dispatch
+  targets, FFI / `#[used]` exports, test symbols, `impl Trait for` method names, and
+  `#[allow(dead_code)]` markers. The verdict is validated against `cargo check`
+  `dead_code` as a compiler-grade oracle (binding invariant: Sense `dead` for Rust
+  ⊆ cargo `dead_code` — zero false `dead` on the `axum` benchmark repo).
+
 - Go is the second language whose symbols can earn the `dead` verdict. The Go
   voice earns `dead` only for an unexported func / method / type with no caller,
   no mention, and no invisible-reach idiom; everything else stays `possibly_dead`

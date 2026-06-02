@@ -64,7 +64,10 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extrac
 		typeTraits:   map[string][]string{},
 	}
 	w.preCollect(tree.RootNode(), nil)
-	return w.walk(tree.RootNode(), nil)
+	if err := w.walk(tree.RootNode(), nil); err != nil {
+		return err
+	}
+	return emitHarvest(tree.RootNode(), source, emit)
 }
 
 func init() { extract.Register(Extractor{}) }

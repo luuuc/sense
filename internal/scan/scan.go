@@ -234,6 +234,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	warnMetaWrite(warn, "harvested-langs", writeHarvestedLangs(ctx, idx, h.harvestedLangs))
 	warnMetaWrite(warn, "cgo-exports", writeCgoExports(ctx, idx, h.cgoExports))
+	warnMetaWrite(warn, "rust-exports", writeRustExports(ctx, idx, h.rustExports))
+	warnMetaWrite(warn, "rust-test-symbols", writeRustTestSymbols(ctx, idx, h.rustTestSymbols))
+	warnMetaWrite(warn, "rust-trait-impl-methods", writeRustTraitImplMethods(ctx, idx, h.rustTraitMethods))
+	warnMetaWrite(warn, "rust-allow-dead", writeRustAllowDead(ctx, idx, h.rustAllowDead))
 	// A pre-feature index carried single bare union keys (no language suffix).
 	// The per-language reader globs `*:<lang>` and ignores them, but delete them
 	// on every full scan so an in-place upgrade leaves no stale meta to mislead a
@@ -530,6 +534,23 @@ type harness struct {
 	// persisted set so an unchanged file's exports are not lost.
 	cgoExports map[string]struct{}
 
+	// rustExports is the project-wide set of Rust function/static names whose
+	// reachability the edge graph cannot see (`#[no_mangle]` / `#[export_name]`
+	// functions, `#[no_mangle]` / `#[used]` statics). rustTestSymbols is the set
+	// of Rust test-only symbol names (`#[test]` / `#[bench]`, or nested under a
+	// `#[cfg(test)]` module). Both are written to flat sense_meta keys so the
+	// dead-code Rust voice keeps such a symbol open-world (rust_ffi / rust_used /
+	// rust_test). Flat (not per-language): these are Rust-only attributes, like
+	// cgo. Merged with the persisted set so an unchanged file's names survive.
+	// rustTraitMethods is the set of method names defined in `impl Trait for Type`
+	// blocks (the sound trait-impl signal, including external traits).
+	// rustAllowDead is the set of item names annotated `#[allow(dead_code)]` /
+	// `#[allow(unused)]` (intentionally retained; never in the cargo oracle).
+	rustExports      map[string]struct{}
+	rustTestSymbols  map[string]struct{}
+	rustTraitMethods map[string]struct{}
+	rustAllowDead    map[string]struct{}
+
 	// harvestedLangs is the set of languages whose mention harvest RAN this
 	// scan — every indexed file whose extractor is an extract.MentionHarvester
 	// marks its language here, regardless of how many names it produced. Written
@@ -764,6 +785,38 @@ func (h *harness) walkTree(root string) error {
 				h.cgoExports[n] = struct{}{}
 			}
 		}
+		if len(fr.RustExports) > 0 {
+			if h.rustExports == nil {
+				h.rustExports = map[string]struct{}{}
+			}
+			for _, n := range fr.RustExports {
+				h.rustExports[n] = struct{}{}
+			}
+		}
+		if len(fr.RustTestSymbols) > 0 {
+			if h.rustTestSymbols == nil {
+				h.rustTestSymbols = map[string]struct{}{}
+			}
+			for _, n := range fr.RustTestSymbols {
+				h.rustTestSymbols[n] = struct{}{}
+			}
+		}
+		if len(fr.RustTraitMethods) > 0 {
+			if h.rustTraitMethods == nil {
+				h.rustTraitMethods = map[string]struct{}{}
+			}
+			for _, n := range fr.RustTraitMethods {
+				h.rustTraitMethods[n] = struct{}{}
+			}
+		}
+		if len(fr.RustAllowDead) > 0 {
+			if h.rustAllowDead == nil {
+				h.rustAllowDead = map[string]struct{}{}
+			}
+			for _, n := range fr.RustAllowDead {
+				h.rustAllowDead[n] = struct{}{}
+			}
+		}
 
 		batch = append(batch, fr)
 		if len(batch) >= batchSize {
@@ -835,11 +888,15 @@ type fileResult struct {
 	Language       string
 	Source         []byte
 	Hash           string
-	Symbols        []extract.EmittedSymbol
-	Edges          []extract.EmittedEdge
-	DispatchNames  []string
-	MentionedNames []string
-	CgoExports     []string
+	Symbols         []extract.EmittedSymbol
+	Edges           []extract.EmittedEdge
+	DispatchNames   []string
+	MentionedNames  []string
+	CgoExports       []string
+	RustExports      []string
+	RustTestSymbols  []string
+	RustTraitMethods []string
+	RustAllowDead    []string
 }
 
 // 100 files per SQLite transaction amortizes BEGIN/COMMIT overhead (~10x
@@ -953,11 +1010,15 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 		Language:       ex.Language(),
 		Source:         source,
 		Hash:           newHash,
-		Symbols:        collected.symbols,
-		Edges:          collected.edges,
-		DispatchNames:  collected.dispatchNames,
-		MentionedNames: collected.mentionedNames,
-		CgoExports:     collected.cgoExports,
+		Symbols:         collected.symbols,
+		Edges:           collected.edges,
+		DispatchNames:   collected.dispatchNames,
+		MentionedNames:  collected.mentionedNames,
+		CgoExports:       collected.cgoExports,
+		RustExports:      collected.rustExports,
+		RustTestSymbols:  collected.rustTestSymbols,
+		RustTraitMethods: collected.rustTraitMethods,
+		RustAllowDead:    collected.rustAllowDead,
 	}
 }
 
@@ -1287,11 +1348,15 @@ func safeExtractRaw(ex extract.RawExtractor, source []byte, rel string, c *colle
 // ---- collector (per-file Emitter) ----
 
 type collector struct {
-	symbols        []extract.EmittedSymbol
-	edges          []extract.EmittedEdge
-	dispatchNames  []string
-	mentionedNames []string
-	cgoExports     []string
+	symbols         []extract.EmittedSymbol
+	edges           []extract.EmittedEdge
+	dispatchNames   []string
+	mentionedNames  []string
+	cgoExports       []string
+	rustExports      []string
+	rustTestSymbols  []string
+	rustTraitMethods []string
+	rustAllowDead    []string
 }
 
 func (c *collector) Symbol(s extract.EmittedSymbol) error {
@@ -1325,6 +1390,44 @@ func (c *collector) MentionName(name string) error {
 // instead of being falsely called dead.
 func (c *collector) CgoExportName(name string) error {
 	c.cgoExports = append(c.cgoExports, name)
+	return nil
+}
+
+// RustExportName implements extract.RustHarvestEmitter: an extractor streams every
+// Rust function/static whose reachability the edge graph cannot see (a
+// `#[no_mangle]` / `#[export_name]` function, a `#[no_mangle]` / `#[used]`
+// static). The project-wide set feeds the dead-code Rust voice so such a symbol
+// stays open-world (rust_ffi / rust_used) rather than being falsely called dead.
+func (c *collector) RustExportName(name string) error {
+	c.rustExports = append(c.rustExports, name)
+	return nil
+}
+
+// RustTestSymbol implements extract.RustHarvestEmitter: an extractor streams every
+// Rust test-only symbol (`#[test]` / `#[bench]`, or nested under `#[cfg(test)]`).
+// The project-wide set feeds the dead-code Rust voice so a test symbol stays
+// open-world (rust_test) instead of being falsely called dead.
+func (c *collector) RustTestSymbol(name string) error {
+	c.rustTestSymbols = append(c.rustTestSymbols, name)
+	return nil
+}
+
+// RustTraitImplMethod implements extract.RustHarvestEmitter: an extractor streams
+// every method defined in an `impl Trait for Type` block. The project-wide set
+// feeds the dead-code Rust voice so a trait-satisfying method stays open-world
+// (rust_trait_impl) instead of being falsely called dead.
+func (c *collector) RustTraitImplMethod(name string) error {
+	c.rustTraitMethods = append(c.rustTraitMethods, name)
+	return nil
+}
+
+// RustAllowDeadName implements extract.RustHarvestEmitter: an extractor streams
+// every item annotated `#[allow(dead_code)]` / `#[allow(unused)]`. The project-wide
+// set feeds the dead-code Rust voice so an intentionally-retained symbol stays
+// open-world (rust_allow_dead) instead of being called dead — rustc suppresses its
+// warning, so it is never in the cargo oracle.
+func (c *collector) RustAllowDeadName(name string) error {
+	c.rustAllowDead = append(c.rustAllowDead, name)
 	return nil
 }
 

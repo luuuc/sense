@@ -102,6 +102,34 @@ type Facts struct {
 	// its absent caller. Flat, not per-language: cgo is Go-only. Populated from the
 	// cgo_exports sense_meta key; an absent key yields an empty set (no cgo known).
 	CgoExportNames map[string]struct{}
+	// RustExportNames is the set of Rust function/static names whose reachability
+	// the edge graph cannot see: `#[no_mangle]` / `#[export_name]` functions
+	// (called across the FFI boundary) and `#[no_mangle]` / `#[used]` statics
+	// (kept alive by the linker). The Rust voice keeps such a name open-world
+	// (rust_ffi for a function, rust_used for a static). Flat, not per-language —
+	// these are Rust-only attributes. Populated from the rust_exports sense_meta
+	// key; an absent key yields an empty set.
+	RustExportNames map[string]struct{}
+	// RustTestSymbolNames is the set of Rust test-only symbol names (`#[test]` /
+	// `#[bench]`, or nested under a `#[cfg(test)]` module). The Rust voice keeps
+	// them open-world (rust_test): the test harness invokes them and `cargo build`
+	// does not compile them, so a zero-edge verdict would be a false `dead`.
+	// Populated from the rust_test_symbols sense_meta key.
+	RustTestSymbolNames map[string]struct{}
+	// RustTraitImplMethodNames is the set of method names defined in `impl Trait
+	// for Type` blocks. The Rust voice keeps such a method open-world
+	// (rust_trait_impl): it satisfies a trait and is reached through a trait object
+	// or generic bound, where the static graph shows no direct caller. This is the
+	// sound, name-independent trait-impl signal — it covers external traits (serde's
+	// Deserializer, std::io::Write, …) the voice's static table cannot enumerate.
+	// Populated from the rust_trait_impl_methods sense_meta key.
+	RustTraitImplMethodNames map[string]struct{}
+	// RustAllowDeadNames is the set of Rust item names annotated
+	// `#[allow(dead_code)]` / `#[allow(unused)]`. The Rust voice keeps such a name
+	// open-world (rust_allow_dead): the author deliberately suppressed the lint, so
+	// rustc never warns it and it is absent from the cargo oracle. Populated from
+	// the rust_allow_dead sense_meta key.
+	RustAllowDeadNames map[string]struct{}
 	// HarvestedLangs is the set of languages whose mention harvest actually ran
 	// for this index. The soundness gate refuses `dead` for a symbol whose
 	// language is absent here (reason core_no_harvest): a missing harvest cannot
