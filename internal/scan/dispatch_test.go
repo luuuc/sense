@@ -217,11 +217,12 @@ func TestDispatchNamesAdapterErrors(t *testing.T) {
 }
 
 // TestScanWritesHarvestedLangs proves the harvested-langs capability gate
-// end to end: Ruby and Go files mark their languages harvested (both extractors
-// are MentionHarvesters), while a Python file in the same scan does NOT mark
-// `python` — Python harvests no mentions, so its symbols must fail closed rather
-// than earn `dead` off an absent set. This is what lets HarvestedLangs diverge
-// from the mention keyset for a real, non-harvesting language.
+// end to end: Ruby, Go, and Python files mark their languages harvested (all
+// three extractors are MentionHarvesters), while a Java file in the same scan
+// does NOT mark `java` — the generic-spec Java extractor harvests no mentions, so
+// its symbols must fail closed rather than earn `dead` off an absent set. This is
+// what lets HarvestedLangs diverge from the mention keyset for a real,
+// non-harvesting language.
 func TestScanWritesHarvestedLangs(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -239,6 +240,10 @@ func TestScanWritesHarvestedLangs(t *testing.T) {
 		[]byte("def helper():\n    pass\n"), 0o644); err != nil {
 		t.Fatalf("write python: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "Thing.java"),
+		[]byte("class Thing {\n  void go() {}\n}\n"), 0o644); err != nil {
+		t.Fatalf("write java: %v", err)
+	}
 
 	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
 		t.Fatalf("scan.Run: %v", err)
@@ -254,13 +259,13 @@ func TestScanWritesHarvestedLangs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read harvested_langs: %v", err)
 	}
-	for _, lang := range []string{"ruby", "go"} {
+	for _, lang := range []string{"ruby", "go", "python"} {
 		if _, ok := got[lang]; !ok {
 			t.Errorf("expected %s in harvested_langs, got %v", lang, got)
 		}
 	}
-	if _, ok := got["python"]; ok {
-		t.Errorf("python harvests no mentions; must be absent from harvested_langs, got %v", got)
+	if _, ok := got["java"]; ok {
+		t.Errorf("java (generic-spec extractor) harvests no mentions; must be absent from harvested_langs, got %v", got)
 	}
 }
 
@@ -549,5 +554,80 @@ func TestScanWritesDispatchNames(t *testing.T) {
 	}
 	if _, ok := got["hidden_handler"]; !ok {
 		t.Errorf("expected 'hidden_handler' in dispatch_names:ruby meta, got %v", got)
+	}
+}
+
+// TestScanWritesPythonHarvest proves the Python dead-code harvest flows end to
+// end: a Python file with a route decorator, a generic decorator, a `@receiver`
+// signal handler, and an `__all__` export lands each name in its flat sense_meta
+// key, where the dead-code Python voice reads them to keep the symbols
+// open-world. It also confirms python is recorded as a mention-harvesting
+// language.
+func TestScanWritesPythonHarvest(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+
+	src := `__all__ = ["_exported"]
+
+
+@app.route("/health")
+def health():
+    return "ok"
+
+
+@property
+def label(self):
+    return self._owner
+
+
+@receiver(post_save)
+def on_save(sender, **kwargs):
+    return None
+
+
+def _exported():
+    return 1
+`
+	if err := os.WriteFile(filepath.Join(root, "app.py"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write python: %v", err)
+	}
+
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	a, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{pythonRoutesMetaKey, "health"},
+		{pythonDecoratedMetaKey, "label"},
+		{pythonDjangoMetaKey, "on_save"},
+		{pythonAllExportsMetaKey, "_exported"},
+	}
+	for _, c := range cases {
+		got, err := readNameSet(ctx, a, c.key)
+		if err != nil {
+			t.Fatalf("read %s: %v", c.key, err)
+		}
+		if _, ok := got[c.want]; !ok {
+			t.Errorf("expected %q in %s, got %v", c.want, c.key, got)
+		}
+	}
+
+	// Route and Django handlers are also in the generic decorated set (a name can
+	// be in several sets; the voice reads the most specific).
+	decorated, _ := readNameSet(ctx, a, pythonDecoratedMetaKey)
+	for _, name := range []string{"health", "on_save"} {
+		if _, ok := decorated[name]; !ok {
+			t.Errorf("expected %q in %s (superset), got %v", name, pythonDecoratedMetaKey, decorated)
+		}
 	}
 }
