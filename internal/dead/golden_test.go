@@ -211,6 +211,27 @@ func TestDeadCLIIntegration(t *testing.T) {
 		}
 	}
 
+	// EARNED dead (Rust): the non-`pub`, zero-edge, unmentioned function.
+	if verdict["orphaned_rust"] != "dead" {
+		t.Errorf("orphaned_rust verdict = %q, want dead (non-pub, no caller, no mention)", verdict["orphaned_rust"])
+	}
+	// POSSIBLY_DEAD (Rust), exact reason: a trait-impl method is reached through the
+	// trait; a derive-named method is reached through a synthesized impl. Both would
+	// otherwise be `dead` (Money::clone is unmentioned), so this is the two-sided proof.
+	if v, r := verdict["Robot::greet"], reason["Robot::greet"]; v != "possibly_dead" || r != "rust_trait_impl" {
+		t.Errorf("Robot::greet = (%q, %q), want (possibly_dead, rust_trait_impl)", v, r)
+	}
+	if v, r := verdict["Money::clone"], reason["Money::clone"]; v != "possibly_dead" || r != "rust_derive" {
+		t.Errorf("Money::clone = (%q, %q), want (possibly_dead, rust_derive)", v, r)
+	}
+	// SAFETY INVARIANT: no `pub` Rust symbol earns dead — rustc's dead_code lint
+	// flags only non-`pub` items, so a `pub` one must stay possibly_dead.
+	for _, e := range g.Findings {
+		if hasSuffix(e.File, ".rs") && e.Verdict == "dead" && (e.Qualified == "Registry" || e.Qualified == "Greeter") {
+			t.Errorf("%s (pub Rust) was flagged dead; pub items must stay possibly_dead", e.Qualified)
+		}
+	}
+
 	// Known-live symbols must not be reported at all.
 	for q := range verdict {
 		for _, live := range []string{
