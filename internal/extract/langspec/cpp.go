@@ -21,5 +21,7 @@ func init() {
 		InheritKinds: []string{"base_class_clause"},
 
 		NameField: "name",
+
+		VisibilityFn: cppVisibility,
 	}))
 }

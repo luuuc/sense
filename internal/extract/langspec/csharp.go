@@ -21,5 +21,8 @@ func init() {
 		InheritKinds: []string{"base_list"},
 
 		NameField: "name",
+
+		VisibilityFn:    csharpVisibility,
+		AnnotationKinds: []string{"attribute_list"},
 	}))
 }

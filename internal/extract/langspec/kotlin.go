@@ -26,7 +26,9 @@ func init() {
 
 		NameField: "name",
 
-		CallNameFn: kotlinCallName,
+		CallNameFn:      kotlinCallName,
+		VisibilityFn:    kotlinVisibility,
+		AnnotationKinds: []string{"annotation"},
 	}))
 }
 

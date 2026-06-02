@@ -217,12 +217,13 @@ func TestDispatchNamesAdapterErrors(t *testing.T) {
 }
 
 // TestScanWritesHarvestedLangs proves the harvested-langs capability gate
-// end to end: Ruby, Go, and Python files mark their languages harvested (all
-// three extractors are MentionHarvesters), while a Java file in the same scan
-// does NOT mark `java` — the generic-spec Java extractor harvests no mentions, so
-// its symbols must fail closed rather than earn `dead` off an absent set. This is
-// what lets HarvestedLangs diverge from the mention keyset for a real,
-// non-harvesting language.
+// end to end: Ruby, Go, Python, and Java files mark their languages harvested
+// (Java is the one langspec language wired with MentionKinds, validated against
+// the javalin benchmark), while a C# file in the same scan does NOT mark `csharp`
+// — the generic-spec C# extractor harvests no mentions (no benchmark repo), so its
+// symbols must fail closed rather than earn `dead` off an absent set. This is what
+// lets HarvestedLangs diverge from the mention keyset for a real, non-harvesting
+// language.
 func TestScanWritesHarvestedLangs(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -244,6 +245,10 @@ func TestScanWritesHarvestedLangs(t *testing.T) {
 		[]byte("class Thing {\n  void go() {}\n}\n"), 0o644); err != nil {
 		t.Fatalf("write java: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "Thing.cs"),
+		[]byte("class Thing {\n  void Go() {}\n}\n"), 0o644); err != nil {
+		t.Fatalf("write csharp: %v", err)
+	}
 
 	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
 		t.Fatalf("scan.Run: %v", err)
@@ -259,13 +264,13 @@ func TestScanWritesHarvestedLangs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read harvested_langs: %v", err)
 	}
-	for _, lang := range []string{"ruby", "go", "python"} {
+	for _, lang := range []string{"ruby", "go", "python", "java"} {
 		if _, ok := got[lang]; !ok {
 			t.Errorf("expected %s in harvested_langs, got %v", lang, got)
 		}
 	}
-	if _, ok := got["java"]; ok {
-		t.Errorf("java (generic-spec extractor) harvests no mentions; must be absent from harvested_langs, got %v", got)
+	if _, ok := got["csharp"]; ok {
+		t.Errorf("csharp (no benchmark, no MentionKinds) harvests no mentions; must be absent from harvested_langs, got %v", got)
 	}
 }
 
@@ -431,6 +436,50 @@ export default function Page() {}
 	}
 	if _, ok := harvested["typescript"]; !ok {
 		t.Errorf("expected typescript in harvested_langs, got %v", harvested)
+	}
+}
+
+// TestScanWritesLangspecAnnotated proves the langspec annotation harvest flows
+// end to end through the scan collector: an annotated Java class and method land
+// their names in the flat langspec_annotated sense_meta key, while a plain method
+// does not. It exercises the LangspecHarvestEmitter collector path plus the
+// harness aggregation in one scan.
+func TestScanWritesLangspecAnnotated(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+
+	src := `@Service
+public class Svc {
+    @Test public void shouldWork() {}
+    public void plain() {}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "Svc.java"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write java: %v", err)
+	}
+
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	a, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	set, err := readNameSet(ctx, a, langspecAnnotatedMetaKey)
+	if err != nil {
+		t.Fatalf("read langspec_annotated: %v", err)
+	}
+	for _, name := range []string{"Svc", "shouldWork"} {
+		if _, ok := set[name]; !ok {
+			t.Errorf("expected %q in langspec_annotated, got %v", name, set)
+		}
+	}
+	if _, ok := set["plain"]; ok {
+		t.Errorf("plain (un-annotated) method must not be in langspec_annotated, got %v", set)
 	}
 }
 

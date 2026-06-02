@@ -21,5 +21,8 @@ func init() {
 		InheritKinds: []string{"base_clause", "class_interface_clause"},
 
 		NameField: "name",
+
+		VisibilityFn:    phpVisibility,
+		AnnotationKinds: []string{"attribute_list"},
 	}))
 }

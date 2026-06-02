@@ -377,6 +377,27 @@ type PythonHarvestEmitter interface {
 	PythonAllExportName(name string) error
 }
 
+// LangspecHarvestEmitter is an optional Emitter extension for streaming the
+// dead-code fact the table-driven langspec extractor produces for the
+// Standard-tier languages (Java, Kotlin, C#, Scala, C++, PHP, C):
+//
+//   - LangspecAnnotatedName: the name of a class/method/function carrying any
+//     annotation or attribute (Java `@Service`/`@Test`, C# `[Fact]`/`[HttpGet]`,
+//     Kotlin/Scala annotations, PHP `#[Route]`). These languages have no
+//     per-framework voice, so any annotated symbol may be dispatched by a DI
+//     container, a test runner, or a router with no source caller; the langspec
+//     voice keeps such a name open-world (ls_annotated).
+//
+// The name set feeds a flat (not per-language) sense_meta key — annotations span
+// the shared langspec extractor, like decorators span the .ts/.tsx/.js family.
+// Cross-language name overlap is the safe direction (it only ever raises a hand).
+// An extractor probes for this interface with a type assertion; an Emitter that
+// does not implement it simply receives no names. Returning an error aborts
+// extraction.
+type LangspecHarvestEmitter interface {
+	LangspecAnnotatedName(name string) error
+}
+
 // MentionHarvester marks an Extractor whose Extract streams the broad mention
 // set (via MentionEmitter) for every file it processes. The scan records such a
 // language as harvested even on a scan that yields zero mentions for it, so the

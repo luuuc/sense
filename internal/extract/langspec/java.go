@@ -21,5 +21,12 @@ func init() {
 		InheritFields: []string{"superclass", "interfaces"},
 
 		NameField: "name",
+
+		VisibilityFn:    javaVisibility,
+		AnnotationKinds: []string{"marker_annotation", "annotation"},
+		// Java is the one langspec language with a real-world benchmark repo
+		// (javalin), so it harvests mentions and its file-local symbols may earn
+		// `dead` (gated by the per-language decision in the langspec voice).
+		MentionKinds: []string{"identifier", "type_identifier"},
 	}))
 }

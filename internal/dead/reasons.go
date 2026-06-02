@@ -77,6 +77,16 @@ const (
 	ReasonPythonClass     = "py_class"
 	ReasonPythonConstant  = "py_constant"
 
+	// Langspec-voice reason codes (voice_langspec.go owns their catalog specs).
+	// Shared across the Standard-tier table-driven languages (Java, Kotlin, C#,
+	// Scala, C++, PHP, C), which have no per-framework voice.
+	ReasonLangspecInterfaceMethod   = "ls_interface_method"
+	ReasonLangspecAnnotated         = "ls_annotated"
+	ReasonLangspecPublicNoFramework = "ls_public_no_framework"
+	ReasonLangspecReflectiveType    = "ls_reflective_type"
+	ReasonLangspecDynamic           = "ls_dynamic"
+	ReasonLangspecUnvalidated       = "ls_unvalidated"
+
 	// Rust-voice reason codes (voice_rust.go owns their catalog specs).
 	ReasonRustTraitImpl = "rust_trait_impl"
 	ReasonRustDerive    = "rust_derive"

@@ -20,9 +20,9 @@ type langSpec struct {
 	Tier      extract.Tier
 	Separator string
 
-	FuncTypes  []string
-	ClassTypes []string
-	CallTypes  []string
+	FuncTypes   []string
+	ClassTypes  []string
+	CallTypes   []string
 	ImportTypes []string
 
 	// InheritFields are field names on class nodes that hold superclass/interface
@@ -36,6 +36,32 @@ type langSpec struct {
 	NameField string
 
 	CallNameFn func(node *sitter.Node, source []byte) string
+
+	// VisibilityFn computes a func/class node's visibility ("public", "private",
+	// "protected", "internal", or a grammar-specific token like "package") from
+	// its access modifiers, or "" when the grammar offers no signal. Set per
+	// grammar; nil leaves Visibility unset. The dead-code langspec voice treats
+	// any non-"private" value (including unset "") as not-file-local and raises a
+	// hand, so the only direction that risks a false `dead` is mislabeling a
+	// reachable symbol "private" — which the per-grammar fns never do.
+	VisibilityFn func(n *sitter.Node, source []byte) string
+
+	// AnnotationKinds are the node kinds that represent an annotation/attribute on
+	// a declaration (Java "marker_annotation"/"annotation", C#/PHP "attribute_list",
+	// Kotlin/Scala "annotation"). Their presence as a direct child — or one level
+	// inside a "modifiers" wrapper — marks the symbol annotated, which the langspec
+	// voice reads (ls_annotated) because a framework's DI/reflection/test runner may
+	// dispatch any annotated symbol with no source caller.
+	AnnotationKinds []string
+
+	// MentionKinds are the node kinds whose text is a bare-name mention for the
+	// dead-code soundness harvest (e.g. "identifier", "type_identifier"). A
+	// non-empty list opts this grammar into mention harvesting, which is the
+	// prerequisite for any of its symbols to earn `dead`: the soundness gate proves
+	// a name unreachable only against the harvested mention set. An empty list
+	// means the language never harvests, so its symbols fail closed (core_no_harvest)
+	// — the honest default for a language with no validated `dead` tier.
+	MentionKinds []string
 }
 
 type genericExtractor struct {
@@ -75,7 +101,74 @@ func (g *genericExtractor) Extract(tree *sitter.Tree, source []byte, _ string, e
 		source: source,
 		emit:   emit,
 	}
-	return w.walk(tree.RootNode(), nil)
+	if err := w.walk(tree.RootNode(), nil); err != nil {
+		return err
+	}
+	return w.emitMentions(tree.RootNode())
+}
+
+// HarvestsMentions reports whether this grammar streams the broad mention set
+// (see walker.emitMentions). It is true exactly when MentionKinds is configured,
+// so the scan records the language as harvested and the dead-code soundness gate
+// can reason about it. A grammar with no MentionKinds never harvests, so its
+// symbols fail closed (core_no_harvest) rather than earn `dead` off an absent set.
+func (g *genericExtractor) HarvestsMentions() bool { return len(g.spec.MentionKinds) > 0 }
+
+// emitMentions streams every bare-name mention in the tree to the emitter when it
+// is a MentionEmitter and this grammar opted in via MentionKinds. The project-wide
+// union feeds the dead-code arbiter's soundness gate: a candidate earns `dead`
+// only when its name is absent from this set, so a live-but-unbindable reference
+// (an inherited bare call, a chain receiver, a reflectively-named string) still
+// leaves a textual mention and keeps the symbol open-world. A grammar with no
+// MentionKinds emits nothing.
+func (w *walker) emitMentions(root *sitter.Node) error {
+	if len(w.spec.MentionKinds) == 0 {
+		return nil
+	}
+	me, ok := w.emit.(extract.MentionEmitter)
+	if !ok {
+		return nil
+	}
+	for _, name := range extract.HarvestMentions(root, w.source, w.mentionWalkSpec()) {
+		if err := me.MentionName(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mentionWalkSpec parameterises the shared mention harvest for this grammar: the
+// configured MentionKinds carry a bare-name mention (read via extract.Text), and a
+// definition's own name token is excluded so a symbol is never cancelled by its
+// own declaration (otherwise no symbol could ever earn `dead`).
+func (w *walker) mentionWalkSpec() extract.MentionWalkSpec {
+	nameOf := make(map[string]func(*sitter.Node, []byte) string, len(w.spec.MentionKinds))
+	for _, kind := range w.spec.MentionKinds {
+		nameOf[kind] = extract.Text
+	}
+	return extract.MentionWalkSpec{
+		NameOf:             nameOf,
+		SkipDefinitionName: w.isDefinitionName,
+	}
+}
+
+// isDefinitionName reports whether n is the NameField child of a func/class
+// declaration — the symbol's own name token, excluded from the mention set. It is
+// the generic analog of the Ruby/Python definition-name skip; it covers the
+// grammars whose name is a direct NameField child (Java/C#/Kotlin/Scala/PHP). A
+// grammar whose name hides inside a declarator (C/C++) is not matched here, which
+// is harmless: those languages have no validated `dead` tier, so their mention
+// gate is never the deciding factor.
+func (w *walker) isDefinitionName(n *sitter.Node) bool {
+	p := n.Parent()
+	if p == nil {
+		return false
+	}
+	if !w.isFunc(p.Kind()) && !w.isClass(p.Kind()) {
+		return false
+	}
+	name := p.ChildByFieldName(w.spec.NameField)
+	return name != nil && name.Equals(*n)
 }
 
 type walker struct {
@@ -142,10 +235,15 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            symKind,
+		Visibility:      w.visibility(n),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
 	}); err != nil {
+		return err
+	}
+
+	if err := w.emitAnnotation(n, name); err != nil {
 		return err
 	}
 
@@ -176,10 +274,15 @@ func (w *walker) handleFunc(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            kind,
+		Visibility:      w.visibility(n),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
 	}); err != nil {
+		return err
+	}
+
+	if err := w.emitAnnotation(n, name); err != nil {
 		return err
 	}
 
@@ -518,6 +621,58 @@ func (w *walker) extractDeclaratorName(n *sitter.Node) string {
 		}
 	}
 	return ""
+}
+
+// visibility returns the access visibility of a func/class node via the
+// grammar's VisibilityFn, or "" when the grammar configures none.
+func (w *walker) visibility(n *sitter.Node) string {
+	if w.spec.VisibilityFn == nil {
+		return ""
+	}
+	return w.spec.VisibilityFn(n, w.source)
+}
+
+// emitAnnotation streams name to the LangspecHarvestEmitter when n carries an
+// annotation/attribute (per AnnotationKinds) and the emitter accepts it. A
+// framework's DI/reflection/test runner may dispatch any annotated symbol with no
+// source caller, so the langspec voice keeps such a name open-world (ls_annotated).
+// An Emitter that does not implement the extension, or a grammar with no
+// AnnotationKinds, is a no-op.
+func (w *walker) emitAnnotation(n *sitter.Node, name string) error {
+	if name == "" || len(w.spec.AnnotationKinds) == 0 || !w.hasAnnotation(n) {
+		return nil
+	}
+	he, ok := w.emit.(extract.LangspecHarvestEmitter)
+	if !ok {
+		return nil
+	}
+	return he.LangspecAnnotatedName(name)
+}
+
+// hasAnnotation reports whether n carries an annotation/attribute, checking its
+// direct children and one level inside a "modifiers" wrapper (Java/Kotlin/Scala
+// hold annotations there; C#/PHP carry an attribute_list as a direct child).
+func (w *walker) hasAnnotation(n *sitter.Node) bool {
+	count := n.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if slices.Contains(w.spec.AnnotationKinds, child.Kind()) {
+			return true
+		}
+		if child.Kind() == "modifiers" {
+			mc := child.NamedChildCount()
+			for j := uint(0); j < mc; j++ {
+				gc := child.NamedChild(j)
+				if gc != nil && slices.Contains(w.spec.AnnotationKinds, gc.Kind()) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (w *walker) qualify(scope []string) string {
