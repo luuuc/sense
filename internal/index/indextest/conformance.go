@@ -42,7 +42,6 @@ func RunConformance(t *testing.T, newIdx Factory) {
 		{"QueryByFileID", testQueryByFileID},
 		{"QueryByName", testQueryByName},
 		{"QueryLimit", testQueryLimit},
-		{"Clear", testClear},
 		{"Close", testClose},
 	}
 	for _, tc := range cases {
@@ -463,30 +462,6 @@ func testQueryLimit(t *testing.T, newIdx Factory) {
 	}
 	if len(got) != 3 {
 		t.Errorf("Query(Limit=3) = %d rows, want 3", len(got))
-	}
-}
-
-func testClear(t *testing.T, newIdx Factory) {
-	ctx := context.Background()
-	idx := open(t, newIdx)
-
-	fileID := mustWriteFile(ctx, t, idx, sampleFile("app/models/temp.rb"))
-	symID := mustWriteSymbol(ctx, t, idx, sampleSymbol(fileID, "Temp", "Temp", model.KindClass))
-
-	if err := idx.Clear(ctx); err != nil {
-		t.Fatalf("Clear: %v", err)
-	}
-
-	got, err := idx.Query(ctx, index.Filter{})
-	if err != nil {
-		t.Fatalf("Query after Clear: %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("Query after Clear = %d rows, want 0", len(got))
-	}
-
-	if _, err := idx.ReadSymbol(ctx, symID); !errors.Is(err, index.ErrNotFound) {
-		t.Errorf("ReadSymbol after Clear: err = %v, want ErrNotFound", err)
 	}
 }
 

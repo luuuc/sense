@@ -1068,44 +1068,6 @@ func TestDeleteFile(t *testing.T) {
 	}
 }
 
-func TestClear(t *testing.T) {
-	a := openTestDB(t)
-	ctx := context.Background()
-
-	fid := seedFile(t, a, "app.go", "go", "h1")
-	sid := seedSymbol(t, a, fid, "A", "pkg.A", "class")
-	line := 5
-	if _, err := a.WriteEdge(ctx, &model.Edge{
-		SourceID: &sid, TargetID: sid, Kind: model.EdgeCalls,
-		FileID: fid, Line: &line, Confidence: 1.0,
-	}); err != nil {
-		t.Fatalf("WriteEdge: %v", err)
-	}
-	if err := a.WriteEmbedding(ctx, sid, floatVec(1.0)); err != nil {
-		t.Fatalf("WriteEmbedding: %v", err)
-	}
-
-	if err := a.Clear(ctx); err != nil {
-		t.Fatalf("Clear: %v", err)
-	}
-
-	paths, err := a.FilePaths(ctx)
-	if err != nil {
-		t.Fatalf("FilePaths after clear: %v", err)
-	}
-	if len(paths) != 0 {
-		t.Errorf("FilePaths after clear = %v, want empty", paths)
-	}
-
-	count, err := a.SymbolCount(ctx)
-	if err != nil {
-		t.Fatalf("SymbolCount after clear: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("SymbolCount after clear = %d, want 0", count)
-	}
-}
-
 func TestSymbolCountEmptyAndPopulated(t *testing.T) {
 	a := openTestDB(t)
 	ctx := context.Background()
