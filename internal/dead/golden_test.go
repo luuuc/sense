@@ -232,6 +232,29 @@ func TestDeadCLIIntegration(t *testing.T) {
 		}
 	}
 
+	// EARNED dead (TS): the module-private, zero-edge, unmentioned .ts function.
+	if verdict["orphanedTs"] != "dead" {
+		t.Errorf("orphanedTs verdict = %q, want dead (module-private .ts, no caller, no mention)", verdict["orphanedTs"])
+	}
+	// TS/JS PRECISION SPLIT: the byte-identical shape in a .js file stays
+	// possibly_dead (js_dynamic) — plain JS is too loose for the closed-world bet.
+	if v, r := verdict["orphanedJs"], reason["orphanedJs"]; v != "possibly_dead" || r != "js_dynamic" {
+		t.Errorf("orphanedJs = (%q, %q), want (possibly_dead, js_dynamic) — the TS/JS split", v, r)
+	}
+	// POSSIBLY_DEAD (TS), exact reasons — the two-sided control for each hand-raise:
+	// an exported symbol, a JSX component, a Next.js route default, and a
+	// decorator-annotated (module-private) class all stay open-world.
+	for q, wantReason := range map[string]string{
+		"exportedHelper": "core_exported_api", // exported callable in a library
+		"Badge":          "ts_jsx",             // PascalCase component in a .tsx file
+		"Page":           "ts_framework_route", // app/page.tsx default export
+		"TokenStore":     "ts_decorator",       // @Injectable on a module-private class
+	} {
+		if v, r := verdict[q], reason[q]; v != "possibly_dead" || r != wantReason {
+			t.Errorf("%s = (%q, %q), want (possibly_dead, %q)", q, v, r, wantReason)
+		}
+	}
+
 	// Known-live symbols must not be reported at all.
 	for q := range verdict {
 		for _, live := range []string{

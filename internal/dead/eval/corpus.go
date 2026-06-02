@@ -17,6 +17,11 @@ package eval
 // detection and are added with the Rails voice; here the same class of lie
 // is captured through the framework-independent value-object path.
 func Corpus() []Fixture {
+	return append(rubyCorpus(), tsCorpus()...)
+}
+
+// rubyCorpus is the Ruby slice of the trust corpus (see Corpus).
+func rubyCorpus() []Fixture {
 	return []Fixture{
 		{
 			Name: "genuine_dead_private",

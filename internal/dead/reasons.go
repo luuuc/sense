@@ -57,6 +57,16 @@ const (
 	ReasonGoConst     = "go_const"
 	ReasonGoExported  = "go_exported"
 
+	// TS-voice reason codes (voice_ts.go owns their catalog specs).
+	ReasonTSExported       = "ts_exported"
+	ReasonTSJSX            = "ts_jsx"
+	ReasonTSDecorator      = "ts_decorator"
+	ReasonTSFrameworkRoute = "ts_framework_route"
+	ReasonTSDefaultExport  = "ts_default_export"
+	ReasonTSMethod         = "ts_method"
+	ReasonTSType           = "ts_type"
+	ReasonJSDynamic        = "js_dynamic"
+
 	// Rust-voice reason codes (voice_rust.go owns their catalog specs).
 	ReasonRustTraitImpl = "rust_trait_impl"
 	ReasonRustDerive    = "rust_derive"
