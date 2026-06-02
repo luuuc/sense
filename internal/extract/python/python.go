@@ -36,9 +36,17 @@
 //   - Function:   f  (top-level only; nested defs are closures, skipped)
 //   - Constant:   NAME  or  Outer.NAME
 //
+// Visibility (see visibility.go): each symbol is marked `private` (leading
+// underscore, non-dunder) or `public`. The dead-code Python voice lets only
+// underscore-private functions/methods fall through to `dead`.
+//
+// Dead-code harvest (see harvest.go): the broad mention set, the
+// getattr/setattr/hasattr dispatch set, the decorator / route / Django reach
+// sets, and the `__all__` export set — the facts the Python voice and the
+// arbiter's soundness gate read.
+//
 // What is still skipped:
 //   - imports (edge resolution; handled in 01-03)
-//   - visibility (leading underscore convention)
 package python
 
 import (
@@ -63,7 +71,10 @@ func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
 	w := &walker{source: source, emit: emit, pkgBindings: map[string]string{}}
 	w.collectModuleConstants(tree.RootNode())
-	return w.walk(tree.RootNode(), nil)
+	if err := w.walk(tree.RootNode(), nil); err != nil {
+		return err
+	}
+	return emitHarvest(tree.RootNode(), source, emit)
 }
 
 func init() { extract.Register(Extractor{}) }
@@ -215,6 +226,7 @@ func (w *walker) handleClass(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindClass,
+		Visibility:      visibilityForName(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -289,6 +301,7 @@ func (w *walker) emitFunctionAndWalkBody(n *sitter.Node, scope []string, decorat
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            kind,
+		Visibility:      visibilityForName(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -429,6 +442,7 @@ func (w *walker) handleAssignment(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindConstant,
+		Visibility:      visibilityForName(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
