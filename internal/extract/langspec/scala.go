@@ -21,5 +21,8 @@ func init() {
 		InheritFields: []string{"extend"},
 
 		NameField: "name",
+
+		VisibilityFn:    scalaVisibility,
+		AnnotationKinds: []string{"annotation"},
 	}))
 }

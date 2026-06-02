@@ -19,5 +19,7 @@ func init() {
 		ImportTypes: []string{"preproc_include"},
 
 		NameField: "name",
+
+		VisibilityFn: cVisibility,
 	}))
 }
