@@ -244,6 +244,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	warnMetaWrite(warn, "py-routes", writePythonRoutes(ctx, idx, h.pyRoutes))
 	warnMetaWrite(warn, "py-django", writePythonDjango(ctx, idx, h.pyDjango))
 	warnMetaWrite(warn, "py-all-exports", writePythonAllExports(ctx, idx, h.pyAllExports))
+	warnMetaWrite(warn, "langspec-annotated", writeLangspecAnnotated(ctx, idx, h.lsAnnotated))
 	// A pre-feature index carried single bare union keys (no language suffix).
 	// The per-language reader globs `*:<lang>` and ignores them, but delete them
 	// on every full scan so an in-place upgrade leaves no stale meta to mislead a
@@ -577,6 +578,13 @@ type harness struct {
 	pyDjango     map[string]struct{}
 	pyAllExports map[string]struct{}
 
+	// lsAnnotated is the set of langspec (Java/Kotlin/C#/Scala/C++/PHP/C)
+	// class/method/function names carrying any annotation or attribute. Written to
+	// a flat sense_meta key so the dead-code langspec voice keeps an annotated
+	// symbol open-world (ls_annotated): with no per-framework voice, a DI
+	// container, test runner, or router may dispatch it with no source caller.
+	lsAnnotated map[string]struct{}
+
 	// harvestedLangs is the set of languages whose mention harvest RAN this
 	// scan — every indexed file whose extractor is an extract.MentionHarvester
 	// marks its language here, regardless of how many names it produced. Written
@@ -891,6 +899,14 @@ func (h *harness) walkTree(root string) error {
 				h.pyAllExports[n] = struct{}{}
 			}
 		}
+		if len(fr.LangspecAnnotated) > 0 {
+			if h.lsAnnotated == nil {
+				h.lsAnnotated = map[string]struct{}{}
+			}
+			for _, n := range fr.LangspecAnnotated {
+				h.lsAnnotated[n] = struct{}{}
+			}
+		}
 
 		batch = append(batch, fr)
 		if len(batch) >= batchSize {
@@ -958,25 +974,26 @@ func (h *harness) flushBatch(batch []*fileResult) error {
 // fileResult holds the output of parseFile — everything needed to
 // persist a file's symbols and edges without re-reading or re-parsing.
 type fileResult struct {
-	Rel              string
-	Language         string
-	Source           []byte
-	Hash             string
-	Symbols          []extract.EmittedSymbol
-	Edges            []extract.EmittedEdge
-	DispatchNames    []string
-	MentionedNames   []string
-	CgoExports       []string
-	RustExports      []string
-	RustTestSymbols  []string
-	RustTraitMethods []string
-	RustAllowDead    []string
-	TSDecorated      []string
-	TSDefaultExports []string
-	PyDecorated      []string
-	PyRoutes         []string
-	PyDjango         []string
-	PyAllExports     []string
+	Rel               string
+	Language          string
+	Source            []byte
+	Hash              string
+	Symbols           []extract.EmittedSymbol
+	Edges             []extract.EmittedEdge
+	DispatchNames     []string
+	MentionedNames    []string
+	CgoExports        []string
+	RustExports       []string
+	RustTestSymbols   []string
+	RustTraitMethods  []string
+	RustAllowDead     []string
+	TSDecorated       []string
+	TSDefaultExports  []string
+	PyDecorated       []string
+	PyRoutes          []string
+	PyDjango          []string
+	PyAllExports      []string
+	LangspecAnnotated []string
 }
 
 // 100 files per SQLite transaction amortizes BEGIN/COMMIT overhead (~10x
@@ -1086,25 +1103,26 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 	})
 
 	return &fileResult{
-		Rel:              rel,
-		Language:         ex.Language(),
-		Source:           source,
-		Hash:             newHash,
-		Symbols:          collected.symbols,
-		Edges:            collected.edges,
-		DispatchNames:    collected.dispatchNames,
-		MentionedNames:   collected.mentionedNames,
-		CgoExports:       collected.cgoExports,
-		RustExports:      collected.rustExports,
-		RustTestSymbols:  collected.rustTestSymbols,
-		RustTraitMethods: collected.rustTraitMethods,
-		RustAllowDead:    collected.rustAllowDead,
-		TSDecorated:      collected.tsDecorated,
-		TSDefaultExports: collected.tsDefaultExports,
-		PyDecorated:      collected.pyDecorated,
-		PyRoutes:         collected.pyRoutes,
-		PyDjango:         collected.pyDjango,
-		PyAllExports:     collected.pyAllExports,
+		Rel:               rel,
+		Language:          ex.Language(),
+		Source:            source,
+		Hash:              newHash,
+		Symbols:           collected.symbols,
+		Edges:             collected.edges,
+		DispatchNames:     collected.dispatchNames,
+		MentionedNames:    collected.mentionedNames,
+		CgoExports:        collected.cgoExports,
+		RustExports:       collected.rustExports,
+		RustTestSymbols:   collected.rustTestSymbols,
+		RustTraitMethods:  collected.rustTraitMethods,
+		RustAllowDead:     collected.rustAllowDead,
+		TSDecorated:       collected.tsDecorated,
+		TSDefaultExports:  collected.tsDefaultExports,
+		PyDecorated:       collected.pyDecorated,
+		PyRoutes:          collected.pyRoutes,
+		PyDjango:          collected.pyDjango,
+		PyAllExports:      collected.pyAllExports,
+		LangspecAnnotated: collected.lsAnnotated,
 	}
 }
 
@@ -1449,6 +1467,7 @@ type collector struct {
 	pyRoutes         []string
 	pyDjango         []string
 	pyAllExports     []string
+	lsAnnotated      []string
 }
 
 func (c *collector) Symbol(s extract.EmittedSymbol) error {
@@ -1575,6 +1594,16 @@ func (c *collector) PythonDjangoName(name string) error {
 // (py_all_export) even when underscore-private.
 func (c *collector) PythonAllExportName(name string) error {
 	c.pyAllExports = append(c.pyAllExports, name)
+	return nil
+}
+
+// LangspecAnnotatedName implements extract.LangspecHarvestEmitter: the langspec
+// extractor streams every annotated/attributed class/method/function (Java
+// `@Service`, C# `[Fact]`, Kotlin/Scala annotations, PHP `#[Route]`). The
+// project-wide set feeds the dead-code langspec voice so a framework-dispatched
+// symbol stays open-world (ls_annotated) instead of being falsely called dead.
+func (c *collector) LangspecAnnotatedName(name string) error {
+	c.lsAnnotated = append(c.lsAnnotated, name)
 	return nil
 }
 

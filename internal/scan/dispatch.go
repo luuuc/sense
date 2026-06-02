@@ -246,6 +246,21 @@ func writePythonAllExports(ctx context.Context, idx *sqlite.Adapter, collected m
 	return writeNameSet(ctx, idx, pythonAllExportsMetaKey, collected)
 }
 
+// langspecAnnotatedMetaKey is the sense_meta key holding the project-wide set of
+// langspec (Java/Kotlin/C#/Scala/C++/PHP/C) class/method/function names carrying
+// any annotation or attribute. The dead-code langspec voice reads it: with no
+// per-framework voice for these languages, a framework's DI/router/test runner may
+// dispatch an annotated symbol with no source caller, so it stays open-world
+// (ls_annotated) rather than earning `dead`. Flat, not per-language — annotations
+// span the shared table-driven langspec extractor.
+const langspecAnnotatedMetaKey = "langspec_annotated"
+
+// writeLangspecAnnotated persists the project-wide langspec annotated-name set,
+// unioning with the existing set (same self-heals-on-rebuild rationale as above).
+func writeLangspecAnnotated(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, langspecAnnotatedMetaKey, collected)
+}
+
 // addNamesByLang unions names into byLang[lang], creating the language's set on
 // first use. Both per-language name accumulators (dispatch, mention) share it so
 // the handler keeps each language's names apart for per-language meta writes.
