@@ -297,6 +297,75 @@ func TestScanWritesCgoExports(t *testing.T) {
 	}
 }
 
+// TestScanWritesRustHarvest proves the Rust attribute harvest flows end to end
+// through the scan collector and aggregation: a single Rust file carrying every
+// attribute shape lands each name in its sense_meta key, where the dead-code Rust
+// voice reads it. It exercises all four RustHarvestEmitter collector paths in one
+// scan.
+func TestScanWritesRustHarvest(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+
+	src := `#[no_mangle]
+pub extern "C" fn ffi_entry() {}
+
+#[used]
+static KEEP: u8 = 0;
+
+#[allow(dead_code)]
+fn intentionally_kept() {}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn async_case() {}
+}
+
+trait Greeter {
+    fn greet(&self);
+}
+
+struct Robot;
+
+impl Greeter for Robot {
+    fn greet(&self) {}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "lib.rs"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write rust: %v", err)
+	}
+
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	a, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	cases := []struct {
+		key, name string
+	}{
+		{rustExportsMetaKey, "ffi_entry"},
+		{rustExportsMetaKey, "KEEP"},
+		{rustTestSymbolsMetaKey, "async_case"},
+		{rustAllowDeadMetaKey, "intentionally_kept"},
+		{rustTraitImplMethodsMetaKey, "greet"},
+	}
+	for _, c := range cases {
+		set, err := readNameSet(ctx, a, c.key)
+		if err != nil {
+			t.Fatalf("read %s: %v", c.key, err)
+		}
+		if _, ok := set[c.name]; !ok {
+			t.Errorf("expected %q in %s, got %v", c.name, c.key, set)
+		}
+	}
+}
+
 // TestScanDeletesLegacyUnionKeys proves the in-place-upgrade cleanup: a scan
 // removes the stale bare `mentioned_names`/`dispatch_names` union keys a
 // pre-feature index left behind, while the per-language keys survive.
