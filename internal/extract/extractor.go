@@ -324,6 +324,27 @@ type MentionEmitter interface {
 	MentionName(name string) error
 }
 
+// TSHarvestEmitter is an optional Emitter extension for streaming the TS/JS
+// dead-code facts the TypeScript voice reads — names whose reachability the edge
+// graph cannot see because a framework or the module system reaches them:
+//
+//   - TSDecoratedName: a class or method carrying a decorator (`@Component`,
+//     `@Injectable`, `@Controller`, a route-method decorator). Angular/Nest's
+//     DI/router instantiates or routes to it with no source caller, so the voice
+//     keeps it open-world (ts_decorator) even when module-private.
+//   - TSDefaultExportName: the name bound by an `export default` form. A default
+//     export is imported by path rather than by name, so the voice raises the more
+//     specific ts_default_export instead of the generic ts_exported.
+//
+// The name sets feed flat (not per-language) sense_meta keys — these concepts span
+// the .ts/.tsx/.js family, which shares one extractor. An extractor probes for this
+// interface with a type assertion; an Emitter that does not implement it simply
+// receives no names. Returning an error aborts extraction.
+type TSHarvestEmitter interface {
+	TSDecoratedName(name string) error
+	TSDefaultExportName(name string) error
+}
+
 // MentionHarvester marks an Extractor whose Extract streams the broad mention
 // set (via MentionEmitter) for every file it processes. The scan records such a
 // language as harvested even on a scan that yields zero mentions for it, so the

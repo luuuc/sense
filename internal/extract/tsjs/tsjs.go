@@ -106,11 +106,15 @@ func extractAll(tree *sitter.Tree, source []byte, filePath string, emit extract.
 		stimulusName: inferStimulusController(filePath),
 		pkgBindings:  map[string]string{},
 	}
+	w.collectExports(tree.RootNode())
 	w.collectModuleConstants(tree.RootNode())
 	if err := w.walk(tree.RootNode(), nil); err != nil {
 		return err
 	}
-	return w.walkDynamicImports(tree.RootNode())
+	if err := w.walkDynamicImports(tree.RootNode()); err != nil {
+		return err
+	}
+	return emitHarvest(tree.RootNode(), source, filePath, emit)
 }
 
 // ---- walker ----
@@ -121,6 +125,15 @@ type walker struct {
 	filePath     string
 	stimulusName string            // non-empty if this file is a Stimulus controller
 	pkgBindings  map[string]string // unqualified name → qualified name for module-level constants
+	// exported is the set of local names the module exports in any form; it
+	// drives each emitted symbol's Visibility ("public" if present, else
+	// "private"). defaultExports is the subset that are default exports.
+	// isModule is false for a global script (no top-level import/export), where
+	// every symbol is treated as public (globally reachable by concatenation).
+	// All three are populated by collectExports before the main walk.
+	exported       map[string]bool
+	defaultExports map[string]bool
+	isModule       bool
 }
 
 // collectModuleConstants pre-scans top-level const declarations for
@@ -293,6 +306,7 @@ func (w *walker) emitClassWithBody(n *sitter.Node, name string, scope []string) 
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindClass,
+		Visibility:      w.visibilityOf(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -427,6 +441,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindMethod,
+		Visibility:      w.methodVisibility(scope),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -460,6 +475,7 @@ func (w *walker) handleInterface(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindInterface,
+		Visibility:      w.visibilityOf(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -501,6 +517,7 @@ func (w *walker) handleTypeAlias(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindType,
+		Visibility:      w.visibilityOf(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -626,6 +643,7 @@ func (w *walker) handleEnum(n *sitter.Node, scope []string) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindClass,
+		Visibility:      w.visibilityOf(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -661,6 +679,7 @@ func (w *walker) emitFunctionWithBody(n *sitter.Node, name string, scope []strin
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindFunction,
+		Visibility:      w.visibilityOf(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
 		LineEnd:         extract.Line(n.EndPosition()),
@@ -728,6 +747,7 @@ func (w *walker) handleVariableDeclarator(decl *sitter.Node, scope []string) err
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            kind,
+		Visibility:      w.visibilityOf(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(decl.StartPosition()),
 		LineEnd:         extract.Line(decl.EndPosition()),
@@ -897,12 +917,15 @@ func (w *walker) handleReexport(n *sitter.Node, modulePath string) error {
 			if name == "" || name == "default" {
 				continue
 			}
+			// A re-exported name is definitionally an export of this module, so
+			// it is always public — it never falls to the closed-world dead test.
 			if err := w.emit.Symbol(extract.EmittedSymbol{
-				Name:      name,
-				Qualified: name,
-				Kind:      model.KindConstant,
-				LineStart: extract.Line(spec.StartPosition()),
-				LineEnd:   extract.Line(spec.EndPosition()),
+				Name:       name,
+				Qualified:  name,
+				Kind:       model.KindConstant,
+				Visibility: "public",
+				LineStart:  extract.Line(spec.StartPosition()),
+				LineEnd:    extract.Line(spec.EndPosition()),
 			}); err != nil {
 				return err
 			}
@@ -941,13 +964,18 @@ func hasDefaultKeyword(n *sitter.Node, source []byte) bool {
 	return false
 }
 
-// fileBasedName derives a PascalCase symbol name from the file path.
-// Returns "" if the path is empty or the file is an index file.
-func (w *walker) fileBasedName() string {
-	if w.filePath == "" {
+// fileBasedName derives a PascalCase symbol name from the walker's file path.
+func (w *walker) fileBasedName() string { return fileBasedNameOf(w.filePath) }
+
+// fileBasedNameOf derives a PascalCase symbol name from a file path. Returns ""
+// if the path is empty or the file is an index file. Shared by the walker
+// (synthesizing anonymous default-export symbol names) and the visibility pass
+// (recognizing the same names as exported).
+func fileBasedNameOf(path string) string {
+	if path == "" {
 		return ""
 	}
-	base := filepath.Base(w.filePath)
+	base := filepath.Base(path)
 	name := strings.TrimSuffix(base, filepath.Ext(base))
 	if name == "" || name == "index" {
 		return ""
