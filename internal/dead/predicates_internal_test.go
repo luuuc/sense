@@ -27,6 +27,27 @@ func TestIsTestSymbolBranches(t *testing.T) {
 	}
 }
 
+// TestIsInTestFileBranches covers each non-production path form, including the
+// Go-toolchain `testdata/` fixture convention, plus a production control.
+func TestIsInTestFileBranches(t *testing.T) {
+	cases := map[string]bool{
+		"foo_test.go":                          true,
+		"app/test/helper.rb":                   true,
+		"src/tests/util.ts":                    true,
+		"app/spec/models/order_spec.rb":        true,
+		"internal/extract/testdata/go/x.go":    true, // testdata/ fixture dir
+		"testdata/fixtures/main.go":            true, // testdata/ at root
+		"components/__tests__/button.test.tsx": true,
+		"widget.spec.ts":                       true,
+		"internal/dead/dead.go":                false, // production source
+	}
+	for file, want := range cases {
+		if got := isInTestFile(Symbol{File: file}); got != want {
+			t.Errorf("isInTestFile(%q) = %v, want %v", file, got, want)
+		}
+	}
+}
+
 // TestRubyMethodParentNameBranches covers the no-separator, dotted, hashed,
 // and namespaced forms.
 func TestRubyMethodParentNameBranches(t *testing.T) {
@@ -143,13 +164,17 @@ func TestEntryPointPredicates(t *testing.T) {
 	if isMainFunction(Symbol{Name: "run"}) {
 		t.Error("run is not main")
 	}
-	for _, n := range []string{"initialize", "__init__", "constructor", "init", "Init"} {
+	for _, n := range []string{"initialize", "__init__", "constructor"} {
 		if !isConstructor(Symbol{Name: n}) {
 			t.Errorf("%q should be a constructor", n)
 		}
 	}
-	if isConstructor(Symbol{Name: "build"}) {
-		t.Error("build is not a constructor")
+	// Go's init/Init are NOT constructors: the Go voice owns init (go_init) so it
+	// surfaces as possibly_dead rather than being excluded as an entry point.
+	for _, n := range []string{"init", "Init", "build"} {
+		if isConstructor(Symbol{Name: n}) {
+			t.Errorf("%q should not be a constructor", n)
+		}
 	}
 	if !hasAnySuffix("PaymentService", serviceClassSuffixes) {
 		t.Error("PaymentService should match a service suffix")

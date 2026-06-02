@@ -96,6 +96,12 @@ type Facts struct {
 	// mentions harvested from its OWN language, never off another's. Populated
 	// from sense_meta.
 	MentionedNames map[string]map[string]struct{}
+	// CgoExportNames is the set of Go function names marked with a cgo `//export`
+	// directive. Such a function is called from C with no Go caller edge, so the
+	// Go voice keeps it open-world (go_cgo) rather than letting it earn `dead` off
+	// its absent caller. Flat, not per-language: cgo is Go-only. Populated from the
+	// cgo_exports sense_meta key; an absent key yields an empty set (no cgo known).
+	CgoExportNames map[string]struct{}
 	// HarvestedLangs is the set of languages whose mention harvest actually ran
 	// for this index. The soundness gate refuses `dead` for a symbol whose
 	// language is absent here (reason core_no_harvest): a missing harvest cannot

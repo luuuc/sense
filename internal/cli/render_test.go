@@ -835,8 +835,9 @@ func TestRunDeadHumanSuccess(t *testing.T) {
 		t.Fatalf("exit = %d; stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	// Seeded data is Go, which has no language voice, so the unreferenced
-	// symbols are possibly_dead (core_no_language_voice), never earned dead.
+	// Seeded data is Go, but this DB is hand-built and never scanned, so no Go
+	// mention harvest ran: the soundness gate fails closed (core_no_harvest),
+	// keeping the unreferenced symbols possibly_dead, never earned dead.
 	if !strings.Contains(out, "Possibly dead") {
 		t.Errorf("expected possibly-dead section, got:\n%s", out)
 	}

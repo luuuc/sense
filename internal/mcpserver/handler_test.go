@@ -783,11 +783,12 @@ func TestHandleDeadCode(t *testing.T) {
 				if err := json.Unmarshal([]byte(text), &resp); err != nil {
 					t.Fatalf("unmarshal: %v", err)
 				}
-				// Seeded data is Go, which has no language voice, so every
-				// unreferenced symbol is possibly_dead (core_no_language_voice),
-				// never an earned dead — the honest default on an unsupported stack.
+				// Seeded data is Go, but this DB is hand-built and never scanned, so
+				// no Go mention harvest ran. The per-language soundness gate fails
+				// closed (core_no_harvest), keeping every unreferenced symbol
+				// possibly_dead — never an earned dead off an absent harvest.
 				if resp.DeadCount != 0 {
-					t.Errorf("Go has no language voice; expected 0 earned dead, got %d", resp.DeadCount)
+					t.Errorf("no Go mention harvest in seeded data; expected 0 earned dead, got %d", resp.DeadCount)
 				}
 				if resp.PossiblyDeadCount == 0 {
 					t.Error("expected possibly_dead symbols (model.Order has zero incoming edges)")

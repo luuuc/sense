@@ -48,6 +48,14 @@ const (
 	ReasonRailsRouting  = "rails_routing"
 	ReasonRailsCallback = "rails_callback"
 	ReasonRailsConcern  = "rails_concern"
+
+	// Go-voice reason codes (voice_go.go owns their catalog specs).
+	ReasonGoInit      = "go_init"
+	ReasonGoInterface = "go_interface"
+	ReasonGoCgo       = "go_cgo"
+	ReasonGoGenerated = "go_generated"
+	ReasonGoConst     = "go_const"
+	ReasonGoExported  = "go_exported"
 )
 
 // reasonSpec is the static metadata for a reason code: a removability
@@ -84,11 +92,14 @@ var reasonCatalog = map[string]reasonSpec{
 		verify:   "Public API of a library — callers may live outside this repo. Search dependent projects and the rest of this tree for each name before removing.",
 	},
 	// Reflection target: the name is dispatched dynamically somewhere, so it
-	// is likely live — sort near the bottom.
+	// is likely live — sort near the bottom. The hint is language-neutral: each
+	// language's dispatch set is harvested from its own reflection idioms (Ruby
+	// send/const_get, Go reflect.MethodByName/struct tags, …), so the recipe names
+	// the general shape rather than one language's keywords.
 	ReasonReflection: {
 		priority: 30,
-		hint:     "name is a dynamic dispatch target (send/const_get/define_method); grep for it as a symbol/string before removing",
-		verify:   "These names appear as dynamic-dispatch targets. For each, grep for it as a string/symbol literal (send/public_send/const_get/define_method arguments) before removing.",
+		hint:     "name is a dynamic/reflective dispatch target; grep for it as a string literal before removing",
+		verify:   "These names appear as reflective dispatch targets (e.g. a reflection call's string argument or a struct-tag key). For each, grep the repo for it as a string literal before removing.",
 	},
 	// Name mentioned where the resolver could not bind it: very likely a real
 	// (just unresolved) caller, so this sorts near the bottom — least likely
