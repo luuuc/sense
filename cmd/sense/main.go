@@ -65,6 +65,7 @@ func main() {
 		fs := flag.NewFlagSet("sense scan", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
+		rebuildFlag := fs.Bool("rebuild", false, "drop and rebuild the index from source (preserves lifetime metrics)")
 		embedFlag := fs.Bool("embed", false, "block until embeddings complete (default: defer to MCP server)")
 		quietFlag := fs.Bool("quiet", false, "suppress warnings")
 		dir := fs.String("dir", ".", "project root")
@@ -108,6 +109,7 @@ func main() {
 				Quiet:             *quietFlag,
 				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
 				Embed:             *embedFlag,
+				Rebuild:           *rebuildFlag,
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, "sense scan:", err)
 				os.Exit(1)

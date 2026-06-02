@@ -61,6 +61,7 @@ type Options struct {
 	Quiet             bool      // suppress progress display and warning hints; forces non-TTY behavior
 	EmbeddingsEnabled bool      // when true, embeddings are part of the index pipeline
 	Embed             bool      // block until embeddings complete; requires EmbeddingsEnabled. When false, embeddings are deferred and a watermark is written for the MCP server to pick up.
+	Rebuild           bool      // drop and recreate the index from source (preserving lifetime metrics) before walking, so every file is re-parsed and re-resolved even when its hash is unchanged
 }
 
 // PhaseTiming records how long each scan phase took.
@@ -183,6 +184,17 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	if idx.FTSMigrated {
 		_, _ = fmt.Fprintf(out, "migrated fts index — keyword search will repopulate during this scan\n")
+	}
+
+	// --rebuild drops the derived tables (preserving lifetime metrics) before
+	// the walk, so the emptied sense_files forces every file to re-parse and
+	// re-resolve even when its hash is unchanged. Skipped when Open already
+	// rebuilt for a schema mismatch — that path left the same empty state.
+	if opts.Rebuild && !idx.Rebuilt {
+		if err := idx.Rebuild(ctx); err != nil {
+			return nil, fmt.Errorf("rebuild index: %w", err)
+		}
+		_, _ = fmt.Fprintf(out, "rebuilding index from source (lifetime metrics preserved)\n")
 	}
 
 	prog := newProgress(out, opts.Quiet)
