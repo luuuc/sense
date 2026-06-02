@@ -169,6 +169,32 @@ func writeRustAllowDead(ctx context.Context, idx *sqlite.Adapter, collected map[
 	return writeNameSet(ctx, idx, rustAllowDeadMetaKey, collected)
 }
 
+// tsDecoratedMetaKey is the sense_meta key holding the project-wide set of TS/JS
+// class and method names carrying a decorator (`@Component` / `@Injectable` /
+// `@Controller` / route-method decorators). The dead-code TS voice reads it: a
+// framework's DI/router reaches such a symbol with no source caller, so it stays
+// open-world (ts_decorator) rather than earning `dead`. Flat, not per-language —
+// decorators span the .ts/.tsx/.js family, which shares one extractor.
+const tsDecoratedMetaKey = "ts_decorated"
+
+// writeTSDecorated persists the project-wide TS decorated-name set, unioning with
+// the existing set (same self-heals-on-rebuild rationale as the other name sets).
+func writeTSDecorated(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, tsDecoratedMetaKey, collected)
+}
+
+// tsDefaultExportsMetaKey is the sense_meta key holding the project-wide set of
+// TS/JS names bound by an `export default` form. The dead-code TS voice reads it:
+// a default export is imported by path, not by name, so the voice raises the more
+// specific ts_default_export reason. Flat, like the decorated set.
+const tsDefaultExportsMetaKey = "ts_default_exports"
+
+// writeTSDefaultExports persists the project-wide TS default-export set, unioning
+// with the existing set (same self-heals-on-rebuild rationale as the other sets).
+func writeTSDefaultExports(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, tsDefaultExportsMetaKey, collected)
+}
+
 // addNamesByLang unions names into byLang[lang], creating the language's set on
 // first use. Both per-language name accumulators (dispatch, mention) share it so
 // the handler keeps each language's names apart for per-language meta writes.

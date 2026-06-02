@@ -366,6 +366,101 @@ impl Greeter for Robot {
 	}
 }
 
+// TestScanWritesTSHarvest proves the TS/JS harvest flows end to end through the
+// scan collector and aggregation: a TypeScript file carrying a decorator, a
+// default export, a computed-property dispatch, and a method call lands each name
+// in its sense_meta key, and `typescript` is recorded as harvested. It exercises
+// the TSHarvestEmitter collector paths plus the shared mention/dispatch harvest in
+// one scan.
+func TestScanWritesTSHarvest(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+
+	src := `@Component({})
+export class AppComponent {
+  render(obj: any) {
+    obj["serialize"]();
+    this.helper();
+  }
+  helper() {}
+}
+
+export default function Page() {}
+`
+	if err := os.WriteFile(filepath.Join(root, "app.ts"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write ts: %v", err)
+	}
+
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	a, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	cases := []struct {
+		key, name string
+	}{
+		{tsDecoratedMetaKey, "AppComponent"},
+		{tsDefaultExportsMetaKey, "Page"},
+		{dispatchNamesKey("typescript"), "serialize"},
+		{mentionedNamesKey("typescript"), "helper"},
+	}
+	for _, c := range cases {
+		set, err := readNameSet(ctx, a, c.key)
+		if err != nil {
+			t.Fatalf("read %s: %v", c.key, err)
+		}
+		if _, ok := set[c.name]; !ok {
+			t.Errorf("expected %q in %s, got %v", c.name, c.key, set)
+		}
+	}
+	// typescript registers as harvested so its symbols can earn `dead`.
+	harvested, err := readNameSet(ctx, a, harvestedLangsMetaKey)
+	if err != nil {
+		t.Fatalf("read harvested_langs: %v", err)
+	}
+	if _, ok := harvested["typescript"]; !ok {
+		t.Errorf("expected typescript in harvested_langs, got %v", harvested)
+	}
+}
+
+// TestWriteReadTSHarvestRoundTrip pins the flat TS meta keys' write/read contract,
+// mirroring the dispatch/mention round-trips: a written set reads back, and an
+// empty set leaves the key absent (self-heals on the next scan).
+func TestWriteReadTSHarvestRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	a := openTempAdapter(t)
+
+	if err := writeTSDecorated(ctx, a, map[string]struct{}{"AppComponent": {}}); err != nil {
+		t.Fatalf("writeTSDecorated: %v", err)
+	}
+	if err := writeTSDefaultExports(ctx, a, map[string]struct{}{"Page": {}}); err != nil {
+		t.Fatalf("writeTSDefaultExports: %v", err)
+	}
+	dec, _ := readNameSet(ctx, a, tsDecoratedMetaKey)
+	if _, ok := dec["AppComponent"]; !ok {
+		t.Errorf("ts_decorated missing AppComponent: %v", dec)
+	}
+	def, _ := readNameSet(ctx, a, tsDefaultExportsMetaKey)
+	if _, ok := def["Page"]; !ok {
+		t.Errorf("ts_default_exports missing Page: %v", def)
+	}
+
+	// Empty collected + nothing persisted → key stays absent.
+	a2 := openTempAdapter(t)
+	if err := writeTSDecorated(ctx, a2, nil); err != nil {
+		t.Fatalf("writeTSDecorated empty: %v", err)
+	}
+	if raw, _ := a2.ReadMeta(ctx, tsDecoratedMetaKey); raw != "" {
+		t.Errorf("expected no ts_decorated key for empty set, got %q", raw)
+	}
+}
+
 // TestScanDeletesLegacyUnionKeys proves the in-place-upgrade cleanup: a scan
 // removes the stale bare `mentioned_names`/`dispatch_names` union keys a
 // pre-feature index left behind, while the per-language keys survive.
