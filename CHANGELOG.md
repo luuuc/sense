@@ -6,6 +6,33 @@ All notable changes to Sense.
 
 ### Added
 
+- The Standard-tier (`langspec`) languages — Java, Kotlin, C#, Scala, C++, PHP,
+  C — now carry `Symbol.Visibility` and get specific dead-code reasons instead of
+  the blanket `core_no_language_voice`. The table-driven walker gained three
+  per-grammar fields: `VisibilityFn` maps each grammar's access modifiers to a
+  visibility (Java package-private default → `package`, C# member default →
+  `private`, C `static` → file-local, C++ from the positional `public:`/`private:`
+  section), which makes the core library-API gate fire for these languages;
+  `AnnotationKinds` harvests every annotated/attributed symbol (`@Service`,
+  `[Fact]`, `#[Route]`) to the `langspec_annotated` set; `MentionKinds` opts a
+  grammar into the soundness mention harvest. The new `langspecVoice`
+  (`internal/dead/voice_langspec.go`, registered once per language) raises
+  `ls_annotated` (framework-dispatched), `ls_interface_method` (reached through an
+  implementor), `ls_public_no_framework` (a public symbol a Spring/JPA/JUnit/ASP.NET
+  path may reach — Sense models no framework here), `ls_reflective_type` (a
+  reflectively-loadable class/type/constant), `ls_dynamic` (a private PHP callable;
+  reflection is pervasive), and `ls_unvalidated` (a private callable in a static
+  language with no benchmark to validate a `dead` tier). **Java is the sixth
+  language to earn `dead`**, and only narrowly: an explicitly `private`
+  (class-local) callable that is unreferenced, non-annotated, not an interface
+  method, and absent from Java's mention set. Validated on the `javalin` benchmark
+  (313 symbols, 28 unreferenced, **zero false `dead`** — every unreferenced symbol
+  is public/annotated/interface and correctly held `possibly_dead`) plus a
+  two-sided synthetic control. The other six ship reasons-only: PHP is fixed
+  (reflection-pervasive), and Kotlin/C#/Scala/C++/C have no benchmark repo, so they
+  fail closed (`ls_unvalidated`) until one exists — only Java wires `MentionKinds`
+  and harvests mentions.
+
 - Python is the fifth language whose symbols can earn the `dead` verdict, and
   `Symbol.Visibility` is now populated for Python. An underscore pre-pass
   (`internal/extract/python/visibility.go`) marks each symbol `private` (a
