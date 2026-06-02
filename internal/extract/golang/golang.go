@@ -17,7 +17,7 @@
 //   - func at package scope → KindFunction  (no receiver)
 //   - func with receiver    → KindMethod
 //   - const NAME = …        → KindConstant  (any case; Go has no
-//                             all-caps convention)
+//     all-caps convention)
 //
 // Calls edges:
 //   - Function / method bodies are walked for call_expression nodes.
@@ -56,12 +56,15 @@ func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
 func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
 	w := &walker{
-		source: source,
-		emit:   emit,
-		pkg:    packageName(tree.RootNode(), source),
+		source:      source,
+		emit:        emit,
+		pkg:         packageName(tree.RootNode(), source),
 		pkgBindings: map[string]string{},
 	}
-	return w.walkTopLevel(tree.RootNode())
+	if err := w.walkTopLevel(tree.RootNode()); err != nil {
+		return err
+	}
+	return emitHarvest(tree.RootNode(), source, emit)
 }
 
 func init() { extract.Register(Extractor{}) }
@@ -69,8 +72,8 @@ func init() { extract.Register(Extractor{}) }
 // ---- walker ----
 
 type walker struct {
-	source []byte
-	emit   extract.Emitter
+	source      []byte
+	emit        extract.Emitter
 	pkg         string            // package name, used to prefix every qualified name
 	pkgBindings map[string]string // unqualified name → qualified name for package-level consts and vars
 }
@@ -190,7 +193,10 @@ func (w *walker) emitConstSpec(spec *sitter.Node, doc string) error {
 			continue
 		}
 		name := extract.Text(c, w.source)
-		if name == "" {
+		// `const _ = …` is a blank declaration, not a named symbol; never emit it
+		// (it would otherwise read as a zero-edge dead candidate the Go voice can't
+		// vouch for, yet `staticcheck` never flags a blank).
+		if name == "" || name == "_" {
 			continue
 		}
 		if err := w.emit.Symbol(extract.EmittedSymbol{
@@ -224,7 +230,9 @@ func (w *walker) handleVarDeclaration(n *sitter.Node) error {
 				continue
 			}
 			name := extract.Text(c, w.source)
-			if name == "" {
+			// `var _ = …` (and the common `var _ Iface = (*T)(nil)` assertion) is a
+			// blank declaration, not a named symbol; never emit it.
+			if name == "" || name == "_" {
 				continue
 			}
 			if err := w.emit.Symbol(extract.EmittedSymbol{

@@ -217,11 +217,11 @@ func TestDispatchNamesAdapterErrors(t *testing.T) {
 }
 
 // TestScanWritesHarvestedLangs proves the harvested-langs capability gate
-// end to end: a Ruby file marks `ruby` harvested (its extractor is a
-// MentionHarvester), while a Go file in the same scan does NOT mark `go` — Go
-// harvests no mentions, so its symbols must fail closed rather than earn `dead`
-// off an absent set. This is what lets HarvestedLangs diverge from the mention
-// keyset for a real, non-harvesting language.
+// end to end: Ruby and Go files mark their languages harvested (both extractors
+// are MentionHarvesters), while a Python file in the same scan does NOT mark
+// `python` — Python harvests no mentions, so its symbols must fail closed rather
+// than earn `dead` off an absent set. This is what lets HarvestedLangs diverge
+// from the mention keyset for a real, non-harvesting language.
 func TestScanWritesHarvestedLangs(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -234,6 +234,10 @@ func TestScanWritesHarvestedLangs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "main.go"),
 		[]byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
 		t.Fatalf("write go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "thing.py"),
+		[]byte("def helper():\n    pass\n"), 0o644); err != nil {
+		t.Fatalf("write python: %v", err)
 	}
 
 	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
@@ -250,11 +254,46 @@ func TestScanWritesHarvestedLangs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read harvested_langs: %v", err)
 	}
-	if _, ok := got["ruby"]; !ok {
-		t.Errorf("expected ruby in harvested_langs, got %v", got)
+	for _, lang := range []string{"ruby", "go"} {
+		if _, ok := got[lang]; !ok {
+			t.Errorf("expected %s in harvested_langs, got %v", lang, got)
+		}
 	}
-	if _, ok := got["go"]; ok {
-		t.Errorf("go harvests no mentions; must be absent from harvested_langs, got %v", got)
+	if _, ok := got["python"]; ok {
+		t.Errorf("python harvests no mentions; must be absent from harvested_langs, got %v", got)
+	}
+}
+
+// TestScanWritesCgoExports proves the cgo-export harvest flows end to end: a Go
+// file with a `//export` directive lands its function name in the cgo_exports
+// sense_meta key, where the dead-code Go voice reads it to keep the function
+// open-world (it is called from C, never by a Go caller).
+func TestScanWritesCgoExports(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+
+	if err := os.WriteFile(filepath.Join(root, "bridge.go"),
+		[]byte("package main\n\n//export GoCallback\nfunc GoCallback() {}\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write go: %v", err)
+	}
+
+	if _, err := Run(ctx, Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+
+	a, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	got, err := readNameSet(ctx, a, cgoExportsMetaKey)
+	if err != nil {
+		t.Fatalf("read cgo_exports: %v", err)
+	}
+	if _, ok := got["GoCallback"]; !ok {
+		t.Errorf("expected GoCallback in cgo_exports, got %v", got)
 	}
 }
 

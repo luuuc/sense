@@ -97,6 +97,22 @@ func writeHarvestedLangs(ctx context.Context, idx *sqlite.Adapter, collected map
 	return writeNameSet(ctx, idx, harvestedLangsMetaKey, collected)
 }
 
+// cgoExportsMetaKey is the sense_meta key holding the project-wide set of Go
+// function names marked with a cgo `//export` directive, as a JSON string array.
+// The dead-code Go voice reads it: a function whose name appears here is called
+// from C with no Go caller, so it stays open-world (go_cgo) rather than earning
+// `dead`. Flat, not per-language — cgo is Go-only. A pre-feature index has no
+// such key, which reads as an empty set (no cgo functions known), the safe
+// direction: a real cgo export then degrades to a possible false `dead` only
+// until the next full scan harvests it, never a crash.
+const cgoExportsMetaKey = "cgo_exports"
+
+// writeCgoExports persists the project-wide cgo-export set, unioning with the
+// existing set (same self-heals-on-rebuild rationale as the other name sets).
+func writeCgoExports(ctx context.Context, idx *sqlite.Adapter, collected map[string]struct{}) error {
+	return writeNameSet(ctx, idx, cgoExportsMetaKey, collected)
+}
+
 // addNamesByLang unions names into byLang[lang], creating the language's set on
 // first use. Both per-language name accumulators (dispatch, mention) share it so
 // the handler keeps each language's names apart for per-language meta writes.
