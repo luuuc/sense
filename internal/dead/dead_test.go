@@ -1307,6 +1307,100 @@ func verdictByQualified(r dead.Result) map[string]dead.Verdict {
 	return m
 }
 
+// TestFindDeadLegacyMetaFailsClosed is the legacy-meta control: a pre-feature
+// index that carries only the old union `mentioned_names` key (no per-language
+// suffix) must degrade to all-possibly_dead, never a false `dead`. The
+// per-language reader globs `mentioned_names:*`, so the legacy key is invisible,
+// every language reads as un-harvested, and the soundness gate fails closed with
+// core_no_harvest — the safe direction. Pins the migration rabbit hole.
+func TestFindDeadLegacyMetaFailsClosed(t *testing.T) {
+	// Scan the smoke fixture, which pins one genuinely-dead Ruby private
+	// (LineItem#orphaned_private) earning `dead` under per-language meta.
+	root := smokeRoot(t)
+	senseDir := t.TempDir()
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{Root: root, Sense: senseDir, Output: &bytes.Buffer{}, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	dbPath := filepath.Join(senseDir, "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Baseline: with per-language meta the orphan earns `dead`, proving the
+	// fixture is a real `dead` for the downgrade to then take away.
+	base, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead baseline: %v", err)
+	}
+	if !deadHasSuffix(base, "#orphaned_private") {
+		t.Fatalf("baseline: orphaned_private should earn dead under per-language meta")
+	}
+
+	// Downgrade the index to a pre-feature shape: drop the per-language keys and
+	// write the bare union key carrying the same names.
+	legacyMentions, _ := adapter.ReadMeta(ctx, "mentioned_names:ruby")
+	if legacyMentions == "" {
+		t.Fatal("expected mentioned_names:ruby present before downgrade")
+	}
+	if err := adapter.DeleteMeta(ctx, "mentioned_names:ruby"); err != nil {
+		t.Fatalf("delete mention key: %v", err)
+	}
+	_ = adapter.DeleteMeta(ctx, "dispatch_names:ruby")
+	// A pre-feature index predates the harvest entirely — it has no
+	// harvested_langs key either, so drop it to model the legacy shape faithfully.
+	if err := adapter.DeleteMeta(ctx, "harvested_langs"); err != nil {
+		t.Fatalf("delete harvested_langs: %v", err)
+	}
+	if err := adapter.WriteMeta(ctx, "mentioned_names", legacyMentions); err != nil {
+		t.Fatalf("write legacy union key: %v", err)
+	}
+
+	// After downgrade: nothing earns `dead`, and the orphan fails closed with
+	// core_no_harvest (its language reads as un-harvested).
+	got, err := dead.FindDead(ctx, db, dead.Options{})
+	if err != nil {
+		t.Fatalf("FindDead legacy: %v", err)
+	}
+	for _, f := range got.Findings {
+		if f.Verdict == dead.VerdictDead {
+			t.Errorf("%s earned dead off a legacy union index, want possibly_dead", f.Symbol.Qualified)
+		}
+	}
+	if code := reasonCodeForSuffix(got, "#orphaned_private"); code != dead.ReasonNoHarvest {
+		t.Errorf("orphaned_private reason = %q, want %q (fail-closed)", code, dead.ReasonNoHarvest)
+	}
+}
+
+// deadHasSuffix reports whether any earned-`dead` finding's qualified name ends
+// with suffix.
+func deadHasSuffix(r dead.Result, suffix string) bool {
+	for _, f := range r.Findings {
+		if f.Verdict == dead.VerdictDead && endsWith(f.Symbol.Qualified, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// reasonCodeForSuffix returns the reason code of the first finding whose
+// qualified name ends with suffix, or "" if none (or the finding has no reason).
+func reasonCodeForSuffix(r dead.Result, suffix string) string {
+	for _, f := range r.Findings {
+		if endsWith(f.Symbol.Qualified, suffix) && f.Reason != nil {
+			return f.Reason.Code
+		}
+	}
+	return ""
+}
+
 // TestFindDeadExcludesRouteHelpers proves synthetic route:* helper symbols —
 // emitted by the route DSL and often unreferenced (e.g. the _url twins) — are
 // never reported as dead Ruby code, while an ordinary same-named app method

@@ -78,19 +78,31 @@ type Facts struct {
 	// no main yet is not a library: its public methods are internal, so a
 	// detected framework makes IsLibrary false. See buildFacts.
 	IsLibrary bool
-	// DispatchNames is the set of literal names that appear as reflection /
-	// metaprogramming dispatch targets (send/public_send/__send__/
-	// define_method/respond_to?/method/const_get/constantize). A symbol
-	// whose name is in this set could be invoked dynamically. Populated from
-	// sense_meta at scan time (see the Ruby visibility card).
-	DispatchNames map[string]struct{}
-	// MentionedNames is the broad set of every bare name the code mentions —
-	// every identifier/symbol token except definition names. It drives the
-	// arbiter's soundness gate: a candidate earns `dead` only when its name is
-	// absent from this set (mentioned nowhere a hidden caller could be) AND the
-	// set is non-empty (proving the harvest ran). This makes `dead` sound even
-	// where the resolver could not bind every call. Populated from sense_meta.
-	MentionedNames map[string]struct{}
+	// DispatchNames maps a language to the set of literal names that appear as
+	// reflection / metaprogramming dispatch targets in THAT language
+	// (Ruby send/public_send/__send__/define_method/respond_to?/method/
+	// const_get/constantize; other voices bring their own idioms). A symbol
+	// whose name is in its own language's set could be invoked dynamically. The
+	// set is keyed by language so one language's reflection literals never keep
+	// another language's symbol open-world. Populated from sense_meta at scan
+	// time (see the Ruby visibility card).
+	DispatchNames map[string]map[string]struct{}
+	// MentionedNames maps a language to the broad set of every bare name THAT
+	// language's code mentions — every identifier/symbol token except definition
+	// names. It drives the arbiter's soundness gate: a candidate earns `dead`
+	// only when its name is absent from its own language's set (mentioned
+	// nowhere a hidden caller could be) AND that set is non-empty. Keying by
+	// language is the soundness primitive: a symbol may earn `dead` only against
+	// mentions harvested from its OWN language, never off another's. Populated
+	// from sense_meta.
+	MentionedNames map[string]map[string]struct{}
+	// HarvestedLangs is the set of languages whose mention harvest actually ran
+	// for this index. The soundness gate refuses `dead` for a symbol whose
+	// language is absent here (reason core_no_harvest): a missing harvest cannot
+	// prove a name unmentioned, so it fails closed rather than earn `dead` off
+	// another language's mentions. This makes the gate's per-language scope
+	// explicit instead of resting on a coincidentally-empty global set.
+	HarvestedLangs map[string]struct{}
 	// InterfaceIDs are symbol IDs of interfaces; a method whose parent is one
 	// is part of a contract and reachable through any implementor.
 	InterfaceIDs map[int64]struct{}
@@ -188,20 +200,25 @@ func (a *Arbiter) decideOne(s Symbol, f Facts) Finding {
 	// be. A live-but-unbindable call still left a textual mention, which keeps
 	// the symbol open-world instead of falsely dead.
 	//
-	// An empty mention set fails closed: it means the harvest was unavailable
-	// (a pre-feature index or corrupt meta), so the gate cannot prove the name
-	// is unmentioned and stays honest. The gate assumes the mention harvest ran
-	// over the same tree the candidates came from — its soundness depends on
-	// that coupling, so a partial-tree harvest must not be trusted here.
+	// The gate is PER-LANGUAGE: a symbol is proven against the mentions
+	// harvested from its OWN language, never off another's. The set is keyed by
+	// s.Language and gated twice, both failing closed toward caution:
 	//
-	// NOTE (per-language scope): the mention set is project-GLOBAL, not
-	// per-language. With only the Ruby voice registered this is correct, because
-	// every name that could reach a Ruby symbol is harvested from Ruby files. A
-	// future language voice (Go/TS/…) MUST ship its own mention harvest before
-	// its symbols may earn `dead` here — otherwise it would earn `dead` off
-	// another language's mentions. TestSoundnessGateIsRubyOnlyToday pins this.
-	_, mentioned := f.MentionedNames[s.Name]
-	if len(f.MentionedNames) == 0 || mentioned {
+	//   1. HarvestedLangs miss → the symbol's language never harvested mentions,
+	//      so there is nothing to prove against. Refuse `dead` (core_no_harvest).
+	//      This is the invariant that makes proliferating voices safe: a future
+	//      voice that registers without shipping its own harvest earns
+	//      core_no_harvest, not `dead` off another language's mentions.
+	//   2. Empty set or name present → the gate cannot prove the name unmentioned
+	//      (an unavailable harvest, or a real unbound mention). Refuse `dead`
+	//      (core_name_mentioned). The gate assumes the harvest ran over the same
+	//      tree the candidates came from; a partial-tree harvest is not trusted.
+	set := f.MentionedNames[s.Language]
+	if _, harvested := f.HarvestedLangs[s.Language]; !harvested {
+		r := newReason(ReasonNoHarvest)
+		return Finding{Symbol: s, Verdict: VerdictPossiblyDead, Reason: &r}
+	}
+	if _, mentioned := set[s.Name]; len(set) == 0 || mentioned {
 		r := newReason(ReasonNameMentioned)
 		return Finding{Symbol: s, Verdict: VerdictPossiblyDead, Reason: &r}
 	}

@@ -18,7 +18,11 @@ func (coreVoice) Lang() string { return "" }
 // Inspect raises the reflection gate first (the more specific, more
 // likely-live signal), then the export gate.
 func (coreVoice) Inspect(s Symbol, f Facts) *Reason {
-	if _, ok := f.DispatchNames[s.Name]; ok {
+	// The dispatch set is keyed by language: a name is reflection-reachable only
+	// if it appears as a dispatch target in its OWN language. Keying here in
+	// lockstep with the arbiter's soundness gate keeps both per-language, so a
+	// Ruby `send :foo` never keeps a Go `foo` open-world (or vice versa).
+	if _, ok := f.DispatchNames[s.Language][s.Name]; ok {
 		r := newReason(ReasonReflection)
 		return &r
 	}

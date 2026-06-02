@@ -188,31 +188,21 @@ func collectDispatchNames(root *sitter.Node, source []byte) []string {
 // "grep the name; only the definition matches", and it makes the `dead`
 // verdict sound independent of whether the resolver could bind every call.
 // Definition names are excluded so a method is not cancelled by its own `def`.
+//
+// The tree-walk itself is the language-agnostic extract.HarvestMentions; Ruby
+// supplies only its grammar specifics — that an `identifier` carries its text
+// and a `simple_symbol` carries its name minus the leading colon, and that the
+// name token of a `def`/`def self.` is the one position to exclude. A future
+// voice harvests by passing its own kinds and definition test to the same
+// helper.
 func collectMentionedNames(root *sitter.Node, source []byte) []string {
-	seen := map[string]struct{}{}
-	_ = extract.WalkNamedDescendants(root, "identifier", func(id *sitter.Node) error {
-		if isDefinitionName(id) {
-			return nil
-		}
-		if name := extract.Text(id, source); name != "" {
-			seen[name] = struct{}{}
-		}
-		return nil
+	return extract.HarvestMentions(root, source, extract.MentionWalkSpec{
+		NameOf: map[string]func(*sitter.Node, []byte) string{
+			"identifier":    extract.Text,
+			"simple_symbol": symbolOrStringName,
+		},
+		SkipDefinitionName: isDefinitionName,
 	})
-	_ = extract.WalkNamedDescendants(root, "simple_symbol", func(s *sitter.Node) error {
-		if name := symbolOrStringName(s, source); name != "" {
-			seen[name] = struct{}{}
-		}
-		return nil
-	})
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(seen))
-	for n := range seen {
-		out = append(out, n)
-	}
-	return out
 }
 
 // isDefinitionName reports whether id is the `name` field of a method or

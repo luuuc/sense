@@ -762,6 +762,11 @@ func TestExtractorMetadata(t *testing.T) {
 	if ex.Grammar() == nil {
 		t.Error("Grammar() returned nil")
 	}
+	// Ruby opts into the mention harvest, so the scan records `ruby` as
+	// harvested and its private methods may earn `dead`.
+	if !ex.HarvestsMentions() {
+		t.Error("HarvestsMentions() = false, want true (Ruby streams the mention set)")
+	}
 }
 
 func TestPascalCase(t *testing.T) {

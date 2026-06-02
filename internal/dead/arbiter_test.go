@@ -23,6 +23,26 @@ func sym(name, lang string) Symbol {
 	return Symbol{Name: name, Qualified: name, Language: lang, Kind: "method"}
 }
 
+// langNames builds a language-keyed name set {lang: {names...}}, the shape of
+// Facts.MentionedNames and Facts.DispatchNames after the per-language gate.
+func langNames(lang string, names ...string) map[string]map[string]struct{} {
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		set[n] = struct{}{}
+	}
+	return map[string]map[string]struct{}{lang: set}
+}
+
+// harvested builds a Facts.HarvestedLangs set for the given languages — the
+// languages whose mention harvest ran, the precondition for earning `dead`.
+func harvested(langs ...string) map[string]struct{} {
+	out := make(map[string]struct{}, len(langs))
+	for _, l := range langs {
+		out[l] = struct{}{}
+	}
+	return out
+}
+
 // TestArbiterTwoSidedGate is the control the coverage gate demands: with a
 // language voice registered, a symbol no voice flags earns `dead`, AND a
 // symbol the voice flags stays `possibly_dead`. The gate is two-sided, not a
@@ -31,9 +51,9 @@ func TestArbiterTwoSidedGate(t *testing.T) {
 	voice := fakeVoice{lang: "ruby", code: ReasonReflection, raiseFor: map[string]struct{}{"flagged": {}}}
 	a := NewArbiter(voice)
 
-	// A non-empty mention set that does NOT contain "clean" lets the soundness
-	// gate prove "clean" is mentioned nowhere a hidden caller could be.
-	f := Facts{MentionedNames: map[string]struct{}{"flagged": {}}}
+	// A non-empty Ruby mention set that does NOT contain "clean" lets the
+	// soundness gate prove "clean" is mentioned nowhere a hidden caller could be.
+	f := Facts{MentionedNames: langNames("ruby", "flagged"), HarvestedLangs: harvested("ruby")}
 	got := a.Decide([]Symbol{sym("flagged", "ruby"), sym("clean", "ruby")}, f)
 
 	if got[0].Verdict != VerdictPossiblyDead {
@@ -112,7 +132,7 @@ func TestArbiterTieBreakFirstRegistered(t *testing.T) {
 }
 
 func TestCoreVoiceReflectionGate(t *testing.T) {
-	f := Facts{DispatchNames: map[string]struct{}{"process": {}}}
+	f := Facts{DispatchNames: langNames("ruby", "process")}
 	r := coreVoice{}.Inspect(Symbol{Name: "process", Kind: "method", Language: "ruby"}, f)
 	if r == nil || r.Code != ReasonReflection {
 		t.Errorf("reflection gate: got %+v, want %q", r, ReasonReflection)
@@ -141,10 +161,29 @@ func TestCoreVoiceExportGate(t *testing.T) {
 	}
 }
 
+// TestCoreVoiceReflectionGateIsPerLanguage proves the dispatch gate keys by
+// language in lockstep with the soundness gate: a Ruby reflection literal must
+// not keep a Go symbol of the same name open-world. Without per-language keying
+// one language's `send :foo` would mute another language's `foo`, re-opening
+// the cross-language hole on the reflection side.
+func TestCoreVoiceReflectionGateIsPerLanguage(t *testing.T) {
+	f := Facts{DispatchNames: langNames("ruby", "process")}
+	// Same name, different language → the Ruby dispatch set must not match.
+	goSym := Symbol{Name: "process", Kind: "method", Language: "go"}
+	if r := (coreVoice{}).Inspect(goSym, f); r != nil {
+		t.Errorf("Go symbol matched a Ruby dispatch name: %+v, want nil (per-language)", r)
+	}
+	// The Ruby symbol of the same name IS matched.
+	rubySymbol := Symbol{Name: "process", Kind: "method", Language: "ruby"}
+	if r := (coreVoice{}).Inspect(rubySymbol, f); r == nil || r.Code != ReasonReflection {
+		t.Errorf("Ruby symbol reflection gate = %+v, want %q", r, ReasonReflection)
+	}
+}
+
 func TestCoreVoiceReflectionBeatsExport(t *testing.T) {
 	// A symbol that is both a dispatch target and public-in-a-library raises
 	// reflection (the gate checked first / more specific).
-	f := Facts{IsLibrary: true, DispatchNames: map[string]struct{}{"Charge": {}}}
+	f := Facts{IsLibrary: true, DispatchNames: langNames("go", "Charge")}
 	pub := Symbol{Name: "Charge", Kind: "function", Visibility: "public", Language: "go"}
 	if r := (coreVoice{}).Inspect(pub, f); r == nil || r.Code != ReasonReflection {
 		t.Errorf("got %+v, want reflection to win", r)

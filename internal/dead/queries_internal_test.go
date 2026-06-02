@@ -65,6 +65,18 @@ func TestQueryErrorPathsNoSchema(t *testing.T) {
 	if _, err := buildFacts(ctx, db); err == nil {
 		t.Error("buildFacts should error without schema")
 	}
+	// The per-language meta readers swallow a query error (here, the missing
+	// sense_meta table) and return an empty map rather than crashing — a missing
+	// harvest signal fails closed, never fatal.
+	if got := readDispatchNames(ctx, db); len(got) != 0 {
+		t.Errorf("readDispatchNames without schema = %v, want empty", got)
+	}
+	if got := readMentionedNames(ctx, db); len(got) != 0 {
+		t.Errorf("readMentionedNames without schema = %v, want empty", got)
+	}
+	if got := readHarvestedLangs(ctx, db); len(got) != 0 {
+		t.Errorf("readHarvestedLangs without schema = %v, want empty", got)
+	}
 	if _, err := FindDead(ctx, db, Options{}); err == nil {
 		t.Error("FindDead should error without schema")
 	}
@@ -113,26 +125,62 @@ func TestReadFrameworksMeta(t *testing.T) {
 	}
 }
 
-// TestReadDispatchNamesMeta covers the missing-row, empty-value, corrupt-JSON,
-// and valid branches of readDispatchNames.
+// TestReadHarvestedLangsMeta covers the missing-row, corrupt-JSON, and valid
+// branches of readHarvestedLangs against a real sense_meta table.
+func TestReadHarvestedLangsMeta(t *testing.T) {
+	db := memDB(t)
+	ctx := context.Background()
+	mustExec(t, db, `CREATE TABLE sense_meta(key TEXT PRIMARY KEY, value TEXT)`)
+
+	if got := readHarvestedLangs(ctx, db); len(got) != 0 {
+		t.Errorf("readHarvestedLangs (missing) = %v, want empty", got)
+	}
+	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('harvested_langs', '{bad')`)
+	if got := readHarvestedLangs(ctx, db); len(got) != 0 {
+		t.Errorf("readHarvestedLangs (corrupt) = %v, want empty", got)
+	}
+	mustExec(t, db, `UPDATE sense_meta SET value='["ruby","go"]' WHERE key='harvested_langs'`)
+	got := readHarvestedLangs(ctx, db)
+	if _, ok := got["ruby"]; !ok {
+		t.Error("readHarvestedLangs (valid) should contain ruby")
+	}
+	if _, ok := got["go"]; !ok {
+		t.Error("readHarvestedLangs (valid) should contain go")
+	}
+}
+
+// TestReadDispatchNamesMeta covers the per-language reader's branches: missing,
+// a legacy union key (ignored), a corrupt per-language value (self-heals to an
+// empty set), and a valid per-language value parsed under its language.
 func TestReadDispatchNamesMeta(t *testing.T) {
 	db := memDB(t)
 	ctx := context.Background()
 	mustExec(t, db, `CREATE TABLE sense_meta(key TEXT PRIMARY KEY, value TEXT)`)
 
+	// Missing → empty.
 	if got := readDispatchNames(ctx, db); len(got) != 0 {
 		t.Errorf("readDispatchNames (missing) = %v, want empty", got)
 	}
-	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('dispatch_names', '')`)
+	// A legacy union key (no language suffix) does not match the per-language
+	// GLOB, so it is ignored — a pre-feature index harvests no languages.
+	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('dispatch_names', '["legacy"]')`)
 	if got := readDispatchNames(ctx, db); len(got) != 0 {
-		t.Errorf("readDispatchNames (empty) = %v, want empty", got)
+		t.Errorf("readDispatchNames (legacy union key) = %v, want empty (ignored)", got)
 	}
-	mustExec(t, db, `UPDATE sense_meta SET value='{bad' WHERE key='dispatch_names'`)
-	if got := readDispatchNames(ctx, db); len(got) != 0 {
-		t.Errorf("readDispatchNames (corrupt) = %v, want empty", got)
+	// Corrupt per-language value → that language is present with an empty set.
+	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('dispatch_names:ruby', '{bad')`)
+	if got := readDispatchNames(ctx, db); len(got) != 1 || got["ruby"] == nil || len(got["ruby"]) != 0 {
+		t.Errorf("readDispatchNames (corrupt ruby) = %v, want ruby present-but-empty", got)
 	}
-	mustExec(t, db, `UPDATE sense_meta SET value='["process","perform"]' WHERE key='dispatch_names'`)
-	if _, ok := readDispatchNames(ctx, db)["process"]; !ok {
-		t.Error("readDispatchNames (valid) should contain process")
+	// Valid per-language value → names parsed under the language.
+	mustExec(t, db, `UPDATE sense_meta SET value='["process","perform"]' WHERE key='dispatch_names:ruby'`)
+	if _, ok := readDispatchNames(ctx, db)["ruby"]["process"]; !ok {
+		t.Error("readDispatchNames (valid) should contain ruby/process")
+	}
+	// An empty language suffix (the bare prefix plus a colon) is skipped — it
+	// names no language, so it can never mark a harvest.
+	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('dispatch_names:', '["x"]')`)
+	if _, ok := readDispatchNames(ctx, db)[""]; ok {
+		t.Error("readDispatchNames must skip an empty language suffix")
 	}
 }

@@ -25,6 +25,15 @@ const (
 	// was unavailable. Either way closed-world is not proven, so it stays
 	// open-world. This is what makes `dead` sound against an incomplete resolver.
 	ReasonNameMentioned = "core_name_mentioned"
+	// ReasonNoHarvest is the per-language soundness-gate reason: a language
+	// voice for the symbol's language is registered (so it cleared the
+	// no-language-voice gate), but that language never harvested its own
+	// mention set, so the gate has no project-wide names to prove the symbol
+	// unmentioned. It fails closed — `dead` off another language's mentions is
+	// exactly the cross-language lie the per-language gate exists to refuse.
+	// Dormant for any language that harvests (Ruby always does); it is the
+	// guard a future voice trips until it ships its own harvest.
+	ReasonNoHarvest = "core_no_harvest"
 
 	// Ruby-voice reason codes (voice_ruby.go owns their catalog specs).
 	ReasonRubyValueObject  = "ruby_value_object"
@@ -88,6 +97,15 @@ var reasonCatalog = map[string]reasonSpec{
 		priority: 15,
 		hint:     "name appears in a call or symbol position Sense could not bind to this definition; grep for it before removing",
 		verify:   "These names are mentioned somewhere Sense could not resolve to a caller (an inherited bare call, a `**splat`, a chain receiver, or a `validate :sym`/`delegate`-style symbol argument). For each, grep the repo for its bare name and as a `:symbol` before removing.",
+	},
+	// Harvest unavailable for this language: Sense has a voice for the stack but
+	// no project-wide mention set to reason against, so it cannot prove the
+	// symbol unreachable. Sorts at the bottom with the other soundness-gate
+	// reason — least likely to be safely removable.
+	ReasonNoHarvest: {
+		priority: 15,
+		hint:     "Sense has not harvested this language's names, so it cannot prove the symbol unreachable; confirm callers manually before removing",
+		verify:   "Sense registered a voice for this language but harvested no project-wide names for it, so the soundness gate cannot prove these symbols unmentioned. For each, grep the repo for its bare name and as a string/symbol literal before removing.",
 	},
 }
 
