@@ -275,6 +275,39 @@ type CgoExportEmitter interface {
 	CgoExportName(name string) error
 }
 
+// RustHarvestEmitter is an optional Emitter extension for streaming the Rust
+// attribute facts the dead-code Rust voice reads — names whose reachability the
+// edge graph cannot see because the caller lives outside indexed Rust:
+//
+//   - RustExportName: a function marked `#[no_mangle]` / `#[export_name = …]`
+//     (called across the FFI boundary from C) or a `#[no_mangle]` / `#[used]`
+//     static (kept alive by the linker). No Rust caller edge exists, so the voice
+//     keeps it open-world (rust_ffi for a function, rust_used for a static).
+//   - RustTestSymbol: an item marked `#[test]` / `#[bench]` (including scoped
+//     `#[tokio::test]`) or nested under a `#[cfg(test)]` module. The test harness
+//     invokes it, never an indexed caller, and `cargo build` does not even compile
+//     it, so the voice keeps it open-world (rust_test).
+//   - RustTraitImplMethod: a method defined in an `impl Trait for Type` block. It
+//     satisfies a trait and is reached through a trait object or generic bound,
+//     so the voice keeps it open-world (rust_trait_impl). This is the sound,
+//     name-independent signal that covers external traits (serde, std::io) the
+//     magic table cannot enumerate.
+//   - RustAllowDeadName: an item annotated `#[allow(dead_code)]` / `#[allow(unused)]`.
+//     The author deliberately suppressed the lint, so rustc never warns it and it
+//     is absent from the cargo oracle; the voice keeps it open-world
+//     (rust_allow_dead).
+//
+// The name sets feed flat (not per-language) sense_meta keys — these concepts are
+// Rust-only, like cgo is Go-only — that the Rust voice reads. An extractor probes
+// for this interface with a type assertion; an Emitter that does not implement it
+// simply receives no names. Returning an error aborts extraction.
+type RustHarvestEmitter interface {
+	RustExportName(name string) error
+	RustTestSymbol(name string) error
+	RustTraitImplMethod(name string) error
+	RustAllowDeadName(name string) error
+}
+
 // MentionEmitter is an optional Emitter extension for streaming every bare
 // name a file *mentions* — every identifier or symbol-literal token that
 // appears in any position other than a definition's own name. Unlike
