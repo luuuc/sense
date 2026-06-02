@@ -56,6 +56,16 @@ const (
 	ReasonGoGenerated = "go_generated"
 	ReasonGoConst     = "go_const"
 	ReasonGoExported  = "go_exported"
+
+	// Rust-voice reason codes (voice_rust.go owns their catalog specs).
+	ReasonRustTraitImpl = "rust_trait_impl"
+	ReasonRustDerive    = "rust_derive"
+	ReasonRustFFI       = "rust_ffi"
+	ReasonRustUsed      = "rust_used"
+	ReasonRustTest      = "rust_test"
+	ReasonRustPub       = "rust_pub"
+	ReasonRustModule    = "rust_module"
+	ReasonRustAllowDead = "rust_allow_dead"
 )
 
 // reasonSpec is the static metadata for a reason code: a removability

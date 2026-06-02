@@ -223,6 +223,46 @@ func TestFrameworkAppMethodGetsLanguageReasonNotExportedAPI(t *testing.T) {
 	}
 }
 
+// TestRustArbiterTwoSidedGate is the Rust two-sided control on the real voice
+// stack: a non-`pub`, unmentioned Rust function earns `dead`, while a trait-impl
+// method, a `pub` library function (core_exported_api, not rust_pub), and a
+// `#[no_mangle]` export all stay possibly_dead with the exact reason. It proves
+// the Rust voice composes with the core voice and the per-language soundness gate.
+func TestRustArbiterTwoSidedGate(t *testing.T) {
+	a := defaultArbiter()
+	f := Facts{
+		IsLibrary:            true,
+		HarvestedLangs:       harvested("rust"),
+		MentionedNames:       langNames("rust", "process", "public_api", "ffi_entry"),
+		InterfaceMethodNames: map[string]struct{}{"process": {}},
+		RustExportNames:      map[string]struct{}{"ffi_entry": {}},
+	}
+
+	dead := Symbol{Name: "orphan", Qualified: "m::orphan", Kind: "function", Visibility: "private", Language: "rust"}
+	trait := Symbol{Name: "process", Qualified: "m::Money::process", Kind: "method", Visibility: "private", Language: "rust"}
+	pub := Symbol{Name: "public_api", Qualified: "m::public_api", Kind: "function", Visibility: "public", Language: "rust"}
+	ffi := Symbol{Name: "ffi_entry", Qualified: "m::ffi_entry", Kind: "function", Visibility: "public", Language: "rust"}
+
+	got := a.Decide([]Symbol{dead, trait, pub, ffi}, f)
+
+	// orphan: non-pub, unmentioned, no idiom → earns dead.
+	if got[0].Verdict != VerdictDead {
+		t.Errorf("orphan: verdict = %q (reason %+v), want dead", got[0].Verdict, got[0].Reason)
+	}
+	// process: trait method name → rust_trait_impl, possibly_dead.
+	if got[1].Verdict != VerdictPossiblyDead || got[1].Reason == nil || got[1].Reason.Code != ReasonRustTraitImpl {
+		t.Errorf("process: got (%q, %+v), want (possibly_dead, rust_trait_impl)", got[1].Verdict, got[1].Reason)
+	}
+	// public_api: pub callable in a library → core_exported_api wins over rust_pub.
+	if got[2].Reason == nil || got[2].Reason.Code != ReasonExportedAPI {
+		t.Errorf("public_api: reason = %+v, want core_exported_api", got[2].Reason)
+	}
+	// ffi_entry: #[no_mangle] export → rust_ffi (wins over the pub gate).
+	if got[3].Reason == nil || got[3].Reason.Code != ReasonRustFFI {
+		t.Errorf("ffi_entry: reason = %+v, want rust_ffi", got[3].Reason)
+	}
+}
+
 func TestReasonCatalogLookup(t *testing.T) {
 	if reasonPriority(ReasonNoLanguageVoice) != 70 {
 		t.Errorf("no_language_voice priority = %d, want 70", reasonPriority(ReasonNoLanguageVoice))
