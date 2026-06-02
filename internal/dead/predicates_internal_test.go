@@ -195,3 +195,42 @@ func TestFrameworkNamesSorted(t *testing.T) {
 		t.Error("frameworkNames(nil) should be empty")
 	}
 }
+
+// TestIsInTestFile pins the test-fixture exclusion, including the patterns the
+// nextjs eval surfaced: a top-level `test/` directory (no leading slash) and the
+// jscodeshift `__testfixtures__` convention. Symbols in these are fixtures or
+// test code, never removable production code, so they are excluded from
+// dead-code candidacy.
+func TestIsInTestFile(t *testing.T) {
+	in := []string{
+		"order_test.go",
+		"pkg/sub/thing_test.go",
+		"app/test/helper.ts",
+		"test/e2e/app-dir/fixtures/simple/typecheck-validation.ts",
+		"test/production/tsconfig-verifier/pages/index.tsx",
+		"tests/unit/helper.rb",
+		"app/spec/models/user.rb",
+		"src/__tests__/widget.tsx",
+		"internal/extract/testdata/typescript/basic.ts",
+		"packages/next-codemod/transforms/__testfixtures__/x/y.input.ts",
+		"__testfixtures__/standalone.ts",
+		"components/Button.spec.ts",
+		"components/Button.test.js",
+	}
+	for _, f := range in {
+		if !isInTestFile(Symbol{File: f}) {
+			t.Errorf("isInTestFile(%q) = false, want true", f)
+		}
+	}
+	out := []string{
+		"packages/next/src/server/render.tsx",
+		"app/users/page.tsx",
+		"lib/contest/scoring.ts", // "test" appears mid-word, not as a segment
+		"src/latest/index.ts",
+	}
+	for _, f := range out {
+		if isInTestFile(Symbol{File: f}) {
+			t.Errorf("isInTestFile(%q) = true, want false", f)
+		}
+	}
+}

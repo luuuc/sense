@@ -131,11 +131,15 @@ func FindDead(ctx context.Context, db *sql.DB, opts Options) (Result, error) {
 	}, nil
 }
 
-// defaultArbiter is the registered voice stack for this build: the generic
-// core voice plus the Ruby and Rails language voices. Adding a language voice
-// (Go, TS, Python) is a one-line change here once it exists.
+// defaultArbiter is the registered voice stack for this build: the generic core
+// voice plus the Ruby, Rails, Go, Rust, and TypeScript/JavaScript language
+// voices. The TS voice is registered once per language string the shared
+// extractor emits ("typescript", "tsx", "javascript") so each is a language for
+// which closed-world can be proven. Adding a language voice is a one-line change
+// here once it exists.
 func defaultArbiter() *Arbiter {
-	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{}, goVoice{}, rustVoice{})
+	return NewArbiter(coreVoice{}, rubyVoice{}, railsVoice{}, goVoice{}, rustVoice{},
+		tsVoice{lang: "typescript"}, tsVoice{lang: "tsx"}, tsVoice{lang: "javascript"})
 }
 
 // buildFacts gathers the project-wide index facts the voices consume. It is
@@ -185,6 +189,8 @@ func buildFacts(ctx context.Context, db *sql.DB) (Facts, error) {
 		RustTestSymbolNames:      readRustTestSymbolNames(ctx, db),
 		RustTraitImplMethodNames: readRustTraitImplMethodNames(ctx, db),
 		RustAllowDeadNames:       readRustAllowDeadNames(ctx, db),
+		TSDecoratedNames:         readTSDecoratedNames(ctx, db),
+		TSDefaultExportNames:     readTSDefaultExportNames(ctx, db),
 		ValueObjectClassIDs:  valueObjectClassIDs,
 		IncludedModuleIDs:    includedModuleIDs,
 		ControllerConcernIDs: controllerConcernIDs,
@@ -253,7 +259,8 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 		WHERE NOT EXISTS (` + edgeFilter + `)
 		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')
 		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'
-		AND s.qualified NOT LIKE '` + routePrefixPattern + `'`
+		AND s.qualified NOT LIKE '` + routePrefixPattern + `'
+		AND f.path NOT LIKE '%.d.ts'`
 	var args []any
 
 	if opts.Language != "" {
@@ -658,7 +665,9 @@ func isTestSymbol(s Symbol) bool {
 func isInTestFile(s Symbol) bool {
 	return strings.Contains(s.File, "_test.") ||
 		strings.Contains(s.File, "/test/") ||
+		strings.HasPrefix(s.File, "test/") ||
 		strings.Contains(s.File, "/tests/") ||
+		strings.HasPrefix(s.File, "tests/") ||
 		strings.Contains(s.File, "/spec/") ||
 		strings.Contains(s.File, "/__tests__/") ||
 		// `testdata/` is a fixture directory the Go toolchain (go build/vet,
@@ -668,6 +677,12 @@ func isInTestFile(s Symbol) bool {
 		// `dead` set aligned with the toolchain's universe and free of fixture noise.
 		strings.Contains(s.File, "/testdata/") ||
 		strings.HasPrefix(s.File, "testdata/") ||
+		// `__testfixtures__/` is the jscodeshift convention for transform
+		// input/output samples (next-codemod uses it heavily): standalone code the
+		// test runner reads as text, never imported. Its symbols are fixtures, not
+		// removable code — the TS/JS analog of `testdata/`.
+		strings.Contains(s.File, "/__testfixtures__/") ||
+		strings.HasPrefix(s.File, "__testfixtures__/") ||
 		strings.HasSuffix(s.File, ".spec.ts") ||
 		strings.HasSuffix(s.File, ".spec.js") ||
 		strings.HasSuffix(s.File, ".test.ts") ||
@@ -843,6 +858,22 @@ func readRustTraitImplMethodNames(ctx context.Context, db *sql.DB) map[string]st
 // (rust_allow_dead). A missing or corrupt key yields an empty set.
 func readRustAllowDeadNames(ctx context.Context, db *sql.DB) map[string]struct{} {
 	return readStringSetMeta(ctx, db, "rust_allow_dead")
+}
+
+// readTSDecoratedNames returns the set of TS/JS class/method names carrying a
+// decorator, persisted to the ts_decorated sense_meta key by the scan layer. The
+// TS voice keeps such a name open-world (ts_decorator). A missing or corrupt key
+// yields an empty set.
+func readTSDecoratedNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "ts_decorated")
+}
+
+// readTSDefaultExportNames returns the set of TS/JS names bound by an `export
+// default` form, persisted to the ts_default_exports sense_meta key by the scan
+// layer. The TS voice raises ts_default_export for such a name. A missing or
+// corrupt key yields an empty set.
+func readTSDefaultExportNames(ctx context.Context, db *sql.DB) map[string]struct{} {
+	return readStringSetMeta(ctx, db, "ts_default_exports")
 }
 
 // readStringSetMeta reads a JSON string-array sense_meta value into a set,

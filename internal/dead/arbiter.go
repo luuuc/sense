@@ -130,6 +130,19 @@ type Facts struct {
 	// rustc never warns it and it is absent from the cargo oracle. Populated from
 	// the rust_allow_dead sense_meta key.
 	RustAllowDeadNames map[string]struct{}
+	// TSDecoratedNames is the set of TS/JS class and method names carrying a
+	// decorator (`@Component` / `@Injectable` / `@Controller` / route-method
+	// decorators). The TS voice keeps such a name open-world (ts_decorator): a
+	// framework's DI/router instantiates or routes to it with no source caller,
+	// even when the symbol is module-private. Flat, not per-language — decorators
+	// span the .ts/.tsx/.js family. Populated from the ts_decorated sense_meta key.
+	TSDecoratedNames map[string]struct{}
+	// TSDefaultExportNames is the set of TS/JS names bound by an `export default`
+	// form. The TS voice raises the more specific ts_default_export (over the
+	// generic ts_exported) for such a name: it is imported by path, not by name.
+	// Flat, like TSDecoratedNames. Populated from the ts_default_exports sense_meta
+	// key.
+	TSDefaultExportNames map[string]struct{}
 	// HarvestedLangs is the set of languages whose mention harvest actually ran
 	// for this index. The soundness gate refuses `dead` for a symbol whose
 	// language is absent here (reason core_no_harvest): a missing harvest cannot

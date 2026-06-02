@@ -238,6 +238,8 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	warnMetaWrite(warn, "rust-test-symbols", writeRustTestSymbols(ctx, idx, h.rustTestSymbols))
 	warnMetaWrite(warn, "rust-trait-impl-methods", writeRustTraitImplMethods(ctx, idx, h.rustTraitMethods))
 	warnMetaWrite(warn, "rust-allow-dead", writeRustAllowDead(ctx, idx, h.rustAllowDead))
+	warnMetaWrite(warn, "ts-decorated", writeTSDecorated(ctx, idx, h.tsDecorated))
+	warnMetaWrite(warn, "ts-default-exports", writeTSDefaultExports(ctx, idx, h.tsDefaultExports))
 	// A pre-feature index carried single bare union keys (no language suffix).
 	// The per-language reader globs `*:<lang>` and ignores them, but delete them
 	// on every full scan so an in-place upgrade leaves no stale meta to mislead a
@@ -551,6 +553,15 @@ type harness struct {
 	rustTraitMethods map[string]struct{}
 	rustAllowDead    map[string]struct{}
 
+	// tsDecorated is the set of TS/JS class/method names carrying a decorator
+	// (`@Component` / `@Injectable` / route-method decorators); tsDefaultExports
+	// is the set of names bound by an `export default` form. Both are written to
+	// flat sense_meta keys so the dead-code TS voice keeps a decorated symbol
+	// open-world (ts_decorator) and labels a default export ts_default_export.
+	// Flat (not per-language): these concepts span the .ts/.tsx/.js family.
+	tsDecorated      map[string]struct{}
+	tsDefaultExports map[string]struct{}
+
 	// harvestedLangs is the set of languages whose mention harvest RAN this
 	// scan — every indexed file whose extractor is an extract.MentionHarvester
 	// marks its language here, regardless of how many names it produced. Written
@@ -817,6 +828,22 @@ func (h *harness) walkTree(root string) error {
 				h.rustAllowDead[n] = struct{}{}
 			}
 		}
+		if len(fr.TSDecorated) > 0 {
+			if h.tsDecorated == nil {
+				h.tsDecorated = map[string]struct{}{}
+			}
+			for _, n := range fr.TSDecorated {
+				h.tsDecorated[n] = struct{}{}
+			}
+		}
+		if len(fr.TSDefaultExports) > 0 {
+			if h.tsDefaultExports == nil {
+				h.tsDefaultExports = map[string]struct{}{}
+			}
+			for _, n := range fr.TSDefaultExports {
+				h.tsDefaultExports[n] = struct{}{}
+			}
+		}
 
 		batch = append(batch, fr)
 		if len(batch) >= batchSize {
@@ -897,6 +924,8 @@ type fileResult struct {
 	RustTestSymbols  []string
 	RustTraitMethods []string
 	RustAllowDead    []string
+	TSDecorated      []string
+	TSDefaultExports []string
 }
 
 // 100 files per SQLite transaction amortizes BEGIN/COMMIT overhead (~10x
@@ -1019,6 +1048,8 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 		RustTestSymbols:  collected.rustTestSymbols,
 		RustTraitMethods: collected.rustTraitMethods,
 		RustAllowDead:    collected.rustAllowDead,
+		TSDecorated:      collected.tsDecorated,
+		TSDefaultExports: collected.tsDefaultExports,
 	}
 }
 
@@ -1357,6 +1388,8 @@ type collector struct {
 	rustTestSymbols  []string
 	rustTraitMethods []string
 	rustAllowDead    []string
+	tsDecorated      []string
+	tsDefaultExports []string
 }
 
 func (c *collector) Symbol(s extract.EmittedSymbol) error {
@@ -1428,6 +1461,25 @@ func (c *collector) RustTraitImplMethod(name string) error {
 // warning, so it is never in the cargo oracle.
 func (c *collector) RustAllowDeadName(name string) error {
 	c.rustAllowDead = append(c.rustAllowDead, name)
+	return nil
+}
+
+// TSDecoratedName implements extract.TSHarvestEmitter: an extractor streams every
+// TS/JS class/method carrying a decorator (`@Component` / `@Injectable` / route
+// decorator). The project-wide set feeds the dead-code TS voice so a
+// framework-dispatched symbol stays open-world (ts_decorator) instead of being
+// falsely called dead.
+func (c *collector) TSDecoratedName(name string) error {
+	c.tsDecorated = append(c.tsDecorated, name)
+	return nil
+}
+
+// TSDefaultExportName implements extract.TSHarvestEmitter: an extractor streams
+// every name bound by an `export default` form. The project-wide set feeds the
+// dead-code TS voice so a default export carries the more specific
+// ts_default_export reason rather than the generic ts_exported.
+func (c *collector) TSDefaultExportName(name string) error {
+	c.tsDefaultExports = append(c.tsDefaultExports, name)
 	return nil
 }
 
