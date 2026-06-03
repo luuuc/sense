@@ -623,11 +623,11 @@ type walkEntry struct {
 	rel  string
 }
 
-// walkTree walks root depth-first. Dot-prefixed directories (.git,
-// .vscode) and the .sense directory are always skipped. Paths matched
-// by the ignore matcher are skipped. Symlinks are not followed.
-//
-//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
+// walkTree is the walk phase, read as the four named steps its comments long
+// described: collect the file paths, preload the incremental-skip hashes, parse
+// every file in parallel, then serially account and batch-write the results. The
+// per-symbol prepared statement lives for the whole walk and is torn down here so
+// each phase helper can assume it is set.
 func (h *harness) walkTree(root string) error {
 	stmt, err := h.idx.PrepareSymbolStmt(h.ctx)
 	if err != nil {
@@ -637,7 +637,35 @@ func (h *harness) walkTree(root string) error {
 	h.symbolStmt = stmt
 	defer func() { h.symbolStmt = nil }()
 
-	// Phase 1: collect file paths.
+	entries, err := h.collectPaths(root)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	h.progress.setPhase("Scanning...", int64(len(entries)))
+
+	hashMap, err := h.preloadHashes()
+	if err != nil {
+		return err
+	}
+
+	results, err := h.parseAllFiles(entries, hashMap)
+	if err != nil {
+		return err
+	}
+
+	return h.accountAndWrite(entries, results, hashMap)
+}
+
+// collectPaths walks root depth-first and returns the regular files to parse.
+// Dot-prefixed directories (.git, .vscode) and the .sense directory are always
+// skipped, paths matched by the ignore matcher are skipped, and symlinks are not
+// followed. It bumps h.files, h.seenPaths, and h.defaultIgnored as it goes so
+// the later phases and stale-removal see the full visit set.
+func (h *harness) collectPaths(root string) ([]walkEntry, error) {
 	var entries []walkEntry
 	werr := filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
@@ -682,22 +710,34 @@ func (h *harness) walkTree(root string) error {
 		return nil
 	})
 	if werr != nil {
-		return werr
+		return nil, werr
 	}
+	return entries, nil
+}
 
-	if len(entries) == 0 {
-		return nil
-	}
-
-	h.progress.setPhase("Scanning...", int64(len(entries)))
-
-	// Phase 2: pre-load file hashes for incremental skip.
+// preloadHashes loads the persisted file-hash map once, so the parse phase can
+// skip files whose content is unchanged without a per-file DB round trip.
+func (h *harness) preloadHashes() (map[string]sqlite.CachedFile, error) {
 	hashMap, err := h.idx.FileHashMap(h.ctx)
 	if err != nil {
-		return fmt.Errorf("load file hashes: %w", err)
+		return nil, fmt.Errorf("load file hashes: %w", err)
 	}
+	return hashMap, nil
+}
 
-	// Phase 3: parallel parse+extract.
+// parseAllFiles parses and extracts every entry in parallel, returning a result
+// slice positionally aligned with entries (results[i] is entries[i]'s result, or
+// nil when the file was unchanged, unknown, or failed to parse). The contract
+// this preserves exactly — the no-gos depend on it — is:
+//   - bounded fan-out: runtime.NumCPU() workers, no more;
+//   - deterministic ordering: each goroutine writes only its own results[i] slot
+//     (never a reordering channel-collect), so the result order is the entry
+//     order and no lock is needed;
+//   - per-file panic isolation: parseFileStandalone recovers an extractor panic
+//     (tree-sitter on a malformed CST is real), so one bad file is skipped, not
+//     the scan. The goroutines therefore never return an error; the only error
+//     g.Wait can surface is context cancellation.
+func (h *harness) parseAllFiles(entries []walkEntry, hashMap map[string]sqlite.CachedFile) ([]*fileResult, error) {
 	results := make([]*fileResult, len(entries))
 	g, gctx := errgroup.WithContext(h.ctx)
 	g.SetLimit(runtime.NumCPU())
@@ -711,30 +751,23 @@ func (h *harness) walkTree(root string) error {
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return err
+		return nil, err
 	}
+	return results, nil
+}
 
-	// Phase 4: serial accounting + batched write.
+// accountAndWrite is the serial phase: it walks the parse results in entry
+// order, accounts for files the parse phase skipped because their hash was
+// unchanged, folds each freshly-parsed file's harvested names into the
+// project-wide sets, and writes parsed files in batched transactions.
+func (h *harness) accountAndWrite(entries []walkEntry, results []*fileResult, hashMap map[string]sqlite.CachedFile) error {
 	var batch []*fileResult
 	for i, fr := range results {
 		rel := entries[i].rel
-		ext := strings.ToLower(filepath.Ext(rel))
-		ex := extract.ForExtension(ext)
+		ex := extract.ForExtension(strings.ToLower(filepath.Ext(rel)))
 
 		if fr == nil {
-			if ex != nil {
-				cached, ok := hashMap[rel]
-				if ok && cached.ID > 0 {
-					h.skipped++
-					h.indexed++
-					h.indexedFiles = append(h.indexedFiles, indexedFile{
-						ID: cached.ID, Path: rel, Language: ex.Language(),
-					})
-					// A cached file is still indexed, so its language's harvest
-					// is still represented in this index.
-					h.markHarvested(ex)
-				}
-			}
+			h.accountCachedFile(rel, ex, hashMap)
 			continue
 		}
 		h.markHarvested(ex)
@@ -752,6 +785,28 @@ func (h *harness) walkTree(root string) error {
 		return h.flushBatch(batch)
 	}
 	return nil
+}
+
+// accountCachedFile records a file the parse phase skipped because its content
+// hash was unchanged. It is still indexed — its symbols persist from a prior
+// scan — so it counts toward skipped/indexed, joins indexedFiles for the
+// test-association pass, and marks its language harvested so the dead-code gate
+// still sees that language. A file with no registered extractor or no cached row
+// is a no-op.
+func (h *harness) accountCachedFile(rel string, ex extract.Extractor, hashMap map[string]sqlite.CachedFile) {
+	if ex == nil {
+		return
+	}
+	cached, ok := hashMap[rel]
+	if !ok || cached.ID <= 0 {
+		return
+	}
+	h.skipped++
+	h.indexed++
+	h.indexedFiles = append(h.indexedFiles, indexedFile{
+		ID: cached.ID, Path: rel, Language: ex.Language(),
+	})
+	h.markHarvested(ex)
 }
 
 // flushBatch writes a batch of parsed file results in a single transaction.
