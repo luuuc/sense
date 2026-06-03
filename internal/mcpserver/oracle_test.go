@@ -94,53 +94,51 @@ func collectOracleCalls(t *testing.T) []labeledCall {
 
 	rf := setupResolveFixture(t)
 
-	mk := func(args map[string]any) mcp.CallToolRequest { return toolReq(args) }
-
 	calls := []labeledCall{}
 	add := func(label string, result *mcp.CallToolResult, err error) {
 		calls = append(calls, labeledCall{label: label, text: callText(t, result, err)})
 	}
 
 	// Every tool, happy path.
-	r, err := h.handleSearch(ctx, mk(map[string]any{"query": "auth"}))
+	r, err := h.handleSearch(ctx, toolReq(map[string]any{"query": "auth"}))
 	add("search/auth", r, err)
 
-	r, err = h.handleGraph(ctx, mk(map[string]any{"symbol": "auth.Verify", "direction": "both"}))
+	r, err = h.handleGraph(ctx, toolReq(map[string]any{"symbol": "auth.Verify", "direction": "both"}))
 	add("graph/verify/both", r, err)
 
-	r, err = h.handleGraph(ctx, mk(map[string]any{"symbol": "auth.Verify", "direction": "callers"}))
+	r, err = h.handleGraph(ctx, toolReq(map[string]any{"symbol": "auth.Verify", "direction": "callers"}))
 	add("graph/verify/callers", r, err)
 
-	r, err = h.handleGraph(ctx, mk(map[string]any{"symbol": "handler.HandleRequest", "direction": "callees"}))
+	r, err = h.handleGraph(ctx, toolReq(map[string]any{"symbol": "handler.HandleRequest", "direction": "callees"}))
 	add("graph/handlerequest/callees", r, err)
 
-	r, err = h.handleGraph(ctx, mk(map[string]any{"dead_code": true}))
+	r, err = h.handleGraph(ctx, toolReq(map[string]any{"dead_code": true}))
 	add("graph/dead_code", r, err)
 
-	r, err = h.handleBlast(ctx, mk(map[string]any{"symbol": "auth.Verify"}))
+	r, err = h.handleBlast(ctx, toolReq(map[string]any{"symbol": "auth.Verify"}))
 	add("blast/verify", r, err)
 
-	r, err = h.handleConventions(ctx, mk(map[string]any{}))
+	r, err = h.handleConventions(ctx, toolReq(map[string]any{}))
 	add("conventions", r, err)
 
 	r, err = h.handleStatus(ctx, mcp.CallToolRequest{})
 	add("status", r, err)
 
 	// Not-found and error responses.
-	r, err = h.handleGraph(ctx, mk(map[string]any{"symbol": "DoesNotExist"}))
+	r, err = h.handleGraph(ctx, toolReq(map[string]any{"symbol": "DoesNotExist"}))
 	add("graph/not_found", r, err)
 
-	r, err = h.handleGraph(ctx, mk(map[string]any{"symbol": ""}))
+	r, err = h.handleGraph(ctx, toolReq(map[string]any{"symbol": ""}))
 	add("graph/missing_param", r, err)
 
-	r, err = h.handleBlast(ctx, mk(map[string]any{"symbol": "auth.Verify", "diff": "HEAD~1"}))
+	r, err = h.handleBlast(ctx, toolReq(map[string]any{"symbol": "auth.Verify", "diff": "HEAD~1"}))
 	add("blast/both_args", r, err)
 
-	r, err = h.handleBlast(ctx, mk(map[string]any{}))
+	r, err = h.handleBlast(ctx, toolReq(map[string]any{}))
 	add("blast/no_args", r, err)
 
 	// Disambiguation needs colliding base names — use the resolve fixture.
-	r, err = rf.h.handleGraph(ctx, mk(map[string]any{"symbol": "Handle"}))
+	r, err = rf.h.handleGraph(ctx, toolReq(map[string]any{"symbol": "Handle"}))
 	add("graph/disambiguation", r, err)
 
 	return calls

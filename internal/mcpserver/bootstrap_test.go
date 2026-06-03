@@ -1,8 +1,11 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,7 +68,8 @@ func TestBuildMCPServerRebuildsOnSchemaMismatch(t *testing.T) {
 	repo.Scan(scan.Options{})
 	staleUserVersion(t, repo.Root)
 
-	s, h, cleanup, err := buildMCPServer(RunOptions{Dir: repo.Root})
+	var diag bytes.Buffer
+	s, h, cleanup, err := buildMCPServer(RunOptions{Dir: repo.Root, diag: &diag})
 	if err != nil {
 		t.Fatalf("buildMCPServer: %v", err)
 	}
@@ -78,13 +82,17 @@ func TestBuildMCPServerRebuildsOnSchemaMismatch(t *testing.T) {
 	if got := symbolCount(t, h, "Hello"); got == 0 {
 		t.Error("rebuild scan should have repopulated the index, but Hello is absent")
 	}
+	// The injected writer captures the rebuild diagnostics by text.
+	if out := diag.String(); !strings.Contains(out, "schema version mismatch") || !strings.Contains(out, "rebuild complete") {
+		t.Errorf("expected rebuild diagnostics in diag, got: %q", out)
+	}
 }
 
 // TestBuildMCPServerWarnsOnModelMismatch drives the embedding-model warning
 // branch: the stored model differs from the binary's, so buildMCPServer warns
-// (to stderr) yet still builds the engine. The assertion is the branch
-// outcome — engine built despite the mismatch — not the warning text, which
-// goes to os.Stderr (a 27-05 cleanup makes it injectable/assertable).
+// yet still builds the engine. With the 27-05 io.Writer seam the warning text
+// is captured through an injected writer, so the assertion is both the branch
+// outcome — engine built despite the mismatch — and the warning itself.
 func TestBuildMCPServerWarnsOnModelMismatch(t *testing.T) {
 	hermeticEnv(t)
 
@@ -96,7 +104,8 @@ func TestBuildMCPServerWarnsOnModelMismatch(t *testing.T) {
 		t.Fatalf("write stale model meta: %v", err)
 	}
 
-	s, h, cleanup, err := buildMCPServer(RunOptions{Dir: repo.Root})
+	var diag bytes.Buffer
+	s, h, cleanup, err := buildMCPServer(RunOptions{Dir: repo.Root, diag: &diag})
 	if err != nil {
 		t.Fatalf("buildMCPServer: %v", err)
 	}
@@ -107,6 +116,22 @@ func TestBuildMCPServerWarnsOnModelMismatch(t *testing.T) {
 	}
 	if got := symbolCount(t, h, "Hello"); got == 0 {
 		t.Error("engine should serve the existing index despite the model warning")
+	}
+	if out := diag.String(); !strings.Contains(out, "embedding model changed") || !strings.Contains(out, "stale-model-v0") {
+		t.Errorf("expected model-mismatch warning in diag, got: %q", out)
+	}
+}
+
+// TestResolveDiagDefaultsToStderr pins the seam's default: with no writer
+// injected, bootstrap diagnostics go to os.Stderr byte-for-byte (production
+// output is unchanged), and an injected writer is used verbatim.
+func TestResolveDiagDefaultsToStderr(t *testing.T) {
+	if got := resolveDiag(RunOptions{}); got != os.Stderr {
+		t.Errorf("default diag = %v, want os.Stderr", got)
+	}
+	var buf bytes.Buffer
+	if got := resolveDiag(RunOptions{diag: &buf}); got != &buf {
+		t.Error("injected diag writer should be returned verbatim")
 	}
 }
 
