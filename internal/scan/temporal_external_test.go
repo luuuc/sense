@@ -3,153 +3,243 @@ package scan_test
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
+	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/scan"
+	"github.com/luuuc/sense/internal/scan/scantest"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-// gitInit creates a real git repo at root with deterministic identity.
-// Centralises the env-var boilerplate that several tests would otherwise
-// duplicate. Returns a runner for `git <args...>` against that repo.
-func gitInit(t *testing.T, root string) func(args ...string) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
+// coChange builds a Commit that rewrites the same two cross-directory
+// files at revision i. The pair lives in pkg/ and lib/ so temporal
+// coupling (which ignores same-directory pairs) can form an edge between
+// them. They are Ruby classes with a real inherits edge (B < A) so each
+// file's representative symbol carries non-temporal connectivity —
+// exercising representativeSymbols' inbound and outbound connectivity
+// queries, not just its empty-graph path.
+func coChange(i int) scantest.Commit {
+	return scantest.Commit{
+		Files: map[string]string{
+			"pkg/a.rb": fmt.Sprintf("# rev %d\nclass A\n  def hi; end\nend\n", i),
+			"lib/b.rb": fmt.Sprintf("# rev %d\nclass B < A\n  def yo; end\nend\n", i),
+		},
+		Message: fmt.Sprintf("co-change %d", i),
 	}
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
+}
+
+func temporalEdgeCount(t *testing.T, adapter *sqlite.Adapter) int {
+	t.Helper()
+	edges, err := adapter.EdgesOfKind(context.Background(), model.EdgeTemporal)
+	if err != nil {
+		t.Fatalf("EdgesOfKind: %v", err)
+	}
+	return len(edges)
+}
+
+// TestExtractTemporalCoupling_whenPairCoChangesAboveThreshold_writesBidirectionalEdges
+// is the positive path the negative cases never reach: a cross-directory
+// pair that co-changes four times (≥ minCoChanges) with both files indexed
+// drives the full pipeline — significant-pair selection, representativeSymbols,
+// clearTemporalEdges, and the bidirectional edge write. It asserts the
+// observable graph: one temporal edge each way, carrying the co-change count
+// on Line and strength 1.0 on Confidence (4 co-changes / 4 max changes).
+func TestExtractTemporalCoupling_whenPairCoChangesAboveThreshold_writesBidirectionalEdges(t *testing.T) {
+	repo := scantest.NewRepo(t, nil)
+	commits := make([]scantest.Commit, 4)
+	for i := range commits {
+		commits[i] = coChange(i)
+	}
+	repo.WithGitHistory(commits)
+
+	ctx := context.Background()
+	_, adapter := repo.Scan(scan.Options{})
+
+	edges, err := adapter.EdgesOfKind(ctx, model.EdgeTemporal)
+	if err != nil {
+		t.Fatalf("EdgesOfKind: %v", err)
+	}
+	if len(edges) != 2 {
+		t.Fatalf("temporal edges = %d, want 2 (one each way for the pkg/a.rb ↔ lib/b.rb pair)", len(edges))
+	}
+
+	// Both directions present: the two edges are mirror images.
+	a, b := edges[0], edges[1]
+	if a.SourceID == nil || b.SourceID == nil {
+		t.Fatalf("temporal edges must have source symbols, got %+v and %+v", a, b)
+	}
+	if *a.SourceID != b.TargetID || *b.SourceID != a.TargetID {
+		t.Errorf("expected mirrored edges, got A(src=%d,tgt=%d) B(src=%d,tgt=%d)",
+			*a.SourceID, a.TargetID, *b.SourceID, b.TargetID)
+	}
+	for _, e := range edges {
+		if e.Kind != model.EdgeTemporal {
+			t.Errorf("edge kind = %q, want %q", e.Kind, model.EdgeTemporal)
+		}
+		if e.Confidence != 1.0 {
+			t.Errorf("edge confidence = %v, want 1.0 (4 co-changes / 4 max changes)", e.Confidence)
+		}
+		if e.Line == nil || *e.Line != 4 {
+			t.Errorf("edge Line = %v, want 4 (co-change count)", e.Line)
 		}
 	}
-	run("init")
-	run("config", "user.email", "test@test.com")
-	run("config", "user.name", "test")
-	return run
+}
+
+// TestExtractTemporalCoupling_multiplePairsExerciseRankingAndStrength drives
+// the branches a single symmetric pair never reaches:
+//   - two significant pairs, so the deterministic sort comparator runs;
+//   - an asymmetric change count, so the "other file changed more" branch
+//     in the strength denominator fires;
+//   - a co-changing file with no symbols (comment-only), so both the
+//     skip-file-without-symbols path in representativeSymbols and the
+//     skip-pair-without-a-representative path in the edge loop run.
+//
+// The graph assertion stays observable: only the A↔B pair (both files have
+// a class) yields edges; the pair involving the symbol-less file is dropped.
+func TestExtractTemporalCoupling_multiplePairsExerciseRankingAndStrength(t *testing.T) {
+	repo := scantest.NewRepo(t, nil)
+
+	classA := func(i int) string { return fmt.Sprintf("# rev %d\nclass A\n  def hi; end\nend\n", i) }
+	classB := func(i int) string { return fmt.Sprintf("# rev %d\nclass B < A\n  def yo; end\nend\n", i) }
+	notesOnly := func(i int) string { return fmt.Sprintf("# rev %d — comments only, no symbols\n", i) }
+
+	var commits []scantest.Commit
+	// 4 commits couple x/a.rb ↔ z/b.rb (A↔B co-change = 4).
+	for i := 0; i < 4; i++ {
+		commits = append(commits, scantest.Commit{
+			Files:   map[string]string{"x/a.rb": classA(i), "z/b.rb": classB(i)},
+			Message: fmt.Sprintf("ab %d", i),
+		})
+	}
+	// 4 commits couple z/b.rb ↔ w/notes.rb (B↔notes co-change = 4), which
+	// pushes z/b.rb's total change count to 8 — higher than its partner in
+	// either pair, exercising the asymmetric-strength branch.
+	for i := 0; i < 4; i++ {
+		commits = append(commits, scantest.Commit{
+			Files:   map[string]string{"z/b.rb": classB(i + 4), "w/notes.rb": notesOnly(i)},
+			Message: fmt.Sprintf("bn %d", i),
+		})
+	}
+	repo.WithGitHistory(commits)
+
+	_, adapter := repo.Scan(scan.Options{})
+
+	// Only A↔B produces edges; B↔notes is dropped because notes.rb has no
+	// representative symbol. Bidirectional ⇒ exactly 2 temporal edges.
+	if got := temporalEdgeCount(t, adapter); got != 2 {
+		t.Errorf("temporal edges = %d, want 2 (only the A↔B pair anchors symbols)", got)
+	}
+}
+
+// TestExtractTemporalCoupling_sharedFirstFileSortsBySecond covers the
+// deterministic ordering's secondary tiebreak: two significant pairs that
+// share their first (lexically smaller) file must be ordered by their
+// second file. One hub file (a/hub.rb) co-changes with two leaves in
+// other directories, producing pairs (a/hub.rb, m/x.rb) and
+// (a/hub.rb, n/y.rb) — equal on the first element, so the comparator falls
+// through to comparing the second.
+func TestExtractTemporalCoupling_sharedFirstFileSortsBySecond(t *testing.T) {
+	repo := scantest.NewRepo(t, nil)
+	hub := func(i int) string { return fmt.Sprintf("# rev %d\nclass Hub\n  def go; end\nend\n", i) }
+	leaf := func(name string, i int) string {
+		return fmt.Sprintf("# rev %d\nclass %s < Hub\nend\n", i, name)
+	}
+	var commits []scantest.Commit
+	for i := 0; i < 4; i++ {
+		commits = append(commits, scantest.Commit{
+			Files:   map[string]string{"a/hub.rb": hub(i), "m/x.rb": leaf("X", i)},
+			Message: fmt.Sprintf("hx %d", i),
+		})
+	}
+	for i := 0; i < 4; i++ {
+		commits = append(commits, scantest.Commit{
+			Files:   map[string]string{"a/hub.rb": hub(i + 4), "n/y.rb": leaf("Y", i)},
+			Message: fmt.Sprintf("hy %d", i),
+		})
+	}
+	repo.WithGitHistory(commits)
+
+	_, adapter := repo.Scan(scan.Options{})
+
+	// Two pairs, both bidirectional ⇒ 4 temporal edges.
+	if got := temporalEdgeCount(t, adapter); got != 4 {
+		t.Errorf("temporal edges = %d, want 4 (hub↔x and hub↔y, both directions)", got)
+	}
+}
+
+// TestExtractTemporalCoupling_isIdempotentAcrossRescans pins clearTemporalEdges'
+// purpose: a second scan must not double the temporal edges. Without the
+// clear-before-recompute step the count would grow each run.
+func TestExtractTemporalCoupling_isIdempotentAcrossRescans(t *testing.T) {
+	repo := scantest.NewRepo(t, nil)
+	commits := make([]scantest.Commit, 4)
+	for i := range commits {
+		commits[i] = coChange(i)
+	}
+	repo.WithGitHistory(commits)
+
+	_, firstAdapter := repo.Scan(scan.Options{})
+	if got := temporalEdgeCount(t, firstAdapter); got != 2 {
+		t.Fatalf("temporal edges after first scan = %d, want 2 (baseline for the idempotency check)", got)
+	}
+
+	_, adapter := repo.Scan(scan.Options{})
+	if got := temporalEdgeCount(t, adapter); got != 2 {
+		t.Errorf("temporal edges after rescan = %d, want 2 (clearTemporalEdges must prevent doubling)", got)
+	}
 }
 
 // TestExtractTemporalCoupling_whenCoChangesBelowThreshold_writesNoEdges
-// exercises the "drop pairs below minCoChanges" branch in
-// extractTemporalCoupling: two files in different directories that
-// co-change only twice (below the threshold of 3) must produce zero
-// temporal edges, even though structurally they would qualify.
+// exercises the "drop pairs below minCoChanges" branch: a cross-directory
+// pair that co-changes only twice (below the threshold of three) must
+// produce zero temporal edges even though it is structurally eligible.
 func TestExtractTemporalCoupling_whenCoChangesBelowThreshold_writesNoEdges(t *testing.T) {
-	root := t.TempDir()
-	gitCmd := gitInit(t, root)
+	repo := scantest.NewRepo(t, nil)
+	repo.WithGitHistory([]scantest.Commit{coChange(0), coChange(1)})
 
-	pathA := filepath.Join(root, "pkg", "a.go")
-	pathB := filepath.Join(root, "lib", "b.go")
+	_, adapter := repo.Scan(scan.Options{})
 
-	// Only 2 co-changes — below minCoChanges (3).
-	for i := 0; i < 2; i++ {
-		writeFile(t, pathA, fmt.Sprintf("package pkg\n\n// v%d\nfunc A() {}\n", i))
-		writeFile(t, pathB, fmt.Sprintf("package lib\n\n// v%d\nfunc B() {}\n", i))
-		gitCmd("add", "-A")
-		gitCmd("commit", "-m", fmt.Sprintf("co-change %d", i))
-	}
-
-	ctx := context.Background()
-	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	dbPath := filepath.Join(root, ".sense", "index.db")
-	a, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = a.Close() })
-
-	var edgeCount int
-	err = a.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sense_edges WHERE kind = 'temporal'`).Scan(&edgeCount)
-	if err != nil {
-		t.Fatalf("query temporal edges: %v", err)
-	}
-	if edgeCount != 0 {
-		t.Errorf("expected 0 temporal edges below threshold, got %d", edgeCount)
+	if got := temporalEdgeCount(t, adapter); got != 0 {
+		t.Errorf("expected 0 temporal edges below threshold, got %d", got)
 	}
 }
 
-// TestExtractTemporalCoupling_whenNoIndexedFiles_returnsEarly
-// covers the len(indexedFiles)==0 branch: a git repo with commits whose
-// only files are unindexed (e.g. plain text) means temporal coupling
-// has nothing to anchor against and must short-circuit cleanly.
+// TestExtractTemporalCoupling_whenNoIndexedFiles_returnsEarly covers the
+// len(indexedFiles)==0 branch: commits touching only unindexed files (plain
+// text) leave temporal coupling nothing to anchor against, so it must
+// short-circuit cleanly.
 func TestExtractTemporalCoupling_whenNoIndexedFiles_returnsEarly(t *testing.T) {
-	root := t.TempDir()
-	gitCmd := gitInit(t, root)
-
-	// Co-changes between two .txt files — git sees them but the scanner
-	// won't extract symbols, so the indexed-file map will be empty.
+	repo := scantest.NewRepo(t, nil)
+	var commits []scantest.Commit
 	for i := 0; i < 4; i++ {
-		writeFile(t, filepath.Join(root, "docs", "a.txt"), fmt.Sprintf("v%d\n", i))
-		writeFile(t, filepath.Join(root, "notes", "b.txt"), fmt.Sprintf("v%d\n", i))
-		gitCmd("add", "-A")
-		gitCmd("commit", "-m", fmt.Sprintf("co-change %d", i))
+		commits = append(commits, scantest.Commit{
+			Files: map[string]string{
+				"docs/a.txt":  fmt.Sprintf("v%d\n", i),
+				"notes/b.txt": fmt.Sprintf("v%d\n", i),
+			},
+			Message: fmt.Sprintf("co-change %d", i),
+		})
 	}
+	repo.WithGitHistory(commits)
 
-	ctx := context.Background()
-	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
+	_, adapter := repo.Scan(scan.Options{})
 
-	dbPath := filepath.Join(root, ".sense", "index.db")
-	a, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = a.Close() })
-
-	var edgeCount int
-	if err := a.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sense_edges WHERE kind = 'temporal'`).Scan(&edgeCount); err != nil {
-		t.Fatalf("query temporal edges: %v", err)
-	}
-	if edgeCount != 0 {
-		t.Errorf("expected 0 temporal edges when no files are indexed, got %d", edgeCount)
+	if got := temporalEdgeCount(t, adapter); got != 0 {
+		t.Errorf("expected 0 temporal edges when no files are indexed, got %d", got)
 	}
 }
 
-// TestExtractTemporalCoupling_whenRepoHasNoHistory_writesNoEdges
-// exercises the early return when parseGitLog returns empty commits
-// (a fresh git repo with no commits yet).
+// TestExtractTemporalCoupling_whenRepoHasNoHistory_writesNoEdges exercises
+// the early return when parseGitLog yields no commits (a git repo with an
+// indexed file but no commits yet).
 func TestExtractTemporalCoupling_whenRepoHasNoHistory_writesNoEdges(t *testing.T) {
-	root := t.TempDir()
-	gitCmd := gitInit(t, root)
-	_ = gitCmd // init only; no commits
+	repo := scantest.NewRepo(t, nil)
+	repo.WithGitHistory(nil) // init only, no commits
+	repo.Write("pkg/a.go", "package pkg\nfunc A() {}\n")
 
-	writeFile(t, filepath.Join(root, "pkg", "a.go"), "package pkg\nfunc A() {}\n")
+	_, adapter := repo.Scan(scan.Options{})
 
-	ctx := context.Background()
-	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	dbPath := filepath.Join(root, ".sense", "index.db")
-	a, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = a.Close() })
-
-	var edgeCount int
-	if err := a.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sense_edges WHERE kind = 'temporal'`).Scan(&edgeCount); err != nil {
-		t.Fatalf("query temporal edges: %v", err)
-	}
-	if edgeCount != 0 {
-		t.Errorf("expected 0 temporal edges with no commits, got %d", edgeCount)
+	if got := temporalEdgeCount(t, adapter); got != 0 {
+		t.Errorf("expected 0 temporal edges with no commits, got %d", got)
 	}
 }
