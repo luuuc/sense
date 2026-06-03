@@ -1,4 +1,4 @@
-.PHONY: build test test-hermetic clean install lint fmt ci run fetch-deps bench smoke
+.PHONY: build test test-hermetic cover clean install lint fmt ci run fetch-deps bench smoke
 
 VERSION ?= dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -35,8 +35,25 @@ HERMETIC_PKGS := \
 test-hermetic:
 	go test $(HERMETIC_PKGS)
 
+# Coverage floor (scaffold). Measured under this exact invocation
+# (-race -coverpkg=./...): 91.9% on 2026-06-03, so the floor sits just under
+# it with headroom for run-to-run and cross-platform variance. This is the
+# gross-regression scaffold that ratchets toward the cycle's 95% target; the
+# per-file 95% floor (scoped to covered packages) lands in 27-13. The hard
+# fail is this local `go tool cover` check, NOT a Codecov status, so a flaky
+# upload never reds the build.
+COVER_FLOOR ?= 91
+cover:
+	go test -race -count=1 -coverprofile=coverage.txt -coverpkg=./... ./...
+	@total=$$(go tool cover -func=coverage.txt | awk 'END {gsub(/%/,"",$$NF); print $$NF}'); \
+	awk -v t="$$total" -v f="$(COVER_FLOOR)" 'BEGIN { \
+		printf "total coverage: %s%% (floor: %s%%)\n", t, f; \
+		if (t+0 < f+0) { printf "FAIL: coverage %s%% is below the %s%% floor\n", t, f; exit 1 } \
+	}'
+
 clean:
 	rm -rf bin/ dist/
+	rm -f coverage.txt
 
 install: build
 	cp bin/sense /usr/local/bin/sense
@@ -49,7 +66,7 @@ fmt:
 	@$(ensure-golangci)
 	@PATH="$$PATH:$$(go env GOPATH)/bin" golangci-lint fmt
 
-ci: build test lint
+ci: build cover lint
 	@echo "All CI checks passed!"
 
 smoke:

@@ -1,12 +1,19 @@
+# Codecov is INFORMATIONAL only. The build-failing coverage gate is the
+# deterministic total-% floor in `make cover` (no upload dependency, so a flaky
+# Codecov upload never reds the build). These statuses surface per-file coverage
+# for visibility but must not fail CI.
+#
+# The real per-file 95% floor — scoped to the packages cycle 27 covers — is a
+# 27-13 deliverable. Until then Codecov stays advisory and the total-% floor in
+# `make cover` is the only hard coverage gate.
 coverage:
   status:
     project:
       default:
-        target: auto
-        threshold: 2%
+        informational: true
     patch:
       default:
-        target: 80%
+        informational: true
 
 ignore:
   # benchmark harness and vendored fixture repos

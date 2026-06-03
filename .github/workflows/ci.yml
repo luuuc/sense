@@ -48,8 +48,11 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Test
-        run: go test -race -count=1 -v -coverprofile=coverage.txt -coverpkg=./... ./...
+      - name: Test & coverage gate
+        # Single definition of "tests pass": the same `make cover` a contributor
+        # runs locally (go test -race -coverpkg=./... + a total-% floor). Remote
+        # CI can no longer disagree with `make ci` about what green means.
+        run: make cover
 
       - name: Hermetic unit tests (offline)
         # Goal 5 proof: the hermetic package set must pass with no network,
@@ -76,11 +79,10 @@ jobs:
         run: make smoke
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          # Pinned (not "latest") so the v2 formatters: block and the gocyclo/
-          # gocognit thresholds are reproducible. Keep in sync with the Makefile.
-          version: v2.12.2
+        # Same `make lint` a contributor runs locally — golangci-lint is pinned
+        # in the Makefile (GOLANGCI_VERSION), so the v2 formatters: block and the
+        # gocyclo/gocognit thresholds are reproducible and cannot drift from CI.
+        run: make lint
 
   stdout-hygiene:
     runs-on: ubuntu-latest
