@@ -1,0 +1,294 @@
+package freshen
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/scan"
+	"github.com/luuuc/sense/internal/sqlite"
+)
+
+// scanRepo runs an initial full scan so a Service has an index to keep
+// fresh. embeddings controls whether scan records embedding debt.
+func scanRepo(t *testing.T, root string, embeddings bool) {
+	t.Helper()
+	if _, err := scan.Run(context.Background(), scan.Options{
+		Root:              root,
+		Output:            &bytes.Buffer{},
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: embeddings,
+	}); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+}
+
+// symbolExists opens a fresh read connection and reports whether a symbol
+// with the given name is in the index. A fresh connection sees the
+// Service's committed WAL writes.
+func symbolExists(t *testing.T, root, name string) bool {
+	t.Helper()
+	a, err := sqlite.Open(context.Background(), filepath.Join(root, ".sense", "index.db"))
+	if err != nil {
+		t.Fatalf("open read adapter: %v", err)
+	}
+	defer func() { _ = a.Close() }()
+	var n int
+	if err := a.DB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sense_symbols WHERE name = ?`, name).Scan(&n); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	return n > 0
+}
+
+func TestServiceReindexesOnEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Embeddings enabled so the embed controller's checkDebt/runEmbed
+	// closures execute (debt is deferred by the scan, then picked up).
+	scanRepo(t, root, true)
+
+	ws := &mcpio.WatchState{}
+	svc, err := NewService(Config{Root: root, EmbeddingsEnabled: true, WatchState: ws})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc.Stop()
+
+	// Start publishes watching state for status reporting.
+	if watching, _ := ws.Get(); !watching {
+		t.Error("expected WatchState to report watching after Start")
+	}
+
+	if symbolExists(t, root, "Goodbye") {
+		t.Fatal("Goodbye should not exist before the edit")
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n\nfunc Goodbye() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(8 * time.Second)
+	for {
+		if symbolExists(t, root, "Goodbye") {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out: Service did not re-index the edit")
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+}
+
+func TestServiceRepairFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, false)
+
+	// Idle debounce so only RepairFiles can refresh, not the watcher.
+	svc, err := NewService(Config{Root: root, DebounceMs: 10 * 60 * 1000})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc.Stop()
+
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n\nfunc Goodbye() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.RepairFiles(context.Background(), []string{"main.go"}); err != nil {
+		t.Fatalf("RepairFiles: %v", err)
+	}
+	if !symbolExists(t, root, "Goodbye") {
+		t.Error("RepairFiles should have re-indexed the edited file")
+	}
+
+	// Empty path set is a no-op.
+	if err := svc.RepairFiles(context.Background(), nil); err != nil {
+		t.Errorf("RepairFiles(nil) should be a no-op, got %v", err)
+	}
+}
+
+func TestServiceRepairFilesReadOnlyNoop(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, false)
+
+	// Pre-hold the lock with this live process → read-only service.
+	if err := os.WriteFile(filepath.Join(root, ".sense", lockFileName),
+		[]byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := NewService(Config{Root: root})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc.Stop()
+	if svc.Writing() {
+		t.Fatal("service should be read-only")
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n\nfunc Goodbye() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RepairFiles(context.Background(), []string{"main.go"}); err != nil {
+		t.Fatalf("RepairFiles: %v", err)
+	}
+	if symbolExists(t, root, "Goodbye") {
+		t.Error("read-only service must not repair")
+	}
+}
+
+func TestServiceRepairAfterStopIsSafe(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, false)
+
+	svc, err := NewService(Config{Root: root, DebounceMs: 10 * 60 * 1000})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	svc.Stop()
+
+	// A repair that races (or follows) shutdown must not write through the
+	// closed adapter — it returns nil instead of panicking.
+	if err := svc.RepairFiles(context.Background(), []string{"main.go"}); err != nil {
+		t.Errorf("RepairFiles after Stop should be a safe no-op, got %v", err)
+	}
+}
+
+func TestServiceStartIdempotent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, false)
+
+	svc, err := NewService(Config{Root: root})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Stop()
+
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	// Second Start is a no-op and must not error or start a second watcher.
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+}
+
+func TestServiceStopWithoutStart(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, false)
+
+	svc, err := NewService(Config{Root: root})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	// Stop before Start must release the adapter without panicking, and be
+	// safe to call again.
+	svc.Stop()
+	svc.Stop()
+}
+
+func TestServiceNewMissingIndex(t *testing.T) {
+	// A root with no .sense directory: opening the index db fails because
+	// its parent directory does not exist.
+	root := t.TempDir()
+	_, err := NewService(Config{Root: root})
+	if err == nil {
+		t.Fatal("expected NewService to fail when .sense/index.db cannot be opened")
+	}
+}
+
+func TestServiceNewEmptyRootDefaults(t *testing.T) {
+	// Empty Root defaults to the working directory. The package test
+	// directory has no .sense, so the open fails — but the default-root
+	// branch is exercised.
+	if _, err := NewService(Config{Root: ""}); err == nil {
+		t.Fatal("expected NewService to fail (no .sense in working dir)")
+	}
+}
+
+func TestServiceNewBadConfig(t *testing.T) {
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(senseDir, "config.yml"),
+		[]byte("ignore: [unterminated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewService(Config{Root: root}); err == nil {
+		t.Fatal("expected NewService to fail on malformed config.yml")
+	}
+}
+
+func TestServiceStartDegradesWhenLockCheckFails(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, false)
+
+	svc, err := NewService(Config{Root: root})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Stop()
+
+	// Remove the repo so the lock cannot be created. Start must not crash
+	// the host: it degrades to read-only (serves queries, no writer).
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("Start should degrade, not error: %v", err)
+	}
+	if svc.Writing() {
+		t.Error("service should be read-only when the lock cannot be acquired")
+	}
+}

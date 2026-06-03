@@ -1,4 +1,4 @@
-package watch
+package freshen
 
 import (
 	"context"
@@ -9,20 +9,6 @@ import (
 
 	"github.com/luuuc/sense/internal/ignore"
 )
-
-
-func TestRunOptionsDefaults(t *testing.T) {
-	var opts RunOptions
-	if opts.Root != "" {
-		t.Error("RunOptions.Root zero value should be empty")
-	}
-	if opts.EmbeddingsEnabled {
-		t.Error("RunOptions.EmbeddingsEnabled zero value should be false")
-	}
-	if opts.MCP {
-		t.Error("RunOptions.MCP zero value should be false")
-	}
-}
 
 func TestWatcherAddDirThenWrite(t *testing.T) {
 	dir := t.TempDir()
