@@ -96,156 +96,27 @@ type Result struct {
 // summary and any fatal error. Per-file parse/extract errors are
 // non-fatal: a warning is logged, the scan continues, and the result's
 // Warnings counter is incremented.
-//
-//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func Run(ctx context.Context, opts Options) (*Result, error) {
-	root := opts.Root
-	if root == "" {
-		root = "."
-	}
-	senseDir := opts.Sense
-	if senseDir == "" {
-		if env := os.Getenv("SENSE_DIR"); env != "" {
-			senseDir = env
-		} else {
-			senseDir = filepath.Join(root, ".sense")
-		}
-	}
-	out := opts.Output
-	if out == nil {
-		out = os.Stderr
-	}
-	warn := opts.Warnings
-	if warn == nil {
-		warn = os.Stderr
-	}
-
-	absRoot, _ := filepath.Abs(root)
-	if opts.Embed {
-		_, _ = fmt.Fprintf(out, "Indexing %s (with embeddings)...\n", absRoot)
-	} else {
-		_, _ = fmt.Fprintf(out, "Indexing %s...\n", absRoot)
-	}
-
-	cfg, err := config.Load(root)
+	h, idx, senseDir, firstRun, err := setupScan(ctx, opts)
 	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	}
-
-	if env := os.Getenv("SENSE_MAX_FILE_SIZE"); env != "" {
-		if v, err := strconv.Atoi(env); err == nil && v > 0 {
-			cfg.Scan.MaxFileSizeKB = v
-		}
-	}
-
-	matcher, err := ignore.Build(root, cfg.Ignore)
-	if err != nil {
-		return nil, fmt.Errorf("build ignore matcher: %w", err)
-	}
-
-	_, senseDirErr := os.Stat(senseDir)
-	firstRun := os.IsNotExist(senseDirErr)
-
-	if err := os.MkdirAll(senseDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create sense dir: %w", err)
-	}
-
-	if addSenseToGitignore(root) {
-		_, _ = fmt.Fprintf(out, "added .sense/ to .gitignore\n")
-	}
-
-	dbPath := filepath.Join(senseDir, "index.db")
-	idx, err := sqlite.Open(ctx, dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open index: %w", err)
+		return nil, err
 	}
 	defer func() { _ = idx.Close() }()
-
-	if idx.Rebuilt {
-		_, _ = fmt.Fprintf(out, "schema version mismatch — rebuilding index from source\n")
-	}
-	if idx.FTSMigrated {
-		_, _ = fmt.Fprintf(out, "migrated fts index — keyword search will repopulate during this scan\n")
-	}
-
-	// --rebuild drops the derived tables (preserving lifetime metrics) before
-	// the walk, so the emptied sense_files forces every file to re-parse and
-	// re-resolve even when its hash is unchanged. Skipped when Open already
-	// rebuilt for a schema mismatch — that path left the same empty state.
-	if opts.Rebuild && !idx.Rebuilt {
-		if err := idx.Rebuild(ctx); err != nil {
-			return nil, fmt.Errorf("rebuild index: %w", err)
-		}
-		_, _ = fmt.Fprintf(out, "rebuilding index from source (lifetime metrics preserved)\n")
-	}
-
-	prog := newProgress(out, opts.Quiet)
-	wc := newWarningCollector()
-
-	h := &harness{
-		ctx:            ctx,
-		idx:            idx,
-		out:            out,
-		warn:           warn,
-		root:           root,
-		progress:       prog,
-		collector:      wc,
-		parsers:        map[string]*sitter.Parser{},
-		matcher:        matcher,
-		defaultMatcher: ignore.New(ignore.DefaultPatterns()...),
-		maxFileSizeKB:  cfg.Scan.MaxFileSizeKB,
-		seenPaths:      map[string]bool{},
-		newEmbedder:    defaultEmbedderFactory,
-	}
 	defer h.closeParsers()
 
-	prog.start()
-	defer prog.stop()
+	h.progress.start()
+	defer h.progress.stop()
 
 	start := time.Now()
 	var phases PhaseTiming
 
 	t0 := start
-	if err := h.walkTree(root); err != nil {
+	if err := h.walkTree(h.root); err != nil {
 		return nil, err
 	}
 	phases.Walk = time.Since(t0)
 
-	if fw := detectFrameworks(root); len(fw) > 0 {
-		if err := idx.WriteMeta(ctx, "frameworks", frameworksJSON(fw)); err != nil {
-			_, _ = fmt.Fprintf(warn, "warn: write frameworks meta: %v\n", err)
-		}
-	} else {
-		_ = idx.DeleteMeta(ctx, "frameworks")
-	}
-
-	// Each language is an independent sense_meta key, so map-iteration order is
-	// irrelevant — no write depends on another.
-	for lang, set := range h.dispatchNames {
-		warnMetaWrite(warn, "dispatch-names:"+lang, writeDispatchNames(ctx, idx, lang, set))
-	}
-	for lang, set := range h.mentionedNames {
-		warnMetaWrite(warn, "mentioned-names:"+lang, writeMentionedNames(ctx, idx, lang, set))
-	}
-	warnMetaWrite(warn, "harvested-langs", writeHarvestedLangs(ctx, idx, h.harvestedLangs))
-	warnMetaWrite(warn, "cgo-exports", writeCgoExports(ctx, idx, h.cgoExports))
-	warnMetaWrite(warn, "rust-exports", writeRustExports(ctx, idx, h.rustExports))
-	warnMetaWrite(warn, "rust-test-symbols", writeRustTestSymbols(ctx, idx, h.rustTestSymbols))
-	warnMetaWrite(warn, "rust-trait-impl-methods", writeRustTraitImplMethods(ctx, idx, h.rustTraitMethods))
-	warnMetaWrite(warn, "rust-allow-dead", writeRustAllowDead(ctx, idx, h.rustAllowDead))
-	warnMetaWrite(warn, "ts-decorated", writeTSDecorated(ctx, idx, h.tsDecorated))
-	warnMetaWrite(warn, "ts-default-exports", writeTSDefaultExports(ctx, idx, h.tsDefaultExports))
-	warnMetaWrite(warn, "py-decorated", writePythonDecorated(ctx, idx, h.pyDecorated))
-	warnMetaWrite(warn, "py-routes", writePythonRoutes(ctx, idx, h.pyRoutes))
-	warnMetaWrite(warn, "py-django", writePythonDjango(ctx, idx, h.pyDjango))
-	warnMetaWrite(warn, "py-all-exports", writePythonAllExports(ctx, idx, h.pyAllExports))
-	warnMetaWrite(warn, "langspec-annotated", writeLangspecAnnotated(ctx, idx, h.lsAnnotated))
-	// A pre-feature index carried single bare union keys (no language suffix).
-	// The per-language reader globs `*:<lang>` and ignores them, but delete them
-	// on every full scan so an in-place upgrade leaves no stale meta to mislead a
-	// human inspecting sense_meta. Idempotent: absent keys are a no-op.
-	_ = idx.DeleteMeta(ctx, dispatchNamesMetaKey)
-	_ = idx.DeleteMeta(ctx, mentionedNamesMetaKey)
+	writeHarvestedMeta(ctx, idx, h)
 
 	t0 = time.Now()
 	if err := h.removeStaleFiles(); err != nil {
@@ -253,7 +124,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.RemoveStale = time.Since(t0)
 
-	prog.setPhase("Resolving edges...", 0)
+	h.progress.setPhase("Resolving edges...", 0)
 	t0 = time.Now()
 	if err := h.resolveAndWriteEdges(); err != nil {
 		return nil, err
@@ -266,7 +137,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.SatisfyInterfaces = time.Since(t0)
 
-	prog.setPhase("Associating tests...", 0)
+	h.progress.setPhase("Associating tests...", 0)
 	t0 = time.Now()
 	if err := h.associateTests(); err != nil {
 		return nil, err
@@ -285,75 +156,275 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	phases.Temporal = time.Since(t0)
 
-	var modelMigrated bool
-	if opts.EmbeddingsEnabled {
-		if changed, merr := h.migrateEmbeddingModel(); merr != nil {
-			_, _ = fmt.Fprintf(warn, "warn: embedding model migration: %v\n", merr)
-		} else if changed {
-			modelMigrated = true
-			_, _ = fmt.Fprintf(out, "embedding model changed to %s — re-embedding all symbols\n", embed.ModelID)
+	embeddingDebt, err := h.embedAndDefer(opts, idx, &phases)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := finalizeScan(ctx, idx, h, senseDir); err != nil {
+		return nil, err
+	}
+
+	elapsed := time.Since(start)
+	res := buildResult(h, embeddingDebt, elapsed, phases)
+	printScanSummary(h.out, opts, res, elapsed, phases)
+
+	if firstRun {
+		if _, serr := setup.Run(h.root, h.out, &setup.Options{CurrentOnly: true}); serr != nil {
+			_, _ = fmt.Fprintf(h.warn, "warn: AI tool setup failed: %v\n", serr)
 		}
 	}
 
-	if opts.EmbeddingsEnabled && opts.Embed {
-		t0 = time.Now()
-		if err := h.embedSymbols(); err != nil {
-			return nil, err
-		}
+	return res, nil
+}
 
-		// Backfill embeddings for symbols indexed in prior scans
-		// that were never embedded (changedFileIDs was empty).
-		if pending, perr := idx.EmbeddingDebtCount(ctx); perr == nil && pending > 0 {
-			n, eerr := EmbedPending(ctx, idx, root)
+// resolveScanPaths fills the root, sense dir, and output sinks from opts,
+// applying the documented defaults: cwd for the root, $SENSE_DIR or
+// <root>/.sense for the index, and os.Stderr for both sinks.
+func resolveScanPaths(opts Options) (root, senseDir string, out, warn io.Writer) {
+	root = opts.Root
+	if root == "" {
+		root = "."
+	}
+	senseDir = opts.Sense
+	if senseDir == "" {
+		if env := os.Getenv("SENSE_DIR"); env != "" {
+			senseDir = env
+		} else {
+			senseDir = filepath.Join(root, ".sense")
+		}
+	}
+	out = opts.Output
+	if out == nil {
+		out = os.Stderr
+	}
+	warn = opts.Warnings
+	if warn == nil {
+		warn = os.Stderr
+	}
+	return root, senseDir, out, warn
+}
+
+// setupScan resolves paths, loads config and the ignore matcher, ensures the
+// .sense directory and index exist (rebuilding when asked), and assembles the
+// per-scan harness. It returns the harness, the concrete index (the harness
+// holds it behind the indexStore seam, but Run needs the wider adapter surface
+// for the finalize/embed passes), the sense dir, and whether this is a first
+// run. On any setup error the index is already closed, so Run can defer Close
+// only on success.
+func setupScan(ctx context.Context, opts Options) (*harness, *sqlite.Adapter, string, bool, error) {
+	root, senseDir, out, warn := resolveScanPaths(opts)
+
+	absRoot, _ := filepath.Abs(root)
+	if opts.Embed {
+		_, _ = fmt.Fprintf(out, "Indexing %s (with embeddings)...\n", absRoot)
+	} else {
+		_, _ = fmt.Fprintf(out, "Indexing %s...\n", absRoot)
+	}
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		return nil, nil, "", false, fmt.Errorf("load config: %w", err)
+	}
+	if env := os.Getenv("SENSE_MAX_FILE_SIZE"); env != "" {
+		if v, err := strconv.Atoi(env); err == nil && v > 0 {
+			cfg.Scan.MaxFileSizeKB = v
+		}
+	}
+
+	matcher, err := ignore.Build(root, cfg.Ignore)
+	if err != nil {
+		return nil, nil, "", false, fmt.Errorf("build ignore matcher: %w", err)
+	}
+
+	_, senseDirErr := os.Stat(senseDir)
+	firstRun := os.IsNotExist(senseDirErr)
+
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		return nil, nil, "", false, fmt.Errorf("create sense dir: %w", err)
+	}
+	if addSenseToGitignore(root) {
+		_, _ = fmt.Fprintf(out, "added .sense/ to .gitignore\n")
+	}
+
+	idx, err := prepareIndex(ctx, opts, senseDir, out)
+	if err != nil {
+		return nil, nil, "", false, err
+	}
+
+	h := &harness{
+		ctx:            ctx,
+		idx:            idx,
+		out:            out,
+		warn:           warn,
+		root:           root,
+		progress:       newProgress(out, opts.Quiet),
+		collector:      newWarningCollector(),
+		parsers:        map[string]*sitter.Parser{},
+		matcher:        matcher,
+		defaultMatcher: ignore.New(ignore.DefaultPatterns()...),
+		maxFileSizeKB:  cfg.Scan.MaxFileSizeKB,
+		seenPaths:      map[string]bool{},
+		newEmbedder:    defaultEmbedderFactory,
+	}
+	return h, idx, senseDir, firstRun, nil
+}
+
+// prepareIndex opens (or creates) the index, reports any schema rebuild or FTS
+// migration the open triggered, and applies an explicit --rebuild. It closes the
+// index itself if --rebuild fails, so a setup error never leaks the handle.
+func prepareIndex(ctx context.Context, opts Options, senseDir string, out io.Writer) (*sqlite.Adapter, error) {
+	idx, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		return nil, fmt.Errorf("open index: %w", err)
+	}
+
+	if idx.Rebuilt {
+		_, _ = fmt.Fprintf(out, "schema version mismatch — rebuilding index from source\n")
+	}
+	if idx.FTSMigrated {
+		_, _ = fmt.Fprintf(out, "migrated fts index — keyword search will repopulate during this scan\n")
+	}
+
+	// --rebuild drops the derived tables (preserving lifetime metrics) before
+	// the walk, so the emptied sense_files forces every file to re-parse and
+	// re-resolve even when its hash is unchanged. Skipped when Open already
+	// rebuilt for a schema mismatch — that path left the same empty state.
+	if opts.Rebuild && !idx.Rebuilt {
+		if err := idx.Rebuild(ctx); err != nil {
+			_ = idx.Close()
+			return nil, fmt.Errorf("rebuild index: %w", err)
+		}
+		_, _ = fmt.Fprintf(out, "rebuilding index from source (lifetime metrics preserved)\n")
+	}
+	return idx, nil
+}
+
+// writeHarvestedMeta persists every per-language and flat harvested-name set the
+// walk accumulated into sense_meta, plus the detected frameworks. Each key is
+// independent, so a write failure warns and the rest proceed. The legacy bare
+// union keys (no language suffix) are deleted on every full scan so an in-place
+// upgrade leaves no stale meta to mislead a human inspecting sense_meta.
+func writeHarvestedMeta(ctx context.Context, idx *sqlite.Adapter, h *harness) {
+	if fw := detectFrameworks(h.root); len(fw) > 0 {
+		if err := idx.WriteMeta(ctx, "frameworks", frameworksJSON(fw)); err != nil {
+			_, _ = fmt.Fprintf(h.warn, "warn: write frameworks meta: %v\n", err)
+		}
+	} else {
+		_ = idx.DeleteMeta(ctx, "frameworks")
+	}
+
+	// Each language is an independent sense_meta key, so map-iteration order is
+	// irrelevant — no write depends on another.
+	for lang, set := range h.dispatchNames {
+		warnMetaWrite(h.warn, "dispatch-names:"+lang, writeDispatchNames(ctx, idx, lang, set))
+	}
+	for lang, set := range h.mentionedNames {
+		warnMetaWrite(h.warn, "mentioned-names:"+lang, writeMentionedNames(ctx, idx, lang, set))
+	}
+	warnMetaWrite(h.warn, "harvested-langs", writeHarvestedLangs(ctx, idx, h.harvestedLangs))
+	warnMetaWrite(h.warn, "cgo-exports", writeCgoExports(ctx, idx, h.cgoExports))
+	warnMetaWrite(h.warn, "rust-exports", writeRustExports(ctx, idx, h.rustExports))
+	warnMetaWrite(h.warn, "rust-test-symbols", writeRustTestSymbols(ctx, idx, h.rustTestSymbols))
+	warnMetaWrite(h.warn, "rust-trait-impl-methods", writeRustTraitImplMethods(ctx, idx, h.rustTraitMethods))
+	warnMetaWrite(h.warn, "rust-allow-dead", writeRustAllowDead(ctx, idx, h.rustAllowDead))
+	warnMetaWrite(h.warn, "ts-decorated", writeTSDecorated(ctx, idx, h.tsDecorated))
+	warnMetaWrite(h.warn, "ts-default-exports", writeTSDefaultExports(ctx, idx, h.tsDefaultExports))
+	warnMetaWrite(h.warn, "py-decorated", writePythonDecorated(ctx, idx, h.pyDecorated))
+	warnMetaWrite(h.warn, "py-routes", writePythonRoutes(ctx, idx, h.pyRoutes))
+	warnMetaWrite(h.warn, "py-django", writePythonDjango(ctx, idx, h.pyDjango))
+	warnMetaWrite(h.warn, "py-all-exports", writePythonAllExports(ctx, idx, h.pyAllExports))
+	warnMetaWrite(h.warn, "langspec-annotated", writeLangspecAnnotated(ctx, idx, h.lsAnnotated))
+	_ = idx.DeleteMeta(ctx, dispatchNamesMetaKey)
+	_ = idx.DeleteMeta(ctx, mentionedNamesMetaKey)
+}
+
+// embedAndDefer runs the embedding stage. It first migrates the stored model if
+// the binary's model changed, then either embeds synchronously (opts.Embed —
+// including a backfill of symbols left unembedded by earlier scans, and clearing
+// the watermark) or, when embeddings are deferred, writes a watermark for the
+// MCP server and returns the deferred-embedding debt. Returns 0 debt when
+// embeddings ran synchronously or are disabled.
+func (h *harness) embedAndDefer(opts Options, idx *sqlite.Adapter, phases *PhaseTiming) (int, error) {
+	if !opts.EmbeddingsEnabled {
+		return 0, nil
+	}
+
+	var modelMigrated bool
+	if changed, merr := h.migrateEmbeddingModel(); merr != nil {
+		_, _ = fmt.Fprintf(h.warn, "warn: embedding model migration: %v\n", merr)
+	} else if changed {
+		modelMigrated = true
+		_, _ = fmt.Fprintf(h.out, "embedding model changed to %s — re-embedding all symbols\n", embed.ModelID)
+	}
+
+	if opts.Embed {
+		t0 := time.Now()
+		if err := h.embedSymbols(); err != nil {
+			return 0, err
+		}
+		// Backfill embeddings for symbols indexed in prior scans that were
+		// never embedded (changedFileIDs was empty).
+		if pending, perr := idx.EmbeddingDebtCount(h.ctx); perr == nil && pending > 0 {
+			n, eerr := EmbedPending(h.ctx, idx, h.root)
 			if eerr != nil {
-				return nil, fmt.Errorf("embed pending symbols: %w", eerr)
+				return 0, fmt.Errorf("embed pending symbols: %w", eerr)
 			}
 			h.embedded += n
 		}
 		phases.Embed = time.Since(t0)
-
-		if derr := idx.DeleteMeta(ctx, "embedding_watermark"); derr != nil {
-			_, _ = fmt.Fprintf(warn, "warn: clear embedding watermark: %v\n", derr)
+		if derr := idx.DeleteMeta(h.ctx, "embedding_watermark"); derr != nil {
+			_, _ = fmt.Fprintf(h.warn, "warn: clear embedding watermark: %v\n", derr)
 		}
+		return 0, nil
 	}
 
-	var embeddingDebt int
-	if opts.EmbeddingsEnabled && !opts.Embed && (h.changed > 0 || modelMigrated) {
+	if h.changed > 0 || modelMigrated {
 		ts := time.Now().UTC().Format(time.RFC3339)
-		if err := idx.WriteMeta(ctx, "embedding_watermark", ts); err != nil {
-			_, _ = fmt.Fprintf(warn, "warn: write embedding watermark: %v\n", err)
+		if err := idx.WriteMeta(h.ctx, "embedding_watermark", ts); err != nil {
+			_, _ = fmt.Fprintf(h.warn, "warn: write embedding watermark: %v\n", err)
 		}
-		if debt, derr := idx.EmbeddingDebtCount(ctx); derr == nil {
-			embeddingDebt = debt
+		if debt, derr := idx.EmbeddingDebtCount(h.ctx); derr == nil {
+			return debt, nil
 		}
 	}
+	return 0, nil
+}
 
+// finalizeScan runs the post-derivation bookkeeping: recompute and store the
+// repo profile, regenerate the summary, stamp the last-scan time, stamp the
+// schema version, and flush the warning log. Only the schema stamp is fatal;
+// everything else warns and continues.
+func finalizeScan(ctx context.Context, idx *sqlite.Adapter, h *harness, senseDir string) error {
 	if prof, perr := profile.Compute(ctx, idx.DB()); perr == nil {
 		if serr := profile.Store(ctx, idx.DB(), prof); serr != nil {
-			_, _ = fmt.Fprintf(warn, "warn: store profile: %v\n", serr)
+			_, _ = fmt.Fprintf(h.warn, "warn: store profile: %v\n", serr)
 		}
 	}
 
-	if serr := summary.Generate(ctx, idx, senseDir, root); serr != nil {
-		_, _ = fmt.Fprintf(warn, "warn: generate summary: %v\n", serr)
+	if serr := summary.Generate(ctx, idx, senseDir, h.root); serr != nil {
+		_, _ = fmt.Fprintf(h.warn, "warn: generate summary: %v\n", serr)
 	}
 
 	if err := idx.WriteMeta(ctx, "last_scan_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
-		_, _ = fmt.Fprintf(warn, "warn: write last_scan_at: %v\n", err)
+		_, _ = fmt.Fprintf(h.warn, "warn: write last_scan_at: %v\n", err)
 	}
 
 	if err := idx.StampSchemaVersion(ctx); err != nil {
-		return nil, err
+		return err
 	}
-	prog.stop()
+	h.progress.stop()
 
-	if err := wc.writeLog(senseDir); err != nil {
-		_, _ = fmt.Fprintf(warn, "warn: write warnings log: %v\n", err)
+	if err := h.collector.writeLog(senseDir); err != nil {
+		_, _ = fmt.Fprintf(h.warn, "warn: write warnings log: %v\n", err)
 	}
+	return nil
+}
 
-	elapsed := time.Since(start)
-
-	res := &Result{
+// buildResult assembles the run summary from the harness tallies, the deferred
+// embedding debt, the elapsed time, and the per-phase timings.
+func buildResult(h *harness, embeddingDebt int, elapsed time.Duration, phases PhaseTiming) *Result {
+	return &Result{
 		Files:          h.files,
 		Indexed:        h.indexed,
 		Changed:        h.changed,
@@ -365,12 +436,17 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		EmbeddingDebt:  embeddingDebt,
 		Unresolved:     h.unresolved,
 		Ambiguous:      h.ambiguous,
-		Warnings:       wc.count(),
+		Warnings:       h.collector.count(),
 		DefaultIgnored: h.defaultIgnored,
 		Duration:       elapsed,
 		Phases:         phases,
 	}
+}
 
+// printScanSummary writes the human-facing one-line summary and its conditional
+// follow-ups (edges, default-ignored dirs, warnings, deferred embeddings, and
+// the per-phase breakdown on runs over a second) to out.
+func printScanSummary(out io.Writer, opts Options, res *Result, elapsed time.Duration, phases PhaseTiming) {
 	_, _ = fmt.Fprintf(out, "scanned %d files (%d indexed, %d changed, %d skipped) in %s\n",
 		res.Files, res.Indexed, res.Changed, res.Skipped, elapsed)
 	if res.Edges > 0 || res.Unresolved > 0 {
@@ -384,20 +460,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if res.Warnings > 0 && !opts.Quiet {
 		_, _ = fmt.Fprintf(out, "%d warnings — see .sense/warnings.log\n", res.Warnings)
 	}
-	if embeddingDebt > 0 {
-		_, _ = fmt.Fprintf(out, "graph, blast, and conventions ready — embeddings deferred (%d symbols)\n", embeddingDebt)
+	if res.EmbeddingDebt > 0 {
+		_, _ = fmt.Fprintf(out, "graph, blast, and conventions ready — embeddings deferred (%d symbols)\n", res.EmbeddingDebt)
 	}
 	if elapsed > time.Second {
 		printPhaseBreakdown(out, elapsed, phases)
 	}
-
-	if firstRun {
-		if _, serr := setup.Run(root, out, &setup.Options{CurrentOnly: true}); serr != nil {
-			_, _ = fmt.Fprintf(warn, "warn: AI tool setup failed: %v\n", serr)
-		}
-	}
-
-	return res, nil
 }
 
 // ---- harness ----
