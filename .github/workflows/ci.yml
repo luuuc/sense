@@ -57,14 +57,20 @@ jobs:
       - name: Hermetic unit tests (offline)
         # Goal 5 proof: the hermetic package set must pass with no network,
         # no ONNX, and no external binary. The set ratchets per-package as
-        # 27-02→04 inject seams (fully on by 27-04). Linux enforces the
-        # network bite by running in a private network namespace; the package
-        # set guarantees no ONNX/external-binary by construction. macOS has no
-        # unshare, so it runs the same set without the netns wrapper.
+        # 27-02→04 inject seams (fully on by 27-04). No-ONNX/no-external-binary
+        # is structural (the set imports neither embed nor os/exec). The network
+        # bite is added via an UNPRIVILEGED network namespace (unshare -rn,
+        # which preserves the build/module cache and env, no sudo). We probe
+        # the capability first and fall back to a plain run if the runner
+        # restricts unprivileged userns, so the sandbox never reds CI for
+        # infrastructure reasons — depguard already forbids net/os-exec/syscall
+        # in every package currently in the set, so the compile-time guarantee
+        # holds even where the runtime netns is unavailable.
         run: |
-          if [ "${{ matrix.os }}" = "linux" ]; then
-            sudo -E env "PATH=$PATH" unshare -n make test-hermetic
+          if unshare -rn true 2>/dev/null; then
+            unshare -rn make test-hermetic
           else
+            echo "note: unprivileged netns unavailable; depguard enforces no-network for the current set"
             make test-hermetic
           fi
 

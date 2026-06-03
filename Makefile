@@ -4,8 +4,10 @@ VERSION ?= dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 LDFLAGS := -ldflags="-s -w -X 'github.com/luuuc/sense/internal/version.Version=$(VERSION)'"
 
-# Pinned so the gate definition (v2 formatters: block, complexity thresholds)
-# does not float with upstream releases. Keep in sync with .github/workflows/ci.yml.
+# Single source of the golangci-lint version: CI runs `make lint`, so it
+# inherits this pin. Pinned (not "latest") so the gate definition — the v2
+# formatters: block and the gocyclo/gocognit thresholds — does not float with
+# upstream releases.
 GOLANGCI_VERSION ?= v2.12.2
 ensure-golangci = command -v golangci-lint >/dev/null 2>&1 || \
 	(echo "Installing golangci-lint $(GOLANGCI_VERSION)..." && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION))
@@ -23,8 +25,13 @@ test:
 # with no network, no ONNX, and no external binary. The set RATCHETS — it
 # grows per-package as the testability arc (27-02→04) injects seams, fully
 # on by 27-04. A package only joins once it can be unit-tested offline.
-# CI runs this under a private network namespace on Linux (the network bite);
+# CI runs this under an unprivileged network namespace (the network bite);
 # the set guarantees no ONNX/external-binary by construction (no embed/exec deps).
+#
+# This set currently equals the depguard `pure-core` list in .golangci.yml on
+# purpose — those packages are both effect-free (depguard) and offline-testable
+# (here). Grow the two together; they will diverge once a package that is
+# offline-testable but not import-clean joins the hermetic set.
 HERMETIC_PKGS := \
 	./internal/extract/... \
 	./internal/blast/... \
@@ -45,6 +52,8 @@ test-hermetic:
 COVER_FLOOR ?= 91
 cover:
 	go test -race -count=1 -coverprofile=coverage.txt -coverpkg=./... ./...
+	@# Parse depends on `go tool cover`'s total line being last and %-suffixed.
+	@# If that format ever changes, t becomes 0 and the gate fails closed (safe).
 	@total=$$(go tool cover -func=coverage.txt | awk 'END {gsub(/%/,"",$$NF); print $$NF}'); \
 	awk -v t="$$total" -v f="$(COVER_FLOOR)" 'BEGIN { \
 		printf "total coverage: %s%% (floor: %s%%)\n", t, f; \
