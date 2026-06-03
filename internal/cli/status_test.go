@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luuuc/sense/internal/freshen"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -180,5 +181,44 @@ func TestEmbeddingsEnabled(t *testing.T) {
 				t.Errorf("EmbeddingsEnabled() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestComputeCLIFreshnessWatchingAndPending(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	fid, err := adapter.WriteFile(ctx, &model.File{Path: "main.go", Language: "go", Hash: "h", Symbols: 1, IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "Main", Qualified: "main.Main", Kind: "function", LineStart: 1, LineEnd: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a running `sense mcp` watcher holding the single-writer lock.
+	release, ok := freshen.AcquireWriterLock(dir)
+	if !ok {
+		t.Fatal("test setup: should acquire writer lock")
+	}
+	defer release()
+
+	f := computeCLIFreshness(ctx, adapter.DB(), dir)
+	if f.Watching == nil || !*f.Watching {
+		t.Error("expected Watching=true when a watcher holds the lock")
+	}
+	if f.Pending == nil {
+		t.Error("expected Pending to be reported")
+	} else if *f.Pending != 1 {
+		t.Errorf("pending = %d, want 1 (one unembedded symbol)", *f.Pending)
 	}
 }

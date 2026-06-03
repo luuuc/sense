@@ -14,6 +14,7 @@ import (
 	"github.com/luuuc/sense/internal/config"
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
+	"github.com/luuuc/sense/internal/freshen"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/profile"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -204,7 +205,6 @@ func queryLangBreakdown(ctx context.Context, db *sql.DB) map[string]mcpio.Status
 	return out
 }
 
-
 func computeCLIFreshness(ctx context.Context, db *sql.DB, dir string) mcpio.Freshness {
 	var f mcpio.Freshness
 
@@ -244,7 +244,32 @@ func computeCLIFreshness(ctx context.Context, db *sql.DB, dir string) mcpio.Fres
 	staleCount := countStaleFilesCLI(ctx, db, dir)
 	f.StaleFilesSeen = &staleCount
 
+	// Live watcher state: a one-shot `sense status` has no watcher of its
+	// own, but it can tell whether a `sense mcp` server is watching this
+	// repo (it holds the single-writer lock) and how many symbols are
+	// pending embeddings.
+	if freshen.IsWriterLocked(dir) {
+		watching := true
+		f.Watching = &watching
+		if pending := embeddingDebtCLI(ctx, db); pending >= 0 {
+			f.Pending = &pending
+		}
+	}
+
 	return f
+}
+
+// embeddingDebtCLI counts symbols eligible for embeddings that have none
+// yet. Returns -1 if the count cannot be determined.
+func embeddingDebtCLI(ctx context.Context, db *sql.DB) int {
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sense_symbols s
+		 LEFT JOIN sense_embeddings e ON e.symbol_id = s.id
+		 WHERE e.symbol_id IS NULL`).Scan(&n); err != nil {
+		return -1
+	}
+	return n
 }
 
 func abs(n int64) int64 {
@@ -378,6 +403,9 @@ func renderStatusHuman(cio IO, resp mcpio.StatusResponse, health healthInfo) {
 	}
 	if resp.Freshness.Watching != nil && *resp.Freshness.Watching {
 		_, _ = fmt.Fprintf(w, "  Watching:    yes\n")
+	}
+	if resp.Freshness.Pending != nil && *resp.Freshness.Pending > 0 {
+		_, _ = fmt.Fprintf(w, "  Pending:     %d symbols awaiting embeddings\n", *resp.Freshness.Pending)
 	}
 
 	if resp.Version != nil {
