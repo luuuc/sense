@@ -139,8 +139,8 @@ func (h *handlers) buildGraphResponse(ctx context.Context, match cli.Match, p gr
 		return mcpio.GraphResponse{}, nil, fmt.Errorf("sense_graph: load file paths: %w", err)
 	}
 	lookup := func(id int64) (string, bool) {
-		p, ok := pathByID[id]
-		return p, ok
+		path, ok := pathByID[id]
+		return path, ok
 	}
 
 	buildReq := mcpio.BuildGraphRequest{
