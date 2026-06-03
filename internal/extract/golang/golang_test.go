@@ -14,8 +14,11 @@ type recorder struct {
 	edges   []extract.EmittedEdge
 }
 
-func (r *recorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
-func (r *recorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
+func (r *recorder) Symbol(s extract.EmittedSymbol) error {
+	r.symbols = append(r.symbols, s)
+	return nil
+}
+func (r *recorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
 
 // counter counts emitted symbols and edges.
 type counter struct {
@@ -513,7 +516,7 @@ func TestConstructorType(t *testing.T) {
 		{"NewOrder", "Order"},
 		{"newOrder", "Order"},
 		{"NewA", "A"},
-		{"New", ""},  // too short
+		{"New", ""},   // too short
 		{"Newer", ""}, // no uppercase after "New"
 		{"new", ""},   // too short
 		{"abc", ""},
@@ -1017,7 +1020,6 @@ const MaxSize = 1024
 		t.Error("expected error on constant symbol emit")
 	}
 }
-
 
 func TestReceiverTypeQualifiedType(t *testing.T) {
 	r := parse(t, `package svc

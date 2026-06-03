@@ -26,7 +26,7 @@
 //     text — `foo`, `obj.bar`, `a.b.c` — as written, with one rewrite:
 //     a leading `this.` is stripped so `this.helper()` resolves against
 //     the enclosing class's members. Tagged template invocations
-//     (`` tag`literal` ``) parse as `call_expression` in tree-sitter and
+//     (“ tag`literal` “) parse as `call_expression` in tree-sitter and
 //     are emitted as regular calls. `new X()` is a `new_expression`,
 //     not a call_expression; constructors aren't emitted in Tier-Basic.
 //     Subscript / dynamic callees (`obj[k]()`, `f()()`) are skipped.
@@ -36,9 +36,10 @@
 //     tags emit the full surface text (`<Form.Input>` → calls Form.Input).
 //
 // Qualified-name rules (per 05-languages.md, "pkg.module.Class.method"):
-//   Class/Interface/Enum/Type: Name or Outer.Inner
-//   Method:                    Class.method
-//   Function / Const:          Name (no further qualification in Tier-Basic)
+//
+//	Class/Interface/Enum/Type: Name or Outer.Inner
+//	Method:                    Class.method
+//	Function / Const:          Name (no further qualification in Tier-Basic)
 //
 // What Tier-Basic skips:
 //   - class fields (public_field_definition)
@@ -85,9 +86,9 @@ func (TSX) Extract(tree *sitter.Tree, source []byte, filePath string, emit extra
 type JavaScript struct{}
 
 func (JavaScript) Grammar() *sitter.Language { return grammars.JavaScript() }
-func (JavaScript) Language() string           { return "javascript" }
-func (JavaScript) Extensions() []string       { return []string{".js", ".jsx", ".mjs", ".cjs"} }
-func (JavaScript) Tier() extract.Tier         { return extract.TierBasic }
+func (JavaScript) Language() string          { return "javascript" }
+func (JavaScript) Extensions() []string      { return []string{".js", ".jsx", ".mjs", ".cjs"} }
+func (JavaScript) Tier() extract.Tier        { return extract.TierBasic }
 func (JavaScript) Extract(tree *sitter.Tree, source []byte, filePath string, emit extract.Emitter) error {
 	return extractAll(tree, source, filePath, emit)
 }
@@ -139,6 +140,8 @@ type walker struct {
 // collectModuleConstants pre-scans top-level const declarations for
 // value-type constants (not arrow functions or class expressions) so
 // function bodies can emit references edges.
+//
+//nolint:gocyclo,gocognit // 27-11: retired by the tsjs/rust extractor split
 func (w *walker) collectModuleConstants(root *sitter.Node) {
 	if root == nil {
 		return
@@ -219,6 +222,7 @@ func (w *walker) emitConstRefs(body *sitter.Node, sourceQualified string) error 
 	})
 }
 
+//nolint:gocyclo // 27-11: retired by the tsjs/rust extractor split
 func (w *walker) walk(n *sitter.Node, scope []string) error {
 	if n == nil {
 		return nil
@@ -328,9 +332,9 @@ func (w *walker) emitClassWithBody(n *sitter.Node, name string, scope []string) 
 //
 // The two grammars shape this differently:
 //
-//   TypeScript: class_heritage → extends_clause (value: identifier)
-//               class_heritage → implements_clause (type_identifier*)
-//   JavaScript: class_heritage → identifier (direct child, no clause)
+//	TypeScript: class_heritage → extends_clause (value: identifier)
+//	            class_heritage → implements_clause (type_identifier*)
+//	JavaScript: class_heritage → identifier (direct child, no clause)
 //
 // We handle both: clause children are walked with emitHeritageTargets,
 // bare identifiers are converted into a one-target edge in place.
@@ -1045,11 +1049,11 @@ func (w *walker) handleStimulusClass(n *sitter.Node, _ []string) error {
 	qualified := w.stimulusName
 
 	if err := w.emit.Symbol(extract.EmittedSymbol{
-		Name:       qualified,
-		Qualified:  qualified,
-		Kind:       model.KindClass,
-		LineStart:  extract.Line(n.StartPosition()),
-		LineEnd:    extract.Line(n.EndPosition()),
+		Name:      qualified,
+		Qualified: qualified,
+		Kind:      model.KindClass,
+		LineStart: extract.Line(n.StartPosition()),
+		LineEnd:   extract.Line(n.EndPosition()),
 	}); err != nil {
 		return err
 	}
@@ -1146,7 +1150,6 @@ func extractStringArray(fieldDef *sitter.Node, source []byte) []string {
 	}
 	return result
 }
-
 
 // inferStimulusController derives a Stimulus controller qualified name from a
 // file path. Returns "" if the file doesn't match the Stimulus convention.

@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
-	_ "modernc.org/sqlite"
 )
 
 // openTestDB creates a fresh in-tempdir database for a test.

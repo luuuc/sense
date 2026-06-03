@@ -19,8 +19,11 @@ type recorder struct {
 	edges   []extract.EmittedEdge
 }
 
-func (r *recorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
-func (r *recorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
+func (r *recorder) Symbol(s extract.EmittedSymbol) error {
+	r.symbols = append(r.symbols, s)
+	return nil
+}
+func (r *recorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
 
 func TestSmokeExtract(t *testing.T) {
 	ex := Extractor{}
@@ -569,7 +572,7 @@ func TestExtractI18nKeys(t *testing.T) {
 <span><%= I18n.t("users.greeting") %></span>`, "app/views/users/show.html.erb")
 
 	for _, want := range []string{
-		"i18n:users.show.title",     // lazy key expanded against the view scope
+		"i18n:users.show.title", // lazy key expanded against the view scope
 		"i18n:shared.footer.copyright",
 		"i18n:users.greeting",
 	} {

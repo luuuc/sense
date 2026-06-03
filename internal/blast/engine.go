@@ -199,6 +199,8 @@ type Result struct {
 // point to any reopening, so all must be seeds.
 //
 // For single-symbol queries, pass a one-element slice.
+//
+//nolint:gocyclo,gocognit // 27-07: retired by the storage/query split
 func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (Result, error) {
 	if len(symbolIDs) == 0 {
 		return Result{}, fmt.Errorf("blast: no symbol IDs provided")

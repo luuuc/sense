@@ -241,7 +241,7 @@ func scanTOMLValue(path, section, key string) string {
 			if strings.HasPrefix(trimmed, prefix) {
 				val := strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
 				val = strings.Trim(val, `"`)
-				val = strings.Trim(val, `'`)  
+				val = strings.Trim(val, `'`)
 				if len(val) > maxDescBytes {
 					val = truncateUTF8(val, maxDescBytes-3) + "..."
 				}

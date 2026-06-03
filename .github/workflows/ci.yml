@@ -48,8 +48,31 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Test
-        run: go test -race -count=1 -v -coverprofile=coverage.txt -coverpkg=./... ./...
+      - name: Test & coverage gate
+        # Single definition of "tests pass": the same `make cover` a contributor
+        # runs locally (go test -race -coverpkg=./... + a total-% floor). Remote
+        # CI can no longer disagree with `make ci` about what green means.
+        run: make cover
+
+      - name: Hermetic unit tests (offline)
+        # Goal 5 proof: the hermetic package set must pass with no network,
+        # no ONNX, and no external binary. The set ratchets per-package as
+        # 27-02→04 inject seams (fully on by 27-04). No-ONNX/no-external-binary
+        # is structural (the set imports neither embed nor os/exec). The network
+        # bite is added via an UNPRIVILEGED network namespace (unshare -rn,
+        # which preserves the build/module cache and env, no sudo). We probe
+        # the capability first and fall back to a plain run if the runner
+        # restricts unprivileged userns, so the sandbox never reds CI for
+        # infrastructure reasons — depguard already forbids net/os-exec/syscall
+        # in every package currently in the set, so the compile-time guarantee
+        # holds even where the runtime netns is unavailable.
+        run: |
+          if unshare -rn true 2>/dev/null; then
+            unshare -rn make test-hermetic
+          else
+            echo "note: unprivileged netns unavailable; depguard enforces no-network for the current set"
+            make test-hermetic
+          fi
 
       - name: Upload coverage
         if: matrix.os == 'linux'
@@ -62,14 +85,22 @@ jobs:
         run: make smoke
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
+        # Same `make lint` a contributor runs locally — golangci-lint is pinned
+        # in the Makefile (GOLANGCI_VERSION), so the v2 formatters: block and the
+        # gocyclo/gocognit thresholds are reproducible and cannot drift from CI.
+        run: make lint
 
   stdout-hygiene:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Complexity ledger is non-increasing
+        # The inline //nolint:gocyclo/gocognit ledger is tracked debt the
+        # 27-05→12 pitches retire. This fails if it grows past LEDGER_MAX —
+        # new complexity must be decomposed, not suppressed. Exit condition
+        # for cycle 27: LEDGER_MAX = 0 by 27-12.
+        run: make ledger
 
       - name: No bare fmt.Print in internal/ (except MCP transport)
         run: |

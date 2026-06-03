@@ -204,6 +204,8 @@ type labeledItems struct {
 // Lines are added in priority order (highest first). When a line
 // would exceed contextBudget, its items are truncated to fit. If
 // even one item won't fit, remaining lines are dropped.
+//
+//nolint:gocyclo // 27-07: retired by the storage/query split
 func formatSymbolContext(filePath string, sym symbolCtx, edges symbolEdges) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "File: %s\n", filePath)

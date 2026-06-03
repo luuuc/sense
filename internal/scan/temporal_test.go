@@ -94,7 +94,7 @@ func TestCountCoChanges(t *testing.T) {
 		{"pkg/a/file.go", "pkg/b/file.go", "pkg/c/file.go"},
 		{"pkg/a/file.go", "pkg/b/file.go"},
 		{"pkg/a/file.go", "pkg/a/other.go"}, // same directory — should not count
-		{"pkg/c/file.go", "untracked.go"},    // untracked not in indexed
+		{"pkg/c/file.go", "untracked.go"},   // untracked not in indexed
 	}
 
 	pairs, fileCounts := countCoChanges(commits, indexed)

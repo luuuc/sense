@@ -11,24 +11,39 @@ import (
 // harvestRecorder captures emitted symbols plus every optional harvest stream so
 // the harvest tests can assert on raw-byte extraction without the scan harness.
 type harvestRecorder struct {
-	symbols      []extract.EmittedSymbol
-	edges        []extract.EmittedEdge
-	mentions     []string
-	dispatch     []string
-	decorated    []string
-	routes       []string
-	django       []string
-	allExports   []string
+	symbols    []extract.EmittedSymbol
+	edges      []extract.EmittedEdge
+	mentions   []string
+	dispatch   []string
+	decorated  []string
+	routes     []string
+	django     []string
+	allExports []string
 }
 
-func (r *harvestRecorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
-func (r *harvestRecorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
-func (r *harvestRecorder) MentionName(n string) error           { r.mentions = append(r.mentions, n); return nil }
-func (r *harvestRecorder) DispatchName(n string) error          { r.dispatch = append(r.dispatch, n); return nil }
-func (r *harvestRecorder) PythonDecoratedName(n string) error   { r.decorated = append(r.decorated, n); return nil }
-func (r *harvestRecorder) PythonRouteName(n string) error       { r.routes = append(r.routes, n); return nil }
-func (r *harvestRecorder) PythonDjangoName(n string) error      { r.django = append(r.django, n); return nil }
-func (r *harvestRecorder) PythonAllExportName(n string) error   { r.allExports = append(r.allExports, n); return nil }
+func (r *harvestRecorder) Symbol(s extract.EmittedSymbol) error {
+	r.symbols = append(r.symbols, s)
+	return nil
+}
+func (r *harvestRecorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
+func (r *harvestRecorder) MentionName(n string) error       { r.mentions = append(r.mentions, n); return nil }
+func (r *harvestRecorder) DispatchName(n string) error {
+	r.dispatch = append(r.dispatch, n)
+	return nil
+}
+func (r *harvestRecorder) PythonDecoratedName(n string) error {
+	r.decorated = append(r.decorated, n)
+	return nil
+}
+func (r *harvestRecorder) PythonRouteName(n string) error { r.routes = append(r.routes, n); return nil }
+func (r *harvestRecorder) PythonDjangoName(n string) error {
+	r.django = append(r.django, n)
+	return nil
+}
+func (r *harvestRecorder) PythonAllExportName(n string) error {
+	r.allExports = append(r.allExports, n)
+	return nil
+}
 
 // extractHarvest parses src and returns the recorded output including harvests.
 func extractHarvest(t *testing.T, src string) *harvestRecorder {

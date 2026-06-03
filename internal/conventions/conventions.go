@@ -21,15 +21,15 @@ const minPrevalenceInstances = 5
 type Category string
 
 const (
-	CategoryInheritance  Category = "inheritance"
-	CategoryNaming       Category = "naming"
-	CategoryStructure    Category = "structure"
-	CategoryComposition  Category = "composition"
-	CategoryTesting      Category = "testing"
+	CategoryInheritance   Category = "inheritance"
+	CategoryNaming        Category = "naming"
+	CategoryStructure     Category = "structure"
+	CategoryComposition   Category = "composition"
+	CategoryTesting       Category = "testing"
 	CategoryDesignPattern Category = "design_pattern"
-	CategoryFramework    Category = "framework"
-	CategoryArchitecture Category = "architecture"
-	CategoryKeyTypes     Category = "key_types"
+	CategoryFramework     Category = "framework"
+	CategoryArchitecture  Category = "architecture"
+	CategoryKeyTypes      Category = "key_types"
 )
 
 type Example struct {
@@ -54,6 +54,7 @@ type Options struct {
 	MinStrength float64
 }
 
+//nolint:gocyclo // 27-08: retired by the conventions split
 func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, error) {
 	fileFilter, err := resolveFileFilter(ctx, db, opts.Domain)
 	if err != nil {
@@ -144,12 +145,12 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 }
 
 type symbolRow struct {
-	id       int64
-	fileID   int64
-	name     string
+	id        int64
+	fileID    int64
+	name      string
 	qualified string
-	kind     string
-	parentID *int64
+	kind      string
+	parentID  *int64
 }
 
 type edgeRow struct {
@@ -625,6 +626,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 	return out
 }
 
+//nolint:gocyclo,gocognit // 27-08: retired by the conventions split
 func detectTesting(_ []symbolRow, edges []edgeRow, filePathByID map[int64]string, symbolByID map[int64]symbolRow) []Convention {
 	// Detect test file naming conventions from files with "tests" edges
 	testFileIDs := map[int64]struct{}{}
@@ -1021,6 +1023,7 @@ func detectRailsCallbacks(symbols []symbolRow, _ []edgeRow, _ map[int64]symbolRo
 	}}
 }
 
+//nolint:gocyclo // 27-08: retired by the conventions split
 func detectScopes(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	classByID := map[int64]symbolRow{}
 	for _, s := range symbols {
@@ -1202,6 +1205,7 @@ func detectGoTypeAliases(symbols []symbolRow, _ []edgeRow, _ map[int64]symbolRow
 	}}
 }
 
+//nolint:gocyclo // 27-08: retired by the conventions split
 func detectGoMiddleware(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	routerMethods := map[string]bool{
 		"Use": true, "GET": true, "POST": true, "PUT": true, "DELETE": true,
@@ -1263,6 +1267,7 @@ func detectGoMiddleware(symbols []symbolRow, edges []edgeRow, symbolByID map[int
 	}}
 }
 
+//nolint:gocyclo // 27-08: retired by the conventions split
 func detectArchitectureLayers(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	symbolDir := map[int64]string{}
 	for _, s := range symbols {

@@ -198,7 +198,6 @@ func buildContext(count int, pattern, source string) string {
 	return sb.String()
 }
 
-
 func extractPattern(req preToolUseInput) string {
 	if req.Input.Pattern != "" {
 		return req.Input.Pattern

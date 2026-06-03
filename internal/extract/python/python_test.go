@@ -15,8 +15,11 @@ type recorder struct {
 	edges   []extract.EmittedEdge
 }
 
-func (r *recorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
-func (r *recorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
+func (r *recorder) Symbol(s extract.EmittedSymbol) error {
+	r.symbols = append(r.symbols, s)
+	return nil
+}
+func (r *recorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
 
 // counter counts emitted symbols and edges.
 type counter struct {
@@ -933,7 +936,6 @@ DEFAULT_TIMEOUT = 30
 	}
 }
 
-
 func TestDecoratedClassFullPath(t *testing.T) {
 	r := parse(t, `
 @dataclass
@@ -1678,4 +1680,3 @@ def run(*ARGS, **KWARGS):
 		t.Error("should not emit references for **kwargs param name")
 	}
 }
-

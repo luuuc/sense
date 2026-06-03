@@ -37,6 +37,8 @@ func (Extractor) HarvestsMentions() bool { return true }
 //
 // Each emit is best-effort — an Emitter that implements none of the extensions
 // simply receives no names.
+//
+//nolint:gocyclo,gocognit // 27-12: retired by the python/golang/langspec split
 func emitHarvest(root *sitter.Node, source []byte, emit extract.Emitter) error {
 	if me, ok := emit.(extract.MentionEmitter); ok {
 		for _, name := range extract.HarvestMentions(root, source, mentionWalkSpec()) {

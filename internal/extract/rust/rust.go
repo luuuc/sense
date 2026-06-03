@@ -11,7 +11,7 @@
 //   - function_item in impl     → KindMethod with parent = impl type
 //   - mod_item                  → KindModule
 //   - function_signature_item   → KindMethod (trait method signatures,
-//                                 parented to the trait)
+//     parented to the trait)
 //
 // Visibility:
 //   - `pub` → "public"; `pub(crate)`, `pub(super)`, `pub(in path)` and
@@ -33,8 +33,8 @@
 //   - Rust uses `::` for path separators. Module-scoped items carry
 //     the module chain: `inner::helper`.
 //   - Impl methods qualify through the impl's type:
-//       impl Money               → methods qualified `Money::display`
-//       impl Formatter for Money → methods qualified `Money::format`
+//     impl Money               → methods qualified `Money::display`
+//     impl Formatter for Money → methods qualified `Money::format`
 package rust
 
 import (
@@ -193,6 +193,8 @@ func (w *walker) collectDeriveTraits(n *sitter.Node, scope []string) {
 // forEachDerivedTrait walks #[derive(...)] attributes preceding a node
 // and calls fn for each derived trait name. The node argument to fn is
 // the identifier node (for line information).
+//
+//nolint:gocyclo,gocognit // 27-11: retired by the tsjs/rust extractor split
 func (w *walker) forEachDerivedTrait(n *sitter.Node, fn func(traitName string, ident *sitter.Node) error) error {
 	for sib := n.PrevNamedSibling(); sib != nil; sib = sib.PrevNamedSibling() {
 		if sib.Kind() != "attribute_item" {
@@ -765,6 +767,8 @@ func (w *walker) emitStructFieldCompositions(list *sitter.Node, qualified string
 
 // resolveComposeTargets extracts user-defined type names from a type
 // node, unwrapping generic wrappers like Vec<T>, Option<T>, Box<T>.
+//
+//nolint:gocyclo // 27-11: retired by the tsjs/rust extractor split
 func (w *walker) resolveComposeTargets(typeNode *sitter.Node) []string {
 	if typeNode == nil {
 		return nil

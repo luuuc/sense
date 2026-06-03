@@ -13,9 +13,10 @@ import (
 	"testing/iotest"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
-	_ "modernc.org/sqlite"
 )
 
 func indexedDir(t *testing.T) string {

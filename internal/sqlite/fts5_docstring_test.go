@@ -12,7 +12,7 @@ import (
 
 // TestFTS5DocstringStaleRowUpsert pins the FTS5 contract that pitch
 // 25-07's Card 7 calls out: every prior-version scan wrote
-// `docstring=''` rows into sense_symbols_fts (the column existed long
+// `docstring=”` rows into sense_symbols_fts (the column existed long
 // before any extractor populated it). When a re-scan UPSERTs the same
 // (file_id, qualified) symbol with a new non-empty docstring, the
 // FTS5 update trigger must overwrite the stale empty row so a MATCH

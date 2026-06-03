@@ -18,7 +18,7 @@ func TestFmtMs(t *testing.T) {
 		{"sub-ms", 500 * time.Microsecond, "0.50ms"},
 		{"1ms", 1 * time.Millisecond, "1.0ms"},
 		{"ms-range", 50 * time.Millisecond, "50.0ms"},
-		{"near-100ms", 99 * time.Millisecond + 900 * time.Microsecond, "99.9ms"},
+		{"near-100ms", 99*time.Millisecond + 900*time.Microsecond, "99.9ms"},
 		{"100ms", 100 * time.Millisecond, "100ms"},
 		{">=100ms", 150 * time.Millisecond, "150ms"},
 		{"negative", -1 * time.Millisecond, "-1.00ms"},
@@ -100,12 +100,12 @@ func TestMarshalJSONOptionalFields(t *testing.T) {
 			Scan: ScanMetrics{
 				FullScan: 1 * time.Second,
 			},
-			GraphLatency:    Latency{P50: 1 * time.Millisecond},
-			SearchKeyword:   Latency{P50: 1 * time.Millisecond},
-			BlastShallow:    Latency{P50: 1 * time.Millisecond},
-			BlastDeep:       Latency{P50: 1 * time.Millisecond},
+			GraphLatency:       Latency{P50: 1 * time.Millisecond},
+			SearchKeyword:      Latency{P50: 1 * time.Millisecond},
+			BlastShallow:       Latency{P50: 1 * time.Millisecond},
+			BlastDeep:          Latency{P50: 1 * time.Millisecond},
 			ConventionsLatency: Latency{P50: 1 * time.Millisecond},
-			StatusLatency:   Latency{P50: 1 * time.Millisecond},
+			StatusLatency:      Latency{P50: 1 * time.Millisecond},
 		}
 	}
 

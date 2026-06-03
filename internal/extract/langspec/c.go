@@ -13,9 +13,9 @@ func init() {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:  []string{"function_definition"},
-		ClassTypes: []string{"struct_specifier", "enum_specifier"},
-		CallTypes:  []string{"call_expression"},
+		FuncTypes:   []string{"function_definition"},
+		ClassTypes:  []string{"struct_specifier", "enum_specifier"},
+		CallTypes:   []string{"call_expression"},
 		ImportTypes: []string{"preproc_include"},
 
 		NameField: "name",

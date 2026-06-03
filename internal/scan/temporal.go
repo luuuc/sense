@@ -25,6 +25,8 @@ const (
 
 // extractTemporalCoupling derives temporal edges from git co-change history.
 // No-op if git is absent or the git log exceeds gitTimeout.
+//
+//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func (h *harness) extractTemporalCoupling() error {
 	ctx, cancel := context.WithTimeout(h.ctx, gitTimeout)
 	defer cancel()

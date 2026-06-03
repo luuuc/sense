@@ -242,10 +242,10 @@ func TestDocstring_MalformedUTF8(t *testing.T) {
 //     ever does.
 func TestHasBlankLineGap_Contract(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		src     string
-		s, e    uint
-		want    bool
+		name string
+		src  string
+		s, e uint
+		want bool
 	}{
 		{"whitespace-only blank gap", "a\n \nb", 1, 4, true},
 		{"non-newline byte transparent", "a\nx\nb", 1, 4, true},

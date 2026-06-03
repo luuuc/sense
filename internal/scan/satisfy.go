@@ -52,6 +52,8 @@ type structInfo struct {
 // resolved and available for promoted-method computation. Scoped to
 // Go files only — implicit interface satisfaction is a Go-specific
 // semantic.
+//
+//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func (h *harness) satisfyInterfaces() error {
 	goFiles, err := h.idx.FileIDsByLanguage(h.ctx, "go")
 	if err != nil {

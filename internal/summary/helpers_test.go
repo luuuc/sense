@@ -71,9 +71,9 @@ func TestCapitalize(t *testing.T) {
 
 func TestReadStructuredDescription(t *testing.T) {
 	tests := []struct {
-		name    string
-		files   map[string]string
-		want    string
+		name  string
+		files map[string]string
+		want  string
 	}{
 		{
 			name: "package.json",

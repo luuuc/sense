@@ -290,9 +290,9 @@ func TestApplyTestDemotion(t *testing.T) {
 	paths := map[int64]string{1: "internal/dead/dead.go", 2: "internal/dead/dead_test.go", 3: "internal/x/y.go"}
 	mk := func() []Result {
 		return []Result{
-			{SymbolID: 1, Name: "FindDead", FileID: 1, Score: 0.6},  // impl
+			{SymbolID: 1, Name: "FindDead", FileID: 1, Score: 0.6},     // impl
 			{SymbolID: 2, Name: "TestFindDead", FileID: 2, Score: 1.0}, // test by path+name
-			{SymbolID: 3, Name: "MockThing", FileID: 3, Score: 0.9},  // test by name only
+			{SymbolID: 3, Name: "MockThing", FileID: 3, Score: 0.9},    // test by name only
 		}
 	}
 

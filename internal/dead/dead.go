@@ -553,6 +553,8 @@ func excludeEntryPoints(candidates []Symbol, filters entryPointFilters) []Symbol
 // at least one child with incoming edges (i.e., child is NOT in the
 // dead candidate set). A container with live children is alive by
 // purpose — it's the namespace for referenced code.
+//
+//nolint:gocyclo // 27-09: retired by the dead-code split
 func findLiveContainers(ctx context.Context, db *sql.DB, candidates []Symbol) (map[int64]struct{}, error) {
 	deadIDs := make(map[int64]struct{}, len(candidates))
 	for _, s := range candidates {

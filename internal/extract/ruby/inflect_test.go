@@ -17,18 +17,18 @@ func TestSingularize(t *testing.T) {
 		{"invoice", "invoice"},
 		{"", ""},
 		// Additional test cases for full coverage
-		{"processes", "process"},    // sses → ss
-		{"kisses", "kiss"},         // sses → ss
-		{"boxes", "box"},           // xes → x
-		{"faxes", "fax"},           // xes → x
-		{"buzzes", "buzz"},         // zes → z
-		{"quizzes", "quiz"},        // zes → z
-		{"ass", "ass"},             // should not remove s from "ass"
-		{"mass", "mass"},           // should not remove s from "mass"
-		{"glass", "glass"},         // should not remove s from "glass"
-		{"companies", "company"},   // ies → y
-		{"cities", "city"},         // ies → y
-		{"stories", "story"},       // ies → y
+		{"processes", "process"}, // sses → ss
+		{"kisses", "kiss"},       // sses → ss
+		{"boxes", "box"},         // xes → x
+		{"faxes", "fax"},         // xes → x
+		{"buzzes", "buzz"},       // zes → z
+		{"quizzes", "quiz"},      // zes → z
+		{"ass", "ass"},           // should not remove s from "ass"
+		{"mass", "mass"},         // should not remove s from "mass"
+		{"glass", "glass"},       // should not remove s from "glass"
+		{"companies", "company"}, // ies → y
+		{"cities", "city"},       // ies → y
+		{"stories", "story"},     // ies → y
 	}
 	for _, tc := range cases {
 		if got := singularize(tc.in); got != tc.want {

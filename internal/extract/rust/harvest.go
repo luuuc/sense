@@ -25,6 +25,8 @@ func (Extractor) HarvestsMentions() bool { return true }
 // sets feed the Rust voice's rust_ffi / rust_used / rust_test reasons. All four
 // are gathered in one tree walk; each emit is best-effort — an Emitter that
 // implements neither extension simply receives no names.
+//
+//nolint:gocyclo,gocognit // 27-11: retired by the tsjs/rust extractor split
 func emitHarvest(root *sitter.Node, source []byte, emit extract.Emitter) error {
 	h := collectRustHarvest(root, source)
 	if de, ok := emit.(extract.DispatchEmitter); ok {

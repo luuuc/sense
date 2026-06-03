@@ -612,6 +612,8 @@ type localType struct {
 // variables. The locals set tracks every declared variable name
 // (even those with unknown types) so callers can distinguish
 // unresolved locals from package references.
+//
+//nolint:gocyclo // 27-12: retired by the python/golang/langspec split
 func (w *walker) buildTypeMap(funcNode *sitter.Node) (map[string]localType, map[string]bool) {
 	types := map[string]localType{}
 	locals := map[string]bool{}
@@ -728,6 +730,8 @@ func (w *walker) collectShortVarDecl(n *sitter.Node, types map[string]localType,
 
 // collectRangeVars handles `for _, v := range src` — assigns the
 // element type of the range source to the value variable.
+//
+//nolint:gocyclo // 27-12: retired by the python/golang/langspec split
 func (w *walker) collectRangeVars(rc *sitter.Node, types map[string]localType, locals map[string]bool) {
 	left := rc.ChildByFieldName("left")
 	right := rc.ChildByFieldName("right")
@@ -799,6 +803,8 @@ func sliceElemType(typeNode *sitter.Node, source []byte) string {
 }
 
 // inferType attempts to determine the type of a value expression.
+//
+//nolint:gocyclo // 27-12: retired by the python/golang/langspec split
 func (w *walker) inferType(val *sitter.Node) (localType, bool) {
 	if val == nil {
 		return localType{}, false

@@ -9,10 +9,11 @@ import (
 	"sync"
 	"unicode"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/sqlite"
-	"golang.org/x/sync/errgroup"
 )
 
 // Result is a single fused search hit with metadata from both backends.
@@ -135,6 +136,8 @@ type SearchMeta struct {
 }
 
 // Search runs hybrid search and returns fused, re-ranked results.
+//
+//nolint:gocyclo,gocognit // 27-07: retired by the storage/query split
 func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = 10
@@ -872,6 +875,8 @@ const parentPromotionThreshold = 2
 // promoteParents replaces multiple child methods from the same parent
 // class/struct with the parent symbol when 2+ children appear in the
 // top-K results. The parent inherits the highest child score.
+//
+//nolint:gocyclo // 27-07: retired by the storage/query split
 func (e *Engine) promoteParents(ctx context.Context, results []Result, limit int) ([]Result, error) {
 	if len(results) == 0 {
 		return results, nil

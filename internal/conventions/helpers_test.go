@@ -4,7 +4,6 @@ import (
 	"testing"
 )
 
-
 func TestChunkIDsSingleChunk(t *testing.T) {
 	ids := make([]int64, 100)
 	for i := range ids {
@@ -82,13 +81,13 @@ func TestPluralizeBranches(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"class", "classes"},     // ends in "ss"
-		{"match", "matches"},    // ends in "ch"
-		{"flash", "flashes"},    // ends in "sh"
-		{"box", "boxes"},        // ends in "x"
-		{"bus", "buses"},        // ends in "s" (but not "ss")
-		{"function", "functions"}, // default
-		{"method", "methods"},    // default
+		{"class", "classes"},        // ends in "ss"
+		{"match", "matches"},        // ends in "ch"
+		{"flash", "flashes"},        // ends in "sh"
+		{"box", "boxes"},            // ends in "x"
+		{"bus", "buses"},            // ends in "s" (but not "ss")
+		{"function", "functions"},   // default
+		{"method", "methods"},       // default
 		{"interface", "interfaces"}, // default (ends in "e")
 	}
 	for _, tt := range tests {
@@ -143,7 +142,7 @@ func TestDedupeExamplesCoverage(t *testing.T) {
 	examples := []Example{
 		{Name: "Order", Path: "order.go"},
 		{Name: "User", Path: "user.go"},
-		{Name: "Order", Path: "order.go"}, // duplicate
+		{Name: "Order", Path: "order.go"},        // duplicate
 		{Name: "Order", Path: "models/order.go"}, // different path -> not duplicate
 	}
 	got := dedupeExamples(examples)

@@ -14,9 +14,9 @@ const (
 )
 
 const (
-	smallThreshold         = 3000
-	largeDynamicThreshold  = 15000
-	largeStaticThreshold   = 20000
+	smallThreshold        = 3000
+	largeDynamicThreshold = 15000
+	largeStaticThreshold  = 20000
 )
 
 var dynamicLanguages = map[string]bool{

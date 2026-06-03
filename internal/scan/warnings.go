@@ -12,7 +12,7 @@ import (
 type warningKind int
 
 const (
-	warnParseFailed  warningKind = iota
+	warnParseFailed warningKind = iota
 	warnFileTooLarge
 	warnWriteFailed
 	warnMetaError

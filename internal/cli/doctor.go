@@ -321,4 +321,3 @@ func renderDoctorHuman(cio IO, resp doctorResponse) {
 		}
 	}
 }
-

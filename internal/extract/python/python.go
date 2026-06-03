@@ -9,8 +9,8 @@
 //
 // Intra-file edges:
 //   - class B(A)             → inherits edge (B → A) when A is defined
-//                              in the same file; cross-file inheritance
-//                              is dropped for 01-03 to backfill.
+//     in the same file; cross-file inheritance
+//     is dropped for 01-03 to backfill.
 //
 // Calls edges:
 //   - Function / method bodies are walked for `call` nodes. The target
@@ -30,9 +30,9 @@
 // Qualified-name rules (per 05-languages.md):
 //   - Class:      A  or  Outer.Inner
 //   - Method:     A.method  (Python has no syntactic instance/class
-//                            split at def-site; decorators identify
-//                            classmethods but we don't emit a separate
-//                            qualified form).
+//     split at def-site; decorators identify
+//     classmethods but we don't emit a separate
+//     qualified form).
 //   - Function:   f  (top-level only; nested defs are closures, skipped)
 //   - Constant:   NAME  or  Outer.NAME
 //
@@ -82,8 +82,8 @@ func init() { extract.Register(Extractor{}) }
 // ---- walker ----
 
 type walker struct {
-	source []byte
-	emit   extract.Emitter
+	source      []byte
+	emit        extract.Emitter
 	pkgBindings map[string]string // unqualified name → qualified name for module-level constants
 }
 
@@ -492,7 +492,7 @@ func isAllCaps(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if (r >= 'A' && r <= 'Z') {
+		if r >= 'A' && r <= 'Z' {
 			return true
 		}
 	}

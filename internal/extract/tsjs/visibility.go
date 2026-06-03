@@ -95,6 +95,8 @@ func (w *walker) methodVisibility(scope []string) string {
 // free function (not a walker method) so the harvest pass can reuse it without
 // the walker's mutable state. filePath supplies the file-based name an anonymous
 // default export is synthesized under (matching handleDefaultExport).
+//
+//nolint:gocognit // 27-11: retired by the tsjs/rust extractor split
 func collectExportedNames(root *sitter.Node, source []byte, filePath string) (exported, defaultExports map[string]bool) {
 	exported = map[string]bool{}
 	defaultExports = map[string]bool{}

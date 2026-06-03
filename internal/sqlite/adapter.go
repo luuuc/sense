@@ -625,6 +625,8 @@ func (a *Adapter) ReadSymbol(ctx context.Context, id int64) (*model.SymbolContex
 // expands the frontier in the requested direction, deduplicating
 // against already-visited nodes. MaxPerHop caps new symbols per hop;
 // zero means unlimited.
+//
+//nolint:gocyclo,gocognit // 27-07: retired by the storage/query split
 func (a *Adapter) ReadSymbolGraph(ctx context.Context, id int64, depth int, direction model.Direction, maxPerHop int) (*model.GraphResult, error) {
 	root, err := a.ReadSymbol(ctx, id)
 	if err != nil {

@@ -22,14 +22,16 @@ type IncrementalOptions struct {
 	EmbeddingsEnabled bool
 	Output            io.Writer
 	Warnings          io.Writer
-	Changed           []string // relative paths of modified/created files
-	Removed           []string // relative paths of deleted files
+	Changed           []string     // relative paths of modified/created files
+	Removed           []string     // relative paths of deleted files
 	Parsers           *ParserCache // reusable parser cache; nil creates a temporary one
 }
 
 // RunIncremental re-indexes a specific set of changed files and removes
 // deleted ones. It uses the same per-file processing, edge resolution,
 // and embedding logic as the full scan but scoped to the provided paths.
+//
+//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, error) {
 	out := opts.Output
 	if out == nil {
