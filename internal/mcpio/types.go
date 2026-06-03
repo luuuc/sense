@@ -387,6 +387,9 @@ type Freshness struct {
 	MaxFileMtimeSinceScan *string `json:"max_file_mtime_since_scan,omitempty"`
 	Watching              *bool   `json:"watching,omitempty"`
 	WatchSince            *string `json:"watch_since,omitempty"`
+	// Pending is the number of symbols seen by the watcher but not yet
+	// embedded (embedding debt). Non-nil only while a watcher is active.
+	Pending *int `json:"pending,omitempty"`
 }
 
 // StatusResponse is the shape of the sense_status tool's reply (and

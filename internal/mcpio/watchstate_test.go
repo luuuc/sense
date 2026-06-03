@@ -28,3 +28,25 @@ func TestWatchStateSetFalse(t *testing.T) {
 		t.Error("expected zero since when watching=false")
 	}
 }
+
+func TestWatchStateSetIndexedSnapshot(t *testing.T) {
+	ws := &WatchState{}
+	start := time.Now().Add(-time.Minute)
+	ws.Set(true, start)
+	idx := time.Now()
+	ws.SetIndexed(idx, 7)
+
+	on, since, lastIndexed, pending := ws.Snapshot()
+	if !on {
+		t.Error("expected watching")
+	}
+	if !since.Equal(start) {
+		t.Errorf("since = %v, want %v", since, start)
+	}
+	if !lastIndexed.Equal(idx) {
+		t.Errorf("lastIndexed = %v, want %v", lastIndexed, idx)
+	}
+	if pending != 7 {
+		t.Errorf("pending = %d, want 7", pending)
+	}
+}
