@@ -35,18 +35,30 @@ func NewBundledEmbedder(intraOpThreads int) (*ONNXEmbedder, error) {
 	return NewONNXEmbedder(modelBytes, vocabBytes, intraOpThreads)
 }
 
-// ensureORTLib extracts the bundled ONNX Runtime shared library to a
-// cache directory if it doesn't already exist (or if the binary version
-// changed). Returns the path to the extracted library. Uses atomic
-// writes (temp file + rename) to prevent partial extraction.
+// ensureORTLib extracts the bundled ONNX Runtime shared library to the
+// per-user cache directory, keyed by the binary version. It is thin wiring
+// over extractLib: resolve the cache dir, then extract. The bug-prone logic
+// (atomic write, version invalidation) lives in extractLib, which takes its
+// bytes and directory as parameters so it can be tested without the bundled
+// library or the real cache location.
 func ensureORTLib() (string, error) {
-	libData := loadBundledORTLib()
-
 	cacheDir, err := ortCacheDir()
 	if err != nil {
 		return "", err
 	}
+	return extractLib(loadBundledORTLib(), cacheDir, version.Version)
+}
 
+// extractLib writes libData to cacheDir as the platform's ONNX Runtime shared
+// library, returning its path. It skips the write when an extraction tagged
+// wantVersion is already present (the cache hit), and otherwise writes
+// atomically — temp file, chmod, rename — so a crash mid-write never leaves a
+// partial library a later run would load. The version is recorded in a sidecar
+// file so a binary upgrade re-extracts. Pure in the sense that matters for
+// testing: every input (bytes, directory, version) is a parameter, so the
+// atomic-write and stale-version paths are reachable with a temp dir and a few
+// bytes, no bundled library required.
+func extractLib(libData []byte, cacheDir, wantVersion string) (string, error) {
 	libName := "libonnxruntime.so"
 	if runtime.GOOS == "darwin" {
 		libName = "libonnxruntime.dylib"
@@ -55,7 +67,6 @@ func ensureORTLib() (string, error) {
 	libPath := filepath.Join(cacheDir, libName)
 	versionPath := libPath + ".version"
 
-	wantVersion := version.Version
 	if existing, err := os.ReadFile(versionPath); err == nil {
 		if string(existing) == wantVersion {
 			if _, err := os.Stat(libPath); err == nil {
