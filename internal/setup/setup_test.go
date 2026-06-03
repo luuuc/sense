@@ -146,7 +146,7 @@ func TestSettingsPreservesExistingHooks(t *testing.T) {
 	}
 }
 
-func TestSettingsContainsPostToolUse(t *testing.T) {
+func TestSettingsOmitsRetiredPostToolUse(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -159,15 +159,76 @@ func TestSettingsContainsPostToolUse(t *testing.T) {
 	}
 
 	hooks, _ := m["hooks"].(map[string]any)
-	postToolUse, _ := hooks["PostToolUse"].([]any)
-	if len(postToolUse) == 0 {
-		t.Fatal("PostToolUse hook not found in settings")
+	if _, ok := hooks["PostToolUse"]; ok {
+		t.Error("PostToolUse hook should no longer be written (retired in pitch 26-01)")
+	}
+}
+
+func TestRemoveRetiredHook(t *testing.T) {
+	// No hooks map: no-op.
+	s := map[string]any{}
+	removeRetiredHook(s, "PostToolUse")
+
+	// Event absent: no-op.
+	s = map[string]any{"hooks": map[string]any{"SessionStart": []any{}}}
+	removeRetiredHook(s, "PostToolUse")
+	if _, ok := s["hooks"].(map[string]any)["SessionStart"]; !ok {
+		t.Error("unrelated events must be preserved")
 	}
 
-	entry, _ := postToolUse[0].(map[string]any)
-	matcher, _ := entry["matcher"].(string)
-	if matcher != "Write|Edit|NotebookEdit" {
-		t.Errorf("PostToolUse matcher = %q, want Write|Edit|NotebookEdit", matcher)
+	// Event with only a Sense entry: the key is deleted entirely.
+	s = map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{
+			map[string]any{"hooks": []any{map[string]any{"command": "sense hook post-tool-use"}}},
+		},
+	}}
+	removeRetiredHook(s, "PostToolUse")
+	if _, ok := s["hooks"].(map[string]any)["PostToolUse"]; ok {
+		t.Error("PostToolUse should be removed when only the Sense entry remained")
+	}
+}
+
+// TestSetupMigratesAwayPostToolUse verifies that re-running setup over an
+// older config strips the retired Sense PostToolUse hook while preserving a
+// non-Sense PostToolUse hook the user added.
+func TestSetupMigratesAwayPostToolUse(t *testing.T) {
+	root := t.TempDir()
+	claudeDir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Seed an old settings.json: a Sense post-tool-use hook plus a foreign one.
+	old := `{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Write|Edit|NotebookEdit", "hooks": [{"type": "command", "command": "sense hook post-tool-use", "timeout": 5000}]},
+      {"matcher": "Write", "hooks": [{"type": "command", "command": "my-linter"}]}
+    ]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+	hooks, _ := m["hooks"].(map[string]any)
+	ptu, _ := hooks["PostToolUse"].([]any)
+	if len(ptu) != 1 {
+		t.Fatalf("PostToolUse should retain only the user's hook, got %d entries", len(ptu))
+	}
+	entry, _ := ptu[0].(map[string]any)
+	inner, _ := entry["hooks"].([]any)
+	cmd, _ := inner[0].(map[string]any)["command"].(string)
+	if cmd != "my-linter" {
+		t.Errorf("expected the user's PostToolUse hook to survive, got %q", cmd)
 	}
 }
 

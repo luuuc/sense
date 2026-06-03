@@ -69,6 +69,27 @@ func mergeHooks(settings map[string]any, senseHooks map[string]any) {
 	settings["hooks"] = existing
 }
 
+// removeRetiredHook strips Sense entries from a hook event that Sense no
+// longer writes (a retired hook), preserving any non-Sense entries the user
+// added. If the event has no entries left, the event key is removed. This
+// migrates older settings.json files on the next `sense setup`.
+func removeRetiredHook(settings map[string]any, event string) {
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		return
+	}
+	arr, ok := hooks[event].([]any)
+	if !ok {
+		return
+	}
+	kept := removeSenseEntries(arr)
+	if len(kept) == 0 {
+		delete(hooks, event)
+		return
+	}
+	hooks[event] = kept
+}
+
 // removeSenseEntries filters out hook array entries that contain
 // a "sense hook" command, so they can be replaced with fresh ones.
 func removeSenseEntries(entries []any) []any {
