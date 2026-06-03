@@ -127,3 +127,92 @@ func (c *closingEmbedder) Embed(context.Context, []embed.EmbedInput) ([][]float3
 	return nil, nil
 }
 func (c *closingEmbedder) Close() error { return c.closeErr }
+
+// trackingEmbedder records whether Close was called, so the factory
+// error-cleanup path can be asserted.
+type trackingEmbedder struct {
+	closed bool
+}
+
+func (e *trackingEmbedder) Embed(context.Context, []embed.EmbedInput) ([][]float32, error) {
+	return nil, nil
+}
+func (e *trackingEmbedder) Close() error { e.closed = true; return nil }
+
+func TestEmbedPoolSizing(t *testing.T) {
+	cases := []struct {
+		ncpu        int
+		wantWorkers int
+		wantThreads int
+	}{
+		{ncpu: 1, wantWorkers: 2, wantThreads: 1},  // clamp up to 2; threads floor at 1
+		{ncpu: 2, wantWorkers: 2, wantThreads: 1},  // half = 1 → clamp to 2
+		{ncpu: 4, wantWorkers: 2, wantThreads: 2},  // half = 2, no clamp
+		{ncpu: 6, wantWorkers: 3, wantThreads: 2},  // half = 3
+		{ncpu: 8, wantWorkers: 4, wantThreads: 2},  // half = 4 = cap
+		{ncpu: 16, wantWorkers: 4, wantThreads: 4}, // half = 8 → clamp down to 4
+	}
+	for _, c := range cases {
+		workers, threads := embedPoolSizing(c.ncpu)
+		if workers != c.wantWorkers || threads != c.wantThreads {
+			t.Errorf("embedPoolSizing(%d) = (%d, %d), want (%d, %d)",
+				c.ncpu, workers, threads, c.wantWorkers, c.wantThreads)
+		}
+	}
+}
+
+func TestNewEmbedPoolBuildsWorkers(t *testing.T) {
+	var threads []int
+	pool, err := newEmbedPool(func(t int) (embed.Embedder, error) {
+		threads = append(threads, t)
+		return &trackingEmbedder{}, nil
+	})
+	if err != nil {
+		t.Fatalf("newEmbedPool: %v", err)
+	}
+	defer func() { _ = pool.Close() }()
+
+	if pool.workers < 2 || pool.workers > maxEmbedWorkers {
+		t.Errorf("workers = %d, want within [2,%d]", pool.workers, maxEmbedWorkers)
+	}
+	if len(pool.embedders) != pool.workers {
+		t.Errorf("embedders = %d, want %d", len(pool.embedders), pool.workers)
+	}
+	if len(threads) != pool.workers {
+		t.Errorf("factory called %d times, want %d", len(threads), pool.workers)
+	}
+	for _, n := range threads {
+		if n < 1 {
+			t.Errorf("threadsPerWorker = %d, want >= 1", n)
+		}
+	}
+}
+
+func TestNewEmbedPoolFactoryErrorClosesCreated(t *testing.T) {
+	want := errors.New("factory boom")
+	var created []*trackingEmbedder
+	calls := 0
+	pool, err := newEmbedPool(func(int) (embed.Embedder, error) {
+		calls++
+		if calls == 2 {
+			return nil, want
+		}
+		e := &trackingEmbedder{}
+		created = append(created, e)
+		return e, nil
+	})
+	if pool != nil {
+		t.Errorf("pool = %v, want nil on factory error", pool)
+	}
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
+	}
+	// Workers is always >= 2, so the first embedder was built before the
+	// second call failed — it must have been closed during cleanup.
+	if len(created) != 1 {
+		t.Fatalf("created %d embedders before failure, want 1", len(created))
+	}
+	if !created[0].closed {
+		t.Error("embedder created before the failure was not closed")
+	}
+}

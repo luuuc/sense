@@ -4,40 +4,33 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/embed/embedtest"
 	"github.com/luuuc/sense/internal/index"
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-func skipWithoutORT(t *testing.T) {
+// useFakeEmbedder swaps the scan pipeline's embedder for a deterministic fake,
+// so the embedding paths run without ONNX. This is the seam card 27-02 added:
+// the production embedder stays the default, the test substitutes a fake via
+// the export_test.go setter, and scan.Run / scan.Options are untouched.
+func useFakeEmbedder(t *testing.T) {
 	t.Helper()
-	// Check model is bundled (via fetch-deps.sh)
-	_, thisFile, _, _ := runtime.Caller(0)
-	bundleDir := filepath.Join(filepath.Dir(thisFile), "..", "embed", "bundle")
-	if _, err := os.Stat(filepath.Join(bundleDir, "model.onnx")); err != nil {
-		t.Skip("model not bundled; run scripts/fetch-deps.sh --local")
-	}
-	libName := "libonnxruntime.dylib"
-	if runtime.GOOS == "linux" {
-		libName = "libonnxruntime.so"
-	}
-	arch := runtime.GOARCH
-	platformDir := filepath.Join(bundleDir, runtime.GOOS+"_"+arch)
-	if _, err := os.Stat(filepath.Join(platformDir, libName)); err != nil {
-		t.Skip("ORT library not bundled; run scripts/fetch-deps.sh --local")
-	}
+	scan.SetEmbedderFactory(t, func(int) (embed.Embedder, error) {
+		return embedtest.NewFakeEmbedder(embed.Dimensions), nil
+	})
 }
 
 func TestScanEmbeddings(t *testing.T) {
-	skipWithoutORT(t)
+	useFakeEmbedder(t)
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "auth.go"), `package auth
@@ -86,7 +79,7 @@ func Logout(token string) {
 }
 
 func TestScanEmbeddingsIncremental(t *testing.T) {
-	skipWithoutORT(t)
+	useFakeEmbedder(t)
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "auth.go"), `package auth
@@ -169,7 +162,7 @@ func Verify(token string) bool {
 }
 
 func TestEmbedPending(t *testing.T) {
-	skipWithoutORT(t)
+	useFakeEmbedder(t)
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "auth.go"), `package auth
@@ -276,7 +269,7 @@ func Logout(token string) {
 }
 
 func TestEmbedPendingCancelSafe(t *testing.T) {
-	skipWithoutORT(t)
+	useFakeEmbedder(t)
 
 	root := t.TempDir()
 	// Create enough symbols to make embedding take non-trivial time.
@@ -329,7 +322,7 @@ func TestEmbedPendingCancelSafe(t *testing.T) {
 }
 
 func TestDeferredEmbedTransition(t *testing.T) {
-	skipWithoutORT(t)
+	useFakeEmbedder(t)
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "svc.go"), `package svc
@@ -398,7 +391,7 @@ func Validate() bool { return true }
 }
 
 func TestScanEmbedBackfillsOnNoChange(t *testing.T) {
-	skipWithoutORT(t)
+	useFakeEmbedder(t)
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "svc.go"), `package svc
@@ -476,6 +469,89 @@ func firstEmbeddingBlobSize(t *testing.T, dbPath string) int {
 		t.Fatalf("read embedding: %v", err)
 	}
 	return len(blob)
+}
+
+// deferredScan runs a structural scan (no embeddings) so a temp index has
+// symbols and embedding debt, then returns its db path. Shared by the
+// embed-error tests below.
+func deferredScan(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, content := range files {
+		writeFile(t, filepath.Join(root, rel), content)
+	}
+	_, err := scan.Run(context.Background(), scan.Options{
+		Root:              root,
+		Output:            io.Discard,
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             false,
+	})
+	if err != nil {
+		t.Fatalf("deferred scan: %v", err)
+	}
+	return filepath.Join(root, ".sense", "index.db")
+}
+
+// TestEmbedPendingPoolError covers the newEmbedPool failure branch in
+// EmbedPending: a factory that errors leaves the pending debt unembedded and
+// the error surfaces to the caller.
+func TestEmbedPendingPoolError(t *testing.T) {
+	dbPath := deferredScan(t, map[string]string{"a.go": "package a\n\nfunc F() {}\n"})
+	scan.SetEmbedderFactory(t, func(int) (embed.Embedder, error) {
+		return nil, errors.New("no embedder")
+	})
+
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	if _, err := scan.EmbedPending(ctx, adapter, filepath.Dir(filepath.Dir(dbPath))); err == nil {
+		t.Fatal("expected error when the embedder factory fails")
+	}
+}
+
+// TestEmbedPendingQueryError covers the SymbolsWithoutEmbeddings failure branch
+// in EmbedPending via a closed adapter — a real condition, not a fault-injecting
+// interface.
+func TestEmbedPendingQueryError(t *testing.T) {
+	dbPath := deferredScan(t, map[string]string{"a.go": "package a\n\nfunc F() {}\n"})
+
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	_ = adapter.Close() // close first so the pending-symbols query fails
+
+	if _, err := scan.EmbedPending(ctx, adapter, filepath.Dir(filepath.Dir(dbPath))); err == nil {
+		t.Fatal("expected error querying pending symbols on a closed adapter")
+	}
+}
+
+// TestScanEmbedSymbolsPoolError covers the newEmbedPool failure branch in
+// embedSymbols: a failing factory aborts the pass-3 embed and Run returns the
+// error.
+func TestScanEmbedSymbolsPoolError(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc F() {}\n")
+	scan.SetEmbedderFactory(t, func(int) (embed.Embedder, error) {
+		return nil, errors.New("no embedder")
+	})
+
+	_, err := scan.Run(context.Background(), scan.Options{
+		Root:              root,
+		Output:            io.Discard,
+		Warnings:          io.Discard,
+		EmbeddingsEnabled: true,
+		Embed:             true,
+	})
+	if err == nil {
+		t.Fatal("expected Run to fail when the embedder factory fails")
+	}
 }
 
 func readMeta(t *testing.T, dbPath, key string) string {

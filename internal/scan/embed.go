@@ -30,24 +30,47 @@ type embedPool struct {
 	workers   int
 }
 
-func newEmbedPool() (*embedPool, error) {
-	ncpu := runtime.NumCPU()
-	workers := ncpu / 2
+// embedderFactory constructs one embedder configured for threads intra-op
+// threads. It is the seam that keeps ONNX out of the scan pipeline's tests:
+// production wires defaultEmbedderFactory (the bundled ONNX model); a test
+// substitutes a fake via SetEmbedderFactory (see export_test.go).
+type embedderFactory func(threads int) (embed.Embedder, error)
+
+// defaultEmbedderFactory is the production embedder: the ONNX model bundled in
+// the binary. It is a package var, not a hard call, so the export_test.go seam
+// can swap it for a fake without widening any exported surface. Mutated only by
+// SetEmbedderFactory (with t.Cleanup restore); not safe to override under
+// t.Parallel — the scan embedding tests run serially, which is why it can be a
+// plain global rather than threaded through Options.
+var defaultEmbedderFactory embedderFactory = func(threads int) (embed.Embedder, error) {
+	return embed.NewBundledEmbedder(threads)
+}
+
+// embedPoolSizing decides the worker count and per-worker intra-op thread
+// count from the available CPUs: half the cores, clamped to [2, maxEmbedWorkers],
+// then threads split evenly across workers (at least one). Pure so the clamps
+// can be exercised across CPU counts without depending on the test host.
+func embedPoolSizing(ncpu int) (workers, threadsPerWorker int) {
+	workers = ncpu / 2
 	if workers < 2 {
 		workers = 2
 	}
 	if workers > maxEmbedWorkers {
 		workers = maxEmbedWorkers
 	}
-
-	threadsPerWorker := ncpu / workers
+	threadsPerWorker = ncpu / workers
 	if threadsPerWorker < 1 {
 		threadsPerWorker = 1
 	}
+	return workers, threadsPerWorker
+}
+
+func newEmbedPool(newEmbedder embedderFactory) (*embedPool, error) {
+	workers, threadsPerWorker := embedPoolSizing(runtime.NumCPU())
 
 	embedders := make([]embed.Embedder, workers)
 	for i := range embedders {
-		emb, err := embed.NewBundledEmbedder(threadsPerWorker)
+		emb, err := newEmbedder(threadsPerWorker)
 		if err != nil {
 			for j := 0; j < i; j++ {
 				_ = embedders[j].Close()
@@ -165,7 +188,7 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, e
 		return 0, nil
 	}
 
-	h := &harness{ctx: ctx, idx: idx, root: root, out: io.Discard, warn: io.Discard}
+	h := &harness{ctx: ctx, idx: idx, root: root, out: io.Discard, warn: io.Discard, newEmbedder: defaultEmbedderFactory}
 	h.extendMethodSnippets(syms)
 	contextMap := h.buildContextMap(syms)
 
@@ -186,7 +209,7 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, e
 		}
 	}
 
-	pool, err := newEmbedPool()
+	pool, err := newEmbedPool(h.newEmbedder)
 	if err != nil {
 		return 0, fmt.Errorf("create embed pool: %w", err)
 	}
@@ -275,7 +298,7 @@ func (h *harness) embedSymbols() error {
 		}
 	}
 
-	pool, err := newEmbedPool()
+	pool, err := newEmbedPool(h.newEmbedder)
 	if err != nil {
 		return fmt.Errorf("create embed pool: %w", err)
 	}

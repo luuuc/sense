@@ -215,6 +215,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		defaultMatcher: ignore.New(ignore.DefaultPatterns()...),
 		maxFileSizeKB:  cfg.Scan.MaxFileSizeKB,
 		seenPaths:      map[string]bool{},
+		newEmbedder:    defaultEmbedderFactory,
 	}
 	defer h.closeParsers()
 
@@ -509,6 +510,13 @@ type harness struct {
 	matcher        *ignore.Matcher
 	defaultMatcher *ignore.Matcher
 	maxFileSizeKB  int
+
+	// newEmbedder constructs the embedders for pass 3. Defaulted from
+	// defaultEmbedderFactory (the bundled ONNX model) so production is
+	// unchanged; a test swaps the package default via SetEmbedderFactory to
+	// drive embedding without ONNX. The field threads that choice from Run
+	// into embedSymbols without touching the exported Options.
+	newEmbedder embedderFactory
 
 	// symbolStmt is a prepared statement for WriteSymbol, created at
 	// the start of walkTree and closed when walkTree returns.
