@@ -239,3 +239,23 @@ func TestIsWatchEnabledConfigFile(t *testing.T) {
 		t.Error("watch: false in config.yml should disable")
 	}
 }
+
+// A broken config.yml must not silently turn a feature off: both watch and
+// embeddings fall back to enabled when Load fails to parse the file. This
+// pins the promise in IsWatchEnabled/IsEmbeddingsEnabled's doc comments.
+func TestEnvOrConfigBoolUnparseableConfigDefaultsToEnabled(t *testing.T) {
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(senseDir, "config.yml"), []byte("watch: [unterminated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !IsWatchEnabled(root) {
+		t.Error("unparseable config.yml should default watch to enabled")
+	}
+	if !IsEmbeddingsEnabled(root) {
+		t.Error("unparseable config.yml should default embeddings to enabled")
+	}
+}
