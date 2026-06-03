@@ -11,8 +11,10 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -80,4 +82,80 @@ func (r *Repo) Scan(opts scan.Options) (*scan.Result, *sqlite.Adapter) {
 	}
 	r.t.Cleanup(func() { _ = adapter.Close() })
 	return res, adapter
+}
+
+// Commit is one scripted commit in a WithGitHistory replay: the files to
+// write (relative path → content) before committing, and the message.
+// Files in the same commit co-change; temporal coupling only pairs files
+// in different directories, so a fixture that wants an edge must spread
+// the pair across directories.
+type Commit struct {
+	Files   map[string]string
+	Message string
+}
+
+// WithGitHistory runs a real `git init` at the repo root and replays the
+// given commits in order, so temporal-coupling code runs against genuine
+// `git log` output rather than a stub. Every source of nondeterminism is
+// pinned per-command (never via the developer's global config): author and
+// committer identity, author and committer date (set together — they
+// differ as env vars and a missing committer date is a classic flake), a
+// fixed TZ, and isolation from ~/.gitconfig and the system config. The
+// co-change structure is therefore identical across machines and CI
+// runners. Commit timestamps are anchored to the wall clock (one hour
+// apart, ending at roughly now) so the history stays inside temporal.go's
+// `--since=6 months ago` window on any run date; commit SHAs consequently
+// vary run-to-run and are never asserted. Skips the test if git is absent.
+func (r *Repo) WithGitHistory(commits []Commit) {
+	r.t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		r.t.Skip("git not available")
+	}
+
+	r.git(gitEnv(time.Time{}), "init")
+
+	base := time.Now().UTC().Add(-time.Duration(len(commits)) * time.Hour)
+	for i, c := range commits {
+		for rel, content := range c.Files {
+			r.Write(rel, content)
+		}
+		env := gitEnv(base.Add(time.Duration(i) * time.Hour))
+		r.git(env, "add", "-A")
+		r.git(env, "commit", "-m", c.Message)
+	}
+}
+
+// git runs `git <args>` in the repo root with the given environment,
+// failing the test on a non-zero exit. CombinedOutput surfaces git's own
+// diagnostics in the failure message.
+func (r *Repo) git(env []string, args ...string) {
+	r.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Root
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		r.t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// gitEnv builds a fully-pinned git environment: fixed identity, both date
+// vars stamped to date (zero date means "leave the commit date to git",
+// used for `init` which writes no commit), a fixed TZ, and global/system
+// config redirected to the null device so no developer or CI machine
+// setting can perturb the result.
+func gitEnv(date time.Time) []string {
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_SYSTEM="+os.DevNull,
+		"GIT_AUTHOR_NAME=sense-test",
+		"GIT_AUTHOR_EMAIL=test@sense.test",
+		"GIT_COMMITTER_NAME=sense-test",
+		"GIT_COMMITTER_EMAIL=test@sense.test",
+		"TZ=UTC",
+	)
+	if !date.IsZero() {
+		stamp := date.Format(time.RFC3339)
+		env = append(env, "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+	}
+	return env
 }

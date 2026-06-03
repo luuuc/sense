@@ -499,7 +499,7 @@ func addSenseToGitignore(root string) bool {
 // files. The consequence is called out on resolveAndWriteEdges.
 type harness struct {
 	ctx       context.Context
-	idx       *sqlite.Adapter
+	idx       indexStore
 	out       io.Writer // summary-line sink
 	warn      io.Writer // infrastructure warning sink (not per-file)
 	root      string    // repository root directory
