@@ -66,3 +66,17 @@ linters:
       # revive: indent-error-flow is noisy in CLI command handlers
       - linters: [revive]
         text: "indent-error-flow: "
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      # Settle imports into stdlib / external / internal (github.com/luuuc/sense)
+      # groups so future diffs stay stable.
+      local-prefixes:
+        - github.com/luuuc/sense
+  exclusions:
+    paths:
+      - bench/lib/test_fixtures
