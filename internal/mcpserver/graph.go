@@ -27,22 +27,64 @@ const (
 	compactEdgeKeepCount = 10
 )
 
-//nolint:gocyclo // 27-05: retired by the mcpserver split
+// graphParams is the validated, defaulted input to a sense_graph query.
+type graphParams struct {
+	symbol        string
+	direction     model.Direction
+	depth         int
+	minConfidence float64
+	contextLines  int
+}
+
 func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if req.GetBool("dead_code", false) {
 		return h.handleDeadCode(ctx, req)
 	}
 
+	params, errResult := parseGraphParams(req)
+	if errResult != nil {
+		return errResult, nil
+	}
+
+	// Read-repair: refresh any stale touched files before resolving, so a
+	// just-edited symbol is visible even before the debounced watcher fires.
+	snap := h.repairAndSnapshot(ctx)
+
+	match, err := h.resolveSymbol(ctx, "sense_graph", params.symbol)
+	if err != nil {
+		if re, ok := err.(*resolveError); ok {
+			return re.result, nil
+		}
+		return nil, err
+	}
+
+	resp, gr, err := h.buildGraphResponse(ctx, match, params)
+	if err != nil {
+		return nil, err
+	}
+
+	h.shapeGraphResponse(ctx, &resp, gr, params, snap)
+
+	out, err := mcpio.MarshalGraphCompactDirectional(resp, params.direction)
+	if err != nil {
+		return nil, fmt.Errorf("sense_graph: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// parseGraphParams validates and defaults the request parameters. A non-nil
+// result is a ready-to-return validation error; the caller returns it as-is.
+func parseGraphParams(req mcp.CallToolRequest) (graphParams, *mcp.CallToolResult) {
 	symbol := req.GetString("symbol", "")
 	if symbol == "" {
-		return mcp.NewToolResultError("sense_graph: missing required parameter 'symbol'"), nil
+		return graphParams{}, mcp.NewToolResultError("sense_graph: missing required parameter 'symbol'")
 	}
 
 	direction := model.Direction(req.GetString("direction", "both"))
 	switch direction {
 	case model.DirectionBoth, model.DirectionCallers, model.DirectionCallees:
 	default:
-		return mcp.NewToolResultError(fmt.Sprintf("sense_graph: direction must be both, callers, or callees (got %q)", direction)), nil
+		return graphParams{}, mcp.NewToolResultError(fmt.Sprintf("sense_graph: direction must be both, callers, or callees (got %q)", direction))
 	}
 
 	defaultDepth := 1
@@ -54,37 +96,8 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		depth = 1
 	}
 	if depth > mcpio.MaxGraphDepth {
-		return mcp.NewToolResultError(fmt.Sprintf("sense_graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth)), nil
+		return graphParams{}, mcp.NewToolResultError(fmt.Sprintf("sense_graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth))
 	}
-
-	// Read-repair: refresh any stale touched files before resolving, so a
-	// just-edited symbol is visible even before the debounced watcher fires.
-	snap := h.repairAndSnapshot(ctx)
-
-	match, err := h.resolveSymbol(ctx, "sense_graph", symbol)
-	if err != nil {
-		if re, ok := err.(*resolveError); ok {
-			return re.result, nil
-		}
-		return nil, err
-	}
-
-	gr, err := h.adapter.ReadSymbolGraph(ctx, match.ID, depth, direction, mcpio.MaxPerHop)
-	if err != nil {
-		return nil, fmt.Errorf("sense_graph: read symbol: %w", err)
-	}
-
-	fileIDs := cli.CollectGraphFileIDs(gr)
-	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
-	if err != nil {
-		return nil, fmt.Errorf("sense_graph: load file paths: %w", err)
-	}
-	lookup := func(id int64) (string, bool) {
-		p, ok := pathByID[id]
-		return p, ok
-	}
-
-	contextLines := req.GetInt("context_lines", mcpio.DefaultContextLines)
 
 	// min_confidence defaults to the display floor (0.5); a sentinel of -1
 	// lets us tell "absent" from an explicit 0.0. An explicit value is
@@ -93,7 +106,7 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	minConfidence := mcpio.GraphConfidenceFloor
 	if v := req.GetFloat("min_confidence", -1); v >= 0 {
 		if v > 1 {
-			return mcp.NewToolResultError(fmt.Sprintf("sense_graph: min_confidence must be between 0.0 and 1.0 (got %g)", v)), nil
+			return graphParams{}, mcp.NewToolResultError(fmt.Sprintf("sense_graph: min_confidence must be between 0.0 and 1.0 (got %g)", v))
 		}
 		minConfidence = v
 		if minConfidence < mcpio.MinGraphConfidence {
@@ -101,25 +114,61 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 	}
 
+	return graphParams{
+		symbol:        symbol,
+		direction:     direction,
+		depth:         depth,
+		minConfidence: minConfidence,
+		contextLines:  req.GetInt("context_lines", mcpio.DefaultContextLines),
+	}, nil
+}
+
+// buildGraphResponse runs the core query for a resolved symbol: it reads the
+// graph, resolves file paths, builds the response, and enriches it with
+// dispatch-inferred and also-called-by edges. It returns the response and the
+// raw graph result (needed by the shaping step for the root symbol id).
+func (h *handlers) buildGraphResponse(ctx context.Context, match cli.Match, p graphParams) (mcpio.GraphResponse, *model.GraphResult, error) {
+	gr, err := h.adapter.ReadSymbolGraph(ctx, match.ID, p.depth, p.direction, mcpio.MaxPerHop)
+	if err != nil {
+		return mcpio.GraphResponse{}, nil, fmt.Errorf("sense_graph: read symbol: %w", err)
+	}
+
+	fileIDs := cli.CollectGraphFileIDs(gr)
+	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
+	if err != nil {
+		return mcpio.GraphResponse{}, nil, fmt.Errorf("sense_graph: load file paths: %w", err)
+	}
+	lookup := func(id int64) (string, bool) {
+		p, ok := pathByID[id]
+		return p, ok
+	}
+
 	buildReq := mcpio.BuildGraphRequest{
-		Direction:      direction,
+		Direction:      p.direction,
 		SegmentCallers: h.defaults.GraphSegmentCallers,
-		Snippets:       mcpio.NewSnippetReader(h.dir, contextLines),
-		MinConfidence:  minConfidence,
+		Snippets:       mcpio.NewSnippetReader(h.dir, p.contextLines),
+		MinConfidence:  p.minConfidence,
 	}
 	resp := mcpio.BuildFullGraphResponse(ctx, gr, lookup, buildReq)
 
-	if direction != model.DirectionCallees {
+	if p.direction != model.DirectionCallees {
 		inferred := h.resolveDispatchCallers(ctx, &gr.Root, &resp, lookup)
 		if len(inferred) > 0 {
 			resp.DispatchInferred = inferred
 		}
 	}
 
-	if direction == model.DirectionCallees || direction == model.DirectionBoth {
+	if p.direction == model.DirectionCallees || p.direction == model.DirectionBoth {
 		enrichAlsoCalledBy(ctx, h.adapter, h.cachedSymbolCount(ctx), gr, &resp)
 	}
 
+	return resp, gr, nil
+}
+
+// shapeGraphResponse applies the presentation steps that run after the query:
+// edge compaction, seen-symbol tracking, metrics, the coverage note, the
+// freshness footer, next-step hints, and the token budget.
+func (h *handlers) shapeGraphResponse(ctx context.Context, resp *mcpio.GraphResponse, gr *model.GraphResult, p graphParams, snap *staleSnapshot) {
 	if len(resp.Edges.CalledBy) > compactEdgeKeepCount {
 		compactCallEdges(resp.Edges.CalledBy)
 	}
@@ -134,26 +183,19 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	h.seenSymbols[gr.Root.Symbol.ID] = true
 	h.seenMu.Unlock()
 
-	h.tracker.Record("sense_graph", symbol,
+	h.tracker.Record("sense_graph", p.symbol,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
 	if len(resp.Edges.CalledBy) > 10 {
 		resp.CoverageNote = "Graph edges from indexed source files — may miss callers in examples/, scripts/, or macro-generated code"
 	}
 
-	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState, snap)
-	resp.Freshness = freshness
-	resp.NextSteps = graphHints(resp, direction)
+	resp.Freshness = computeFreshness(ctx, h.db, h.dir, false, h.watchState, snap)
+	resp.NextSteps = graphHints(*resp, p.direction)
 
 	// Keep hub responses within the MCP token budget — sheds deeper layers
 	// and trims the longest edge list, recording the count in OmittedEdges.
-	mcpio.ApplyGraphBudget(&resp, h.defaults.GraphTokenBudget)
-
-	out, err := mcpio.MarshalGraphCompactDirectional(resp, direction)
-	if err != nil {
-		return nil, fmt.Errorf("sense_graph: marshal: %w", err)
-	}
-	return mcp.NewToolResultText(string(out)), nil
+	mcpio.ApplyGraphBudget(resp, h.defaults.GraphTokenBudget)
 }
 
 const (
@@ -216,7 +258,6 @@ func enrichAlsoCalledBy(ctx context.Context, adapter *sqlite.Adapter, symbolCoun
 	}
 }
 
-//nolint:gocyclo // 27-05: retired by the mcpserver split
 func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.SymbolContext, resp *mcpio.GraphResponse, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {
 	sym := root.Symbol
 	if sym.Kind != model.KindMethod || sym.ParentID == nil {
@@ -249,34 +290,41 @@ func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.Symbo
 			continue
 		}
 		via := qualifiedOrNameRef(eqSym.Symbol)
+		inferred = appendDispatchCallers(inferred, eqSym.Inbound, via, directCallers, lookup)
+	}
+	return inferred
+}
 
-		for _, e := range eqSym.Inbound {
-			if e.Edge.Kind != model.EdgeCalls {
-				continue
-			}
-			if len(inferred) >= maxDispatchInferred {
-				break
-			}
-			callerName := qualifiedOrNameRef(e.Target)
-			if _, dup := directCallers[callerName]; dup {
-				continue
-			}
-			directCallers[callerName] = struct{}{}
-
-			var filePath *string
-			if p, ok := lookup(e.Target.FileID); ok {
-				filePath = &p
-			}
-			inferred = append(inferred, mcpio.DispatchInferredRef{
-				Symbol:     callerName,
-				File:       filePath,
-				LineStart:  e.Target.LineStart,
-				LineEnd:    e.Target.LineEnd,
-				Ref:        mcpio.FormatRefPtr(filePath, e.Target.LineStart),
-				Via:        via,
-				Confidence: mcpio.Confidence(DispatchInferredConfidence),
-			})
+// appendDispatchCallers folds one dispatch-equivalent method's inbound call
+// edges into inferred, skipping callers already seen (direct or via an earlier
+// equivalent) and stopping once the per-query cap is reached.
+func appendDispatchCallers(inferred []mcpio.DispatchInferredRef, inbound []model.EdgeRef, via string, directCallers map[string]struct{}, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {
+	for _, e := range inbound {
+		if e.Edge.Kind != model.EdgeCalls {
+			continue
 		}
+		if len(inferred) >= maxDispatchInferred {
+			break
+		}
+		callerName := qualifiedOrNameRef(e.Target)
+		if _, dup := directCallers[callerName]; dup {
+			continue
+		}
+		directCallers[callerName] = struct{}{}
+
+		var filePath *string
+		if p, ok := lookup(e.Target.FileID); ok {
+			filePath = &p
+		}
+		inferred = append(inferred, mcpio.DispatchInferredRef{
+			Symbol:     callerName,
+			File:       filePath,
+			LineStart:  e.Target.LineStart,
+			LineEnd:    e.Target.LineEnd,
+			Ref:        mcpio.FormatRefPtr(filePath, e.Target.LineStart),
+			Via:        via,
+			Confidence: mcpio.Confidence(DispatchInferredConfidence),
+		})
 	}
 	return inferred
 }

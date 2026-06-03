@@ -16,7 +16,6 @@ import (
 // (pitch 22-05 response compaction).
 const snippetStripThreshold = 5
 
-//nolint:gocyclo // 27-05: retired by the mcpserver split
 func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	query, err := req.RequireString("query")
 	if err != nil {
@@ -24,22 +23,7 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 	}
 
 	limit := req.GetInt("limit", 10)
-	language := req.GetString("language", "")
-	minScore := req.GetFloat("min_score", 0.0)
-	mode := req.GetString("mode", search.ModeHybrid)
-
-	keywordBias := h.defaults.SearchKeywordWeight - 0.5
-	if keywordBias < 0 {
-		keywordBias = 0
-	}
-	results, meta, err := h.search.Search(ctx, search.Options{
-		Query:       query,
-		Limit:       limit,
-		Language:    language,
-		MinScore:    minScore,
-		KeywordBias: keywordBias,
-		Mode:        mode,
-	})
+	results, meta, err := h.search.Search(ctx, h.searchOptions(req, query, limit))
 	if err != nil {
 		return nil, fmt.Errorf("sense_search: %w", err)
 	}
@@ -53,6 +37,42 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 		return nil, fmt.Errorf("sense_search: load file paths: %w", err)
 	}
 
+	entries, uniqueFiles := h.buildSearchEntries(results, pathByID)
+	entries, uniqueFiles, textFallbackFired := h.applyTextFallback(ctx, query, limit, entries, uniqueFiles)
+
+	resp := assembleSearchResponse(entries, uniqueFiles, meta, textFallbackFired)
+	h.tracker.Record("sense_search", query,
+		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, textFallbackFired)
+	resp.NextSteps = searchHints(resp)
+
+	out, err := mcpio.MarshalSearchCompact(resp)
+	if err != nil {
+		return nil, fmt.Errorf("sense_search: marshal: %w", err)
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// searchOptions reads the request parameters into engine search options,
+// applying the profile's keyword-weight bias.
+func (h *handlers) searchOptions(req mcp.CallToolRequest, query string, limit int) search.Options {
+	keywordBias := h.defaults.SearchKeywordWeight - 0.5
+	if keywordBias < 0 {
+		keywordBias = 0
+	}
+	return search.Options{
+		Query:       query,
+		Limit:       limit,
+		Language:    req.GetString("language", ""),
+		MinScore:    req.GetFloat("min_score", 0.0),
+		KeywordBias: keywordBias,
+		Mode:        req.GetString("mode", search.ModeHybrid),
+	}
+}
+
+// buildSearchEntries converts engine results into response entries, marking
+// already-seen symbols, stripping snippets past the strip threshold, and
+// collecting the set of unique files the results touch.
+func (h *handlers) buildSearchEntries(results []search.Result, pathByID map[int64]string) ([]mcpio.SearchResultEntry, map[string]struct{}) {
 	entries := make([]mcpio.SearchResultEntry, len(results))
 	uniqueFiles := map[string]struct{}{}
 	for i, r := range results {
@@ -81,31 +101,43 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 			uniqueFiles[path] = struct{}{}
 		}
 	}
+	return entries, uniqueFiles
+}
 
-	textFallbackFired := false
-	if h.textFallback != nil && h.textFallback.Available() && len(entries) < limit {
-		textResults := h.textFallback.Search(ctx, query, h.dir, []string{"."}, limit)
-		matches := make([]mcpio.TextMatch, len(textResults))
-		for i, tr := range textResults {
-			matches[i] = mcpio.TextMatch{File: tr.File, Line: tr.Line, Match: tr.Match}
-		}
-		textEntries, fired := mcpio.ConvertTextResults(matches, entries)
-		if fired {
-			entries = append(entries, textEntries...)
-			for _, e := range textEntries {
-				uniqueFiles[e.File] = struct{}{}
-			}
-			textFallbackFired = true
-		}
+// applyTextFallback appends literal grep-style matches when the index search
+// underfilled the limit and a text fallback is available. It returns the
+// (possibly extended) entries and file set, and whether the fallback fired.
+func (h *handlers) applyTextFallback(ctx context.Context, query string, limit int, entries []mcpio.SearchResultEntry, uniqueFiles map[string]struct{}) ([]mcpio.SearchResultEntry, map[string]struct{}, bool) {
+	if h.textFallback == nil || !h.textFallback.Available() || len(entries) >= limit {
+		return entries, uniqueFiles, false
 	}
 
+	textResults := h.textFallback.Search(ctx, query, h.dir, []string{"."}, limit)
+	matches := make([]mcpio.TextMatch, len(textResults))
+	for i, tr := range textResults {
+		matches[i] = mcpio.TextMatch{File: tr.File, Line: tr.Line, Match: tr.Match}
+	}
+	textEntries, fired := mcpio.ConvertTextResults(matches, entries)
+	if !fired {
+		return entries, uniqueFiles, false
+	}
+	entries = append(entries, textEntries...)
+	for _, e := range textEntries {
+		uniqueFiles[e.File] = struct{}{}
+	}
+	return entries, uniqueFiles, true
+}
+
+// assembleSearchResponse builds the response envelope from the finished
+// entries, the search metadata, and whether the text fallback contributed.
+func assembleSearchResponse(entries []mcpio.SearchResultEntry, uniqueFiles map[string]struct{}, meta search.SearchMeta, textFallbackFired bool) mcpio.SearchResponse {
 	searchMode := meta.Mode
 	if textFallbackFired {
 		searchMode += "+text"
 	}
 
 	filesAvoided := len(uniqueFiles)
-	resp := mcpio.SearchResponse{
+	return mcpio.SearchResponse{
 		Results:    entries,
 		SearchMode: searchMode,
 		FusionWeights: mcpio.FusionWeights{
@@ -119,16 +151,6 @@ func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*
 			TextFallbackFired:         textFallbackFired,
 		},
 	}
-	h.tracker.Record("sense_search", query,
-		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, textFallbackFired)
-
-	resp.NextSteps = searchHints(resp)
-
-	out, err := mcpio.MarshalSearchCompact(resp)
-	if err != nil {
-		return nil, fmt.Errorf("sense_search: marshal: %w", err)
-	}
-	return mcp.NewToolResultText(string(out)), nil
 }
 
 func searchHints(resp mcpio.SearchResponse) []mcpio.NextStep {
