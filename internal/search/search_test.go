@@ -266,7 +266,7 @@ func TestFusionCentralityBreaksTie(t *testing.T) {
 		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
 			FileID: fid2, Name: fmt.Sprintf("Caller%d", i),
 			Qualified: fmt.Sprintf("pkg.Caller%d", i),
-			Kind: "function", LineStart: i * 10, LineEnd: i*10 + 5,
+			Kind:      "function", LineStart: i * 10, LineEnd: i*10 + 5,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -352,7 +352,7 @@ func TestSearchRanksHubSymbolHigher(t *testing.T) {
 		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
 			FileID: callerFile, Name: fmt.Sprintf("Caller%d", i),
 			Qualified: fmt.Sprintf("pkg.Caller%d", i),
-			Kind: "function", LineStart: i * 10, LineEnd: i*10 + 5,
+			Kind:      "function", LineStart: i * 10, LineEnd: i*10 + 5,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -369,7 +369,7 @@ func TestSearchRanksHubSymbolHigher(t *testing.T) {
 		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
 			FileID: callerFile, Name: fmt.Sprintf("HelperCaller%d", i),
 			Qualified: fmt.Sprintf("pkg.HelperCaller%d", i),
-			Kind: "function", LineStart: 300 + i*10, LineEnd: 305 + i*10,
+			Kind:      "function", LineStart: 300 + i*10, LineEnd: 305 + i*10,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -594,7 +594,7 @@ func TestSearchDemotesTestSymbols(t *testing.T) {
 		callerID, err := a.WriteSymbol(ctx, &model.Symbol{
 			FileID: callerFile, Name: fmt.Sprintf("Caller%d", i),
 			Qualified: fmt.Sprintf("pkg.Caller%d", i),
-			Kind: "function", LineStart: i * 10, LineEnd: i*10 + 5,
+			Kind:      "function", LineStart: i * 10, LineEnd: i*10 + 5,
 		})
 		if err != nil {
 			t.Fatal(err)

@@ -17,9 +17,9 @@ func init() {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:  []string{"function_declaration"},
-		ClassTypes: []string{"class_declaration", "object_declaration"},
-		CallTypes:  []string{"call_expression"},
+		FuncTypes:   []string{"function_declaration"},
+		ClassTypes:  []string{"class_declaration", "object_declaration"},
+		CallTypes:   []string{"call_expression"},
 		ImportTypes: []string{"import_header"},
 
 		InheritKinds: []string{"delegation_specifier"},

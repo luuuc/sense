@@ -104,13 +104,13 @@ func (rustVoice) Inspect(s Symbol, f Facts) *Reason {
 // unaffected.
 var rustDerivableTraitMethods = map[string]bool{
 	"clone": true, "clone_from": true, // Clone
-	"fmt":                              true, // Debug
-	"eq":  true, "ne": true,                 // PartialEq
+	"fmt": true,             // Debug
+	"eq":  true, "ne": true, // PartialEq
 	"partial_cmp": true, "lt": true, "le": true, "gt": true, "ge": true, // PartialOrd
-	"cmp":  true,                            // Ord
-	"hash": true,                            // Hash
-	"default":     true,                     // Default
-	"serialize":   true, "deserialize": true, // serde
+	"cmp":       true,                      // Ord
+	"hash":      true,                      // Hash
+	"default":   true,                      // Default
+	"serialize": true, "deserialize": true, // serde
 }
 
 func init() {

@@ -31,15 +31,15 @@ func TestBuildNestedGitignore(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"app.log", true},               // root .gitignore
-		{"sub/app.log", true},            // root .gitignore applies everywhere
-		{"sub/local-only", true},         // sub/.gitignore anchored with prefix
-		{"local-only", false},            // not at root
-		{"sub/foo.tmp", true},            // sub/.gitignore unanchored
-		{"foo.tmp", false},               // sub/.gitignore doesn't apply at root
-		{"sub/deep/secret.txt", true},    // deep/.gitignore
-		{"secret.txt", false},            // deep/.gitignore doesn't apply at root
-		{"sub/deep/other.txt", false},    // not ignored
+		{"app.log", true},             // root .gitignore
+		{"sub/app.log", true},         // root .gitignore applies everywhere
+		{"sub/local-only", true},      // sub/.gitignore anchored with prefix
+		{"local-only", false},         // not at root
+		{"sub/foo.tmp", true},         // sub/.gitignore unanchored
+		{"foo.tmp", false},            // sub/.gitignore doesn't apply at root
+		{"sub/deep/secret.txt", true}, // deep/.gitignore
+		{"secret.txt", false},         // deep/.gitignore doesn't apply at root
+		{"sub/deep/other.txt", false}, // not ignored
 	}
 	for _, tt := range tests {
 		if got := m.Match(tt.path, false); got != tt.want {

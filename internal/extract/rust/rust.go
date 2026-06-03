@@ -11,7 +11,7 @@
 //   - function_item in impl     → KindMethod with parent = impl type
 //   - mod_item                  → KindModule
 //   - function_signature_item   → KindMethod (trait method signatures,
-//                                 parented to the trait)
+//     parented to the trait)
 //
 // Visibility:
 //   - `pub` → "public"; `pub(crate)`, `pub(super)`, `pub(in path)` and
@@ -33,8 +33,8 @@
 //   - Rust uses `::` for path separators. Module-scoped items carry
 //     the module chain: `inner::helper`.
 //   - Impl methods qualify through the impl's type:
-//       impl Money               → methods qualified `Money::display`
-//       impl Formatter for Money → methods qualified `Money::format`
+//     impl Money               → methods qualified `Money::display`
+//     impl Formatter for Money → methods qualified `Money::format`
 package rust
 
 import (

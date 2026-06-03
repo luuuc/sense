@@ -96,9 +96,9 @@ func TestJava_MethodInvocation_WithReceiver(t *testing.T) {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:  []string{"method_declaration", "constructor_declaration"},
-		ClassTypes: []string{"class_declaration", "interface_declaration"},
-		CallTypes:  []string{"method_invocation", "object_creation_expression"},
+		FuncTypes:   []string{"method_declaration", "constructor_declaration"},
+		ClassTypes:  []string{"class_declaration", "interface_declaration"},
+		CallTypes:   []string{"method_invocation", "object_creation_expression"},
 		ImportTypes: []string{"import_declaration"},
 
 		InheritFields: []string{"superclass", "interfaces"},
@@ -149,9 +149,9 @@ func TestKotlin_CallNameFn(t *testing.T) {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:  []string{"function_declaration"},
-		ClassTypes: []string{"class_declaration", "object_declaration"},
-		CallTypes:  []string{"call_expression"},
+		FuncTypes:   []string{"function_declaration"},
+		ClassTypes:  []string{"class_declaration", "object_declaration"},
+		CallTypes:   []string{"call_expression"},
 		ImportTypes: []string{"import_header"},
 
 		InheritKinds: []string{"delegation_specifier"},
@@ -267,9 +267,9 @@ func TestCSharp_Imports(t *testing.T) {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:  []string{"method_declaration", "constructor_declaration"},
-		ClassTypes: []string{"class_declaration", "interface_declaration", "struct_declaration"},
-		CallTypes:  []string{"invocation_expression"},
+		FuncTypes:   []string{"method_declaration", "constructor_declaration"},
+		ClassTypes:  []string{"class_declaration", "interface_declaration", "struct_declaration"},
+		CallTypes:   []string{"invocation_expression"},
 		ImportTypes: []string{"using_directive"},
 
 		InheritKinds: []string{"base_list"},
@@ -312,9 +312,9 @@ func TestScala_Imports(t *testing.T) {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:  []string{"function_definition"},
-		ClassTypes: []string{"class_definition", "object_definition", "trait_definition"},
-		CallTypes:  []string{"call_expression"},
+		FuncTypes:   []string{"function_definition"},
+		ClassTypes:  []string{"class_definition", "object_definition", "trait_definition"},
+		CallTypes:   []string{"call_expression"},
 		ImportTypes: []string{"import_declaration"},
 
 		InheritFields: []string{"extend_clause"},
@@ -356,9 +356,9 @@ func TestPHP_Calls(t *testing.T) {
 		Tier:      extract.TierStandard,
 		Separator: "\\",
 
-		FuncTypes:  []string{"function_definition", "method_declaration"},
-		ClassTypes: []string{"class_declaration", "interface_declaration", "trait_declaration"},
-		CallTypes:  []string{"function_call_expression", "member_call_expression", "scoped_call_expression"},
+		FuncTypes:   []string{"function_definition", "method_declaration"},
+		ClassTypes:  []string{"class_declaration", "interface_declaration", "trait_declaration"},
+		CallTypes:   []string{"function_call_expression", "member_call_expression", "scoped_call_expression"},
 		ImportTypes: []string{"namespace_use_declaration"},
 
 		InheritFields: []string{"base_clause", "interfaces"},
@@ -686,4 +686,3 @@ func TestWalkForCalls_SkipsNestedClasses(t *testing.T) {
 		t.Error("missing symbol Outer.Inner.innerMethod")
 	}
 }
-

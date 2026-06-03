@@ -162,4 +162,3 @@ func TestUpdateDevBuild(t *testing.T) {
 		t.Errorf("stderr = %q, expected development build message", stderr.String())
 	}
 }
-

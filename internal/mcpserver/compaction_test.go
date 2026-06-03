@@ -71,13 +71,13 @@ func setupCompactionFixture(t *testing.T) *handlers {
 	t.Cleanup(func() { tracker.Close() })
 
 	return &handlers{
-		adapter:      adapter,
-		db:           adapter.DB(),
-		dir:          dir,
-		search:       search.NewEngine(adapter, nil, nil),
-		tracker:      tracker,
-		defaults:     profile.DefaultParams(),
-		seenSymbols:  make(map[int64]bool),
+		adapter:     adapter,
+		db:          adapter.DB(),
+		dir:         dir,
+		search:      search.NewEngine(adapter, nil, nil),
+		tracker:     tracker,
+		defaults:    profile.DefaultParams(),
+		seenSymbols: make(map[int64]bool),
 	}
 }
 

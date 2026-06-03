@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/luuuc/sense/internal/sqlite"
 	_ "modernc.org/sqlite"
+
+	"github.com/luuuc/sense/internal/sqlite"
 )
 
 func TestOpenIndexRebuiltOnSchemaMismatch(t *testing.T) {

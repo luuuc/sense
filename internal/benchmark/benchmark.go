@@ -7,10 +7,10 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"strings"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/luuuc/sense/internal/blast"
@@ -40,11 +40,11 @@ type Latency struct {
 }
 
 type ScanMetrics struct {
-	FullScan          time.Duration
-	FilesPerSec       float64
-	SymbolsPerSec     float64
-	IncrementalClean  time.Duration
-	IncrementalDirty  time.Duration
+	FullScan         time.Duration
+	FilesPerSec      float64
+	SymbolsPerSec    float64
+	IncrementalClean time.Duration
+	IncrementalDirty time.Duration
 }
 
 type IndexMetrics struct {

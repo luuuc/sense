@@ -22,8 +22,8 @@ func (w BaseWorker) ClockIn() {}
 func (w *BaseWorker) ClockOut() {}
 
 type PickerBot struct {
-	BaseWorker         // embedded → includes edge
-	*Logger            // embedded pointer → includes edge
+	BaseWorker          // embedded → includes edge
+	*Logger             // embedded pointer → includes edge
 	assignedZone string // regular field, not embedded
 }
 

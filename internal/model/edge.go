@@ -22,11 +22,11 @@ func Int64Ptr(v int64) *int64 { return &v }
 type EdgeKind string
 
 const (
-	EdgeCalls    EdgeKind = "calls"
-	EdgeImports  EdgeKind = "imports"
-	EdgeInherits EdgeKind = "inherits"
-	EdgeIncludes EdgeKind = "includes"
-	EdgeTests    EdgeKind = "tests"
+	EdgeCalls      EdgeKind = "calls"
+	EdgeImports    EdgeKind = "imports"
+	EdgeInherits   EdgeKind = "inherits"
+	EdgeIncludes   EdgeKind = "includes"
+	EdgeTests      EdgeKind = "tests"
 	EdgeComposes   EdgeKind = "composes"
 	EdgeTemporal   EdgeKind = "temporal"
 	EdgeReferences EdgeKind = "references"

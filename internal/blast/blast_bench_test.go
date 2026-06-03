@@ -22,11 +22,11 @@ import (
 // the cost curve is visible when `go test -bench` runs with -count
 // or -benchtime:
 //
-//   small_graph (~1K symbols, branching 8)  — sanity check that the
-//                                              hot path isn't doing
-//                                              something O(N²).
-//   large_graph (~30K symbols, branching 30) — the pitch's explicit
-//                                              acceptance target.
+//	small_graph (~1K symbols, branching 8)  — sanity check that the
+//	                                           hot path isn't doing
+//	                                           something O(N²).
+//	large_graph (~30K symbols, branching 30) — the pitch's explicit
+//	                                           acceptance target.
 //
 // The graph shape is a uniform fan-in tree: symbol 1 is the root,
 // symbols at depth k have branching-factor callers in depth k+1,

@@ -90,8 +90,8 @@ func TestFlatBuildSkipsMismatchedAndEmptyVectors(t *testing.T) {
 	// vector are skipped; the index keeps only the dimension-3 rows.
 	embeddings := map[int64][]float32{
 		1: normalize([]float32{1, 0, 0}),
-		2: {1, 0},     // wrong dim — skipped
-		3: {},         // empty — skipped
+		2: {1, 0}, // wrong dim — skipped
+		3: {},     // empty — skipped
 		4: normalize([]float32{0, 1, 0}),
 	}
 	idx := search.BuildFlatIndex(embeddings)

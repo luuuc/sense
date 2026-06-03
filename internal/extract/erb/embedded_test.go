@@ -119,14 +119,14 @@ func TestEmbeddedRuby_KeywordNotEmitted(t *testing.T) {
 
 func TestEmbeddedRubyCode(t *testing.T) {
 	cases := map[string]string{
-		"= current_user":  "current_user", // <%= output marker
-		" foo.bar ":       "foo.bar",       // <% plain
-		"- trimmed":       "trimmed",       // <%- whitespace-trim marker
-		"= -1":            "-1",            // unary minus after the output marker survives
-		" -1":             "-1",            // <% -1 %>: leading space means '-' is unary minus, not a marker
-		"":                "",
-		"   ":             "",
-		"current_user":    "current_user",
+		"= current_user": "current_user", // <%= output marker
+		" foo.bar ":      "foo.bar",      // <% plain
+		"- trimmed":      "trimmed",      // <%- whitespace-trim marker
+		"= -1":           "-1",           // unary minus after the output marker survives
+		" -1":            "-1",           // <% -1 %>: leading space means '-' is unary minus, not a marker
+		"":               "",
+		"   ":            "",
+		"current_user":   "current_user",
 	}
 	for in, want := range cases {
 		if got := embeddedRubyCode(in); got != want {

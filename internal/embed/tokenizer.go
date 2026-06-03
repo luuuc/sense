@@ -9,12 +9,12 @@ import (
 // all-MiniLM-L6-v2. It handles lowercasing, punctuation splitting,
 // and subword decomposition using the model's vocabulary.
 type tokenizer struct {
-	vocab   map[string]int32
-	maxLen  int
-	clsID   int32
-	sepID   int32
-	unkID   int32
-	padID   int32
+	vocab  map[string]int32
+	maxLen int
+	clsID  int32
+	sepID  int32
+	unkID  int32
+	padID  int32
 }
 
 func newTokenizer(vocabData []byte, maxLen int) *tokenizer {

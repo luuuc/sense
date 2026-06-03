@@ -308,7 +308,6 @@ func normalizeStatusResponse(r *StatusResponse) {
 	}
 }
 
-
 // MarshalUnreferenced renders an UnreferencedResponse with the shared
 // CLI pretty-print contract.
 func MarshalUnreferenced(r UnreferencedResponse) ([]byte, error) {

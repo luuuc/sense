@@ -1218,12 +1218,12 @@ func setupCallbackFixture(t *testing.T) *sqlite.Adapter {
 		symIDs[sd.qualified] = id
 	}
 	parents := map[string]string{
-		"Order.before_save":        "Order",
-		"Order.after_create":       "Order",
-		"User.before_validation":   "User",
-		"User.after_save":          "User",
-		"Product.before_destroy":   "Product",
-		"Product.after_commit":     "Product",
+		"Order.before_save":      "Order",
+		"Order.after_create":     "Order",
+		"User.before_validation": "User",
+		"User.after_save":        "User",
+		"Product.before_destroy": "Product",
+		"Product.after_commit":   "Product",
 	}
 	for childQ, parentQ := range parents {
 		_, err := adapter.DB().ExecContext(ctx, `UPDATE sense_symbols SET parent_id = ? WHERE id = ?`, symIDs[parentQ], symIDs[childQ])
@@ -1787,4 +1787,3 @@ func TestDetectExternalDependenciesNoDomain(t *testing.T) {
 		t.Errorf("expected no conventions without domain, got %d", len(convs))
 	}
 }
-

@@ -389,7 +389,7 @@ func seedChain(ctx context.Context, t *testing.T, a *sqlite.Adapter, n int) []in
 		sid, err := a.WriteSymbol(ctx, &model.Symbol{
 			FileID: fid, Name: fmt.Sprintf("S%d", i),
 			Qualified: fmt.Sprintf("S%d", i),
-			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+			Kind:      model.KindMethod, LineStart: 1, LineEnd: 5,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -540,7 +540,7 @@ func TestReadSymbolGraphTruncation(t *testing.T) {
 		callerID, _ := a.WriteSymbol(ctx, &model.Symbol{
 			FileID: fid, Name: fmt.Sprintf("Caller%d", i),
 			Qualified: fmt.Sprintf("Caller%d", i),
-			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+			Kind:      model.KindMethod, LineStart: 1, LineEnd: 5,
 		})
 		if _, err := a.WriteEdge(ctx, &model.Edge{
 			SourceID: model.Int64Ptr(callerID), TargetID: hubID,
@@ -556,7 +556,7 @@ func TestReadSymbolGraphTruncation(t *testing.T) {
 		grandID, _ := a.WriteSymbol(ctx, &model.Symbol{
 			FileID: gfid, Name: fmt.Sprintf("Grand%d", i),
 			Qualified: fmt.Sprintf("Grand%d", i),
-			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+			Kind:      model.KindMethod, LineStart: 1, LineEnd: 5,
 		})
 		if _, err := a.WriteEdge(ctx, &model.Edge{
 			SourceID: model.Int64Ptr(grandID), TargetID: callerID,

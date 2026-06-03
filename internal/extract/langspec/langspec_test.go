@@ -51,13 +51,12 @@ func TestSyntheticSpec_ClassesAndMethods(t *testing.T) {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:    []string{"function_definition"},
-		ClassTypes:   []string{"class_definition"},
-		CallTypes:    []string{"call"},
-		ImportTypes:  []string{"import_from_statement"},
+		FuncTypes:     []string{"function_definition"},
+		ClassTypes:    []string{"class_definition"},
+		CallTypes:     []string{"call"},
+		ImportTypes:   []string{"import_from_statement"},
 		InheritFields: []string{"superclasses"},
-		NameField:    "name",
-
+		NameField:     "name",
 	}
 
 	src := `

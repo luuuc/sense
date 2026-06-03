@@ -84,8 +84,8 @@ func TestWithAliasingRewritesBeforeHandler(t *testing.T) {
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "sense_graph"
 	req.Params.Arguments = map[string]any{
-		"name": "User", // global alias → symbol
-		"dir":  "callers", // tool alias → direction
+		"name": "User",       // global alias → symbol
+		"dir":  "callers",    // tool alias → direction
 		"text": "user model", // global alias → query
 	}
 	if _, err := wrapped(context.Background(), req); err != nil {

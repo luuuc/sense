@@ -277,7 +277,7 @@ func TestUpdateNewerAvailable(t *testing.T) {
 	var installCalled bool
 	var installVersion string
 	origRunInstall := runInstallScriptFn
-		runInstallScriptFn = func(ver string, _, _ io.Writer) error {
+	runInstallScriptFn = func(ver string, _, _ io.Writer) error {
 		installCalled = true
 		installVersion = ver
 		return nil

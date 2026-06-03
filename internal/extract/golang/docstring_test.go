@@ -289,4 +289,3 @@ func Hush() {}
 		t.Errorf("Docstring on body-less comments = %q, want \"\"", sym.Docstring)
 	}
 }
-

@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/luuuc/sense/internal/scan"
 	_ "modernc.org/sqlite"
+
+	"github.com/luuuc/sense/internal/scan"
 )
 
 // downgradeFTS rewrites the index's FTS table to an older shape that lacks the

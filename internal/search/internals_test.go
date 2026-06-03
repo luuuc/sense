@@ -10,7 +10,6 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-
 func TestExpandQueryIdenticalSplit(t *testing.T) {
 	// "hello world" splits into "hello world" (identical) -> no second sub-query
 	got := expandQuery("hello world")

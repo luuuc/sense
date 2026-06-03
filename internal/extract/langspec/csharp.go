@@ -13,9 +13,9 @@ func init() {
 		Tier:      extract.TierStandard,
 		Separator: ".",
 
-		FuncTypes:  []string{"method_declaration", "constructor_declaration"},
-		ClassTypes: []string{"class_declaration", "interface_declaration", "struct_declaration", "enum_declaration", "record_declaration", "namespace_declaration"},
-		CallTypes:  []string{"invocation_expression", "object_creation_expression"},
+		FuncTypes:   []string{"method_declaration", "constructor_declaration"},
+		ClassTypes:  []string{"class_declaration", "interface_declaration", "struct_declaration", "enum_declaration", "record_declaration", "namespace_declaration"},
+		CallTypes:   []string{"invocation_expression", "object_creation_expression"},
 		ImportTypes: []string{"using_directive"},
 
 		InheritKinds: []string{"base_list"},

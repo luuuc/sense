@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
-	_ "modernc.org/sqlite"
 )
 
 func seedTestDB(t *testing.T) (*sql.DB, func()) {

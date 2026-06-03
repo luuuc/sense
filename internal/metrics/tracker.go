@@ -19,10 +19,10 @@ type Tracker struct {
 	flushInterval time.Duration
 
 	session struct {
-		queries            atomic.Int64
-		fileReadsAvoided   atomic.Int64
-		tokensSaved        atomic.Int64
-		textFallbackFired  atomic.Int64
+		queries           atomic.Int64
+		fileReadsAvoided  atomic.Int64
+		tokensSaved       atomic.Int64
+		textFallbackFired atomic.Int64
 	}
 
 	topQuery struct {

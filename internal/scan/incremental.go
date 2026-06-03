@@ -22,8 +22,8 @@ type IncrementalOptions struct {
 	EmbeddingsEnabled bool
 	Output            io.Writer
 	Warnings          io.Writer
-	Changed           []string // relative paths of modified/created files
-	Removed           []string // relative paths of deleted files
+	Changed           []string     // relative paths of modified/created files
+	Removed           []string     // relative paths of deleted files
 	Parsers           *ParserCache // reusable parser cache; nil creates a temporary one
 }
 

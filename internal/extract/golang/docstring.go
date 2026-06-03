@@ -130,4 +130,3 @@ func isLicenseHeader(line string) bool {
 	return strings.HasPrefix(line, "Copyright") ||
 		strings.HasPrefix(line, "SPDX-")
 }
-

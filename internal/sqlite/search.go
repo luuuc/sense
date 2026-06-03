@@ -487,4 +487,3 @@ func sanitizeFTS5Query(q string) string {
 	}
 	return strings.Join(quoted, " OR ")
 }
-

@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-
 func TestUpdateAlreadyLatest_NonDev(t *testing.T) {
 	// The Update function checks version.Version == "0.0.0-dev" first,
 	// which always returns 1 in test builds. TestUpdateDevBuild in

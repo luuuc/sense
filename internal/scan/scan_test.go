@@ -134,7 +134,6 @@ func TestScanSecondRunSkipsSetup(t *testing.T) {
 	}
 }
 
-
 func TestScanSchemaApplied(t *testing.T) {
 	root := t.TempDir()
 	buildTree(t, root, []string{"a.go"})
@@ -598,7 +597,6 @@ end
 		t.Error("expected Greeter#dispatch outbound edge to Greeter#say, none found")
 	}
 }
-
 
 // TestScanEmitsTestsEdgesByFilenameConvention pins Card 12's test-
 // association contract: a `widget.go` / `widget_test.go` pair in

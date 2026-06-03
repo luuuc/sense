@@ -26,8 +26,8 @@ var RailsCallbackNames = map[string]bool{
 	// the lifecycle hooks above. Without it the predicate reads as zero-edge.
 	// (`validates :attr, ...` takes attribute names, not method symbols, so it
 	// is deliberately omitted — it would emit edges to non-method targets.)
-	"validate": true,
-	"before_commit":     true,
-	"after_commit":      true,
-	"after_rollback":    true,
+	"validate":       true,
+	"before_commit":  true,
+	"after_commit":   true,
+	"after_rollback": true,
 }

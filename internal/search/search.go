@@ -9,10 +9,11 @@ import (
 	"sync"
 	"unicode"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/sqlite"
-	"golang.org/x/sync/errgroup"
 )
 
 // Result is a single fused search hit with metadata from both backends.

@@ -56,8 +56,11 @@ type recorder struct {
 	edges   []extract.EmittedEdge
 }
 
-func (r *recorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
-func (r *recorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
+func (r *recorder) Symbol(s extract.EmittedSymbol) error {
+	r.symbols = append(r.symbols, s)
+	return nil
+}
+func (r *recorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
 
 func TestInferStimulusController(t *testing.T) {
 	tests := []struct {
@@ -210,8 +213,8 @@ export default class extends Controller {
 
 	// Check outlet edges
 	wantOutlets := map[string]bool{
-		"SearchController":          false,
-		"Admin::ResultsController":  false,
+		"SearchController":         false,
+		"Admin::ResultsController": false,
 	}
 	for _, e := range r.edges {
 		if _, ok := wantOutlets[e.TargetQualified]; ok {
@@ -1160,7 +1163,6 @@ func TestStarReexportEdge(t *testing.T) {
 	}
 }
 
-
 func TestAbstractClassDeclaration(t *testing.T) {
 	r := parseTS(t, `abstract class Animal {
   abstract speak(): string;
@@ -1881,7 +1883,6 @@ func TestInterfaceHeritageError(t *testing.T) {
 	}
 }
 
-
 func TestTypeAliasSymbolErrorTS(t *testing.T) {
 	err := parseWithEmitter(t, `type ID = string;`, &failAfter{symbolsLeft: 0, edgesLeft: 100})
 	if err == nil {
@@ -1895,7 +1896,6 @@ func TestTypeAliasIntersectionEdgeError(t *testing.T) {
 		t.Error("expected error on type alias intersection edge emit")
 	}
 }
-
 
 func TestFunctionWithCallError(t *testing.T) {
 	err := parseWithEmitter(t, `function f() { g(); h(); }`, &failAfter{symbolsLeft: 100, edgesLeft: 0})

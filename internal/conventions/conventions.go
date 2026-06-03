@@ -21,15 +21,15 @@ const minPrevalenceInstances = 5
 type Category string
 
 const (
-	CategoryInheritance  Category = "inheritance"
-	CategoryNaming       Category = "naming"
-	CategoryStructure    Category = "structure"
-	CategoryComposition  Category = "composition"
-	CategoryTesting      Category = "testing"
+	CategoryInheritance   Category = "inheritance"
+	CategoryNaming        Category = "naming"
+	CategoryStructure     Category = "structure"
+	CategoryComposition   Category = "composition"
+	CategoryTesting       Category = "testing"
 	CategoryDesignPattern Category = "design_pattern"
-	CategoryFramework    Category = "framework"
-	CategoryArchitecture Category = "architecture"
-	CategoryKeyTypes     Category = "key_types"
+	CategoryFramework     Category = "framework"
+	CategoryArchitecture  Category = "architecture"
+	CategoryKeyTypes      Category = "key_types"
 )
 
 type Example struct {
@@ -144,12 +144,12 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 }
 
 type symbolRow struct {
-	id       int64
-	fileID   int64
-	name     string
+	id        int64
+	fileID    int64
+	name      string
 	qualified string
-	kind     string
-	parentID *int64
+	kind      string
+	parentID  *int64
 }
 
 type edgeRow struct {

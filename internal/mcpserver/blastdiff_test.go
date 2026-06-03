@@ -230,11 +230,11 @@ func TestBlastDiffMultipleFiles(t *testing.T) {
 	}
 
 	edge := model.Edge{
-		SourceID: &symID,
-		TargetID: symID,
-		Kind:     model.EdgeCalls,
-		FileID:   fileID,
-		Line:     intPtr(1),
+		SourceID:   &symID,
+		TargetID:   symID,
+		Kind:       model.EdgeCalls,
+		FileID:     fileID,
+		Line:       intPtr(1),
 		Confidence: 1.0,
 	}
 	if _, err := h.adapter.WriteEdge(ctx, &edge); err != nil {

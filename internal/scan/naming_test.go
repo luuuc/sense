@@ -28,9 +28,9 @@ func TestSingularize(t *testing.T) {
 
 func TestSplitQualified(t *testing.T) {
 	cases := []struct {
-		in        string
-		wantBare  string
-		wantNS    string
+		in       string
+		wantBare string
+		wantNS   string
 	}{
 		{"WorkPackages::CreateService", "CreateService", "WorkPackages"},
 		{"Admin::WorkPackages::CreateService", "CreateService", "WorkPackages"},

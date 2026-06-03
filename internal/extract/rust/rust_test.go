@@ -14,8 +14,11 @@ type recorder struct {
 	edges   []extract.EmittedEdge
 }
 
-func (r *recorder) Symbol(s extract.EmittedSymbol) error { r.symbols = append(r.symbols, s); return nil }
-func (r *recorder) Edge(e extract.EmittedEdge) error     { r.edges = append(r.edges, e); return nil }
+func (r *recorder) Symbol(s extract.EmittedSymbol) error {
+	r.symbols = append(r.symbols, s)
+	return nil
+}
+func (r *recorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
 
 // counter counts emitted symbols and edges.
 type counter struct {
@@ -1258,7 +1261,6 @@ impl Parser {
 		t.Errorf("expected at least 2 calls from Parser::parse, got %d", calls)
 	}
 }
-
 
 func TestUnwrapReferenceType(t *testing.T) {
 	r := parse(t, `
