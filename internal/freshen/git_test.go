@@ -45,6 +45,32 @@ func TestNewGitHeadWatcherNonRepo(t *testing.T) {
 	}
 }
 
+// TestNewGitHeadWatcherAddFails drives the fsnotify-Add failure branch: .git
+// exists as a directory (so the stat passes) but cannot be watched because it
+// is unreadable. Root-guarded — root ignores the permission bits.
+func TestNewGitHeadWatcherAddFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission bits are ignored when running as root")
+	}
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(gitDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(gitDir, 0o755) })
+
+	w, err := newGitHeadWatcher(root)
+	if w != nil {
+		_ = w.Close()
+	}
+	if err == nil {
+		t.Skip("this platform allowed a watch on an unreadable .git; nothing to assert")
+	}
+}
+
 func TestGitDiffNamesSameCommit(t *testing.T) {
 	c, r := gitDiffNames(t.TempDir(), "abc", "abc")
 	if c != nil || r != nil {

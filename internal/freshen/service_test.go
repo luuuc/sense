@@ -311,6 +311,111 @@ func TestServiceNewBadConfig(t *testing.T) {
 	}
 }
 
+// TestServiceRunExitsOnClosedBatches covers run's closed-channel branch: when
+// the debounce loop closes the batch channel, the consumer goroutine returns.
+func TestServiceRunExitsOnClosedBatches(t *testing.T) {
+	s := &Service{}
+	s.wg.Add(1)
+
+	batches := make(chan Batch)
+	close(batches)
+
+	done := make(chan struct{})
+	go func() {
+		s.run(context.Background(), batches)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not exit when the batch channel closed")
+	}
+}
+
+// TestRepairFilesNilAdapterAfterClose covers RepairFiles' raced-shutdown
+// guard: a repair that runs (on the query goroutine) after Stop closed the
+// adapter sees a nil adapter under the write mutex and bails instead of
+// writing through a closed handle.
+func TestRepairFilesNilAdapterAfterClose(t *testing.T) {
+	s := &Service{}
+	s.mu.Lock()
+	s.started = true
+	s.writing = true // pass the Writing() gate so we reach the adapter check
+	s.mu.Unlock()
+	s.adapter = nil
+
+	if err := s.RepairFiles(context.Background(), []string{"main.go"}); err != nil {
+		t.Errorf("RepairFiles with a nil adapter should be a safe no-op, got %v", err)
+	}
+}
+
+// lockDir creates an unreadable (chmod 000) subdirectory and restores its
+// permissions on cleanup so the temp tree can be removed. It is the harness
+// for the permission-error branches; callers must root-guard.
+func lockDir(t *testing.T, parent string) {
+	t.Helper()
+	locked := filepath.Join(parent, "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+}
+
+// TestServiceNewIgnoreBuildError covers NewService's ignore-matcher failure
+// branch: an unreadable directory present before construction makes the
+// gitignore walk fail to open a nested .gitignore, so NewService returns the
+// error. Root-guarded.
+func TestServiceNewIgnoreBuildError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission bits are ignored when running as root")
+	}
+	root := t.TempDir()
+	lockDir(t, root)
+
+	if _, err := NewService(Config{Root: root}); err == nil {
+		t.Skip("this platform let the ignore walk read an unreadable dir; nothing to assert")
+	}
+}
+
+// TestServiceStartWatcherCreateError covers Start's watcher-creation failure
+// branch: the writer lock is acquired, but building the watcher fails because
+// an unreadable directory appeared after construction (so the ignore matcher
+// built on the clean tree), so Start releases the lock, closes the adapter,
+// and returns the error. Root-guarded.
+func TestServiceStartWatcherCreateError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission bits are ignored when running as root")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, false)
+
+	// NewService walks the clean tree, so the ignore matcher builds fine.
+	svc, err := NewService(Config{Root: root})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Stop()
+
+	// Now lock a subdirectory: Start acquires the writer lock, then the
+	// watcher's registerAll surfaces the unreadable dir as a New error.
+	lockDir(t, root)
+
+	if err := svc.Start(context.Background()); err == nil {
+		t.Skip("this platform let the watcher register an unreadable dir; nothing to assert")
+	}
+	if svc.Writing() {
+		t.Error("Start should not report writing after a watcher-creation failure")
+	}
+}
+
 func TestServiceStartDegradesWhenLockCheckFails(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"),
