@@ -25,10 +25,12 @@ import (
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/cli"
+	"github.com/luuuc/sense/internal/config"
 	"github.com/luuuc/sense/internal/conventions"
 	"github.com/luuuc/sense/internal/dead"
 	"github.com/luuuc/sense/internal/embed"
 	"github.com/luuuc/sense/internal/extract"
+	"github.com/luuuc/sense/internal/freshen"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/metrics"
 	"github.com/luuuc/sense/internal/model"
@@ -125,16 +127,52 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 	}
 
 	embeddingsEnabled := cli.EmbeddingsEnabled(dir)
-	var hasDebt bool
-	if embeddingsEnabled {
-		debtCount, _ := adapter.EmbeddingDebtCount(ctx)
-		hasDebt = debtCount > 0
+
+	// Background freshening. When no external watcher owns this index
+	// (WatchState == nil), the server hosts its own freshen.Service so the
+	// index stays current for the whole session — catching edits from any
+	// source, not just the agent's Write/Edit. The Service owns embedding;
+	// the one-shot embed below only runs as a fallback when the Service is
+	// absent. When an external watcher co-hosts this server (WatchState !=
+	// nil), the server defers watching and embedding to that process.
+	var (
+		freshenSvc     *freshen.Service
+		watchState     = opts.WatchState
+		serviceStarted bool
+	)
+	if opts.WatchState == nil && config.IsWatchEnabled(dir) {
+		ws := &mcpio.WatchState{}
+		svc, serr := freshen.NewService(freshen.Config{
+			Root:              dir,
+			EmbeddingsEnabled: embeddingsEnabled,
+			WatchState:        ws,
+			Log:               func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) },
+			OnEmbedded:        upgradeSearchOnEmbed(adapter, engine),
+		})
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "sense mcp: background watcher unavailable, index will not auto-refresh: %v\n", serr)
+		} else if err := svc.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "sense mcp: background watcher unavailable, index will not auto-refresh: %v\n", err)
+			svc.Stop()
+		} else {
+			freshenSvc = svc
+			serviceStarted = true
+			watchState = ws
+		}
 	}
 
+	// One-shot background embed: only when the Service is not running it.
+	// That is, the index has embedding debt, embeddings are enabled, no
+	// external watcher owns the index, and the Service failed to start.
 	embedCtx, cancelEmbed := context.WithCancel(ctx)
 	embedDone := make(chan struct{})
-
-	if embeddingsEnabled && hasDebt && opts.WatchState == nil {
+	hasDebt := false
+	if embeddingsEnabled && !serviceStarted && opts.WatchState == nil {
+		if debtCount, _ := adapter.EmbeddingDebtCount(ctx); debtCount > 0 {
+			hasDebt = true
+		}
+	}
+	if hasDebt {
 		go func() {
 			defer close(embedDone)
 			n, err := scan.EmbedPending(embedCtx, adapter, dir)
@@ -172,7 +210,7 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 
 	textFallback := search.NewTextFallback()
 
-	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: opts.WatchState, tracker: tracker, defaults: defaults, seenSymbols: make(map[int64]bool)}
+	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: watchState, freshen: freshenSvc, tracker: tracker, defaults: defaults, seenSymbols: make(map[int64]bool)}
 
 	s.AddTool(searchTool(), withAliasing("sense_search", h.handleSearch))
 	s.AddTool(graphTool(), withAliasing("sense_graph", h.handleGraph))
@@ -181,6 +219,11 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 	s.AddTool(statusTool(), withAliasing("sense_status", h.handleStatus))
 
 	cleanup := func() {
+		// Stop the watcher first so no further re-index batch starts, then
+		// drain any one-shot embed, then release the read-side resources.
+		if freshenSvc != nil {
+			freshenSvc.Stop()
+		}
 		cancelEmbed()
 		<-embedDone
 		if embedder != nil {
@@ -193,6 +236,25 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 	return s, h, cleanup, nil
 }
 
+// upgradeSearchOnEmbed returns an OnEmbedded callback that reloads the
+// freshly written embeddings and swaps them into the live search engine,
+// upgrading search from keyword-only to hybrid in place. It reads through
+// the server's own adapter, which sees the Service's committed writes via
+// WAL. Errors are logged and skipped; the next embed round retries.
+func upgradeSearchOnEmbed(adapter *sqlite.Adapter, engine *search.Engine) func(context.Context, int) {
+	return func(ctx context.Context, n int) {
+		embeddings, lerr := adapter.LoadEmbeddings(ctx)
+		if lerr != nil {
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "sense mcp: reload embeddings after embed: %v\n", lerr)
+			}
+			return
+		}
+		engine.SetVectors(search.BuildFlatIndex(embeddings))
+		fmt.Fprintf(os.Stderr, "sense mcp: embeddings complete (%d symbols) — search upgraded to hybrid mode\n", n)
+	}
+}
+
 // handlers holds shared state for MCP tool handlers. The adapter is
 // kept for methods like ReadSymbol that live on *sqlite.Adapter; db
 // is a convenience alias for plain-SQL callers (Lookup, LoadFilePaths).
@@ -203,6 +265,7 @@ type handlers struct {
 	search       *search.Engine
 	textFallback *search.TextFallback
 	watchState   *mcpio.WatchState
+	freshen      *freshen.Service // nil unless this server hosts the writer
 	tracker      *metrics.Tracker
 	defaults     profile.Defaults
 	seenSymbols  map[int64]bool
@@ -385,6 +448,10 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError(fmt.Sprintf("sense_graph: depth %d exceeds maximum of %d", depth, mcpio.MaxGraphDepth)), nil
 	}
 
+	// Read-repair: refresh any stale touched files before resolving, so a
+	// just-edited symbol is visible even before the debounced watcher fires.
+	snap := h.repairAndSnapshot(ctx)
+
 	match, err := h.resolveSymbol(ctx, "sense_graph", symbol)
 	if err != nil {
 		if re, ok := err.(*resolveError); ok {
@@ -465,7 +532,7 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 		resp.CoverageNote = "Graph edges from indexed source files — may miss callers in examples/, scripts/, or macro-generated code"
 	}
 
-	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
+	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState, snap)
 	resp.Freshness = freshness
 	resp.NextSteps = graphHints(resp, direction)
 
@@ -893,6 +960,10 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError("sense_blast: pass either 'symbol' or 'diff', not both"), nil
 	}
 
+	// Read-repair: refresh stale touched files before the blast resolves
+	// and walks edges, so a just-edited symbol is current.
+	snap := h.repairAndSnapshot(ctx)
+
 	maxHops := req.GetInt("max_hops", h.defaults.BlastMaxHops)
 	minConfidence := req.GetFloat("min_confidence", h.defaults.BlastMinConfidence)
 	includeTests := req.GetBool("include_tests", true)
@@ -938,7 +1009,7 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 	h.tracker.Record("sense_blast", blastArgs,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
-	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState)
+	freshness := computeFreshness(ctx, h.db, h.dir, false, h.watchState, snap)
 	resp.Freshness = freshness
 	resp.NextSteps = blastHints(resp)
 
@@ -1499,7 +1570,7 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 	}
 	resp.Languages = langs
 
-	freshness := computeFreshness(ctx, db, dir, true, ws)
+	freshness := computeFreshness(ctx, db, dir, true, ws, nil)
 	if freshness != nil {
 		resp.Freshness = *freshness
 	}
@@ -1830,7 +1901,54 @@ func queryLanguageBreakdown(ctx context.Context, db *sql.DB) (map[string]mcpio.S
 // Freshness computation
 // ---------------------------------------------------------------
 
-func computeFreshness(ctx context.Context, db *sql.DB, dir string, includeMaxMtime bool, ws *mcpio.WatchState) *mcpio.Freshness {
+// staleSnapshot is one pass over the indexed files: the relative paths
+// whose on-disk mtime is newer than their indexed_at, plus the newest
+// mtime seen. It is computed once per query and shared between read-repair
+// (which re-indexes the stale paths) and the freshness footer (which
+// reports the count), so the per-query stat sweep happens at most once on
+// the common path.
+type staleSnapshot struct {
+	staleRels []string
+	maxMtime  *time.Time
+}
+
+func scanStaleFiles(ctx context.Context, db *sql.DB, dir string) staleSnapshot {
+	var snap staleSnapshot
+	rows, err := db.QueryContext(ctx, `SELECT path, indexed_at FROM sense_files`)
+	if err != nil {
+		return snap
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var path, indexedAtStr string
+		if err := rows.Scan(&path, &indexedAtStr); err != nil {
+			continue
+		}
+		indexedAt, err := time.Parse(time.RFC3339Nano, indexedAtStr)
+		if err != nil {
+			continue
+		}
+
+		info, err := os.Stat(filepath.Join(dir, path))
+		if err != nil {
+			continue
+		}
+		mtime := info.ModTime()
+		if mtime.After(indexedAt) {
+			snap.staleRels = append(snap.staleRels, path)
+		}
+		if snap.maxMtime == nil || mtime.After(*snap.maxMtime) {
+			snap.maxMtime = &mtime
+		}
+	}
+	return snap
+}
+
+// computeFreshness builds the freshness footer. When snap is non-nil it
+// reuses that precomputed stale sweep instead of running its own, so a
+// handler that already swept for read-repair does not stat the tree twice.
+func computeFreshness(ctx context.Context, db *sql.DB, dir string, includeMaxMtime bool, ws *mcpio.WatchState, snap *staleSnapshot) *mcpio.Freshness {
 	var lastScanStr sql.NullString
 	row := db.QueryRowContext(ctx, `SELECT MAX(indexed_at) FROM sense_files`)
 	if err := row.Scan(&lastScanStr); err != nil || !lastScanStr.Valid {
@@ -1850,61 +1968,68 @@ func computeFreshness(ctx context.Context, db *sql.DB, dir string, includeMaxMti
 		IndexAgeSeconds: &ageSeconds,
 	}
 
-	staleCount, maxMtime := countStaleFiles(ctx, db, dir)
+	if snap == nil {
+		s := scanStaleFiles(ctx, db, dir)
+		snap = &s
+	}
+	staleCount := len(snap.staleRels)
 	f.StaleFilesSeen = &staleCount
 
-	if includeMaxMtime && maxMtime != nil {
-		ts := maxMtime.UTC().Format(time.RFC3339)
+	if includeMaxMtime && snap.maxMtime != nil {
+		ts := snap.maxMtime.UTC().Format(time.RFC3339)
 		f.MaxFileMtimeSinceScan = &ts
 	}
 
 	if ws != nil {
-		watching, watchSince := ws.Get()
+		watching, watchSince, lastIndexed, pending := ws.Snapshot()
 		if watching {
 			f.Watching = &watching
 			ts := watchSince.UTC().Format(time.RFC3339)
 			f.WatchSince = &ts
+			if !lastIndexed.IsZero() {
+				lu := lastIndexed.UTC().Format(time.RFC3339)
+				f.LastUpdate = &lu
+				age := int64(time.Since(lastIndexed).Seconds())
+				f.IndexUpdateAgeSeconds = &age
+			}
+			p := pending
+			f.Pending = &p
 		}
 	}
 
 	return f
 }
 
-func countStaleFiles(ctx context.Context, db *sql.DB, dir string) (int, *time.Time) {
-	const q = `SELECT path, indexed_at FROM sense_files`
-	rows, err := db.QueryContext(ctx, q)
-	if err != nil {
-		return 0, nil
+// maxInlineRepairFiles bounds how many stale files a single query will
+// re-index inline. Beyond this (e.g. a branch switch touching dozens of
+// files) the query answers on current data and defers to the background
+// watcher and the git fast path — read-repair must never become
+// "re-resolve the world" on a hot query.
+const maxInlineRepairFiles = 8
+
+// repairAndSnapshot sweeps for stale files and, when this server owns the
+// writer and the stale set is small, re-indexes those files inline before
+// the query reads them — so an edit-then-immediately-query reflects the
+// edit even before the debounced watcher fires. It returns the freshness
+// snapshot to reuse for the footer (recomputed only when a repair changed
+// the index). When nothing is stale it is free; when read-only or the
+// stale set is large it is a no-op sweep.
+func (h *handlers) repairAndSnapshot(ctx context.Context) *staleSnapshot {
+	snap := scanStaleFiles(ctx, h.db, h.dir)
+	if h.freshen == nil || !h.freshen.Writing() {
+		return &snap
 	}
-	defer func() { _ = rows.Close() }()
-
-	var stale int
-	var maxMtime *time.Time
-
-	for rows.Next() {
-		var path, indexedAtStr string
-		if err := rows.Scan(&path, &indexedAtStr); err != nil {
-			continue
-		}
-		indexedAt, err := time.Parse(time.RFC3339Nano, indexedAtStr)
-		if err != nil {
-			continue
-		}
-
-		fullPath := filepath.Join(dir, path)
-		info, err := os.Stat(fullPath)
-		if err != nil {
-			continue
-		}
-		mtime := info.ModTime()
-		if mtime.After(indexedAt) {
-			stale++
-		}
-		if maxMtime == nil || mtime.After(*maxMtime) {
-			maxMtime = &mtime
-		}
+	n := len(snap.staleRels)
+	if n == 0 || n > maxInlineRepairFiles {
+		return &snap
 	}
-	return stale, maxMtime
+	if err := h.freshen.RepairFiles(ctx, snap.staleRels); err != nil {
+		fmt.Fprintf(os.Stderr, "sense mcp: read-repair failed: %v\n", err)
+		return &snap
+	}
+	// The repaired files are now current; re-sweep so the footer is honest.
+	after := scanStaleFiles(ctx, h.db, h.dir)
+	return &after
 }
 
 func readMeta(ctx context.Context, db *sql.DB, key string) string {

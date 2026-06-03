@@ -153,7 +153,7 @@ func TestComputeFreshness(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
-	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, false, nil)
+	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, false, nil, nil)
 	if f == nil {
 		t.Fatal("computeFreshness returned nil")
 	}
@@ -166,7 +166,7 @@ func TestComputeFreshnessWithMaxMtime(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
-	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, true, nil)
+	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, true, nil, nil)
 	if f == nil {
 		t.Fatal("computeFreshness returned nil")
 	}
@@ -176,10 +176,10 @@ func TestCountStaleFiles(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
-	count, _ := countStaleFiles(ctx, ts.handlers.db, ts.handlers.dir)
+	count := len(scanStaleFiles(ctx, ts.handlers.db, ts.handlers.dir).staleRels)
 	// Files in test dir probably all non-existent -> should be counted
 	if count < 0 {
-		t.Errorf("countStaleFiles returned negative: %d", count)
+		t.Errorf("scanStaleFiles returned negative: %d", count)
 	}
 }
 
@@ -549,12 +549,9 @@ func TestCountStaleFilesWithRealDir(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
-	count, maxMtime := countStaleFiles(ctx, ts.handlers.db, ts.handlers.dir)
-	if count < 0 {
-		t.Errorf("countStaleFiles returned negative count: %d", count)
-	}
-	if count > 0 && maxMtime == nil {
-		t.Error("countStaleFiles returned stale files but nil maxMtime")
+	snap := scanStaleFiles(ctx, ts.handlers.db, ts.handlers.dir)
+	if len(snap.staleRels) > 0 && snap.maxMtime == nil {
+		t.Error("scanStaleFiles returned stale files but nil maxMtime")
 	}
 }
 
@@ -562,7 +559,7 @@ func TestComputeFreshnessWithNoWatch(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
-	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, true, nil)
+	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, true, nil, nil)
 	if f != nil && f.Watching != nil && *f.Watching {
 		t.Error("freshness should not report watching when no WatchState is provided")
 	}
@@ -767,7 +764,7 @@ func TestComputeFreshnessWatchState(t *testing.T) {
 	ws := &mcpio.WatchState{}
 	ws.Set(true, time.Now().Add(-time.Hour))
 
-	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, false, ws)
+	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, false, ws, nil)
 	if f == nil {
 		t.Fatal("computeFreshness returned nil")
 	}
@@ -776,6 +773,26 @@ func TestComputeFreshnessWatchState(t *testing.T) {
 	}
 	if f.WatchSince == nil {
 		t.Error("expected WatchSince to be set")
+	}
+}
+
+func TestComputeFreshnessSurfacesUpdateAndPending(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	ws := &mcpio.WatchState{}
+	ws.Set(true, time.Now().Add(-time.Hour))
+	ws.SetIndexed(time.Now(), 5)
+
+	f := computeFreshness(ctx, ts.handlers.db, ts.handlers.dir, false, ws, nil)
+	if f == nil {
+		t.Fatal("computeFreshness returned nil")
+	}
+	if f.LastUpdate == nil || f.IndexUpdateAgeSeconds == nil {
+		t.Error("expected last_update/age to be set from the watcher's last re-index")
+	}
+	if f.Pending == nil || *f.Pending != 5 {
+		t.Errorf("expected pending=5, got %v", f.Pending)
 	}
 }
 
@@ -794,7 +811,7 @@ func TestComputeFreshnessEmptyDB(t *testing.T) {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	f := computeFreshness(ctx, adapter.DB(), dir, false, nil)
+	f := computeFreshness(ctx, adapter.DB(), dir, false, nil, nil)
 	if f != nil {
 		t.Errorf("expected nil for empty DB, got %+v", f)
 	}
@@ -845,11 +862,11 @@ func TestCountStaleFilesWithMtime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	count, maxMtime := countStaleFiles(ctx, adapter.DB(), dir)
-	if count != 1 {
-		t.Errorf("expected 1 stale file, got %d", count)
+	snap := scanStaleFiles(ctx, adapter.DB(), dir)
+	if len(snap.staleRels) != 1 {
+		t.Errorf("expected 1 stale file, got %d", len(snap.staleRels))
 	}
-	if maxMtime == nil {
+	if snap.maxMtime == nil {
 		t.Fatal("expected non-nil maxMtime when stale files exist")
 	}
 }
@@ -866,14 +883,14 @@ func TestCountStaleFilesClosedDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Close DB before calling countStaleFiles
+	// Close DB before sweeping
 	_ = adapter.Close()
 
-	count, maxMtime := countStaleFiles(ctx, adapter.DB(), dir)
-	if count != 0 {
-		t.Errorf("expected 0 stale files with closed DB, got %d", count)
+	snap := scanStaleFiles(ctx, adapter.DB(), dir)
+	if len(snap.staleRels) != 0 {
+		t.Errorf("expected 0 stale files with closed DB, got %d", len(snap.staleRels))
 	}
-	if maxMtime != nil {
+	if snap.maxMtime != nil {
 		t.Error("expected nil maxMtime with closed DB")
 	}
 }
