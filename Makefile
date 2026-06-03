@@ -49,9 +49,17 @@ test-hermetic:
 # per-file 95% floor (scoped to covered packages) lands in 27-13. The hard
 # fail is this local `go tool cover` check, NOT a Codecov status, so a flaky
 # upload never reds the build.
+#
+# The onnx_integration tag is set here (and ONLY here) so the gate exercises the
+# CGO embedding shell (internal/embed/onnx.go) for real — the one place the
+# bundled model and ORT runtime run inference. It depends on fetch-deps so the
+# integration test always has its deps and fails loud (never skips) if they are
+# somehow absent. The plain `go test ./...` / `make test` / `make test-hermetic`
+# paths carry NO tag, so unit tests stay ONNX-free; the tag lives only in the
+# coverage gate, which already requires the deps `make build` fetches.
 COVER_FLOOR ?= 91
-cover:
-	go test -race -count=1 -coverprofile=coverage.txt -coverpkg=./... ./...
+cover: fetch-deps
+	go test -race -count=1 -tags onnx_integration -coverprofile=coverage.txt -coverpkg=./... ./...
 	@# Parse depends on `go tool cover`'s total line being last and %-suffixed.
 	@# If that format ever changes, t becomes 0 and the gate fails closed (safe).
 	@total=$$(go tool cover -func=coverage.txt | awk 'END {gsub(/%/,"",$$NF); print $$NF}'); \
