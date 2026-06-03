@@ -94,6 +94,51 @@ func TestServiceReindexesOnEdit(t *testing.T) {
 	}
 }
 
+// TestServiceAfterEmbedRefreshesPending verifies that when a background
+// embed finishes, afterEmbed updates the watch state's pending count to the
+// freshly drained debt (not the startup snapshot) and forwards to the
+// external OnEmbedded callback. Without this, status would keep reporting
+// the pre-embed backlog for the life of the session.
+func TestServiceAfterEmbedRefreshesPending(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scanRepo(t, root, true) // records embedding debt
+
+	ws := &mcpio.WatchState{}
+	svc, err := NewService(Config{Root: root, EmbeddingsEnabled: true, WatchState: ws})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer func() { _ = svc.adapter.Close() }()
+
+	var forwardedN int
+	var forwarded bool
+	svc.onEmbedded = func(_ context.Context, n int) {
+		forwarded = true
+		forwardedN = n
+	}
+
+	// Drain the debt as a real background embed would, then signal completion.
+	if _, err := scan.EmbedPending(context.Background(), svc.adapter, root); err != nil {
+		t.Fatalf("EmbedPending: %v", err)
+	}
+	svc.afterEmbed(context.Background(), 7)
+
+	if !forwarded || forwardedN != 7 {
+		t.Errorf("expected onEmbedded forwarded with n=7, got forwarded=%v n=%d", forwarded, forwardedN)
+	}
+	_, _, lastIndexed, pending := ws.Snapshot()
+	if pending != 0 {
+		t.Errorf("expected pending refreshed to 0 after embed, got %d", pending)
+	}
+	if lastIndexed.IsZero() {
+		t.Error("expected lastIndexed to be set after embed completion")
+	}
+}
+
 func TestServiceRepairFiles(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"),

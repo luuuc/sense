@@ -171,7 +171,7 @@ func (s *Service) Start(ctx context.Context) error {
 		enabled:    s.embeddingsEnabled,
 		ctx:        runCtx,
 		log:        s.log,
-		onEmbedded: s.onEmbedded,
+		onEmbedded: s.afterEmbed,
 		checkDebt: func(ctx context.Context) (int, error) {
 			return s.adapter.EmbeddingDebtCount(ctx)
 		},
@@ -306,6 +306,19 @@ func (s *Service) markIndexed(ctx context.Context) {
 		}
 	}
 	s.watchState.SetIndexed(time.Now().UTC(), pending)
+}
+
+// afterEmbed runs when a background embed finishes writing n>0 embeddings.
+// It refreshes the watch state's pending count (the debt those embeddings
+// just paid down) before forwarding to the external OnEmbedded callback, so
+// status stops reporting the pre-embed backlog. The initial markIndexed at
+// startup snapshots the full debt before the embed runs; without this, that
+// stale count would persist until the next file-change batch.
+func (s *Service) afterEmbed(ctx context.Context, n int) {
+	s.markIndexed(ctx)
+	if s.onEmbedded != nil {
+		s.onEmbedded(ctx, n)
+	}
 }
 
 // Stop cancels background work, waits for it to drain, and closes the
