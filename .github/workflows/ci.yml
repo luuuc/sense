@@ -52,6 +52,10 @@ jobs:
         # Single definition of "tests pass": the same `make cover` a contributor
         # runs locally (go test -race -coverpkg=./... + a total-% floor). Remote
         # CI can no longer disagree with `make ci` about what green means.
+        # `make cover` sets the onnx_integration tag, so this step also runs the
+        # ONNX integration test against the deps fetched above — exercising the
+        # CGO embedding shell for real, and failing loud (never skipping) if the
+        # bundled model or runtime is missing.
         run: make cover
 
       - name: Hermetic unit tests (offline)

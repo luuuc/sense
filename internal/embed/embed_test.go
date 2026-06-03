@@ -400,6 +400,16 @@ func TestFormatContext(t *testing.T) {
 			in:   EmbedInput{QualifiedName: "Foo#bar", Kind: "method", Snippet: "def bar(x)"},
 			want: "method Foo#bar\ndef bar(x)",
 		},
+		{
+			name: "fallback kind+name+filepath (directory signal)",
+			in:   EmbedInput{QualifiedName: "Config", Kind: "class", FilePath: "app/config.rb"},
+			want: "File: app/config.rb\nclass Config",
+		},
+		{
+			name: "fallback kind+name+filepath+snippet",
+			in:   EmbedInput{QualifiedName: "Foo#bar", Kind: "method", FilePath: "lib/foo.rb", Snippet: "def bar"},
+			want: "File: lib/foo.rb\nmethod Foo#bar\ndef bar",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
