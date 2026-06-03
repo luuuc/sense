@@ -30,6 +30,8 @@ type IncrementalOptions struct {
 // RunIncremental re-indexes a specific set of changed files and removes
 // deleted ones. It uses the same per-file processing, edge resolution,
 // and embedding logic as the full scan but scoped to the provided paths.
+//
+//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, error) {
 	out := opts.Output
 	if out == nil {

@@ -81,6 +81,8 @@ func RunWithOptions(opts RunOptions) error {
 
 // buildMCPServer creates the MCP server and handlers without starting stdio
 // transport. Returns the server, handlers, a cleanup function, and any error.
+//
+//nolint:gocyclo,gocognit // 27-05: retired by the mcpserver split
 func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), error) {
 	dir := opts.Dir
 	if dir == "" {
@@ -419,6 +421,7 @@ func statusTool() mcp.Tool {
 // sense_graph handler
 // ---------------------------------------------------------------
 
+//nolint:gocyclo // 27-05: retired by the mcpserver split
 func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if req.GetBool("dead_code", false) {
 		return h.handleDeadCode(ctx, req)
@@ -607,6 +610,7 @@ func enrichAlsoCalledBy(ctx context.Context, adapter *sqlite.Adapter, symbolCoun
 	}
 }
 
+//nolint:gocyclo // 27-05: retired by the mcpserver split
 func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.SymbolContext, resp *mcpio.GraphResponse, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {
 	sym := root.Symbol
 	if sym.Kind != model.KindMethod || sym.ParentID == nil {
@@ -795,6 +799,7 @@ func isTestFile(path string) bool {
 // sense_search handler
 // ---------------------------------------------------------------
 
+//nolint:gocyclo // 27-05: retired by the mcpserver split
 func (h *handlers) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	query, err := req.RequireString("query")
 	if err != nil {
@@ -1518,6 +1523,7 @@ func statusHints(resp mcpio.StatusResponse, sessionQueries int) []mcpio.NextStep
 	return hints
 }
 
+//nolint:gocyclo // 27-05: retired by the mcpserver split
 func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.WatchState) (mcpio.StatusResponse, error) {
 	var resp mcpio.StatusResponse
 

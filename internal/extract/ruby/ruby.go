@@ -180,6 +180,8 @@ func (w *walker) walk(n *sitter.Node, scope []string) error {
 // dispatchCall extracts the method name from a call node once and routes
 // to the appropriate handler. Returns true if the node was fully consumed
 // (caller should not descend into children).
+//
+//nolint:gocyclo // 27-10: retired by the ruby extractor split
 func (w *walker) dispatchCall(n *sitter.Node, scope []string) (bool, error) {
 	methodNode := n.ChildByFieldName("method")
 	if methodNode == nil {
@@ -322,6 +324,8 @@ func (w *walker) handleTestBlock(n *sitter.Node, scope []string, methodName stri
 
 // buildTestScopeSegment extracts a scope segment from a test DSL call.
 // Returns "" when the block should fall back to file-level scope.
+//
+//nolint:gocyclo // 27-10: retired by the ruby extractor split
 func (w *walker) buildTestScopeSegment(n *sitter.Node, methodName string) string {
 	args := n.ChildByFieldName("arguments")
 	if args == nil || args.NamedChildCount() == 0 {
@@ -596,6 +600,8 @@ func sanitizeDesc(s string) string {
 
 // handleClassOrModule emits the symbol, records inheritance (class only),
 // and descends into the body with the class/module pushed onto the scope.
+//
+//nolint:gocognit // 27-10: retired by the ruby extractor split
 func (w *walker) handleClassOrModule(n *sitter.Node, scope []string, kind model.SymbolKind) error {
 	nameNode := n.ChildByFieldName("name")
 	if nameNode == nil {
@@ -987,6 +993,8 @@ func (w *walker) resolveCallTarget(recv *sitter.Node, methodName string, scope [
 // resolveChainReceiver recursively resolves a call-chain receiver to a type
 // by looking up local-variable types and method return types. It caps at 3
 // hops to avoid exponential lookups and absurd qualified names.
+//
+//nolint:gocyclo // 27-10: retired by the ruby extractor split
 func (w *walker) resolveChainReceiver(recv *sitter.Node, scope []string, localTypes map[string]string, depth int) string {
 	if depth > 3 || recv == nil || recv.Kind() != "call" {
 		return ""
@@ -1697,6 +1705,8 @@ func inferSendTargetFromVariable(call *sitter.Node, source []byte) (string, floa
 // collectConstants recursively pre-scans for constant assignments so
 // method bodies can emit references edges. Descends into class/module
 // bodies to find nested constants (e.g. MyClass::TIMEOUT).
+//
+//nolint:gocognit // 27-10: retired by the ruby extractor split
 func (w *walker) collectConstants(n *sitter.Node, scope []string) {
 	if n == nil {
 		return
@@ -1761,6 +1771,8 @@ func (w *walker) collectConstants(n *sitter.Node, scope []string) {
 // an assignment. When skipNestedDefs is set (class-body walks) anything
 // inside a nested def/class/module is skipped too, so a method's
 // references stay attributed to the method, not its enclosing class.
+//
+//nolint:gocyclo,gocognit // 27-10: retired by the ruby extractor split
 func (w *walker) collectConstRefs(root *sitter.Node, sourceQualified string, skipNestedDefs bool) error {
 	if root == nil {
 		return nil

@@ -140,6 +140,8 @@ type walker struct {
 // collectModuleConstants pre-scans top-level const declarations for
 // value-type constants (not arrow functions or class expressions) so
 // function bodies can emit references edges.
+//
+//nolint:gocyclo,gocognit // 27-11: retired by the tsjs/rust extractor split
 func (w *walker) collectModuleConstants(root *sitter.Node) {
 	if root == nil {
 		return
@@ -220,6 +222,7 @@ func (w *walker) emitConstRefs(body *sitter.Node, sourceQualified string) error 
 	})
 }
 
+//nolint:gocyclo // 27-11: retired by the tsjs/rust extractor split
 func (w *walker) walk(n *sitter.Node, scope []string) error {
 	if n == nil {
 		return nil

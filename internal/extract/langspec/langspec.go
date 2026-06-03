@@ -506,6 +506,7 @@ func (w *walker) callReceiver(n *sitter.Node) string {
 	return ""
 }
 
+//nolint:gocyclo,gocognit // 27-12: retired by the python/golang/langspec split
 func (w *walker) importTarget(n *sitter.Node) string {
 	// Try specific import path fields. Skip bare identifiers — they may be
 	// only the first component of a split path (e.g., Scala imports).

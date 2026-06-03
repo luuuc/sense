@@ -38,6 +38,8 @@ type namingCandidate struct {
 //
 // Only runs for projects with Ruby or Python files — Go and TypeScript
 // have explicit references that tree-sitter already captures.
+//
+//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func (h *harness) namingConventionEdges() error {
 	rubyFiles, err := h.idx.FileIDsByLanguage(h.ctx, "ruby")
 	if err != nil {

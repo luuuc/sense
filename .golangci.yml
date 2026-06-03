@@ -16,7 +16,21 @@ linters:
     - revive
     - nolintlint
     - depguard
+    - gocyclo
+    - gocognit
   settings:
+    # Two branching linters, no line-counting one. gocyclo/gocognit measure
+    # the branching that makes code hard to read and test; funlen is
+    # deliberately NOT enabled (raw line count punishes flat switches and
+    # table literals). Thresholds are the cycle's TARGET, not today's worst —
+    # today's violators carry an inline //nolint:goc... ledger pointing at the
+    # pitch that retires them. grep -rn 'nolint:goc' is the burndown.
+    gocyclo:
+      # golangci-lint reports complexity STRICTLY greater than min-complexity,
+      # so 15 == "over 15" (flags 16+).
+      min-complexity: 15
+    gocognit:
+      min-complexity: 30
     exhaustive:
       default-signifies-exhaustive: true
     nolintlint:
@@ -50,6 +64,18 @@ linters:
     paths:
       - bench/lib/test_fixtures
     rules:
+      # gocyclo/gocognit: gate production branching only. Table-driven tests
+      # are legitimately long and branchy; their complexity is not what the
+      # 27-05→12 split/extractor pitches retire, so it stays out of the ledger.
+      - linters: [gocyclo, gocognit]
+        path: _test\.go
+      # gocyclo/gocognit: scoped to the packages cycle 27 actually refactors,
+      # symmetric with the per-file coverage gate (see 27-00 honest boundary).
+      # The long tail below has no in-cycle split owner; its //nolint ledger
+      # would never burn down, so it is left ungated until a follow-up cycle
+      # claims it. Shrink this list as each package is brought into scope.
+      - linters: [gocyclo, gocognit]
+        path: (cmd/sense|internal/(benchmark|cli|freshen|hook|ignore|mcpio|summary))/
       # dupword: SQL NULL repetitions and embedded Ruby/test fixtures are fine
       - linters: [dupword]
         path: _test\.go

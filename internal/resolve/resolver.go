@@ -128,6 +128,8 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //     blast's floor as an unverified cross-scope guess unless the
 //     qualifier can be verified — see isUnverifiedCrossScope.
 //  4. No match ⇒ ok=false.
+//
+//nolint:gocyclo,gocognit // 27-07: retired by the storage/query split
 func (ix *Index) Resolve(req Request) (Result, bool) {
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)
 	gatedKind := req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests || req.Kind == model.EdgeReferences
@@ -518,6 +520,8 @@ func filterByTestDirection(matches []model.SymbolRef, sourceIsTest bool, fileIsT
 // `test/`/`spec/` directories, `_test`/`_spec`/`.test.` infixes, a `test_`
 // prefix, and a `Test`/`Tests` filename suffix — are stable across the
 // supported languages.
+//
+//nolint:gocyclo // 27-07: retired by the storage/query split
 func isTestPath(path string) bool {
 	if strings.Contains(path, "_test.") ||
 		strings.Contains(path, ".test.") ||

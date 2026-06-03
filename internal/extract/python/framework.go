@@ -27,6 +27,8 @@ var djangoRelationFields = map[string]bool{
 // (`models.ForeignKey(User)`). The first positional argument is the
 // target: either an identifier (confidence 0.9) or a string literal
 // like `"app.User"` (confidence 0.8, last dot-segment used as target).
+//
+//nolint:gocyclo // 27-12: retired by the python/golang/langspec split
 func (w *walker) emitDjangoModelField(assign *sitter.Node, scope []string) error {
 	if len(scope) == 0 {
 		return nil
@@ -248,6 +250,8 @@ func (w *walker) emitURLPatternEdges(assign *sitter.Node) error {
 }
 
 // emitSingleURLPattern handles one path()/re_path()/include() call inside urlpatterns.
+//
+//nolint:gocyclo,gocognit // 27-12: retired by the python/golang/langspec split
 func (w *walker) emitSingleURLPattern(call *sitter.Node) error {
 	fn := call.ChildByFieldName("function")
 	if fn == nil {
@@ -376,6 +380,8 @@ var pythonGenericWrappers = map[string]bool{
 // annotation node. Handles plain identifiers, generic types
 // (Optional[X], list[X], Union[X, Y], dict[str, X]), and skips
 // primitives.
+//
+//nolint:gocyclo // 27-12: retired by the python/golang/langspec split
 func (w *walker) emitTypeAnnotationEdge(typeNode *sitter.Node, ownerQualified string, line int) error {
 	if typeNode == nil {
 		return nil

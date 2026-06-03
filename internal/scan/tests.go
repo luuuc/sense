@@ -27,6 +27,8 @@ import (
 // mirror trees (Rails: spec/models/user_spec.rb → app/models/user.rb)
 // are handled by mirrorImpl. Other frameworks (Django, etc.) remain
 // same-directory only until a real case demands it.
+//
+//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func (h *harness) associateTests() error {
 	if len(h.indexedFiles) == 0 {
 		return nil
@@ -113,6 +115,8 @@ func (h *harness) associateTests() error {
 // convention. Matching is suffix / prefix -based and same-directory
 // only; cross-directory mirror trees (Rails, Django) are not
 // handled.
+//
+//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func implSibling(path, language string) (string, bool) {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)

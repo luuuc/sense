@@ -116,6 +116,8 @@ const docstringTruncMarker = "…"
 // summary and any fatal error. Per-file parse/extract errors are
 // non-fatal: a warning is logged, the scan continues, and the result's
 // Warnings counter is incremented.
+//
+//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func Run(ctx context.Context, opts Options) (*Result, error) {
 	root := opts.Root
 	if root == "" {
@@ -697,6 +699,8 @@ type walkEntry struct {
 // walkTree walks root depth-first. Dot-prefixed directories (.git,
 // .vscode) and the .sense directory are always skipped. Paths matched
 // by the ignore matcher are skipped. Symlinks are not followed.
+//
+//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func (h *harness) walkTree(root string) error {
 	stmt, err := h.idx.PrepareSymbolStmt(h.ctx)
 	if err != nil {

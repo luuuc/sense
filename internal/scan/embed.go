@@ -154,6 +154,8 @@ func (h *harness) migrateEmbeddingModel() (bool, error) {
 // minimal harness internally and clears the embedding watermark on success.
 // Returns the number of symbols embedded. The caller rebuilds the in-memory
 // vector index from the embeddings table afterward.
+//
+//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, error) {
 	syms, err := idx.SymbolsWithoutEmbeddings(ctx)
 	if err != nil {
@@ -238,6 +240,8 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, e
 // embedSymbols is pass 3: generate embeddings for symbols in changed files.
 // Only symbols whose file was re-indexed this scan get new embeddings.
 // Orphaned embeddings are cleaned by FK CASCADE when symbols are deleted.
+//
+//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func (h *harness) embedSymbols() error {
 	if len(h.changedFileIDs) == 0 {
 		return nil
