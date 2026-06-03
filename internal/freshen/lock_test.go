@@ -199,6 +199,15 @@ func TestWriterLockReclaimRemoveFails(t *testing.T) {
 	}
 }
 
+// TestLockIsStaleMissingFile covers the stat-error branch: a lock path that
+// does not exist is treated as reclaimable (it vanished between a create
+// attempt and the stat).
+func TestLockIsStaleMissingFile(t *testing.T) {
+	if !lockIsStale(filepath.Join(t.TempDir(), "does-not-exist.lock")) {
+		t.Error("a missing lock file should be reclaimable (stale)")
+	}
+}
+
 func TestPidAlive(t *testing.T) {
 	if !pidAlive(os.Getpid()) {
 		t.Error("current process should be alive")
