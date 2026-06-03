@@ -1,4 +1,4 @@
-.PHONY: build test clean install lint fmt ci run fetch-deps bench smoke
+.PHONY: build test test-hermetic clean install lint fmt ci run fetch-deps bench smoke
 
 VERSION ?= dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -18,6 +18,22 @@ build: fetch-deps
 
 test:
 	go test -v ./...
+
+# Goal 5 (no side effects), enforced by outcome: these packages must pass
+# with no network, no ONNX, and no external binary. The set RATCHETS — it
+# grows per-package as the testability arc (27-02→04) injects seams, fully
+# on by 27-04. A package only joins once it can be unit-tested offline.
+# CI runs this under a private network namespace on Linux (the network bite);
+# the set guarantees no ONNX/external-binary by construction (no embed/exec deps).
+HERMETIC_PKGS := \
+	./internal/extract/... \
+	./internal/blast/... \
+	./internal/conventions/... \
+	./internal/mcpio/... \
+	./internal/model/...
+
+test-hermetic:
+	go test $(HERMETIC_PKGS)
 
 clean:
 	rm -rf bin/ dist/

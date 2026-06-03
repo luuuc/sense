@@ -15,12 +15,37 @@ linters:
     - dupword
     - revive
     - nolintlint
+    - depguard
   settings:
     exhaustive:
       default-signifies-exhaustive: true
     nolintlint:
       require-explanation: true
       require-specific: true
+    depguard:
+      # Goal 5 (no side effects), enforced at compile time: the verified
+      # pure-core packages may not reach for effects. They take bytes and
+      # return data; effects live at the edges (scan, watch, search's
+      # ripgrep, dead/eval's analyzers, the ONNX shell). This set is locked
+      # at today's import-clean state and GROWS as later pitches clean more
+      # packages — never add a package that legitimately shells out.
+      rules:
+        pure-core:
+          files:
+            - "**/internal/extract/**"
+            - "**/internal/blast/**"
+            - "**/internal/conventions/**"
+            - "**/internal/mcpio/**"
+            - "**/internal/model/**"
+          deny:
+            - pkg: os/exec
+              desc: "pure-core must not shell out; inject the effect at the edge"
+            - pkg: net
+              desc: "pure-core must not touch the network; inject the effect at the edge"
+            - pkg: syscall
+              desc: "pure-core must not call syscalls directly; inject the effect at the edge"
+            - pkg: github.com/fsnotify/fsnotify
+              desc: "pure-core must not watch the filesystem; that is the watch package's job"
   exclusions:
     paths:
       - bench/lib/test_fixtures

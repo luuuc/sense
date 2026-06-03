@@ -51,6 +51,20 @@ jobs:
       - name: Test
         run: go test -race -count=1 -v -coverprofile=coverage.txt -coverpkg=./... ./...
 
+      - name: Hermetic unit tests (offline)
+        # Goal 5 proof: the hermetic package set must pass with no network,
+        # no ONNX, and no external binary. The set ratchets per-package as
+        # 27-02→04 inject seams (fully on by 27-04). Linux enforces the
+        # network bite by running in a private network namespace; the package
+        # set guarantees no ONNX/external-binary by construction. macOS has no
+        # unshare, so it runs the same set without the netns wrapper.
+        run: |
+          if [ "${{ matrix.os }}" = "linux" ]; then
+            sudo -E env "PATH=$PATH" unshare -n make test-hermetic
+          else
+            make test-hermetic
+          fi
+
       - name: Upload coverage
         if: matrix.os == 'linux'
         uses: codecov/codecov-action@v6
