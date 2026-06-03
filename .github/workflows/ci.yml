@@ -89,6 +89,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Complexity ledger is non-increasing
+        # The inline //nolint:gocyclo/gocognit ledger is tracked debt the
+        # 27-05→12 pitches retire. This fails if it grows past LEDGER_MAX —
+        # new complexity must be decomposed, not suppressed. Exit condition
+        # for cycle 27: LEDGER_MAX = 0 by 27-12.
+        run: make ledger
+
       - name: No bare fmt.Print in internal/ (except MCP transport)
         run: |
           # Grep for fmt.Print / fmt.Println / fmt.Printf (not fmt.Fprint*)

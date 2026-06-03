@@ -1,4 +1,4 @@
-.PHONY: build test test-hermetic cover clean install lint fmt ci run fetch-deps bench smoke
+.PHONY: build test test-hermetic cover ledger clean install lint fmt ci run fetch-deps bench smoke
 
 VERSION ?= dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -50,6 +50,20 @@ cover:
 		printf "total coverage: %s%% (floor: %s%%)\n", t, f; \
 		if (t+0 < f+0) { printf "FAIL: coverage %s%% is below the %s%% floor\n", t, f; exit 1 } \
 	}'
+
+# Complexity-ledger burndown. Every inline //nolint:gocyclo/gocognit is tracked
+# debt a 27-05→12 split/extractor pitch retires. This asserts the ledger never
+# GROWS: new complexity must be decomposed, not suppressed. Lower LEDGER_MAX as
+# pitches retire entries; the cycle's exit condition is LEDGER_MAX = 0 by 27-12.
+# (Matches gocyclo/gocognit only — an unrelated gocritic suppression is not debt.)
+LEDGER_MAX ?= 48
+ledger:
+	@n=$$(grep -rnE 'nolint:goc(yclo|ognit)' --include='*.go' internal cmd | wc -l | tr -d ' '); \
+	echo "complexity ledger: $$n entries (cap: $(LEDGER_MAX))"; \
+	if [ "$$n" -gt "$(LEDGER_MAX)" ]; then \
+		echo "FAIL: ledger grew past $(LEDGER_MAX). Decompose the function or retire an entry — do not add a new //nolint."; \
+		exit 1; \
+	fi
 
 clean:
 	rm -rf bin/ dist/
