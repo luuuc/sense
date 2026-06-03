@@ -38,23 +38,10 @@ type namingCandidate struct {
 //
 // Only runs for projects with Ruby or Python files — Go and TypeScript
 // have explicit references that tree-sitter already captures.
-//
-//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func (h *harness) namingConventionEdges() error {
-	rubyFiles, err := h.idx.FileIDsByLanguage(h.ctx, "ruby")
+	dynamicFiles, err := h.dynamicFileIDs()
 	if err != nil {
-		return fmt.Errorf("naming: query ruby files: %w", err)
-	}
-	pythonFiles, err := h.idx.FileIDsByLanguage(h.ctx, "python")
-	if err != nil {
-		return fmt.Errorf("naming: query python files: %w", err)
-	}
-	dynamicFiles := make(map[int64]bool, len(rubyFiles)+len(pythonFiles))
-	for id := range rubyFiles {
-		dynamicFiles[id] = true
-	}
-	for id := range pythonFiles {
-		dynamicFiles[id] = true
+		return err
 	}
 	if len(dynamicFiles) == 0 {
 		return nil
@@ -65,6 +52,45 @@ func (h *harness) namingConventionEdges() error {
 		return fmt.Errorf("naming: query symbols: %w", err)
 	}
 
+	classesByName, candidates := collectNamingCandidates(syms, dynamicFiles)
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	written, err := h.writeNamingEdges(candidates, classesByName)
+	if err != nil {
+		return err
+	}
+	h.edges += written
+	return nil
+}
+
+// dynamicFileIDs returns the set of file ids whose language uses naming-based
+// dispatch (Ruby and Python). Go and TypeScript have explicit references
+// tree-sitter already captures, so they are excluded.
+func (h *harness) dynamicFileIDs() (map[int64]bool, error) {
+	rubyFiles, err := h.idx.FileIDsByLanguage(h.ctx, "ruby")
+	if err != nil {
+		return nil, fmt.Errorf("naming: query ruby files: %w", err)
+	}
+	pythonFiles, err := h.idx.FileIDsByLanguage(h.ctx, "python")
+	if err != nil {
+		return nil, fmt.Errorf("naming: query python files: %w", err)
+	}
+	dynamicFiles := make(map[int64]bool, len(rubyFiles)+len(pythonFiles))
+	for id := range rubyFiles {
+		dynamicFiles[id] = true
+	}
+	for id := range pythonFiles {
+		dynamicFiles[id] = true
+	}
+	return dynamicFiles, nil
+}
+
+// collectNamingCandidates indexes the dynamic-language classes/modules by bare
+// name and collects those whose name matches a role suffix (the WorkPackages-
+// Controller / CreateService forms) as edge candidates.
+func collectNamingCandidates(syms []model.Symbol, dynamicFiles map[int64]bool) (map[string][]model.Symbol, []namingCandidate) {
 	classesByName := map[string][]model.Symbol{}
 	var candidates []namingCandidate
 	for _, s := range syms {
@@ -80,13 +106,15 @@ func (h *harness) namingConventionEdges() error {
 			candidates = append(candidates, namingCandidate{sym: s, prefixes: prefixes})
 		}
 	}
+	return classesByName, candidates
+}
 
-	if len(candidates) == 0 {
-		return nil
-	}
-
+// writeNamingEdges resolves each candidate to its model class and writes a
+// low-confidence calls edge, in one transaction, skipping self-edges and
+// candidates whose target is absent.
+func (h *harness) writeNamingEdges(candidates []namingCandidate, classesByName map[string][]model.Symbol) (int, error) {
 	var written int
-	err = h.idx.InTx(h.ctx, func() error {
+	err := h.idx.InTx(h.ctx, func() error {
 		for _, c := range candidates {
 			target, found := resolveModelTarget(c.prefixes, classesByName)
 			if !found || target.ID == c.sym.ID {
@@ -106,11 +134,7 @@ func (h *harness) namingConventionEdges() error {
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	h.edges += written
-	return nil
+	return written, err
 }
 
 // splitQualified splits a qualified name into its bare name and

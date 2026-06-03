@@ -52,8 +52,6 @@ type structInfo struct {
 // resolved and available for promoted-method computation. Scoped to
 // Go files only — implicit interface satisfaction is a Go-specific
 // semantic.
-//
-//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func (h *harness) satisfyInterfaces() error {
 	goFiles, err := h.idx.FileIDsByLanguage(h.ctx, "go")
 	if err != nil {
@@ -71,9 +69,32 @@ func (h *harness) satisfyInterfaces() error {
 		return nil
 	}
 
+	interfaces, structs := classifyGoSymbols(syms, goFiles)
+	if len(interfaces) == 0 || len(structs) == 0 {
+		return nil
+	}
+	if h.satisfyExceedsBudget(interfaces, structs) {
+		return nil
+	}
+
+	collectMethodSets(syms, interfaces, structs)
+	if err := h.promoteEmbeddedMethodSets(structs); err != nil {
+		return err
+	}
+
+	written, err := h.writeSatisfactionEdges(interfaces, structs)
+	if err != nil {
+		return fmt.Errorf("satisfy: write edges: %w", err)
+	}
+	h.edges += written
+	return nil
+}
+
+// classifyGoSymbols partitions the Go symbols into the interface and struct
+// (class) sets satisfaction is computed over, keyed by symbol id.
+func classifyGoSymbols(syms []model.Symbol, goFiles map[int64]bool) (map[int64]*ifaceInfo, map[int64]*structInfo) {
 	interfaces := map[int64]*ifaceInfo{}
 	structs := map[int64]*structInfo{}
-
 	for i := range syms {
 		s := &syms[i]
 		if !goFiles[s.FileID] {
@@ -90,20 +111,24 @@ func (h *harness) satisfyInterfaces() error {
 		default:
 		}
 	}
+	return interfaces, structs
+}
 
-	if len(interfaces) == 0 || len(structs) == 0 {
-		return nil
-	}
-
-	// Performance gate
+// satisfyExceedsBudget reports whether the interface×struct product exceeds the
+// 500K performance gate, warning and skipping the pass when it does.
+func (h *harness) satisfyExceedsBudget(interfaces map[int64]*ifaceInfo, structs map[int64]*structInfo) bool {
 	ifaceCount := int64(len(interfaces)) + int64(len(stdlibInterfaces))
 	product := ifaceCount * int64(len(structs))
 	if product > 500_000 {
 		_, _ = fmt.Fprintf(h.warn, "satisfy: skipping (interfaces×structs = %d > 500K)\n", product)
-		return nil
+		return true
 	}
+	return false
+}
 
-	// Collect interface methods and struct methods from child symbols.
+// collectMethodSets fills each interface's method list and each struct's method
+// set from the method symbols whose parent is in the respective map.
+func collectMethodSets(syms []model.Symbol, interfaces map[int64]*ifaceInfo, structs map[int64]*structInfo) {
 	for i := range syms {
 		s := &syms[i]
 		if s.Kind != model.KindMethod || s.ParentID == nil {
@@ -117,8 +142,12 @@ func (h *harness) satisfyInterfaces() error {
 			st.methods[s.Name] = true
 		}
 	}
+}
 
-	// Load resolved embedding edges and promote methods.
+// promoteEmbeddedMethodSets loads resolved embedding (includes) edges and
+// promotes embedded structs' methods onto their embedders, up to depth 3, so an
+// embedded method counts toward interface satisfaction.
+func (h *harness) promoteEmbeddedMethodSets(structs map[int64]*structInfo) error {
 	edges, err := h.idx.EdgesOfKind(h.ctx, model.EdgeIncludes)
 	if err != nil {
 		return fmt.Errorf("satisfy: query embeddings: %w", err)
@@ -133,10 +162,14 @@ func (h *harness) satisfyInterfaces() error {
 	for id, st := range structs {
 		promoteEmbeddedMethods(st, id, embeddings, structs, 3)
 	}
+	return nil
+}
 
-	// Check satisfaction against project interfaces.
+// writeSatisfactionEdges writes an inherits edge for every struct whose method
+// set satisfies an interface's, in one transaction.
+func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, structs map[int64]*structInfo) (int, error) {
 	var written int
-	err = h.idx.InTx(h.ctx, func() error {
+	err := h.idx.InTx(h.ctx, func() error {
 		for _, iface := range interfaces {
 			if len(iface.methods) == 0 {
 				continue
@@ -152,11 +185,7 @@ func (h *harness) satisfyInterfaces() error {
 		}
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("satisfy: write edges: %w", err)
-	}
-	h.edges += written
-	return nil
+	return written, err
 }
 
 func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int64, structs map[int64]*structInfo, depth int) {

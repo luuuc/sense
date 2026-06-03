@@ -177,8 +177,6 @@ func (h *harness) migrateEmbeddingModel() (bool, error) {
 // minimal harness internally and clears the embedding watermark on success.
 // Returns the number of symbols embedded. The caller rebuilds the in-memory
 // vector index from the embeddings table afterward.
-//
-//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, error) {
 	syms, err := idx.SymbolsWithoutEmbeddings(ctx)
 	if err != nil {
@@ -197,17 +195,7 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, e
 	if pathErr != nil {
 		_, _ = fmt.Fprintf(h.warn, "warn: resolve file paths for embeddings: %v\n", pathErr)
 	}
-
-	inputs := make([]embed.EmbedInput, len(syms))
-	for i, s := range syms {
-		inputs[i] = embed.EmbedInput{
-			QualifiedName: s.Qualified,
-			Kind:          s.Kind,
-			Snippet:       s.Snippet,
-			Context:       contextMap[s.ID],
-			FilePath:      paths[s.FileID],
-		}
-	}
+	inputs := buildEmbedInputs(syms, contextMap, paths)
 
 	pool, err := newEmbedPool(h.newEmbedder)
 	if err != nil {
@@ -226,23 +214,7 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, e
 		if err != nil {
 			return total, fmt.Errorf("generate embeddings: %w", err)
 		}
-
-		chunkSyms := syms[i:end]
-		err = idx.InTx(ctx, func() error {
-			stmt, err := idx.PrepareEmbeddingStmt(ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = stmt.Close() }()
-			for j, vec := range vecs {
-				blob := vectorToBlob(vec)
-				if _, err := stmt.ExecContext(ctx, chunkSyms[j].ID, blob); err != nil {
-					return fmt.Errorf("write embedding symbol=%d: %w", chunkSyms[j].ID, err)
-				}
-			}
-			return nil
-		})
-		if err != nil {
+		if err := writeEmbeddingChunk(ctx, idx, syms[i:end], vecs); err != nil {
 			return total, fmt.Errorf("write embeddings: %w", err)
 		}
 		total += len(vecs)
@@ -260,11 +232,46 @@ func EmbedPending(ctx context.Context, idx *sqlite.Adapter, root string) (int, e
 	return total, nil
 }
 
+// buildEmbedInputs assembles the per-symbol embedder input from the resolved
+// context and file-path maps. Shared by the synchronous (embedSymbols) and
+// backfill (EmbedPending) callers so they build inputs identically.
+func buildEmbedInputs(syms []sqlite.EmbedSymbol, contextMap, paths map[int64]string) []embed.EmbedInput {
+	inputs := make([]embed.EmbedInput, len(syms))
+	for i, s := range syms {
+		inputs[i] = embed.EmbedInput{
+			QualifiedName: s.Qualified,
+			Kind:          s.Kind,
+			Snippet:       s.Snippet,
+			Context:       contextMap[s.ID],
+			FilePath:      paths[s.FileID],
+		}
+	}
+	return inputs
+}
+
+// writeEmbeddingChunk persists one chunk of vectors in a single transaction,
+// pairing each vector with its symbol id positionally. Shared by both embed
+// callers; idx is the indexStore seam both satisfy.
+func writeEmbeddingChunk(ctx context.Context, idx indexStore, chunkSyms []sqlite.EmbedSymbol, vecs [][]float32) error {
+	return idx.InTx(ctx, func() error {
+		stmt, err := idx.PrepareEmbeddingStmt(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = stmt.Close() }()
+		for j, vec := range vecs {
+			blob := vectorToBlob(vec)
+			if _, err := stmt.ExecContext(ctx, chunkSyms[j].ID, blob); err != nil {
+				return fmt.Errorf("write embedding symbol=%d: %w", chunkSyms[j].ID, err)
+			}
+		}
+		return nil
+	})
+}
+
 // embedSymbols is pass 3: generate embeddings for symbols in changed files.
 // Only symbols whose file was re-indexed this scan get new embeddings.
 // Orphaned embeddings are cleaned by FK CASCADE when symbols are deleted.
-//
-//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func (h *harness) embedSymbols() error {
 	if len(h.changedFileIDs) == 0 {
 		return nil
@@ -286,17 +293,7 @@ func (h *harness) embedSymbols() error {
 	if pathErr != nil {
 		_, _ = fmt.Fprintf(h.warn, "warn: resolve file paths for embeddings: %v\n", pathErr)
 	}
-
-	inputs := make([]embed.EmbedInput, len(syms))
-	for i, s := range syms {
-		inputs[i] = embed.EmbedInput{
-			QualifiedName: s.Qualified,
-			Kind:          s.Kind,
-			Snippet:       s.Snippet,
-			Context:       contextMap[s.ID],
-			FilePath:      paths[s.FileID],
-		}
-	}
+	inputs := buildEmbedInputs(syms, contextMap, paths)
 
 	pool, err := newEmbedPool(h.newEmbedder)
 	if err != nil {
@@ -316,23 +313,7 @@ func (h *harness) embedSymbols() error {
 		if err != nil {
 			return fmt.Errorf("generate embeddings: %w", err)
 		}
-
-		chunkSyms := syms[i:end]
-		err = h.idx.InTx(h.ctx, func() error {
-			stmt, err := h.idx.PrepareEmbeddingStmt(h.ctx)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = stmt.Close() }()
-			for j, vec := range vecs {
-				blob := vectorToBlob(vec)
-				if _, err := stmt.ExecContext(h.ctx, chunkSyms[j].ID, blob); err != nil {
-					return fmt.Errorf("write embedding symbol=%d: %w", chunkSyms[j].ID, err)
-				}
-			}
-			return nil
-		})
-		if err != nil {
+		if err := writeEmbeddingChunk(h.ctx, h.idx, syms[i:end], vecs); err != nil {
 			return fmt.Errorf("write embeddings: %w", err)
 		}
 		h.embedded += len(vecs)
