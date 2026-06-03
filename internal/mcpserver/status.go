@@ -90,52 +90,15 @@ func statusHints(resp mcpio.StatusResponse, sessionQueries int) []mcpio.NextStep
 	return hints
 }
 
-//nolint:gocyclo // 27-05: retired by the mcpserver split
 func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.WatchState) (mcpio.StatusResponse, error) {
 	var resp mcpio.StatusResponse
 
-	dbPath := filepath.Join(dir, ".sense", "index.db")
-	if relPath, err := filepath.Rel(dir, dbPath); err == nil {
-		resp.Index.Path = relPath
-	} else {
-		resp.Index.Path = dbPath
-	}
-	if info, err := os.Stat(dbPath); err == nil {
-		resp.Index.SizeBytes = info.Size()
-	}
-
-	row := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_files`)
-	if err := row.Scan(&resp.Index.Files); err != nil {
+	index, progress, err := queryIndexCounts(ctx, db, dir)
+	if err != nil {
 		return resp, err
 	}
-	row = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols`)
-	if err := row.Scan(&resp.Index.Symbols); err != nil {
-		return resp, err
-	}
-	row = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_edges`)
-	if err := row.Scan(&resp.Index.Edges); err != nil {
-		return resp, err
-	}
-	row = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_embeddings`)
-	if err := row.Scan(&resp.Index.Embeddings); err != nil {
-		return resp, err
-	}
-
-	if resp.Index.Symbols > 0 {
-		resp.Index.Coverage = float64(resp.Index.Embeddings) / float64(resp.Index.Symbols)
-	}
-
-	if debt := resp.Index.Symbols - resp.Index.Embeddings; debt > 0 {
-		pct := 0
-		if resp.Index.Symbols > 0 {
-			pct = resp.Index.Embeddings * 100 / resp.Index.Symbols
-		}
-		resp.EmbeddingProgress = &mcpio.EmbeddingProgress{
-			Total:    resp.Index.Symbols,
-			Embedded: resp.Index.Embeddings,
-			Percent:  pct,
-		}
-	}
+	resp.Index = index
+	resp.EmbeddingProgress = progress
 
 	langs, err := queryLanguageBreakdown(ctx, db)
 	if err != nil {
@@ -143,25 +106,11 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 	}
 	resp.Languages = langs
 
-	freshness := computeFreshness(ctx, db, dir, true, ws, nil)
-	if freshness != nil {
+	if freshness := computeFreshness(ctx, db, dir, true, ws, nil); freshness != nil {
 		resp.Freshness = *freshness
 	}
 
-	var schemaVer int
-	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVer); err == nil {
-		storedModel := readMeta(ctx, db, "embedding_model")
-		if storedModel == "" {
-			storedModel = embed.ModelID
-		}
-		resp.Version = &mcpio.StatusVersion{
-			Binary:                version.Version,
-			Schema:                schemaVer,
-			SchemaCurrent:         schemaVer == sqlite.SchemaVersion,
-			EmbeddingModel:        storedModel,
-			EmbeddingModelCurrent: storedModel == embed.ModelID,
-		}
-	}
+	resp.Version = queryVersion(ctx, db)
 
 	structure, err := buildStructure(ctx, db, resp, langs)
 	if err != nil {
@@ -180,6 +129,78 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 	}
 
 	return resp, nil
+}
+
+// queryIndexCounts reads the index path/size and the file/symbol/edge/embedding
+// counts, deriving embedding coverage and the embedding-debt progress (non-nil
+// only when symbols remain unembedded).
+func queryIndexCounts(ctx context.Context, db *sql.DB, dir string) (mcpio.StatusIndex, *mcpio.EmbeddingProgress, error) {
+	var index mcpio.StatusIndex
+
+	dbPath := filepath.Join(dir, ".sense", "index.db")
+	if relPath, err := filepath.Rel(dir, dbPath); err == nil {
+		index.Path = relPath
+	} else {
+		index.Path = dbPath
+	}
+	if info, err := os.Stat(dbPath); err == nil {
+		index.SizeBytes = info.Size()
+	}
+
+	counts := []struct {
+		query string
+		dst   *int
+	}{
+		{`SELECT COUNT(*) FROM sense_files`, &index.Files},
+		{`SELECT COUNT(*) FROM sense_symbols`, &index.Symbols},
+		{`SELECT COUNT(*) FROM sense_edges`, &index.Edges},
+		{`SELECT COUNT(*) FROM sense_embeddings`, &index.Embeddings},
+	}
+	for _, c := range counts {
+		if err := db.QueryRowContext(ctx, c.query).Scan(c.dst); err != nil {
+			return index, nil, err
+		}
+	}
+
+	if index.Symbols > 0 {
+		index.Coverage = float64(index.Embeddings) / float64(index.Symbols)
+	}
+
+	var progress *mcpio.EmbeddingProgress
+	if debt := index.Symbols - index.Embeddings; debt > 0 {
+		pct := 0
+		if index.Symbols > 0 {
+			pct = index.Embeddings * 100 / index.Symbols
+		}
+		progress = &mcpio.EmbeddingProgress{
+			Total:    index.Symbols,
+			Embedded: index.Embeddings,
+			Percent:  pct,
+		}
+	}
+
+	return index, progress, nil
+}
+
+// queryVersion reports the schema and embedding-model versions, comparing each
+// to the binary's current values. It returns nil when the schema version
+// pragma cannot be read.
+func queryVersion(ctx context.Context, db *sql.DB) *mcpio.StatusVersion {
+	var schemaVer int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVer); err != nil {
+		return nil
+	}
+	storedModel := readMeta(ctx, db, "embedding_model")
+	if storedModel == "" {
+		storedModel = embed.ModelID
+	}
+	return &mcpio.StatusVersion{
+		Binary:                version.Version,
+		Schema:                schemaVer,
+		SchemaCurrent:         schemaVer == sqlite.SchemaVersion,
+		EmbeddingModel:        storedModel,
+		EmbeddingModelCurrent: storedModel == embed.ModelID,
+	}
 }
 
 // ---------------------------------------------------------------
