@@ -281,4 +281,39 @@ func TestGraphConfidenceValue(t *testing.T) {
 	}
 }
 
+// TestAppendDispatchCallers exercises the per-equivalent folding in isolation:
+// non-call edges are ignored, callers already seen (direct or via an earlier
+// equivalent) are deduped, a genuine call edge is appended with its via-method
+// and resolved file, and the per-query cap stops further appends.
+func TestAppendDispatchCallers(t *testing.T) {
+	lookup := fileLookup(map[int64]string{2: "caller.go"})
+
+	inbound := []model.EdgeRef{
+		{Edge: model.Edge{Kind: model.EdgeInherits}, Target: model.Symbol{Qualified: "pkg.Skip"}},
+		{Edge: model.Edge{Kind: model.EdgeCalls}, Target: model.Symbol{Qualified: "pkg.New", FileID: 2, LineStart: 7, LineEnd: 9}},
+		{Edge: model.Edge{Kind: model.EdgeCalls}, Target: model.Symbol{Qualified: "pkg.Dup"}},
+	}
+	directCallers := map[string]struct{}{"pkg.Dup": {}}
+
+	got := appendDispatchCallers(nil, inbound, "pkg.S.M", directCallers, lookup)
+	if len(got) != 1 {
+		t.Fatalf("want 1 appended (non-call and dup skipped), got %d: %+v", len(got), got)
+	}
+	if got[0].Symbol != "pkg.New" || got[0].Via != "pkg.S.M" {
+		t.Errorf("appended ref = %+v, want Symbol=pkg.New Via=pkg.S.M", got[0])
+	}
+	if got[0].File == nil || *got[0].File != "caller.go" {
+		t.Errorf("want file caller.go from lookup, got %v", got[0].File)
+	}
+
+	// At the per-query cap, further callers are not appended.
+	full := make([]mcpio.DispatchInferredRef, maxDispatchInferred)
+	capped := appendDispatchCallers(full,
+		[]model.EdgeRef{{Edge: model.Edge{Kind: model.EdgeCalls}, Target: model.Symbol{Qualified: "pkg.Overflow"}}},
+		"pkg.S.M", map[string]struct{}{}, lookup)
+	if len(capped) != maxDispatchInferred {
+		t.Errorf("want cap held at %d, got %d", maxDispatchInferred, len(capped))
+	}
+}
+
 func strPtr(s string) *string { return &s }
