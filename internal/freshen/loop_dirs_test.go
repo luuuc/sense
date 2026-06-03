@@ -1,4 +1,4 @@
-package watch
+package freshen
 
 import (
 	"context"
@@ -511,4 +511,3 @@ func TestIntegration_WatchWriteDebounce(t *testing.T) {
 		t.Fatal("timed out waiting for debounced batch")
 	}
 }
-

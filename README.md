@@ -90,7 +90,7 @@ sense setup
 
 ## Setup & forget
 
-After `sense setup`, there's nothing left to do. The index updates automatically as your code changes. The summary regenerates on every scan. Your AI gets faster answers and burns fewer tokens, and you just stop noticing the friction that used to be there.
+After `sense setup`, there's nothing left to do. The MCP server your editor already launches watches your working tree in the background and re-indexes changes as they land, so the index stays current whether the edit came from your AI, your own editor, a `git pull`, or a branch switch. No second process to start, no `--watch` to remember. The summary regenerates on every scan. Your AI gets faster answers and burns fewer tokens, and you just stop noticing the friction that used to be there.
 
 ## What Your AI Gets
 
@@ -120,6 +120,8 @@ cd /path/to/project && sense scan
 ```
 
 From that moment on, your AI can ask structural questions via MCP. These are what your AI calls. You can run them manually for verification. See [CLI.md](CLI.md) for the full reference.
+
+The MCP server does more than answer queries: for the life of the editor session it watches the working tree with a debounced filesystem watcher and re-indexes changed files in the background, off the request path. A branch switch re-indexes once from a `git diff` rather than reacting to every file. If you query a file that changed microseconds ago, the server repairs just that file inline before answering, so an edit is never missed. One project indexes at a time — a single-writer lock means a second editor window or a `sense scan --watch` in a terminal serves reads without double-indexing. Set `watch: false` in `.sense/config.yml` to turn the background watcher off.
 
 ### Performance
 

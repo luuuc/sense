@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/luuuc/sense/internal/freshen"
+	"github.com/luuuc/sense/internal/scan"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
@@ -355,5 +358,92 @@ func TestSessionStartWithEmptySummary(t *testing.T) {
 	}
 	if !strings.Contains(msg, "symbols") {
 		t.Error("message should still contain index stats")
+	}
+}
+
+// TestSessionStartReconcilesDrift verifies the session-start hook catches
+// up on drift that happened while no watcher was running: an out-of-band
+// edit before the first query is reflected after the hook runs.
+func TestSessionStartReconcilesDrift(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{Root: dir, Output: io.Discard, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	// Edit out of band, as if the editor were closed during the change.
+	if err := os.WriteFile(filepath.Join(dir, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n\nfunc Goodbye() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter, err := sqlite.Open(ctx, filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	var before int
+	_ = adapter.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols WHERE name = 'Goodbye'`).Scan(&before)
+	if before != 0 {
+		t.Fatal("Goodbye should be absent before the hook runs")
+	}
+
+	if _, err := handleSessionStart(ctx, nil, adapter, dir); err != nil {
+		t.Fatalf("handleSessionStart: %v", err)
+	}
+
+	var after int
+	if err := adapter.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols WHERE name = 'Goodbye'`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after == 0 {
+		t.Error("session-start reconcile should have indexed the out-of-band edit")
+	}
+}
+
+// TestSessionStartSkipsReconcileWhenLockHeld verifies the hook defers to a
+// running server: when the writer lock is held, the hook does not reconcile.
+func TestSessionStartSkipsReconcileWhenLockHeld(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{Root: dir, Output: io.Discard, Warnings: io.Discard}); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	// Simulate a running server holding the writer lock.
+	release, ok := freshen.AcquireWriterLock(dir)
+	if !ok {
+		t.Fatal("test setup: should acquire lock")
+	}
+	defer release()
+
+	if err := os.WriteFile(filepath.Join(dir, "main.go"),
+		[]byte("package main\n\nfunc Hello() {}\n\nfunc Goodbye() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter, err := sqlite.Open(ctx, filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	if _, err := handleSessionStart(ctx, nil, adapter, dir); err != nil {
+		t.Fatalf("handleSessionStart: %v", err)
+	}
+
+	var after int
+	_ = adapter.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols WHERE name = 'Goodbye'`).Scan(&after)
+	if after != 0 {
+		t.Error("hook should not reconcile while another process holds the writer lock")
 	}
 }

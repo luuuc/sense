@@ -195,3 +195,67 @@ func TestLoadWatchDebounceMs(t *testing.T) {
 		t.Errorf("WatchDebounceMs = %d, want 500", c.Scan.WatchDebounceMs)
 	}
 }
+
+func TestWatchEnabledDefault(t *testing.T) {
+	c := &Config{}
+	if !c.WatchEnabled() {
+		t.Error("watch should default to enabled")
+	}
+}
+
+func TestWatchEnabledExplicit(t *testing.T) {
+	f := false
+	if (&Config{Watch: &f}).WatchEnabled() {
+		t.Error("watch: false should disable")
+	}
+	tr := true
+	if !(&Config{Watch: &tr}).WatchEnabled() {
+		t.Error("watch: true should enable")
+	}
+}
+
+func TestIsWatchEnabledEnv(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SENSE_WATCH", "false")
+	if IsWatchEnabled(root) {
+		t.Error("SENSE_WATCH=false should disable")
+	}
+	t.Setenv("SENSE_WATCH", "true")
+	if !IsWatchEnabled(root) {
+		t.Error("SENSE_WATCH=true should enable")
+	}
+}
+
+func TestIsWatchEnabledConfigFile(t *testing.T) {
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(senseDir, "config.yml"), []byte("watch: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if IsWatchEnabled(root) {
+		t.Error("watch: false in config.yml should disable")
+	}
+}
+
+// A broken config.yml must not silently turn a feature off: both watch and
+// embeddings fall back to enabled when Load fails to parse the file. This
+// pins the promise in IsWatchEnabled/IsEmbeddingsEnabled's doc comments.
+func TestEnvOrConfigBoolUnparseableConfigDefaultsToEnabled(t *testing.T) {
+	root := t.TempDir()
+	senseDir := filepath.Join(root, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(senseDir, "config.yml"), []byte("watch: [unterminated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !IsWatchEnabled(root) {
+		t.Error("unparseable config.yml should default watch to enabled")
+	}
+	if !IsEmbeddingsEnabled(root) {
+		t.Error("unparseable config.yml should default embeddings to enabled")
+	}
+}

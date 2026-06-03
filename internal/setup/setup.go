@@ -290,21 +290,14 @@ func writeClaudeSettings(root string) (bool, error) {
 				},
 			},
 		},
-		"PostToolUse": []any{
-			map[string]any{
-				"matcher": "Write|Edit|NotebookEdit",
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": "sense hook post-tool-use",
-						"timeout": 5000,
-					},
-				},
-			},
-		},
 	}
 
 	mergeHooks(existing, hooks)
+	// Retire the synchronous PostToolUse re-index hook (pitch 26-01): the
+	// embedded watcher in `sense mcp` plus per-query read-repair now keep
+	// the index fresh off the agent's critical path. Strip any Sense entry
+	// an earlier setup wrote so re-running setup migrates old configs.
+	removeRetiredHook(existing, "PostToolUse")
 	mergePermissions(existing, []string{"mcp__sense__*"})
 
 	if err := writeJSONFile(path, existing); err != nil {

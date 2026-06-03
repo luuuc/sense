@@ -115,6 +115,12 @@ func Open(ctx context.Context, path string) (*Adapter, error) {
 		"&_pragma=synchronous(normal)" +
 		"&_pragma=temp_store(memory)" +
 		"&_pragma=cache_size(-8000)" +
+		// busy_timeout makes a writer wait-and-retry rather than fail
+		// instantly with SQLITE_BUSY. With the embedded watcher, brief
+		// write overlap is possible across processes during single-writer
+		// lock handoff (stale-lock reclaim) and against a one-shot
+		// `sense scan`; this turns those rare races into a short wait.
+		"&_pragma=busy_timeout(5000)" +
 		"&_pragma=mmap_size(" + mmapSize + ")"
 
 	db, err := sql.Open("sqlite", dsn)

@@ -1,4 +1,4 @@
-package watch
+package freshen
 
 import (
 	"context"
@@ -209,4 +209,3 @@ func TestWatcherAddDirSkipDir(t *testing.T) {
 		t.Errorf("AddDir on hidden dir should not error, got %v", err)
 	}
 }
-

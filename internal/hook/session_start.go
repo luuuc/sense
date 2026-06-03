@@ -11,8 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/luuuc/sense/internal/freshen"
 	"github.com/luuuc/sense/internal/sqlite"
 )
+
+// reconcileTimeout bounds the session-start catch-up so a slow re-index can
+// never blow the hook's overall timeout.
+const reconcileTimeout = 4 * time.Second
 
 func formatScanAge(lastScan string, now time.Time) string {
 	t, err := time.Parse(time.RFC3339Nano, lastScan)
@@ -81,6 +86,18 @@ func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.
 
 	if symbolCount == 0 {
 		return nil, nil
+	}
+
+	// Catch up on drift that accumulated while no watcher was running (the
+	// editor was closed, edits or a pull happened in between), so the first
+	// query sees a current index. Respect the single-writer lock: if a
+	// `sense mcp` server is already watching this repo, it owns indexing and
+	// we skip — its watcher and read-repair keep the index fresh.
+	if release, ok := freshen.AcquireWriterLock(dir); ok {
+		rctx, cancel := context.WithTimeout(ctx, reconcileTimeout)
+		_, _, _ = freshen.ReconcileDrift(rctx, adapter, dir)
+		cancel()
+		release()
 	}
 
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT language FROM sense_files WHERE language != '' ORDER BY language`)

@@ -1,6 +1,4 @@
-// Package watch provides filesystem watching with recursive directory
-// registration, debouncing, and gitignore/senseignore filtering.
-package watch
+package freshen
 
 import (
 	"io/fs"
