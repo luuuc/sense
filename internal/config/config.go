@@ -16,6 +16,12 @@ type Config struct {
 	Ignore     []string         `yaml:"ignore"`
 	Scan       ScanConfig       `yaml:"scan"`
 	Embeddings EmbeddingsConfig `yaml:"embeddings"`
+	// Watch toggles the embedded watcher the `sense mcp` server runs to
+	// keep the index fresh in the background. Default true; set watch:
+	// false to turn it off (queries still serve, the index just goes stale
+	// until the next scan). `sense scan --watch` is unaffected — it is an
+	// explicit opt-in.
+	Watch *bool `yaml:"watch"`
 }
 
 type ScanConfig struct {
@@ -48,6 +54,28 @@ func IsEmbeddingsEnabled(root string) bool {
 		return true
 	}
 	return cfg.EmbeddingsEnabled()
+}
+
+// WatchEnabled reports whether the embedded watcher is active. Default is
+// true; set watch: false in config.yml to disable it.
+func (c *Config) WatchEnabled() bool {
+	if c.Watch != nil {
+		return *c.Watch
+	}
+	return true
+}
+
+// IsWatchEnabled checks the SENSE_WATCH env var first, then falls back to
+// the config file. A missing or unparseable config defaults to enabled.
+func IsWatchEnabled(root string) bool {
+	if env := os.Getenv("SENSE_WATCH"); env != "" {
+		return !strings.EqualFold(env, "false") && env != "0"
+	}
+	cfg, err := Load(root)
+	if err != nil {
+		return true
+	}
+	return cfg.WatchEnabled()
 }
 
 // Load reads .sense/config.yml under root. A missing file returns
