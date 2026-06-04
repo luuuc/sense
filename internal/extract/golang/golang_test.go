@@ -6,6 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/luuuc/sense/internal/extract"
+	"github.com/luuuc/sense/internal/grammars"
 )
 
 // recorder captures emitted symbols and edges for assertions.
@@ -438,6 +439,29 @@ func Process(orders []Order) {
 	}
 }
 
+// TestRangeVariableEdgeCases covers the range-clause shapes that are not
+// type-resolved: a single-variable `for i := range` binds the index (not the
+// element), and a blank value `for k, _ := range` has nothing to bind. Both must
+// extract cleanly without inventing a resolved type.
+func TestRangeVariableEdgeCases(t *testing.T) {
+	r := parse(t, `package svc
+
+type Order struct{}
+
+func Scan(orders []Order) {
+	for i := range orders {
+		_ = i
+	}
+	for k, _ := range orders {
+		_ = k
+	}
+}
+`)
+	if findSymbol(r, "svc.Scan") == nil {
+		t.Fatal("missing svc.Scan symbol")
+	}
+}
+
 func TestEmbedding(t *testing.T) {
 	r := parse(t, `package model
 
@@ -526,6 +550,60 @@ func TestConstructorType(t *testing.T) {
 		if got := constructorType(tc.in); got != tc.want {
 			t.Errorf("constructorType(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// receiverNode parses one method declaration and returns its `receiver` child,
+// the parameter_list that receiverType consumes.
+func receiverNode(t *testing.T, src string) (*sitter.Node, []byte) {
+	t.Helper()
+	p := sitter.NewParser()
+	t.Cleanup(p.Close)
+	if err := p.SetLanguage(grammars.Go()); err != nil {
+		t.Fatalf("SetLanguage: %v", err)
+	}
+	source := []byte(src)
+	tree := p.Parse(source, nil)
+	if tree == nil {
+		t.Fatal("Parse returned nil tree")
+	}
+	t.Cleanup(tree.Close)
+	root := tree.RootNode()
+	for i := uint(0); i < root.NamedChildCount(); i++ {
+		n := root.NamedChild(i)
+		if n != nil && n.Kind() == "method_declaration" {
+			return n.ChildByFieldName("receiver"), source
+		}
+	}
+	t.Fatal("no method_declaration in source")
+	return nil, source
+}
+
+// TestReceiverType drives receiverType over real method receivers — value,
+// pointer, and generic — plus the nil contract, the shapes that decide whether a
+// method's body calls resolve against its receiver type.
+func TestReceiverType(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"value", "package p\ntype Order struct{}\nfunc (o Order) M() {}\n", "Order"},
+		{"pointer", "package p\ntype Order struct{}\nfunc (o *Order) M() {}\n", "Order"},
+		{"generic", "package p\ntype Cache[T any] struct{}\nfunc (c Cache[T]) M() {}\n", "Cache"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recv, src := receiverNode(t, tc.src)
+			if got := receiverType(recv, src); got != tc.want {
+				t.Errorf("receiverType = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	// A nil receiver (defensive contract for callers outside handleMethod)
+	// resolves to the empty string, never a panic.
+	if got := receiverType(nil, nil); got != "" {
+		t.Errorf("receiverType(nil) = %q, want empty", got)
 	}
 }
 

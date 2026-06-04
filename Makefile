@@ -71,9 +71,12 @@ cover: fetch-deps
 # Complexity-ledger burndown. Every inline //nolint:gocyclo/gocognit is tracked
 # debt a 27-05→12 split/extractor pitch retires. This asserts the ledger never
 # GROWS: new complexity must be decomposed, not suppressed. Lower LEDGER_MAX as
-# pitches retire entries; the cycle's exit condition is LEDGER_MAX = 0 by 27-12.
+# pitches retire entries. 27-12 retired the last eight extractor entries
+# (python/golang/langspec); the two survivors are 27-07's resolver.go entries
+# (storage/query split), which that pitch left behind — a follow-up should retire
+# them to reach the cycle's intended zero.
 # (Matches gocyclo/gocognit only — an unrelated gocritic suppression is not debt.)
-LEDGER_MAX ?= 16
+LEDGER_MAX ?= 2
 ledger:
 	@n=$$(grep -rnE 'nolint:goc(yclo|ognit)' --include='*.go' internal cmd | wc -l | tr -d ' '); \
 	echo "complexity ledger: $$n entries (cap: $(LEDGER_MAX))"; \

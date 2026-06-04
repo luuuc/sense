@@ -414,6 +414,19 @@ func TestDjangoURLInclude(t *testing.T) {
 	}
 }
 
+func TestDjangoURLAttributeView(t *testing.T) {
+	// A dotted view reference via re_path: the view resolves through the
+	// attribute's last segment, exercising the re_path branch and the
+	// attribute view-reference path.
+	r := parse(t, `urlpatterns = [
+    re_path(r"^home/$", views.home),
+]
+`)
+	if findEdge(r, "urlpatterns", "home", "calls") == nil {
+		t.Error("missing calls edge urlpatterns -> home from re_path attribute view")
+	}
+}
+
 func TestTypeAnnotationComposes(t *testing.T) {
 	r := parse(t, `class Order:
     customer: User
