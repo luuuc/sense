@@ -290,12 +290,6 @@ func (w *walker) handleFunc(n *sitter.Node, scope []string) error {
 }
 
 func (w *walker) handleImport(n *sitter.Node, scope []string) error {
-	text := strings.TrimSpace(extract.Text(n, w.source))
-	if text == "" {
-		return nil
-	}
-
-	// Try to extract a meaningful import path from the node.
 	target := w.importTarget(n)
 	if target == "" {
 		return nil
@@ -484,13 +478,6 @@ func (w *walker) callTarget(n *sitter.Node) string {
 		}
 		return text
 	}
-	if method := n.ChildByFieldName("method"); method != nil {
-		text := strings.TrimSpace(extract.Text(method, w.source))
-		if recv := w.callReceiver(n); recv != "" {
-			return recv + "." + text
-		}
-		return text
-	}
 	return ""
 }
 
@@ -506,76 +493,94 @@ func (w *walker) callReceiver(n *sitter.Node) string {
 	return ""
 }
 
-//nolint:gocyclo,gocognit // 27-12: retired by the python/golang/langspec split
+// importTarget resolves an import node to its target path by trying ordered,
+// grammar-agnostic strategies and returning the first non-empty result. Each
+// strategy is a generic probe — a field name, a set of child node kinds — never a
+// per-grammar special case, so all seven standard-tier grammars share one path.
 func (w *walker) importTarget(n *sitter.Node) string {
-	// Try specific import path fields. Skip bare identifiers — they may be
-	// only the first component of a split path (e.g., Scala imports).
+	if t := w.importFromPathField(n); t != "" {
+		return t
+	}
+	if t := w.importFromChildLiteral(n); t != "" {
+		return t
+	}
+	if t := w.importFromNameField(n); t != "" {
+		return t
+	}
+	return w.importFromBareIdentifiers(n)
+}
+
+// importFromPathField reads an explicit import-path field (path/source/
+// module_name). A bare identifier is skipped: it may be only the first component
+// of a split path (e.g., Scala), which importFromBareIdentifiers joins instead.
+func (w *walker) importFromPathField(n *sitter.Node) string {
 	for _, field := range []string{"path", "source", "module_name"} {
 		child := n.ChildByFieldName(field)
 		if child == nil {
 			continue
 		}
-		ck := child.Kind()
-		if ck == "identifier" || ck == "simple_identifier" {
+		if ck := child.Kind(); ck == "identifier" || ck == "simple_identifier" {
 			continue
 		}
-		text := strings.Trim(extract.Text(child, w.source), "\"'`")
-		if text != "" {
+		if text := strings.Trim(extract.Text(child, w.source), "\"'`"); text != "" {
 			return text
 		}
 	}
+	return ""
+}
 
-	// Scan children for compound identifiers or string literals.
+// importFromChildLiteral scans named children for a string literal or a compound
+// identifier (scoped/dotted/qualified name), returning the first in child order
+// so a path appearing before a sibling token wins.
+func (w *walker) importFromChildLiteral(n *sitter.Node) string {
 	count := n.NamedChildCount()
 	for i := uint(0); i < count; i++ {
 		child := n.NamedChild(i)
 		if child == nil {
 			continue
 		}
-		kind := child.Kind()
-		if kind == "string" || kind == "string_literal" || kind == "interpreted_string_literal" {
-			text := strings.Trim(extract.Text(child, w.source), "\"'`")
-			if text != "" {
+		switch child.Kind() {
+		case "string", "string_literal", "interpreted_string_literal":
+			if text := strings.Trim(extract.Text(child, w.source), "\"'`"); text != "" {
 				return text
 			}
-		}
-		if kind == "scoped_identifier" || kind == "dotted_name" ||
-			kind == "qualified_identifier" || kind == "qualified_name" ||
-			kind == "stable_identifier" || kind == "namespace_use_clause" ||
-			kind == "namespace_name" || kind == "import_prefix" {
-			text := extract.Text(child, w.source)
-			if text != "" {
+		case "scoped_identifier", "dotted_name", "qualified_identifier",
+			"qualified_name", "stable_identifier", "namespace_use_clause",
+			"namespace_name", "import_prefix":
+			if text := extract.Text(child, w.source); text != "" {
 				return text
 			}
 		}
 	}
+	return ""
+}
 
-	// Try the generic "name" field as a fallback.
-	if child := n.ChildByFieldName("name"); child != nil {
-		text := strings.Trim(extract.Text(child, w.source), "\"'`")
-		if text != "" {
-			return text
-		}
+// importFromNameField reads the generic "name" field as a fallback for grammars
+// that expose the import path there.
+func (w *walker) importFromNameField(n *sitter.Node) string {
+	child := n.ChildByFieldName("name")
+	if child == nil {
+		return ""
 	}
+	return strings.Trim(extract.Text(child, w.source), "\"'`")
+}
 
-	// Collect bare identifier children and join — handles grammars that
-	// split import paths across sibling nodes (e.g., Scala).
+// importFromBareIdentifiers joins bare identifier children with the grammar's
+// separator, handling grammars that split an import path across sibling nodes
+// (e.g., Scala's `import a.b.c`).
+func (w *walker) importFromBareIdentifiers(n *sitter.Node) string {
 	var parts []string
+	count := n.NamedChildCount()
 	for i := uint(0); i < count; i++ {
 		child := n.NamedChild(i)
 		if child == nil {
 			continue
 		}
-		kind := child.Kind()
-		if kind == "identifier" || kind == "simple_identifier" {
+		if k := child.Kind(); k == "identifier" || k == "simple_identifier" {
 			parts = append(parts, extract.Text(child, w.source))
 		}
 	}
-	if len(parts) > 0 {
-		return strings.Join(parts, w.spec.Separator)
-	}
-
-	return ""
+	return strings.Join(parts, w.spec.Separator)
 }
 
 func (w *walker) nodeName(n *sitter.Node) string {

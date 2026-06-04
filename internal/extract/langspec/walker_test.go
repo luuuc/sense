@@ -1,6 +1,7 @@
 package langspec
 
 import (
+	"slices"
 	"testing"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -293,14 +294,17 @@ class App {
 		t.Fatalf("Extract: %v", err)
 	}
 
-	var importEdges []extract.EmittedEdge
+	var targets []string
 	for _, e := range em.edges {
 		if e.Kind == model.EdgeImports {
-			importEdges = append(importEdges, e)
+			targets = append(targets, e.TargetQualified)
 		}
 	}
-	if len(importEdges) == 0 {
-		t.Error("expected import edges for using directives")
+	// The compound `using System.Collections.Generic;` resolves via the
+	// qualified-name child (importFromChildLiteral); confirm the decomposed
+	// dispatch preserves the full path, not just the first component.
+	if !slices.Contains(targets, "System.Collections.Generic") {
+		t.Errorf("import targets = %v, want one to be %q", targets, "System.Collections.Generic")
 	}
 }
 
@@ -337,14 +341,17 @@ class Greeter {
 		t.Fatalf("Extract: %v", err)
 	}
 
-	var importEdges []extract.EmittedEdge
+	var targets []string
 	for _, e := range em.edges {
 		if e.Kind == model.EdgeImports {
-			importEdges = append(importEdges, e)
+			targets = append(targets, e.TargetQualified)
 		}
 	}
-	if len(importEdges) == 0 {
-		t.Error("expected import edge for scala.collection.mutable")
+	// Scala splits the path across sibling identifiers; importFromBareIdentifiers
+	// joins them with the grammar separator. Confirm the decomposition still
+	// reconstructs the full dotted path.
+	if !slices.Contains(targets, "scala.collection.mutable") {
+		t.Errorf("import targets = %v, want one to be %q", targets, "scala.collection.mutable")
 	}
 }
 
@@ -636,6 +643,41 @@ fun main() {}
 	}
 	if len(importEdges) == 0 {
 		t.Error("expected import edge from Kotlin import_header")
+	}
+}
+
+// TestC_ParenthesizedDeclarator covers extractDeclaratorName's
+// parenthesized_declarator branch: a C function whose name is wrapped in
+// redundant parentheses (`int (max)(...)`) nests the identifier one level deeper,
+// so the walker must descend through the parentheses to recover the name.
+func TestC_ParenthesizedDeclarator(t *testing.T) {
+	spec := langSpec{
+		Name:      "test-c-paren",
+		Exts:      []string{".c"},
+		Grammar:   grammars.C(),
+		Tier:      extract.TierStandard,
+		Separator: ".",
+
+		FuncTypes:  []string{"function_definition"},
+		ClassTypes: []string{"struct_specifier"},
+		NameField:  "name",
+	}
+
+	src := `int (max)(int a, int b) { return a > b ? a : b; }
+`
+
+	tree := parse(t, spec.Grammar, src)
+	em := &testEmitter{}
+	ex := New(spec)
+	if err := ex.Extract(tree, []byte(src), "test.c", em); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	if len(em.symbols) == 0 {
+		t.Fatal("expected a symbol for the parenthesized-declarator function")
+	}
+	if em.symbols[0].Name != "max" {
+		t.Errorf("name = %q, want %q", em.symbols[0].Name, "max")
 	}
 }
 
