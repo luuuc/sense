@@ -37,44 +37,70 @@ func (Extractor) HarvestsMentions() bool { return true }
 //
 // Each emit is best-effort — an Emitter that implements none of the extensions
 // simply receives no names.
-//
-//nolint:gocyclo,gocognit // 27-12: retired by the python/golang/langspec split
 func emitHarvest(root *sitter.Node, source []byte, emit extract.Emitter) error {
 	if me, ok := emit.(extract.MentionEmitter); ok {
-		for _, name := range extract.HarvestMentions(root, source, mentionWalkSpec()) {
-			if err := me.MentionName(name); err != nil {
-				return err
-			}
+		if err := harvestMentions(root, source, me); err != nil {
+			return err
 		}
 	}
 	if de, ok := emit.(extract.DispatchEmitter); ok {
-		for name := range collectReflectiveDispatch(root, source) {
-			if err := de.DispatchName(name); err != nil {
-				return err
-			}
+		if err := harvestDispatch(root, source, de); err != nil {
+			return err
 		}
 	}
 	if pe, ok := emit.(extract.PythonHarvestEmitter); ok {
-		decorated, routes, django := collectDecoratorReach(root, source)
-		for name := range decorated {
-			if err := pe.PythonDecoratedName(name); err != nil {
-				return err
-			}
+		if err := harvestPythonReach(root, source, pe); err != nil {
+			return err
 		}
-		for name := range routes {
-			if err := pe.PythonRouteName(name); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+// harvestMentions streams every bare-name identifier mention (the broad
+// soundness superset) to the mention emitter.
+func harvestMentions(root *sitter.Node, source []byte, me extract.MentionEmitter) error {
+	for _, name := range extract.HarvestMentions(root, source, mentionWalkSpec()) {
+		if err := me.MentionName(name); err != nil {
+			return err
 		}
-		for name := range django {
-			if err := pe.PythonDjangoName(name); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+// harvestDispatch streams the literal name argument of every
+// getattr/setattr/hasattr call (Python's reflective dispatch) to the emitter.
+func harvestDispatch(root *sitter.Node, source []byte, de extract.DispatchEmitter) error {
+	for name := range collectReflectiveDispatch(root, source) {
+		if err := de.DispatchName(name); err != nil {
+			return err
 		}
-		for name := range collectAllExports(root, source) {
-			if err := pe.PythonAllExportName(name); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+// harvestPythonReach streams the framework-reach name sets — every decorated
+// symbol, the route and Django-dispatch subsets, and `__all__` exports — to the
+// Python harvest emitter.
+func harvestPythonReach(root *sitter.Node, source []byte, pe extract.PythonHarvestEmitter) error {
+	decorated, routes, django := collectDecoratorReach(root, source)
+	for name := range decorated {
+		if err := pe.PythonDecoratedName(name); err != nil {
+			return err
+		}
+	}
+	for name := range routes {
+		if err := pe.PythonRouteName(name); err != nil {
+			return err
+		}
+	}
+	for name := range django {
+		if err := pe.PythonDjangoName(name); err != nil {
+			return err
+		}
+	}
+	for name := range collectAllExports(root, source) {
+		if err := pe.PythonAllExportName(name); err != nil {
+			return err
 		}
 	}
 	return nil
