@@ -25,44 +25,49 @@ func (Extractor) HarvestsMentions() bool { return true }
 // sets feed the Rust voice's rust_ffi / rust_used / rust_test reasons. All four
 // are gathered in one tree walk; each emit is best-effort — an Emitter that
 // implements neither extension simply receives no names.
-//
-//nolint:gocyclo,gocognit // 27-11: retired by the tsjs/rust extractor split
 func emitHarvest(root *sitter.Node, source []byte, emit extract.Emitter) error {
 	h := collectRustHarvest(root, source)
 	if de, ok := emit.(extract.DispatchEmitter); ok {
-		for name := range h.dispatch {
-			if err := de.DispatchName(name); err != nil {
-				return err
-			}
+		if err := emitEach(h.dispatch, de.DispatchName); err != nil {
+			return err
 		}
 	}
 	if me, ok := emit.(extract.MentionEmitter); ok {
-		for name := range h.mentions {
-			if err := me.MentionName(name); err != nil {
-				return err
-			}
+		if err := emitEach(h.mentions, me.MentionName); err != nil {
+			return err
 		}
 	}
 	if re, ok := emit.(extract.RustHarvestEmitter); ok {
-		for name := range h.exports {
-			if err := re.RustExportName(name); err != nil {
-				return err
-			}
+		if err := emitRustHarvest(re, h); err != nil {
+			return err
 		}
-		for name := range h.testSymbols {
-			if err := re.RustTestSymbol(name); err != nil {
-				return err
-			}
-		}
-		for name := range h.traitImplMethods {
-			if err := re.RustTraitImplMethod(name); err != nil {
-				return err
-			}
-		}
-		for name := range h.allowDead {
-			if err := re.RustAllowDeadName(name); err != nil {
-				return err
-			}
+	}
+	return nil
+}
+
+// emitRustHarvest streams the Rust-specific name sets (FFI/used exports,
+// test symbols, trait-impl methods, allow(dead) names) to a
+// RustHarvestEmitter, stopping at the first emit error.
+func emitRustHarvest(re extract.RustHarvestEmitter, h rustHarvest) error {
+	if err := emitEach(h.exports, re.RustExportName); err != nil {
+		return err
+	}
+	if err := emitEach(h.testSymbols, re.RustTestSymbol); err != nil {
+		return err
+	}
+	if err := emitEach(h.traitImplMethods, re.RustTraitImplMethod); err != nil {
+		return err
+	}
+	return emitEach(h.allowDead, re.RustAllowDeadName)
+}
+
+// emitEach calls fn for every name in the set, stopping at the first
+// error. Map iteration order is unspecified, but each name set is emitted
+// independently, so order does not affect the harvested result.
+func emitEach(names map[string]struct{}, fn func(string) error) error {
+	for name := range names {
+		if err := fn(name); err != nil {
+			return err
 		}
 	}
 	return nil
