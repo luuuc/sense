@@ -508,6 +508,102 @@ func TestReadSymbolGraphDepth(t *testing.T) {
 	})
 }
 
+func TestReadSymbolGraphDepthExceedsChain(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	// Chain: S3 → S2 → S1 → S0. Asking for more depth than the chain has
+	// must stop cleanly when the frontier empties, not loop or truncate.
+	ids := seedChain(ctx, t, a, 4)
+
+	gr, err := a.ReadSymbolGraph(ctx, ids[0], 6, "callers", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gr.Truncated {
+		t.Error("expected Truncated=false when the chain exhausts before max depth")
+	}
+	// Root caller S1, then layers for S2 and S3 — two layers, then the
+	// frontier is empty and the hop loop breaks before depth 6.
+	if len(gr.Layers) != 2 {
+		t.Fatalf("layers = %d, want 2 (chain exhausts at S3)", len(gr.Layers))
+	}
+}
+
+func TestReadSymbolGraphTruncationCallees(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	// Callee star: a root method calls 10 leaves. maxPerHop must cap the
+	// outbound expansion at hop 2, exercising the callees side of the hop.
+	rootFile, _ := a.WriteFile(ctx, &model.File{
+		Path: "root.rb", Language: "ruby", Hash: "r", IndexedAt: time.Now(),
+	})
+	rootID, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: rootFile, Name: "Root", Qualified: "Root",
+		Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 10 {
+		fid, _ := a.WriteFile(ctx, &model.File{
+			Path: fmt.Sprintf("leaf_%d.rb", i), Language: "ruby",
+			Hash: fmt.Sprintf("l%d", i), IndexedAt: time.Now(),
+		})
+		leafID, _ := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: fmt.Sprintf("Leaf%d", i),
+			Qualified: fmt.Sprintf("Leaf%d", i),
+			Kind:      model.KindMethod, LineStart: 1, LineEnd: 5,
+		})
+		// Root calls Leaf; each Leaf calls its own grandchild so hop 2 has
+		// outbound edges to admit.
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: model.Int64Ptr(rootID), TargetID: leafID,
+			Kind: model.EdgeCalls, FileID: rootFile, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		gfid, _ := a.WriteFile(ctx, &model.File{
+			Path: fmt.Sprintf("grandleaf_%d.rb", i), Language: "ruby",
+			Hash: fmt.Sprintf("gl%d", i), IndexedAt: time.Now(),
+		})
+		grandID, _ := a.WriteSymbol(ctx, &model.Symbol{
+			FileID: gfid, Name: fmt.Sprintf("GrandLeaf%d", i),
+			Qualified: fmt.Sprintf("GrandLeaf%d", i),
+			Kind:      model.KindMethod, LineStart: 1, LineEnd: 5,
+		})
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: model.Int64Ptr(leafID), TargetID: grandID,
+			Kind: model.EdgeCalls, FileID: gfid, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	gr, err := a.ReadSymbolGraph(ctx, rootID, 2, "callees", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gr.Truncated {
+		t.Error("expected Truncated=true on capped callee expansion")
+	}
+	if len(gr.Layers) != 1 {
+		t.Fatalf("layers = %d, want 1", len(gr.Layers))
+	}
+	if len(gr.Layers[0].Outbound) != 3 {
+		t.Errorf("layer outbound = %d, want 3 (maxPerHop)", len(gr.Layers[0].Outbound))
+	}
+}
+
 func TestReadSymbolGraphTruncation(t *testing.T) {
 	ctx := context.Background()
 	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))

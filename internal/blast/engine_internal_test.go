@@ -238,3 +238,18 @@ func TestSiblingSymbolIDsNonExistent(t *testing.T) {
 		t.Errorf("expected [999999] (self always included), got %v", ids)
 	}
 }
+
+// hasTemporal reports temporal coupling from either a direct temporal caller
+// or an indirect (multi-hop) one; the indirect path is the branch the full
+// Compute tests rarely exercise on its own.
+func TestHasTemporal(t *testing.T) {
+	if !hasTemporal(map[int64]bool{1: true}, nil) {
+		t.Error("direct temporal caller should report temporal coupling")
+	}
+	if !hasTemporal(nil, []CallerHop{{ViaTemporal: true}}) {
+		t.Error("indirect temporal hop should report temporal coupling")
+	}
+	if hasTemporal(nil, []CallerHop{{ViaTemporal: false}}) {
+		t.Error("no temporal edges should report none")
+	}
+}

@@ -199,21 +199,11 @@ type Result struct {
 // point to any reopening, so all must be seeds.
 //
 // For single-symbol queries, pass a one-element slice.
-//
-//nolint:gocyclo,gocognit // 27-07: retired by the storage/query split
 func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (Result, error) {
 	if len(symbolIDs) == 0 {
 		return Result{}, fmt.Errorf("blast: no symbol IDs provided")
 	}
-	if opts.MaxHops <= 0 {
-		opts.MaxHops = defaultMaxHops
-	}
-	if opts.MinConfidence <= 0 {
-		opts.MinConfidence = defaultMinConfidence
-	}
-	if opts.MaxResults <= 0 {
-		opts.MaxResults = defaultMaxResults
-	}
+	opts = opts.withDefaults()
 
 	subject, err := loadSymbol(ctx, db, symbolIDs[0])
 	if err != nil {
@@ -223,144 +213,21 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	hasCallees := subjectHasCallees(ctx, db, symbolIDs)
 	viewReached := subjectViewReached(ctx, db, symbolIDs)
 
-	visited := map[int64]int{}
-	predecessor := map[int64]int64{}
-	viaTemporal := map[int64]bool{}
-	visitedKind := map[int64]string{}
-	pathConf := map[int64]float64{}
-	edgeSites := map[int64]EdgeSite{}
-	frontier := make([]int64, 0, len(symbolIDs))
-	for _, id := range symbolIDs {
-		visited[id] = 0
-		pathConf[id] = 1.0
-		frontier = append(frontier, id)
+	state, err := seedFrontier(ctx, db, subject, symbolIDs)
+	if err != nil {
+		return Result{}, err
 	}
 
-	// childSet tracks a type's own methods. They seed the BFS frontier
-	// (so callers of methods are discoverable) but are explicitly excluded
-	// from blast radius output — see the partition loop below.
-	childSet := map[int64]struct{}{}
-	if shouldExpandChildren(subject.Kind) {
-		childIDs, err := loadChildIDs(ctx, db, symbolIDs)
-		if err != nil {
-			return Result{}, fmt.Errorf("blast: load children: %w", err)
-		}
-		for _, id := range childIDs {
-			if _, seen := visited[id]; !seen {
-				visited[id] = 0
-				pathConf[id] = 1.0
-				visitedKind[id] = "member"
-				frontier = append(frontier, id)
-				childSet[id] = struct{}{}
-			}
-		}
-	}
-
-	truncated := false
-	edgesTraversed := 0
 	for hop := 1; hop <= opts.MaxHops; hop++ {
 		if err := ctx.Err(); err != nil {
 			return Result{}, fmt.Errorf("blast: cancelled at hop %d: %w", hop, err)
 		}
-		pairs, err := expandFrontier(ctx, db, frontier)
-		if err != nil {
-			return Result{}, fmt.Errorf("blast: hop %d: %w", hop, err)
+		if err := state.expandOneHop(ctx, db, hop, opts); err != nil {
+			return Result{}, err
 		}
-		edgesTraversed += len(pairs)
-		var next []int64
-
-		// Group this hop's qualifying edges by source so the expand-vs-sink
-		// and predecessor decisions are made per-node, not per-edge in
-		// iteration order. A node reached this hop ONLY via temporal edges is
-		// a sink: it is recorded (it appears as a co-change caller and feeds
-		// the risk signal) but never expanded, so a temporal hop cannot
-		// launder git co-change into a transitive structural path. A node with
-		// any non-temporal in-edge expands normally, and its predecessor/kind
-		// reflect that structural path.
-		bySource := map[int64][]hopCand{}
-		var order []int64
-		for _, pair := range pairs {
-			if _, seen := visited[pair.source]; seen {
-				continue
-			}
-			cumConf := pathConf[pair.target] * pair.confidence * kindDecay(pair.kind)
-			minConf := opts.MinConfidence
-			if pair.kind == "composes" || pair.kind == "inherits" || pair.kind == "includes" {
-				minConf = StructuralMinConf
-			}
-			if cumConf < minConf {
-				continue
-			}
-			if _, ok := bySource[pair.source]; !ok {
-				order = append(order, pair.source)
-			}
-			bySource[pair.source] = append(bySource[pair.source], hopCand{
-				target:  pair.target,
-				kind:    pair.kind,
-				cumConf: cumConf,
-				fileID:  pair.fileID,
-				line:    pair.line,
-			})
-		}
-
-		for _, src := range order {
-			cands := bySource[src]
-			hasStructural := false
-			for _, c := range cands {
-				if c.kind != "temporal" {
-					hasStructural = true
-					break
-				}
-			}
-			// Choose the path into src: prefer a non-temporal edge when one
-			// exists (temporal is only the recorded route when nothing else
-			// reaches the node), then highest cumulative confidence.
-			var chosen hopCand
-			chosenSet := false
-			for _, c := range cands {
-				if hasStructural && c.kind == "temporal" {
-					continue
-				}
-				if !chosenSet || c.cumConf > chosen.cumConf {
-					chosen = c
-					chosenSet = true
-				}
-			}
-
-			visited[src] = hop
-			predecessor[src] = chosen.target
-			visitedKind[src] = chosen.kind
-			pathConf[src] = chosen.cumConf
-			edgeSites[src] = EdgeSite{FileID: chosen.fileID, Line: chosen.line}
-			if chosen.kind == "temporal" {
-				viaTemporal[src] = true
-			}
-			if hasStructural {
-				next = append(next, src)
-			}
-		}
-		// Cap frontier width: evicted nodes are removed from visited so they
-		// may be re-discovered via a stronger path in a later hop. This is
-		// intentional — it preserves the highest-confidence paths.
-		if len(next) > MaxFrontierWidth {
-			sort.Slice(next, func(i, j int) bool {
-				return pathConf[next[i]] > pathConf[next[j]]
-			})
-			evicted := next[MaxFrontierWidth:]
-			next = next[:MaxFrontierWidth]
-			for _, id := range evicted {
-				delete(visited, id)
-				delete(predecessor, id)
-				delete(visitedKind, id)
-				delete(pathConf, id)
-				delete(viaTemporal, id)
-			}
-			truncated = true
-		}
-		if len(next) == 0 {
+		if len(state.frontier) == 0 {
 			break
 		}
-		frontier = next
 	}
 
 	// Split visited into caller-direct (hop ≤1, from edges) and indirect
@@ -371,191 +238,31 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	for _, id := range symbolIDs {
 		seedSet[id] = struct{}{}
 	}
-	var directIDs, indirectIDs []int64
-	for id, hops := range visited {
-		if _, isSeed := seedSet[id]; isSeed {
-			continue
-		}
-		if _, isChild := childSet[id]; isChild {
-			continue
-		}
-		if hops <= 1 {
-			directIDs = append(directIDs, id)
-		} else {
-			indirectIDs = append(indirectIDs, id)
-		}
-	}
-
+	directIDs, indirectIDs := state.partition(seedSet)
 	totalAffectedCount := len(directIDs) + len(indirectIDs)
+	directIDs, indirectIDs = state.capResults(directIDs, indirectIDs, opts.MaxResults)
 
-	callerCount := len(directIDs) + len(indirectIDs)
-	if callerCount > opts.MaxResults {
-		type ranked struct {
-			id   int64
-			conf float64
-		}
-		all := make([]ranked, 0, callerCount)
-		for _, id := range directIDs {
-			all = append(all, ranked{id, pathConf[id]})
-		}
-		for _, id := range indirectIDs {
-			all = append(all, ranked{id, pathConf[id]})
-		}
-		sort.Slice(all, func(i, j int) bool { return all[i].conf > all[j].conf })
-		all = all[:opts.MaxResults]
-
-		kept := make(map[int64]struct{}, opts.MaxResults)
-		for _, r := range all {
-			kept[r.id] = struct{}{}
-		}
-
-		directIDs = filterIDs(directIDs, kept)
-		indirectIDs = filterIDs(indirectIDs, kept)
-	}
-
-	// Hydrate both sets to model.Symbol in a single bulk read.
-
-	allIDs := append([]int64{}, directIDs...)
-	allIDs = append(allIDs, indirectIDs...)
-	// Also hydrate predecessors so CallerHop.Via can reference them.
-	// Predecessors are either the subject or another caller already
-	// in allIDs; adding them defensively keeps the lookup map whole
-	// without a second query.
-	predIDs := map[int64]struct{}{}
-	for _, predID := range predecessor {
-		predIDs[predID] = struct{}{}
-	}
-	for id := range predIDs {
-		if id == subject.ID {
-			continue
-		}
-		if _, seen := visited[id]; seen {
-			continue
-		}
-		allIDs = append(allIDs, id)
-	}
-
-	symbolsByID, err := loadSymbols(ctx, db, allIDs)
+	symbolsByID, err := state.hydrate(ctx, db, subject, directIDs, indirectIDs)
 	if err != nil {
 		return Result{}, fmt.Errorf("blast: hydrate callers: %w", err)
 	}
-	symbolsByID[subject.ID] = subject
 
-	excludeSelf := subject.Kind == model.KindModule || subject.Kind == model.KindInterface
-	isSelfMethod := func(sym model.Symbol) bool {
-		if !excludeSelf {
-			return false
-		}
-		if sym.ParentID == nil {
-			return false
-		}
-		_, isSeed := seedSet[*sym.ParentID]
-		return isSeed
-	}
-
-	excluded := 0
-	directCallers := make([]model.Symbol, 0, len(directIDs))
-	directTemporalIDs := map[int64]bool{}
-	directEdgeSites := make(map[int64]EdgeSite, len(directIDs))
-	for _, id := range directIDs {
-		sym, ok := symbolsByID[id]
-		if !ok {
-			continue
-		}
-		if isSelfMethod(sym) {
-			excluded++
-			continue
-		}
-		directCallers = append(directCallers, sym)
-		if viaTemporal[id] {
-			directTemporalIDs[id] = true
-		}
-		if es, ok := edgeSites[id]; ok {
-			directEdgeSites[id] = es
-		}
-	}
-	sortSymbolsByID(directCallers)
-
-	indirectCallers := make([]CallerHop, 0, len(indirectIDs))
-	for _, id := range indirectIDs {
-		sym, ok := symbolsByID[id]
-		if !ok {
-			continue
-		}
-		if isSelfMethod(sym) {
-			excluded++
-			continue
-		}
-		via := symbolsByID[predecessor[id]]
-		indirectCallers = append(indirectCallers, CallerHop{
-			Symbol:      sym,
-			Via:         via,
-			Hops:        visited[id],
-			ViaTemporal: viaTemporal[id],
-		})
-	}
-	sortHopsByID(indirectCallers)
-	totalAffectedCount -= excluded
+	isSelf := selfMethodPredicate(subject, seedSet)
+	directCallers, directTemporalIDs, directEdgeSites, excludedD := state.buildDirectCallers(directIDs, symbolsByID, isSelf)
+	indirectCallers, excludedI := state.buildIndirectCallers(indirectIDs, symbolsByID, isSelf)
+	totalAffectedCount -= excludedD + excludedI
 
 	affectedTests := []string{}
 	if opts.IncludeTests {
-		// Include children in test lookup so tests directly targeting
-		// methods on the subject are surfaced even though children are
-		// excluded from the blast radius output.
-		testIDs := make([]int64, 0, 1+len(childSet)+len(directIDs)+len(indirectIDs))
-		testIDs = append(testIDs, subject.ID)
-		for id := range childSet {
-			testIDs = append(testIDs, id)
-		}
-		testIDs = append(testIDs, directIDs...)
-		testIDs = append(testIDs, indirectIDs...)
-		tests, err := loadTestsTargeting(ctx, db, testIDs)
+		affectedTests, err = state.loadAffectedTests(ctx, db, subject, directIDs, indirectIDs)
 		if err != nil {
 			return Result{}, fmt.Errorf("blast: load tests: %w", err)
 		}
-		affectedTests = tests
 	}
 
-	hasTemporalEdge := len(directTemporalIDs) > 0
-	if !hasTemporalEdge {
-		for _, hop := range indirectCallers {
-			if hop.ViaTemporal {
-				hasTemporalEdge = true
-				break
-			}
-		}
-	}
-	risk, reasons := classifyRisk(len(directCallers), hasTemporalEdge)
-
-	symbolTiers := make(map[int64]Tier, len(directIDs)+len(indirectIDs))
-	for _, id := range directIDs {
-		if sym, ok := symbolsByID[id]; ok && !isSelfMethod(sym) {
-			symbolTiers[id] = classifyTier(visitedKind[id])
-		}
-	}
-	for _, id := range indirectIDs {
-		if sym, ok := symbolsByID[id]; ok && !isSelfMethod(sym) {
-			symbolTiers[id] = classifyTier(visitedKind[id])
-		}
-	}
-
-	var subclasses, viaComposition, viaIncludes []model.Symbol
-	for _, idSlice := range [2][]int64{directIDs, indirectIDs} {
-		for _, id := range idSlice {
-			sym, ok := symbolsByID[id]
-			if !ok || isSelfMethod(sym) {
-				continue
-			}
-			switch visitedKind[id] {
-			case "inherits":
-				subclasses = append(subclasses, sym)
-			case "composes":
-				viaComposition = append(viaComposition, sym)
-			case "includes":
-				viaIncludes = append(viaIncludes, sym)
-			}
-		}
-	}
+	risk, reasons := classifyRisk(len(directCallers), hasTemporal(directTemporalIDs, indirectCallers))
+	symbolTiers := state.buildTiers(directIDs, indirectIDs, symbolsByID, isSelf)
+	subclasses, viaComposition, viaIncludes := state.buildEdgeKindGroups(directIDs, indirectIDs, symbolsByID, isSelf)
 
 	return Result{
 		Symbol:                 subject,
@@ -565,7 +272,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		IndirectCallers:        indirectCallers,
 		AffectedTests:          affectedTests,
 		TotalAffected:          totalAffectedCount,
-		EdgesTraversed:         edgesTraversed,
+		EdgesTraversed:         state.edgesTraversed,
 		SubjectHasCallees:      hasCallees,
 		ViewReached:            viewReached,
 		DirectTemporalIDs:      directTemporalIDs,
@@ -574,8 +281,432 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
 		SymbolTiers:            symbolTiers,
-		Truncated:              truncated,
+		Truncated:              state.truncated,
 	}, nil
+}
+
+// bfsState carries the mutable traversal state of one blast computation: the
+// visited hop-distance map and the per-node path metadata the BFS records
+// (predecessor, edge kind, cumulative confidence, edge site, and whether the
+// node was reached only via a temporal edge), the type's own members that seed
+// the frontier but are excluded from output, the current frontier, and the
+// running edge/truncation counters.
+type bfsState struct {
+	visited        map[int64]int
+	predecessor    map[int64]int64
+	viaTemporal    map[int64]bool
+	visitedKind    map[int64]string
+	pathConf       map[int64]float64
+	edgeSites      map[int64]EdgeSite
+	frontier       []int64
+	childSet       map[int64]struct{}
+	truncated      bool
+	edgesTraversed int
+}
+
+// withDefaults fills the zero-value option fields with their defaults: MaxHops
+// 0 ⇒ three hops, MinConfidence 0 ⇒ 0.5, MaxResults 0 ⇒ 100.
+func (o Options) withDefaults() Options {
+	if o.MaxHops <= 0 {
+		o.MaxHops = defaultMaxHops
+	}
+	if o.MinConfidence <= 0 {
+		o.MinConfidence = defaultMinConfidence
+	}
+	if o.MaxResults <= 0 {
+		o.MaxResults = defaultMaxResults
+	}
+	return o
+}
+
+// seedFrontier builds the initial BFS state: the subject IDs seed the frontier
+// at hop 0, and for concrete types the type's own methods are added as members
+// (so callers of methods are discoverable) tracked in childSet so they can be
+// excluded from the radius output.
+func seedFrontier(ctx context.Context, db *sql.DB, subject model.Symbol, symbolIDs []int64) (*bfsState, error) {
+	s := &bfsState{
+		visited:     map[int64]int{},
+		predecessor: map[int64]int64{},
+		viaTemporal: map[int64]bool{},
+		visitedKind: map[int64]string{},
+		pathConf:    map[int64]float64{},
+		edgeSites:   map[int64]EdgeSite{},
+		frontier:    make([]int64, 0, len(symbolIDs)),
+		childSet:    map[int64]struct{}{},
+	}
+	for _, id := range symbolIDs {
+		s.visited[id] = 0
+		s.pathConf[id] = 1.0
+		s.frontier = append(s.frontier, id)
+	}
+
+	if shouldExpandChildren(subject.Kind) {
+		childIDs, err := loadChildIDs(ctx, db, symbolIDs)
+		if err != nil {
+			return nil, fmt.Errorf("blast: load children: %w", err)
+		}
+		for _, id := range childIDs {
+			if _, seen := s.visited[id]; !seen {
+				s.visited[id] = 0
+				s.pathConf[id] = 1.0
+				s.visitedKind[id] = "member"
+				s.frontier = append(s.frontier, id)
+				s.childSet[id] = struct{}{}
+			}
+		}
+	}
+	return s, nil
+}
+
+// expandOneHop advances the BFS by one hop: it expands the current frontier,
+// groups qualifying in-edges per source, admits each source via its chosen
+// path (the temporal-sink decision lives in chooseHopCand), caps the frontier
+// width, and replaces the frontier with the surviving structural expansions.
+func (s *bfsState) expandOneHop(ctx context.Context, db *sql.DB, hop int, opts Options) error {
+	pairs, err := expandFrontier(ctx, db, s.frontier)
+	if err != nil {
+		return fmt.Errorf("blast: hop %d: %w", hop, err)
+	}
+	s.edgesTraversed += len(pairs)
+
+	bySource, order := s.groupBySource(pairs, opts)
+	next := s.admitSources(order, bySource, hop)
+	s.frontier = s.capFrontier(next)
+	return nil
+}
+
+// groupBySource collects this hop's qualifying in-edges by source node, so the
+// expand-vs-sink and predecessor decisions are made per-node rather than
+// per-edge in iteration order. An edge qualifies when its source is unvisited
+// and the cumulative path confidence clears the threshold (a lower structural
+// floor lets ORM chains survive two hops). order preserves first-seen source
+// order for deterministic output.
+func (s *bfsState) groupBySource(pairs []edgePair, opts Options) (map[int64][]hopCand, []int64) {
+	bySource := map[int64][]hopCand{}
+	var order []int64
+	for _, pair := range pairs {
+		if _, seen := s.visited[pair.source]; seen {
+			continue
+		}
+		cumConf := s.pathConf[pair.target] * pair.confidence * kindDecay(pair.kind)
+		minConf := opts.MinConfidence
+		if pair.kind == "composes" || pair.kind == "inherits" || pair.kind == "includes" {
+			minConf = StructuralMinConf
+		}
+		if cumConf < minConf {
+			continue
+		}
+		if _, ok := bySource[pair.source]; !ok {
+			order = append(order, pair.source)
+		}
+		bySource[pair.source] = append(bySource[pair.source], hopCand{
+			target:  pair.target,
+			kind:    pair.kind,
+			cumConf: cumConf,
+			fileID:  pair.fileID,
+			line:    pair.line,
+		})
+	}
+	return bySource, order
+}
+
+// chooseHopCand picks the edge a node is recorded as reached by, and reports
+// whether the node has any structural in-edge (and therefore expands). A
+// non-temporal edge is preferred when one exists — temporal is only the
+// recorded route when nothing else reaches the node — then highest cumulative
+// confidence. This is the temporal-sink rule: a node reached this hop ONLY via
+// temporal edges has hasStructural=false, so it is recorded but never expanded,
+// and a temporal hop cannot launder git co-change into a transitive structural
+// path.
+func chooseHopCand(cands []hopCand) (hopCand, bool) {
+	hasStructural := false
+	for _, c := range cands {
+		if c.kind != "temporal" {
+			hasStructural = true
+			break
+		}
+	}
+	var chosen hopCand
+	chosenSet := false
+	for _, c := range cands {
+		if hasStructural && c.kind == "temporal" {
+			continue
+		}
+		if !chosenSet || c.cumConf > chosen.cumConf {
+			chosen = c
+			chosenSet = true
+		}
+	}
+	return chosen, hasStructural
+}
+
+// admitSources records each grouped source at this hop via its chosen path and
+// returns the nodes that expand next (those with a structural in-edge). A node
+// reached only via temporal edges is recorded as a sink but not returned.
+func (s *bfsState) admitSources(order []int64, bySource map[int64][]hopCand, hop int) []int64 {
+	var next []int64
+	for _, src := range order {
+		chosen, hasStructural := chooseHopCand(bySource[src])
+		s.visited[src] = hop
+		s.predecessor[src] = chosen.target
+		s.visitedKind[src] = chosen.kind
+		s.pathConf[src] = chosen.cumConf
+		s.edgeSites[src] = EdgeSite{FileID: chosen.fileID, Line: chosen.line}
+		if chosen.kind == "temporal" {
+			s.viaTemporal[src] = true
+		}
+		if hasStructural {
+			next = append(next, src)
+		}
+	}
+	return next
+}
+
+// capFrontier caps the next frontier to MaxFrontierWidth, keeping the
+// highest-confidence nodes. Evicted nodes are removed from visited so they may
+// be re-discovered via a stronger path in a later hop — this preserves the
+// highest-confidence paths. It records truncation when eviction happens.
+func (s *bfsState) capFrontier(next []int64) []int64 {
+	if len(next) <= MaxFrontierWidth {
+		return next
+	}
+	sort.Slice(next, func(i, j int) bool {
+		return s.pathConf[next[i]] > s.pathConf[next[j]]
+	})
+	evicted := next[MaxFrontierWidth:]
+	next = next[:MaxFrontierWidth]
+	for _, id := range evicted {
+		delete(s.visited, id)
+		delete(s.predecessor, id)
+		delete(s.visitedKind, id)
+		delete(s.pathConf, id)
+		delete(s.viaTemporal, id)
+	}
+	s.truncated = true
+	return next
+}
+
+// partition splits the visited set into direct callers (hop ≤1) and indirect
+// callers (hop >1). Seeds and the subject's own members are skipped: members
+// seed the frontier so callers of methods are found, but they are not part of
+// the blast radius.
+func (s *bfsState) partition(seedSet map[int64]struct{}) (direct, indirect []int64) {
+	for id, hops := range s.visited {
+		if _, isSeed := seedSet[id]; isSeed {
+			continue
+		}
+		if _, isChild := s.childSet[id]; isChild {
+			continue
+		}
+		if hops <= 1 {
+			direct = append(direct, id)
+		} else {
+			indirect = append(indirect, id)
+		}
+	}
+	return direct, indirect
+}
+
+// capResults trims the caller sets to maxResults total, keeping the
+// highest-confidence callers across both sets.
+func (s *bfsState) capResults(directIDs, indirectIDs []int64, maxResults int) ([]int64, []int64) {
+	callerCount := len(directIDs) + len(indirectIDs)
+	if callerCount <= maxResults {
+		return directIDs, indirectIDs
+	}
+	type ranked struct {
+		id   int64
+		conf float64
+	}
+	all := make([]ranked, 0, callerCount)
+	for _, id := range directIDs {
+		all = append(all, ranked{id, s.pathConf[id]})
+	}
+	for _, id := range indirectIDs {
+		all = append(all, ranked{id, s.pathConf[id]})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].conf > all[j].conf })
+	all = all[:maxResults]
+
+	kept := make(map[int64]struct{}, maxResults)
+	for _, r := range all {
+		kept[r.id] = struct{}{}
+	}
+	return filterIDs(directIDs, kept), filterIDs(indirectIDs, kept)
+}
+
+// hydrate bulk-reads the caller symbols and their predecessors (so CallerHop.Via
+// can reference them) in a single query, then pins the subject into the map.
+func (s *bfsState) hydrate(ctx context.Context, db *sql.DB, subject model.Symbol, directIDs, indirectIDs []int64) (map[int64]model.Symbol, error) {
+	allIDs := append([]int64{}, directIDs...)
+	allIDs = append(allIDs, indirectIDs...)
+	// Also hydrate predecessors so CallerHop.Via can reference them.
+	// Predecessors are either the subject or another caller already
+	// in allIDs; adding them defensively keeps the lookup map whole
+	// without a second query.
+	predIDs := map[int64]struct{}{}
+	for _, predID := range s.predecessor {
+		predIDs[predID] = struct{}{}
+	}
+	for id := range predIDs {
+		if id == subject.ID {
+			continue
+		}
+		if _, seen := s.visited[id]; seen {
+			continue
+		}
+		allIDs = append(allIDs, id)
+	}
+
+	symbolsByID, err := loadSymbols(ctx, db, allIDs)
+	if err != nil {
+		return nil, err
+	}
+	symbolsByID[subject.ID] = subject
+	return symbolsByID, nil
+}
+
+// selfMethodFn reports whether a symbol is a member of the subject itself
+// (excluded from the radius when the subject is a module or interface).
+type selfMethodFn func(model.Symbol) bool
+
+// selfMethodPredicate returns a predicate that, for a module/interface subject,
+// reports whether a symbol is one of the subject's own members. For other
+// subject kinds it always returns false (nothing is excluded as self).
+func selfMethodPredicate(subject model.Symbol, seedSet map[int64]struct{}) selfMethodFn {
+	excludeSelf := subject.Kind == model.KindModule || subject.Kind == model.KindInterface
+	return func(sym model.Symbol) bool {
+		if !excludeSelf {
+			return false
+		}
+		if sym.ParentID == nil {
+			return false
+		}
+		_, isSeed := seedSet[*sym.ParentID]
+		return isSeed
+	}
+}
+
+// buildDirectCallers hydrates the direct-caller IDs into symbols (skipping the
+// subject's own members), recording which were reached via a temporal edge and
+// each one's edge site. Returns the callers, the temporal-ID set, the edge-site
+// map, and the count excluded as self-members.
+func (s *bfsState) buildDirectCallers(directIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) ([]model.Symbol, map[int64]bool, map[int64]EdgeSite, int) {
+	excluded := 0
+	callers := make([]model.Symbol, 0, len(directIDs))
+	temporalIDs := map[int64]bool{}
+	edgeSites := make(map[int64]EdgeSite, len(directIDs))
+	for _, id := range directIDs {
+		sym, ok := symbolsByID[id]
+		if !ok {
+			continue
+		}
+		if isSelf(sym) {
+			excluded++
+			continue
+		}
+		callers = append(callers, sym)
+		if s.viaTemporal[id] {
+			temporalIDs[id] = true
+		}
+		if es, ok := s.edgeSites[id]; ok {
+			edgeSites[id] = es
+		}
+	}
+	sortSymbolsByID(callers)
+	return callers, temporalIDs, edgeSites, excluded
+}
+
+// buildIndirectCallers hydrates the indirect-caller IDs into CallerHops
+// (skipping self-members), attaching each hop's predecessor, hop distance, and
+// temporal flag. Returns the hops and the count excluded as self-members.
+func (s *bfsState) buildIndirectCallers(indirectIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) ([]CallerHop, int) {
+	excluded := 0
+	callers := make([]CallerHop, 0, len(indirectIDs))
+	for _, id := range indirectIDs {
+		sym, ok := symbolsByID[id]
+		if !ok {
+			continue
+		}
+		if isSelf(sym) {
+			excluded++
+			continue
+		}
+		via := symbolsByID[s.predecessor[id]]
+		callers = append(callers, CallerHop{
+			Symbol:      sym,
+			Via:         via,
+			Hops:        s.visited[id],
+			ViaTemporal: s.viaTemporal[id],
+		})
+	}
+	sortHopsByID(callers)
+	return callers, excluded
+}
+
+// loadAffectedTests collects the test files targeting the subject, its members,
+// and the affected callers. Members are included so tests directly targeting
+// the subject's methods surface even though members are excluded from output.
+func (s *bfsState) loadAffectedTests(ctx context.Context, db *sql.DB, subject model.Symbol, directIDs, indirectIDs []int64) ([]string, error) {
+	testIDs := make([]int64, 0, 1+len(s.childSet)+len(directIDs)+len(indirectIDs))
+	testIDs = append(testIDs, subject.ID)
+	for id := range s.childSet {
+		testIDs = append(testIDs, id)
+	}
+	testIDs = append(testIDs, directIDs...)
+	testIDs = append(testIDs, indirectIDs...)
+	return loadTestsTargeting(ctx, db, testIDs)
+}
+
+// hasTemporal reports whether any affected caller — direct or indirect — was
+// reached via a temporal (git co-change) edge, the signal that bumps risk.
+func hasTemporal(directTemporalIDs map[int64]bool, indirectCallers []CallerHop) bool {
+	if len(directTemporalIDs) > 0 {
+		return true
+	}
+	for _, hop := range indirectCallers {
+		if hop.ViaTemporal {
+			return true
+		}
+	}
+	return false
+}
+
+// buildTiers classifies each affected caller (skipping self-members) into its
+// relevance tier, keyed by symbol ID.
+func (s *bfsState) buildTiers(directIDs, indirectIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) map[int64]Tier {
+	tiers := make(map[int64]Tier, len(directIDs)+len(indirectIDs))
+	for _, ids := range [2][]int64{directIDs, indirectIDs} {
+		for _, id := range ids {
+			if sym, ok := symbolsByID[id]; ok && !isSelf(sym) {
+				tiers[id] = classifyTier(s.visitedKind[id])
+			}
+		}
+	}
+	return tiers
+}
+
+// buildEdgeKindGroups partitions the affected callers (skipping self-members)
+// into the structural edge-kind views — subclasses (inherits), composition,
+// and includes — by the edge kind that first discovered each node.
+func (s *bfsState) buildEdgeKindGroups(directIDs, indirectIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) (subclasses, viaComposition, viaIncludes []model.Symbol) {
+	for _, idSlice := range [2][]int64{directIDs, indirectIDs} {
+		for _, id := range idSlice {
+			sym, ok := symbolsByID[id]
+			if !ok || isSelf(sym) {
+				continue
+			}
+			switch s.visitedKind[id] {
+			case "inherits":
+				subclasses = append(subclasses, sym)
+			case "composes":
+				viaComposition = append(viaComposition, sym)
+			case "includes":
+				viaIncludes = append(viaIncludes, sym)
+			}
+		}
+	}
+	return subclasses, viaComposition, viaIncludes
 }
 
 // edgePair is the (source, target) shape one BFS hop returns. source

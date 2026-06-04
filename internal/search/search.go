@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode"
 
 	"golang.org/x/sync/errgroup"
 
@@ -43,36 +42,6 @@ const (
 	SourceHybrid  = "hybrid"
 	SourceGraph   = "graph"
 )
-
-// sourceLabel maps the per-leg contribution flags to a Source value.
-// Keyword-only mode (no vector leg) always yields SourceKeyword because
-// vec is never set.
-func sourceLabel(kw, vec bool) string {
-	switch {
-	case kw && vec:
-		return SourceHybrid
-	case vec:
-		return SourceVector
-	default:
-		return SourceKeyword
-	}
-}
-
-// mergeSource combines the provenance of one symbol seen across multiple
-// sub-queries. Differing non-empty legs (keyword in one, vector in
-// another) mean both legs contributed somewhere, so the merge is hybrid.
-func mergeSource(a, b string) string {
-	switch {
-	case a == b:
-		return a
-	case a == "":
-		return b
-	case b == "":
-		return a
-	default:
-		return SourceHybrid
-	}
-}
 
 // Options controls search behavior.
 type Options struct {
@@ -135,9 +104,26 @@ type SearchMeta struct {
 	VectorWeight  float64
 }
 
-// Search runs hybrid search and returns fused, re-ranked results.
-//
-//nolint:gocyclo,gocognit // 27-07: retired by the storage/query split
+// searchContext is the per-invocation state assembled by prepareSearch and
+// consumed by the fuse and rank phases: corpus size, the candidate budget,
+// whether the vector leg can run (plus the index snapshot), the expanded
+// sub-queries and their batched embeddings, the resolved query shape, and the
+// non-generic term set used for token demotion.
+type searchContext struct {
+	symbolCount          int
+	candidateLimit       int
+	canVector            bool
+	vectors              VectorIndex
+	queries              []string
+	queryVecs            [][]float32
+	shape                QueryShape
+	nonGenericQueryTerms map[string]struct{}
+}
+
+// Search runs hybrid search and returns fused, re-ranked results. It runs the
+// pipeline in order: prepare (classify + embed) → fuse (retrieve + RRF) →
+// rank (the score-mutating passes, whose order is load-bearing) → enrich
+// (graph callees + parent promotion) → finalize (min-score, limit, drops).
 func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = 10
@@ -146,9 +132,49 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		opts.MinScore = 0.0
 	}
 
+	sc, err := e.prepareSearch(ctx, opts)
+	if err != nil {
+		return nil, SearchMeta{}, err
+	}
+
+	fused, kwWeight, vecWeight, err := e.fuseQueries(ctx, opts, sc)
+	if err != nil {
+		return nil, SearchMeta{}, err
+	}
+
+	if err := e.rankResults(ctx, opts, sc, fused); err != nil {
+		return nil, SearchMeta{}, err
+	}
+
+	fused, err = e.enrichResults(ctx, opts, fused)
+	if err != nil {
+		return nil, SearchMeta{}, err
+	}
+
+	results := finalizeResults(opts, fused)
+
+	mode := ModeKeyword
+	if sc.canVector {
+		mode = ModeHybrid
+	}
+	return results, SearchMeta{
+		SymbolCount:   sc.symbolCount,
+		Mode:          mode,
+		Shape:         sc.shape.String(),
+		KeywordWeight: kwWeight,
+		VectorWeight:  vecWeight,
+	}, nil
+}
+
+// prepareSearch assembles the per-invocation searchContext: corpus size, the
+// candidate budget, whether the vector leg can run, the expanded sub-queries,
+// the once-classified query shape (propagated to every sub-query so identifier
+// splits do not re-introduce keyword bias on an NL search), the generic-token
+// set, and the batched sub-query embeddings.
+func (e *Engine) prepareSearch(ctx context.Context, opts Options) (*searchContext, error) {
 	symbolCount, err := e.adapter.SymbolCount(ctx)
 	if err != nil {
-		return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
+		return nil, fmt.Errorf("search: %w", err)
 	}
 
 	// Fetch more candidates than requested so RRF has enough to fuse.
@@ -180,7 +206,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		terms := queryTermSet(opts.Query)
 		df, dfErr := e.adapter.DocumentFrequency(ctx, terms)
 		if dfErr != nil {
-			return nil, SearchMeta{}, fmt.Errorf("search df: %w", dfErr)
+			return nil, fmt.Errorf("search df: %w", dfErr)
 		}
 		nonGenericQueryTerms = nonGenericTerms(terms, df, symbolCount)
 	}
@@ -194,40 +220,36 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		}
 		queryVecs, err = e.embedder.Embed(ctx, inputs)
 		if err != nil {
-			return nil, SearchMeta{}, fmt.Errorf("search embed: %w", err)
+			return nil, fmt.Errorf("search embed: %w", err)
 		}
 	}
 
-	// Run each sub-query through keyword+vector pipeline and fuse per-query.
-	var kwWeight, vecWeight float64
-	queryResults := make([][]Result, len(queries))
-	for i, q := range queries {
-		var kwResults []sqlite.SearchResult
-		var vecResults []VectorResult
+	return &searchContext{
+		symbolCount:          symbolCount,
+		candidateLimit:       candidateLimit,
+		canVector:            canVector,
+		vectors:              vectors,
+		queries:              queries,
+		queryVecs:            queryVecs,
+		shape:                shape,
+		nonGenericQueryTerms: nonGenericQueryTerms,
+	}, nil
+}
 
-		if canVector {
-			g, gctx := errgroup.WithContext(ctx)
-			g.Go(func() error {
-				var err error
-				kwResults, err = e.adapter.KeywordSearch(gctx, q, opts.Language, candidateLimit)
-				return err
-			})
-			qVec := queryVecs[i]
-			g.Go(func() error {
-				vecResults = vectors.Search(qVec, candidateLimit)
-				return nil
-			})
-			if err := g.Wait(); err != nil {
-				return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
-			}
-		} else {
-			kwResults, err = e.adapter.KeywordSearch(ctx, q, opts.Language, candidateLimit)
-			if err != nil {
-				return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
-			}
+// fuseQueries runs each sub-query through the keyword+vector pipeline, fuses
+// each per-query with RRF, then merges the per-query result lists. It returns
+// the fused results and the primary query's keyword/vector weights (reported
+// in SearchMeta).
+func (e *Engine) fuseQueries(ctx context.Context, opts Options, sc *searchContext) ([]Result, float64, float64, error) {
+	var kwWeight, vecWeight float64
+	queryResults := make([][]Result, len(sc.queries))
+	for i, q := range sc.queries {
+		kwResults, vecResults, err := e.retrieveCandidates(ctx, i, q, opts, sc)
+		if err != nil {
+			return nil, 0, 0, err
 		}
 
-		kwResults = e.substringFallback(ctx, kwResults, q, opts.Language, candidateLimit)
+		kwResults = e.substringFallback(ctx, kwResults, q, opts.Language, sc.candidateLimit)
 
 		queryTerms := strings.Fields(strings.ToLower(q))
 		kwFileIDs := make([]int64, 0, len(kwResults))
@@ -242,9 +264,9 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 		boostPathMatches(kwResults, queryTerms, kwPaths)
 
 		qKwWeight, qVecWeight := 1.0, 0.0
-		if canVector {
+		if sc.canVector {
 			vecConf := vectorConfidence(vecResults)
-			qKwWeight, qVecWeight = shapeWeights(shape, vecConf)
+			qKwWeight, qVecWeight = shapeWeights(sc.shape, vecConf)
 		}
 
 		// Report primary query's weights in metadata.
@@ -261,16 +283,55 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	}
 
 	// Merge multi-query results with RRF.
-	var fused []Result
 	if len(queryResults) == 1 {
-		fused = queryResults[0]
-	} else {
-		fused = mergeMultiQuery(queryResults)
+		return queryResults[0], kwWeight, vecWeight, nil
+	}
+	return mergeMultiQuery(queryResults), kwWeight, vecWeight, nil
+}
+
+// retrieveCandidates runs the keyword leg (and, when the vector leg can run,
+// the vector leg in parallel) for one sub-query. i indexes the pre-embedded
+// query vectors; it is only read on the vector path, so the keyword-only path
+// is safe when queryVecs is nil.
+func (e *Engine) retrieveCandidates(ctx context.Context, i int, q string, opts Options, sc *searchContext) ([]sqlite.SearchResult, []VectorResult, error) {
+	var kwResults []sqlite.SearchResult
+	var vecResults []VectorResult
+
+	if sc.canVector {
+		g, gctx := errgroup.WithContext(ctx)
+		g.Go(func() error {
+			var err error
+			kwResults, err = e.adapter.KeywordSearch(gctx, q, opts.Language, sc.candidateLimit)
+			return err
+		})
+		qVec := sc.queryVecs[i]
+		g.Go(func() error {
+			vecResults = sc.vectors.Search(qVec, sc.candidateLimit)
+			return nil
+		})
+		if err := g.Wait(); err != nil {
+			return nil, nil, fmt.Errorf("search: %w", err)
+		}
+		return kwResults, vecResults, nil
 	}
 
+	var err error
+	kwResults, err = e.adapter.KeywordSearch(ctx, q, opts.Language, sc.candidateLimit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("search: %w", err)
+	}
+	return kwResults, nil, nil
+}
+
+// rankResults applies the score-mutating ranking passes to the fused results
+// in place and sorts by final score. The pass ORDER is load-bearing — each
+// pass mutates scores the next reads — so it must be preserved exactly:
+// hydrate → kind weights → path weights → generic-token demotion →
+// normalize → graph centrality → test demotion.
+func (e *Engine) rankResults(ctx context.Context, opts Options, sc *searchContext, fused []Result) error {
 	// Hydrate metadata for vector-only results that have no name/qualified.
 	if err := e.hydrateResults(ctx, fused); err != nil {
-		return nil, SearchMeta{}, fmt.Errorf("search: %w", err)
+		return fmt.Errorf("search: %w", err)
 	}
 
 	// Graph centrality re-ranking.
@@ -280,7 +341,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	}
 	centrality, err := e.adapter.InboundEdgeCounts(ctx, symbolIDs)
 	if err != nil {
-		return nil, SearchMeta{}, fmt.Errorf("search centrality: %w", err)
+		return fmt.Errorf("search centrality: %w", err)
 	}
 	applyKindWeights(fused)
 
@@ -295,7 +356,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	}
 	pathByID, err := e.adapter.FilePathsByIDs(ctx, fileIDs)
 	if err != nil {
-		return nil, SearchMeta{}, fmt.Errorf("search paths: %w", err)
+		return fmt.Errorf("search paths: %w", err)
 	}
 	applyPathWeights(fused, pathByID)
 
@@ -307,7 +368,7 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	// neutralized post-normalize whenever the genuine domain match happens
 	// to be the rescale floor (pinned to 0). No-op for Identifier queries
 	// (nonGenericQueryTerms is nil).
-	genericTokenPenalty(fused, nonGenericQueryTerms)
+	genericTokenPenalty(fused, sc.nonGenericQueryTerms)
 
 	normalizeScores(fused)
 	applyGraphCentrality(fused, centrality)
@@ -324,24 +385,33 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 	sort.Slice(fused, func(i, j int) bool {
 		return fused[i].Score > fused[j].Score
 	})
+	return nil
+}
 
+// enrichResults runs the graph-augmented passes after ranking: it boosts and
+// injects callees of the top results, then promotes a parent class when
+// enough of its methods cluster in the top results.
+func (e *Engine) enrichResults(ctx context.Context, opts Options, fused []Result) ([]Result, error) {
 	// Graph-augmented enrichment: boost callees of top results.
-	fused, err = e.enrichFromGraph(ctx, fused)
+	fused, err := e.enrichFromGraph(ctx, fused)
 	if err != nil {
-		return nil, SearchMeta{}, fmt.Errorf("search enrich: %w", err)
+		return nil, fmt.Errorf("search enrich: %w", err)
 	}
 
 	// Parent promotion: when 2+ methods of the same class appear in top
 	// results, replace them with the parent class at the highest score.
 	fused, err = e.promoteParents(ctx, fused, opts.Limit)
 	if err != nil {
-		return nil, SearchMeta{}, fmt.Errorf("search promote: %w", err)
+		return nil, fmt.Errorf("search promote: %w", err)
 	}
+	return fused, nil
+}
 
-	// Apply min_score filter and limit. Synthetic plumbing symbols
-	// (ruby-core:Struct / ruby-core:Data, emitted only so value-object
-	// inherits edges resolve) are never user-facing — drop them here, the
-	// single chokepoint every retrieval leg funnels through.
+// finalizeResults applies the min_score filter and limit, dropping synthetic
+// plumbing symbols (ruby-core:Struct / ruby-core:Data and route helpers,
+// emitted only so edges resolve) here — the single chokepoint every retrieval
+// leg funnels through, so they are never user-facing.
+func finalizeResults(opts Options, fused []Result) []Result {
 	var results []Result
 	for _, r := range fused {
 		if r.Score < opts.MinScore {
@@ -356,663 +426,5 @@ func (e *Engine) Search(ctx context.Context, opts Options) ([]Result, SearchMeta
 			break
 		}
 	}
-
-	mode := ModeKeyword
-	if canVector {
-		mode = ModeHybrid
-	}
-	return results, SearchMeta{
-		SymbolCount:   symbolCount,
-		Mode:          mode,
-		Shape:         shape.String(),
-		KeywordWeight: kwWeight,
-		VectorWeight:  vecWeight,
-	}, nil
-}
-
-const rrfK = 60
-
-const (
-	confidenceHighThreshold = 0.6
-	confidenceLowThreshold  = 0.4
-)
-
-// fusionWeights returns keyword and vector weights for reciprocal rank
-// fusion based on vector confidence. High confidence → equal weight;
-// low confidence → keyword-biased; very low → keyword-heavy but vectors
-// still contribute (floor of 0.2).
-func fusionWeights(vecConfidence float64) (keyword, vector float64) {
-	switch {
-	case vecConfidence >= confidenceHighThreshold:
-		return 0.5, 0.5
-	case vecConfidence >= confidenceLowThreshold:
-		return 0.6, 0.4
-	default:
-		return 0.7, 0.3
-	}
-}
-
-// fuseRRF merges keyword and vector result lists using reciprocal rank
-// fusion with configurable weights: score(symbol) = Σ weight/(k + rank).
-// Symbols appearing in both lists get contributions from both.
-//
-// The returned slice is sorted by fused score descending (ties broken by
-// ascending symbol ID for determinism). This ordering is part of the
-// contract: callers such as mergeMultiQuery treat each result's slice
-// position as its fusion rank, so returning map-iteration order would feed
-// noise into the next RRF stage instead of the weighted fusion ranking.
-func fuseRRF(keyword []sqlite.SearchResult, vector []VectorResult, kwWeight, vecWeight float64) []Result {
-	type entry struct {
-		result Result
-		score  float64
-		kw     bool
-		vec    bool
-	}
-	merged := make(map[int64]*entry)
-
-	for rank, kr := range keyword {
-		id := kr.SymbolID
-		rrfScore := kwWeight / float64(rrfK+rank+1)
-		if e, ok := merged[id]; ok {
-			e.score += rrfScore
-			e.kw = true
-		} else {
-			merged[id] = &entry{
-				result: Result{
-					SymbolID:  kr.SymbolID,
-					Name:      kr.Name,
-					Qualified: kr.Qualified,
-					Kind:      kr.Kind,
-					FileID:    kr.FileID,
-					LineStart: kr.LineStart,
-					Snippet:   kr.Snippet,
-				},
-				score: rrfScore,
-				kw:    true,
-			}
-		}
-	}
-
-	if vecWeight > 0 {
-		for rank, vr := range vector {
-			id := vr.SymbolID
-			rrfScore := vecWeight / float64(rrfK+rank+1)
-			if e, ok := merged[id]; ok {
-				e.score += rrfScore
-				e.vec = true
-			} else {
-				merged[id] = &entry{
-					result: Result{
-						SymbolID: vr.SymbolID,
-					},
-					score: rrfScore,
-					vec:   true,
-				}
-			}
-		}
-	}
-
-	results := make([]Result, 0, len(merged))
-	for _, e := range merged {
-		e.result.Score = e.score
-		e.result.Source = sourceLabel(e.kw, e.vec)
-		results = append(results, e.result)
-	}
-	// Sort by fused score so callers can consume rank order (see contract
-	// in the doc comment). Tie-break by symbol ID for deterministic output.
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		return results[i].SymbolID < results[j].SymbolID
-	})
 	return results
-}
-
-// hydrateResults fills in metadata (name, qualified, kind, etc.) for
-// results that came from the vector backend only and lack symbol details.
-func (e *Engine) hydrateResults(ctx context.Context, results []Result) error {
-	var needIDs []int64
-	for _, r := range results {
-		if r.Qualified == "" {
-			needIDs = append(needIDs, r.SymbolID)
-		}
-	}
-	if len(needIDs) == 0 {
-		return nil
-	}
-
-	symbols, err := e.adapter.SymbolsByIDs(ctx, needIDs)
-	if err != nil {
-		return err
-	}
-
-	for i := range results {
-		if results[i].Qualified != "" {
-			continue
-		}
-		if s, ok := symbols[results[i].SymbolID]; ok {
-			results[i].Name = s.Name
-			results[i].Qualified = s.Qualified
-			results[i].Kind = s.Kind
-			results[i].FileID = s.FileID
-			results[i].LineStart = s.LineStart
-			results[i].Snippet = s.Snippet
-		}
-	}
-	return nil
-}
-
-// normalizeScores applies min-max normalization to map scores into [0, 1].
-// Preserves rank order. Single result gets 1.0; tied scores all get 1.0.
-func normalizeScores(results []Result) {
-	if len(results) <= 1 {
-		for i := range results {
-			results[i].Score = 1.0
-		}
-		return
-	}
-	minScore, maxScore := results[0].Score, results[0].Score
-	for _, r := range results[1:] {
-		if r.Score < minScore {
-			minScore = r.Score
-		}
-		if r.Score > maxScore {
-			maxScore = r.Score
-		}
-	}
-	span := maxScore - minScore
-	if span == 0 {
-		for i := range results {
-			results[i].Score = 1.0
-		}
-		return
-	}
-	for i := range results {
-		results[i].Score = (results[i].Score - minScore) / span
-	}
-}
-
-const (
-	testPathDemotion = 0.5 // symbols in test file paths
-	testNameDemotion = 0.3 // symbols whose name signals test/mock
-)
-
-var testNamePrefixes = []string{"Test", "Mock", "Fake", "Stub"}
-
-// demote applies a multiplicative penalty (expected in [0,1]) that lowers a
-// result's rank. It guards the demotion invariant against a signed score ever
-// re-entering the pipeline: on a positive score it returns score*penalty (a
-// demotion), but a negative score — where ×penalty would raise the value
-// toward zero and silently invert the demotion into a promotion — is returned
-// unchanged. Today every score reaching these passes is non-negative (RRF is a
-// sum of positive reciprocals, and the cross-encoder that once produced
-// negative logits has been removed), so this is cheap insurance, not a live
-// fix. A zero score is also returned unchanged (0*penalty == 0).
-func demote(score, penalty float64) float64 {
-	if score <= 0 {
-		return score
-	}
-	return score * penalty
-}
-
-// applyKindWeights demotes modules (namespaces, rarely the search target)
-// and applies a pre-normalization test-name penalty. This pre-norm pass
-// is NOT redundant with applyTestDemotion (which runs post-norm): it
-// keeps a verbatim-matching test from becoming the normalize-max, since
-// normalizeScores pins the lowest score to 0 and the multiplicative
-// centrality boost cannot lift a 0 — so without it an implementation
-// that is the weakest keyword match gets stuck at the bottom. The two
-// passes are complementary: this one shapes which symbol anchors the
-// rescale; applyTestDemotion is the decisive reorder afterward.
-func applyKindWeights(results []Result) {
-	for i := range results {
-		if results[i].Kind == "module" {
-			results[i].Score = demote(results[i].Score, 0.5)
-		}
-		for _, prefix := range testNamePrefixes {
-			if strings.HasPrefix(results[i].Name, prefix) {
-				results[i].Score = demote(results[i].Score, testNameDemotion)
-				break
-			}
-		}
-	}
-}
-
-// demotedPathSegments lists path segments for infrastructure and test
-// code that should be ranked below application code. Matched with
-// strings.Contains to catch nested paths (e.g. plugins/chat/spec/).
-var demotedPathSegments = []struct {
-	segment string
-	penalty float64
-}{
-	{"db/migrate/", 0.3},
-	{"db/post_migrate/", 0.3},
-	{"script/", 0.3},
-	{"scripts/", 0.3},
-	{"/test/", testPathDemotion},
-	{"/tests/", testPathDemotion},
-	{"/spec/", testPathDemotion},
-	{"/mock/", testPathDemotion},
-	{"/mocks/", testPathDemotion},
-	{"/fixture/", testPathDemotion},
-	{"/fixtures/", testPathDemotion},
-	{"/generated/", 0.4},
-	{"/testdata/", testPathDemotion},
-	{"_test.rb", testPathDemotion},
-	{"_spec.rb", testPathDemotion},
-	{"_test.go", testPathDemotion},
-	{".test.ts", testPathDemotion},
-	{".test.js", testPathDemotion},
-	{".spec.ts", testPathDemotion},
-	{".spec.js", testPathDemotion},
-	{"Test.java", testPathDemotion},
-	{"Test.kt", testPathDemotion},
-	{"_test.py", testPathDemotion},
-	{"/__tests__/", testPathDemotion},
-}
-
-var demotedPathPrefixes = []struct {
-	prefix  string
-	penalty float64
-}{
-	{"spec/", testPathDemotion},
-	{"test/", testPathDemotion},
-}
-
-// boostedPathPrefixes lists path prefixes for primary source directories
-// that get a mild ranking boost.
-var boostedPathPrefixes = []string{
-	"app/",
-	"lib/",
-	"src/",
-}
-
-const sourceBoost = 1.1
-
-// applyPathWeights demotes symbols in infrastructure/test paths and
-// boosts symbols in primary source directories.
-func applyPathWeights(results []Result, pathByID map[int64]string) {
-	for i := range results {
-		path, ok := pathByID[results[i].FileID]
-		if !ok {
-			continue
-		}
-		demoted := false
-		for _, d := range demotedPathPrefixes {
-			if strings.HasPrefix(path, d.prefix) {
-				results[i].Score = demote(results[i].Score, d.penalty)
-				demoted = true
-				break
-			}
-		}
-		if !demoted {
-			for _, d := range demotedPathSegments {
-				if strings.Contains(path, d.segment) {
-					results[i].Score = demote(results[i].Score, d.penalty)
-					demoted = true
-					break
-				}
-			}
-		}
-		if !demoted {
-			for _, prefix := range boostedPathPrefixes {
-				if strings.HasPrefix(path, prefix) {
-					results[i].Score *= sourceBoost
-					break
-				}
-			}
-		}
-	}
-}
-
-// testRankPenalty multiplies the final, normalized score of a test or
-// mock symbol. Tuned so an implementation of even modest relevance
-// (normalized ~0.3) outranks a test that matched the query verbatim
-// (normalized 1.0 → 0.2 after the penalty).
-const testRankPenalty = 0.2
-
-// testFilePathSegments identifies test/spec/mock paths across languages.
-var testFilePathSegments = []string{
-	"_test.", "_spec.", ".test.", ".spec.",
-	"/test/", "/tests/", "/spec/", "/specs/",
-	"/mock/", "/mocks/", "/__tests__/", "/testdata/",
-}
-
-var testFilePathPrefixes = []string{"test/", "spec/"}
-
-// applyTestDemotion multiplies test/mock symbols' scores by
-// testRankPenalty as the final ranking step, so implementations outrank
-// the tests that exercise them. It is a no-op when the query is itself
-// about tests (e.g. "test for the parser", "spec coverage"), where the
-// caller genuinely wants test code surfaced.
-func applyTestDemotion(results []Result, pathByID map[int64]string, query string) {
-	if queryTargetsTests(query) {
-		return
-	}
-	for i := range results {
-		if isTestSymbol(results[i].Name) || isTestPath(pathByID[results[i].FileID]) {
-			results[i].Score = demote(results[i].Score, testRankPenalty)
-		}
-	}
-}
-
-// testQueryWords are whole-word signals that the caller wants test code.
-var testQueryWords = map[string]struct{}{
-	"test": {}, "tests": {}, "testing": {},
-	"spec": {}, "specs": {}, "mock": {}, "mocks": {}, "mocked": {},
-}
-
-// queryTargetsTests reports whether the query is explicitly about test
-// code, in which case test results should not be demoted. It matches on
-// whole words so "latest", "specification", and "inspect" do not count
-// as test queries.
-func queryTargetsTests(query string) bool {
-	for _, tok := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	}) {
-		if _, ok := testQueryWords[tok]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-// isTestSymbol reports whether a symbol name signals test/mock code.
-func isTestSymbol(name string) bool {
-	for _, prefix := range testNamePrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// isTestPath reports whether a file path is a test/spec/mock file.
-// Mirrors mcpio.IsTestPath; kept separate because search cannot import
-// the mcpio marshalling layer. Keep the two in sync if patterns change.
-func isTestPath(path string) bool {
-	if path == "" {
-		return false
-	}
-	for _, p := range testFilePathPrefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	for _, seg := range testFilePathSegments {
-		if strings.Contains(path, seg) {
-			return true
-		}
-	}
-	return false
-}
-
-const vectorConfidenceTopK = 3
-
-// vectorConfidence returns the mean cosine similarity of the top-K
-// vector results. Returns 0 when there are no vector results.
-func vectorConfidence(results []VectorResult) float64 {
-	if len(results) == 0 {
-		return 0
-	}
-	n := vectorConfidenceTopK
-	if n > len(results) {
-		n = len(results)
-	}
-	var sum float64
-	for i := range n {
-		sum += float64(results[i].Similarity)
-	}
-	return sum / float64(n)
-}
-
-// centralityCoefficient controls the multiplicative centrality boost.
-// 50 callers → 1.28x; 200 callers → 1.39x; 1 caller → 1.05x.
-const centralityCoefficient = 0.05
-
-func applyGraphCentrality(results []Result, centrality map[int64]int) {
-	if len(centrality) == 0 {
-		return
-	}
-	for i := range results {
-		if count, ok := centrality[results[i].SymbolID]; ok && count > 0 {
-			boost := 1.0 + math.Log2(1+float64(count))*centralityCoefficient
-			results[i].Score *= boost
-			results[i].References = count
-		}
-	}
-}
-
-const (
-	enrichTopN      = 3
-	enrichBoost     = 0.15
-	enrichBaseScore = 0.05
-)
-
-// enrichFromGraph boosts callees of the top-N results that appear in the
-// candidate set, and injects missing callees as low-score suggestions.
-// Results must be sorted by score descending before calling.
-func (e *Engine) enrichFromGraph(ctx context.Context, results []Result) ([]Result, error) {
-	if len(results) == 0 {
-		return results, nil
-	}
-
-	// Take top-N symbol IDs.
-	n := enrichTopN
-	if n > len(results) {
-		n = len(results)
-	}
-	topIDs := make([]int64, n)
-	for i := range n {
-		topIDs[i] = results[i].SymbolID
-	}
-
-	// Fetch 1-hop callees.
-	calleeMap, err := e.adapter.CalleeIDs(ctx, topIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Collect all callee IDs.
-	calleeSet := map[int64]struct{}{}
-	for _, targets := range calleeMap {
-		for _, id := range targets {
-			calleeSet[id] = struct{}{}
-		}
-	}
-	if len(calleeSet) == 0 {
-		return results, nil
-	}
-
-	// Build index of existing results for fast lookup.
-	existing := make(map[int64]int, len(results))
-	for i, r := range results {
-		existing[r.SymbolID] = i
-	}
-
-	// Boost existing candidates that are callees of top results.
-	var missingIDs []int64
-	for id := range calleeSet {
-		if idx, ok := existing[id]; ok {
-			results[idx].Score += enrichBoost
-		} else {
-			missingIDs = append(missingIDs, id)
-		}
-	}
-
-	// Inject missing callees as graph-suggested results.
-	if len(missingIDs) > 0 {
-		syms, err := e.adapter.SymbolsByIDs(ctx, missingIDs)
-		if err != nil {
-			return nil, err
-		}
-		for _, sym := range syms {
-			results = append(results, Result{
-				SymbolID:  sym.SymbolID,
-				Name:      sym.Name,
-				Qualified: sym.Qualified,
-				Kind:      sym.Kind,
-				FileID:    sym.FileID,
-				LineStart: sym.LineStart,
-				Snippet:   sym.Snippet,
-				Score:     enrichBaseScore,
-				Source:    SourceGraph,
-			})
-		}
-	}
-
-	// Re-sort after boosting and injection.
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Score > results[j].Score
-	})
-
-	return results, nil
-}
-
-const parentPromotionThreshold = 2
-
-// promoteParents replaces multiple child methods from the same parent
-// class/struct with the parent symbol when 2+ children appear in the
-// top-K results. The parent inherits the highest child score.
-//
-//nolint:gocyclo // 27-07: retired by the storage/query split
-func (e *Engine) promoteParents(ctx context.Context, results []Result, limit int) ([]Result, error) {
-	if len(results) == 0 {
-		return results, nil
-	}
-
-	topK := limit
-	if topK > len(results) {
-		topK = len(results)
-	}
-
-	topIDs := make([]int64, topK)
-	for i := range topK {
-		topIDs[i] = results[i].SymbolID
-	}
-
-	parents, err := e.adapter.ParentSymbols(ctx, topIDs)
-	if err != nil {
-		return nil, err
-	}
-	if len(parents) == 0 {
-		return results, nil
-	}
-
-	type parentGroup struct {
-		info      sqlite.ParentInfo
-		children  []int
-		maxScore  float64
-		maxSource string
-	}
-	groups := map[int64]*parentGroup{}
-	for i := range topK {
-		pi, ok := parents[results[i].SymbolID]
-		if !ok {
-			continue
-		}
-		g, exists := groups[pi.ParentID]
-		if !exists {
-			g = &parentGroup{info: pi}
-			groups[pi.ParentID] = g
-		}
-		g.children = append(g.children, i)
-		if results[i].Score > g.maxScore {
-			g.maxScore = results[i].Score
-			g.maxSource = results[i].Source
-		}
-	}
-
-	existing := map[int64]bool{}
-	for _, r := range results {
-		existing[r.SymbolID] = true
-	}
-
-	remove := map[int]bool{}
-	var promoted []Result
-	for _, g := range groups {
-		if len(g.children) < parentPromotionThreshold {
-			continue
-		}
-		if existing[g.info.ParentID] {
-			continue
-		}
-		for _, idx := range g.children {
-			remove[idx] = true
-		}
-		promoted = append(promoted, Result{
-			SymbolID:  g.info.ParentID,
-			Name:      g.info.Name,
-			Qualified: g.info.Qualified,
-			Kind:      g.info.Kind,
-			FileID:    g.info.FileID,
-			LineStart: g.info.LineStart,
-			Snippet:   g.info.Snippet,
-			Score:     g.maxScore,
-			Source:    g.maxSource,
-		})
-	}
-
-	if len(promoted) == 0 {
-		return results, nil
-	}
-
-	var out []Result
-	for i, r := range results {
-		if !remove[i] {
-			out = append(out, r)
-		}
-	}
-	out = append(out, promoted...)
-
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Score > out[j].Score
-	})
-
-	return out, nil
-}
-
-const substringFallbackThreshold = 5
-
-func (e *Engine) substringFallback(ctx context.Context, kwResults []sqlite.SearchResult, query, language string, limit int) []sqlite.SearchResult {
-	if len(kwResults) >= substringFallbackThreshold {
-		return kwResults
-	}
-	subResults, err := e.adapter.SubstringSearch(ctx, query, language, limit-len(kwResults))
-	if err != nil {
-		return kwResults
-	}
-	return deduplicateResults(kwResults, subResults)
-}
-
-func deduplicateResults(primary, secondary []sqlite.SearchResult) []sqlite.SearchResult {
-	seen := make(map[int64]bool, len(primary))
-	for _, r := range primary {
-		seen[r.SymbolID] = true
-	}
-	out := make([]sqlite.SearchResult, len(primary))
-	copy(out, primary)
-	for _, r := range secondary {
-		if !seen[r.SymbolID] {
-			seen[r.SymbolID] = true
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func boostPathMatches(results []sqlite.SearchResult, queryTerms []string, pathByID map[int64]string) {
-	if len(queryTerms) == 0 || len(results) == 0 {
-		return
-	}
-	for i := range results {
-		path := strings.ToLower(pathByID[results[i].FileID])
-		for _, term := range queryTerms {
-			if strings.Contains(path, term) {
-				results[i].Score *= 1.5
-				break
-			}
-		}
-	}
 }
