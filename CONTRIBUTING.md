@@ -37,9 +37,9 @@ CI enforces five mechanical gates, all reproducible locally:
   func Compute(...) { ... }
   ```
 
-  This ledger is the burndown: `grep -rnE 'nolint:goc(yclo|ognit)' internal cmd` lists every outstanding entry, and `make ledger` fails CI if the count grows past its cap (`LEDGER_MAX` in the Makefile). The exit condition is the cap reaching zero. A stray directive left on a now-simple function is itself flagged by `nolintlint`, so the ledger cannot quietly lie.
+  This ledger is the burndown, and it is now at its terminal value: **zero**. `grep -rnE 'nolint:goc(yclo|ognit)' internal cmd` returns nothing, `make ledger` enforces `LEDGER_MAX = 0`, so a new `//nolint:gocyclo`/`gocognit` reds CI — decompose the function, do not suppress it. A stray directive left on a now-simple function is itself flagged by `nolintlint`, so the ledger cannot quietly lie.
 - **Side effects** — `depguard` forbids the verified pure-core packages (`extract`, `blast`, `conventions`, `mcpio`, `model`) from importing `os/exec`/`net`/`syscall`/`fsnotify`; effects belong at the edges. Pair it with `make test-hermetic`, which runs the hermetic package set offline (no network/ONNX/external binary).
-- **Coverage** — `make cover` runs the race suite and fails below the total-% floor (`COVER_FLOOR`). Codecov is informational only.
+- **Coverage** — `make cover` runs the race suite once and applies two floors over the profile. The **primary** is a per-file gate (`scripts/coveragegate`): every production file in the packages the cleanup cycle covered must hold ≥92% line **and** function coverage. Its covered-set, straggler-exception, and excluded-tail lists are config-as-code in that package — the long tail it never reached (`cli`, `summary`, `profile`, …) is listed as excluded, not hidden, and bringing one under the gate is a one-line edit. A coarse total-% **backstop** (`COVER_FLOOR`) catches gross regression. Codecov is informational only. Don't lower the floor or grow the exception list to make a change pass — cover the gap, or, only if the residual is genuinely unreachable, add a justified exception.
 
 Do not lower a gate to make a change pass. Decompose the function, inject the effect behind a seam, or add the test.
 
@@ -62,6 +62,13 @@ chore(ci): pin golangci-lint version
 ## Pull requests
 
 Fill out the PR template: what changed, how you tested, and which issue (if any) the work addresses.
+
+## Adding a language
+
+Adding support for a new programming language has its own step-by-step guide:
+[`CONTRIBUTING-A-LANGUAGE.md`](CONTRIBUTING-A-LANGUAGE.md). It covers both the
+standard tier (a ~30-line table-driven declaration) and the full tier (a bespoke
+extractor), from vendoring the tree-sitter grammar to generating goldens.
 
 ## Larger changes
 

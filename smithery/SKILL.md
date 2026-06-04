@@ -87,5 +87,5 @@ Sense doesn't make the model smarter. It gives the model structural understandin
 - Homepage: https://luuuc.github.io/sense/
 - Benchmark methodology: https://github.com/luuuc/sense/tree/main/bench
 - Head-to-head leaderboard: https://github.com/luuuc/sense/blob/main/docs/bench-leaderboard.svg
-- Languages: https://github.com/luuuc/sense/blob/main/LANGUAGES.md
+- Adding a language: https://github.com/luuuc/sense/blob/main/CONTRIBUTING-A-LANGUAGE.md
 - CLI reference: https://github.com/luuuc/sense/blob/main/CLI.md
