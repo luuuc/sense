@@ -73,7 +73,7 @@ cover: fetch-deps
 # GROWS: new complexity must be decomposed, not suppressed. Lower LEDGER_MAX as
 # pitches retire entries; the cycle's exit condition is LEDGER_MAX = 0 by 27-12.
 # (Matches gocyclo/gocognit only — an unrelated gocritic suppression is not debt.)
-LEDGER_MAX ?= 28
+LEDGER_MAX ?= 23
 ledger:
 	@n=$$(grep -rnE 'nolint:goc(yclo|ognit)' --include='*.go' internal cmd | wc -l | tr -d ' '); \
 	echo "complexity ledger: $$n entries (cap: $(LEDGER_MAX))"; \
