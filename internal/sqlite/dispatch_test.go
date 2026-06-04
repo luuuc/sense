@@ -8,6 +8,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
@@ -168,5 +169,113 @@ func TestDispatchMultipleImplementors(t *testing.T) {
 	got := map[int64]bool{ids[0]: true, ids[1]: true}
 	if !got[21] || !got[31] {
 		t.Errorf("expected IDs [21, 31], got %v", ids)
+	}
+}
+
+func TestInterfaceAliveMethods(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "dispatch.go", "go", "h1")
+
+	// Create an interface with a method
+	ifaceID := seedSymbol(t, a, fid, "Processor", "pkg.Processor", "interface")
+	ifaceMethodID := seedSymbolWithParent(t, a, fid, "Process", "pkg.Processor.Process", "method", ifaceID)
+
+	// Create a concrete type that inherits from the interface
+	implID := seedSymbol(t, a, fid, "Worker", "pkg.Worker", "class")
+	seedSymbolWithParent(t, a, fid, "Process", "pkg.Worker.Process", "method", implID)
+
+	// Write an inherits edge: Worker -> Processor
+	line := 10
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: &implID, TargetID: ifaceID, Kind: model.EdgeInherits,
+		FileID: fid, Line: &line, Confidence: 1.0,
+	}); err != nil {
+		t.Fatalf("WriteEdge inherits: %v", err)
+	}
+
+	// Write a calls edge TO the interface method (someone calls it)
+	callerID := seedSymbol(t, a, fid, "main", "pkg.main", "function")
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: &callerID, TargetID: ifaceMethodID, Kind: model.EdgeCalls,
+		FileID: fid, Line: &line, Confidence: 1.0,
+	}); err != nil {
+		t.Fatalf("WriteEdge calls: %v", err)
+	}
+
+	alive, err := sqlite.InterfaceAliveMethods(ctx, a.DB())
+	if err != nil {
+		t.Fatalf("InterfaceAliveMethods: %v", err)
+	}
+
+	// Should have the implementor's parent type + method name
+	key := sqlite.InterfaceMethodKey{ParentID: implID, MethodName: "Process"}
+	if _, ok := alive[key]; !ok {
+		t.Errorf("InterfaceAliveMethods missing key {ParentID: %d, MethodName: Process}", implID)
+	}
+}
+
+func TestDispatchMethodIDs(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "dispatch.go", "go", "h1")
+
+	// Interface and its method
+	ifaceID := seedSymbol(t, a, fid, "Processor", "pkg.Processor", "interface")
+	ifaceMethodID := seedSymbolWithParent(t, a, fid, "Process", "pkg.Processor.Process", "method", ifaceID)
+
+	// Concrete type that inherits the interface
+	implID := seedSymbol(t, a, fid, "Worker", "pkg.Worker", "class")
+	implMethodID := seedSymbolWithParent(t, a, fid, "Process", "pkg.Worker.Process", "method", implID)
+
+	line := 10
+	// inherits: Worker -> Processor
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: &implID, TargetID: ifaceID, Kind: model.EdgeInherits,
+		FileID: fid, Line: &line, Confidence: 1.0,
+	}); err != nil {
+		t.Fatalf("WriteEdge inherits: %v", err)
+	}
+
+	// From interface method: should find dispatch targets on implementors
+	ids, err := sqlite.DispatchMethodIDs(ctx, a.DB(), ifaceMethodID)
+	if err != nil {
+		t.Fatalf("DispatchMethodIDs from interface: %v", err)
+	}
+	found := false
+	for _, id := range ids {
+		if id == implMethodID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("DispatchMethodIDs from interface should include impl method %d, got %v", implMethodID, ids)
+	}
+
+	// From impl method: should find dispatch targets on the interface
+	ids, err = sqlite.DispatchMethodIDs(ctx, a.DB(), implMethodID)
+	if err != nil {
+		t.Fatalf("DispatchMethodIDs from concrete: %v", err)
+	}
+	found = false
+	for _, id := range ids {
+		if id == ifaceMethodID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("DispatchMethodIDs from concrete should include interface method %d, got %v", ifaceMethodID, ids)
+	}
+
+	// Symbol without parent
+	noParent := seedSymbol(t, a, fid, "standalone", "pkg.standalone", "function")
+	ids, err = sqlite.DispatchMethodIDs(ctx, a.DB(), noParent)
+	if err != nil {
+		t.Fatalf("DispatchMethodIDs no parent: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("DispatchMethodIDs no parent = %v, want empty", ids)
 	}
 }

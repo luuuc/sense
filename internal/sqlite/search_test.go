@@ -719,3 +719,278 @@ func TestSearchQueriesErrorOnClosedAdapter(t *testing.T) {
 		}
 	}
 }
+
+func TestSymbolsByIDs(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "app.go", "go", "h1")
+	s1 := seedSymbol(t, a, fid, "Order", "pkg.Order", "class")
+	s2 := seedSymbol(t, a, fid, "Process", "pkg.Process", "function")
+
+	// Query both
+	result, err := a.SymbolsByIDs(ctx, []int64{s1, s2})
+	if err != nil {
+		t.Fatalf("SymbolsByIDs: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("SymbolsByIDs len = %d, want 2", len(result))
+	}
+	if result[s1].Name != "Order" {
+		t.Errorf("result[s1].Name = %q, want Order", result[s1].Name)
+	}
+	if result[s2].Kind != "function" {
+		t.Errorf("result[s2].Kind = %q, want function", result[s2].Kind)
+	}
+
+	// Empty input
+	result, err = a.SymbolsByIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("SymbolsByIDs empty: %v", err)
+	}
+	if result != nil {
+		t.Errorf("SymbolsByIDs empty = %v, want nil", result)
+	}
+
+	// Non-existent ID
+	result, err = a.SymbolsByIDs(ctx, []int64{99999})
+	if err != nil {
+		t.Fatalf("SymbolsByIDs nonexistent: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("SymbolsByIDs nonexistent len = %d, want 0", len(result))
+	}
+}
+
+func TestInboundEdgeCounts(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "edge.go", "go", "h1")
+	s1 := seedSymbol(t, a, fid, "A", "pkg.A", "function")
+	s2 := seedSymbol(t, a, fid, "B", "pkg.B", "function")
+	s3 := seedSymbol(t, a, fid, "C", "pkg.C", "function")
+
+	line := 5
+	// A calls B, A calls C, B calls C
+	for _, e := range []struct{ src, tgt int64 }{
+		{s1, s2}, {s1, s3}, {s2, s3},
+	} {
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: &e.src, TargetID: e.tgt, Kind: model.EdgeCalls,
+			FileID: fid, Line: &line, Confidence: 1.0,
+		}); err != nil {
+			t.Fatalf("WriteEdge: %v", err)
+		}
+	}
+
+	counts, err := a.InboundEdgeCounts(ctx, []int64{s1, s2, s3})
+	if err != nil {
+		t.Fatalf("InboundEdgeCounts: %v", err)
+	}
+	// s1 has 0 inbound, s2 has 1, s3 has 2
+	if counts[s2] != 1 {
+		t.Errorf("InboundEdgeCounts[s2] = %d, want 1", counts[s2])
+	}
+	if counts[s3] != 2 {
+		t.Errorf("InboundEdgeCounts[s3] = %d, want 2", counts[s3])
+	}
+	if _, ok := counts[s1]; ok {
+		t.Error("InboundEdgeCounts should not have entry for s1 (0 inbound)")
+	}
+
+	// Empty input
+	counts, err = a.InboundEdgeCounts(ctx, nil)
+	if err != nil {
+		t.Fatalf("InboundEdgeCounts empty: %v", err)
+	}
+	if counts != nil {
+		t.Errorf("InboundEdgeCounts empty = %v, want nil", counts)
+	}
+}
+
+func TestCalleeIDs(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "call.go", "go", "h1")
+	s1 := seedSymbol(t, a, fid, "A", "pkg.A", "function")
+	s2 := seedSymbol(t, a, fid, "B", "pkg.B", "function")
+	s3 := seedSymbol(t, a, fid, "C", "pkg.C", "function")
+
+	line := 5
+	// A calls B, A calls C
+	for _, tgt := range []int64{s2, s3} {
+		if _, err := a.WriteEdge(ctx, &model.Edge{
+			SourceID: &s1, TargetID: tgt, Kind: model.EdgeCalls,
+			FileID: fid, Line: &line, Confidence: 1.0,
+		}); err != nil {
+			t.Fatalf("WriteEdge: %v", err)
+		}
+	}
+	// Also add a non-calls edge to make sure it is filtered out
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: &s1, TargetID: s2, Kind: model.EdgeInherits,
+		FileID: fid, Line: &line, Confidence: 1.0,
+	}); err != nil {
+		t.Fatalf("WriteEdge inherits: %v", err)
+	}
+
+	callees, err := a.CalleeIDs(ctx, []int64{s1})
+	if err != nil {
+		t.Fatalf("CalleeIDs: %v", err)
+	}
+	if len(callees[s1]) != 2 {
+		t.Fatalf("CalleeIDs[s1] len = %d, want 2", len(callees[s1]))
+	}
+
+	// s2 has no outbound calls edges
+	if len(callees[s2]) != 0 {
+		t.Errorf("CalleeIDs[s2] len = %d, want 0", len(callees[s2]))
+	}
+
+	// Empty input
+	callees, err = a.CalleeIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("CalleeIDs empty: %v", err)
+	}
+	if callees != nil {
+		t.Errorf("CalleeIDs empty = %v, want nil", callees)
+	}
+}
+
+func TestFilePathsByIDs(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid1 := seedFile(t, a, "src/main.go", "go", "h1")
+	fid2 := seedFile(t, a, "src/util.go", "go", "h2")
+
+	paths, err := a.FilePathsByIDs(ctx, []int64{fid1, fid2})
+	if err != nil {
+		t.Fatalf("FilePathsByIDs: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("FilePathsByIDs len = %d, want 2", len(paths))
+	}
+	if paths[fid1] != "src/main.go" {
+		t.Errorf("paths[fid1] = %q, want src/main.go", paths[fid1])
+	}
+	if paths[fid2] != "src/util.go" {
+		t.Errorf("paths[fid2] = %q, want src/util.go", paths[fid2])
+	}
+
+	// Empty input returns empty map (not nil)
+	paths, err = a.FilePathsByIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("FilePathsByIDs empty: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("FilePathsByIDs empty len = %d, want 0", len(paths))
+	}
+
+	// Non-existent ID
+	paths, err = a.FilePathsByIDs(ctx, []int64{99999})
+	if err != nil {
+		t.Fatalf("FilePathsByIDs nonexistent: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("FilePathsByIDs nonexistent len = %d, want 0", len(paths))
+	}
+}
+
+func TestParentSymbols(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "model.go", "go", "h1")
+	parentID := seedSymbol(t, a, fid, "Order", "pkg.Order", "class")
+	childID := seedSymbolWithParent(t, a, fid, "Process", "pkg.Order.Process", "method", parentID)
+	orphanID := seedSymbol(t, a, fid, "Helper", "pkg.Helper", "function")
+
+	parents, err := a.ParentSymbols(ctx, []int64{childID, orphanID})
+	if err != nil {
+		t.Fatalf("ParentSymbols: %v", err)
+	}
+	// childID has a parent, orphanID does not
+	pi, ok := parents[childID]
+	if !ok {
+		t.Fatal("ParentSymbols missing entry for childID")
+	}
+	if pi.Name != "Order" {
+		t.Errorf("parent name = %q, want Order", pi.Name)
+	}
+	if pi.Qualified != "pkg.Order" {
+		t.Errorf("parent qualified = %q, want pkg.Order", pi.Qualified)
+	}
+	if pi.Kind != "class" {
+		t.Errorf("parent kind = %q, want class", pi.Kind)
+	}
+	if _, ok := parents[orphanID]; ok {
+		t.Error("orphan should not have a parent entry")
+	}
+
+	// Empty input
+	parents, err = a.ParentSymbols(ctx, nil)
+	if err != nil {
+		t.Fatalf("ParentSymbols empty: %v", err)
+	}
+	if parents != nil {
+		t.Errorf("ParentSymbols empty = %v, want nil", parents)
+	}
+}
+
+func TestLoadEmbeddings(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "app.go", "go", "h1")
+	s1 := seedSymbol(t, a, fid, "A", "pkg.A", "class")
+	s2 := seedSymbol(t, a, fid, "B", "pkg.B", "class")
+
+	// Write embeddings as float32 vectors encoded as bytes
+	vec1 := floatVec(1.0, 2.0, 3.0)
+	vec2 := floatVec(4.0, 5.0, 6.0)
+	if err := a.WriteEmbedding(ctx, s1, vec1); err != nil {
+		t.Fatalf("WriteEmbedding s1: %v", err)
+	}
+	if err := a.WriteEmbedding(ctx, s2, vec2); err != nil {
+		t.Fatalf("WriteEmbedding s2: %v", err)
+	}
+
+	result, err := a.LoadEmbeddings(ctx)
+	if err != nil {
+		t.Fatalf("LoadEmbeddings: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("LoadEmbeddings len = %d, want 2", len(result))
+	}
+	if len(result[s1]) != 3 {
+		t.Errorf("result[s1] len = %d, want 3", len(result[s1]))
+	}
+}
+
+func TestSymbolCountEmptyAndPopulated(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	count, err := a.SymbolCount(ctx)
+	if err != nil {
+		t.Fatalf("SymbolCount empty: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("SymbolCount empty = %d, want 0", count)
+	}
+
+	fid := seedFile(t, a, "app.go", "go", "h1")
+	seedSymbol(t, a, fid, "A", "pkg.A", "class")
+	seedSymbol(t, a, fid, "B", "pkg.B", "function")
+
+	count, err = a.SymbolCount(ctx)
+	if err != nil {
+		t.Fatalf("SymbolCount: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("SymbolCount = %d, want 2", count)
+	}
+}

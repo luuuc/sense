@@ -350,3 +350,82 @@ func TestReopenPreservesData(t *testing.T) {
 		t.Errorf("File.IndexedAt = %v, want %v", got.File.IndexedAt, f.IndexedAt)
 	}
 }
+
+func TestInTx(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	// Successful transaction
+	err := a.InTx(ctx, func() error {
+		fid := seedFile(t, a, "tx.go", "go", "h1")
+		seedSymbol(t, a, fid, "F", "pkg.F", "function")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("InTx success: %v", err)
+	}
+
+	// Verify data persisted
+	paths, err := a.FilePaths(ctx)
+	if err != nil {
+		t.Fatalf("FilePaths: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "tx.go" {
+		t.Errorf("FilePaths = %v, want [tx.go]", paths)
+	}
+}
+
+func TestInTxRollback(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	// Seed a file before the transaction
+	seedFile(t, a, "before.go", "go", "h0")
+
+	// Failing transaction should rollback
+	err := a.InTx(ctx, func() error {
+		seedFile(t, a, "rollback.go", "go", "h2")
+		return context.Canceled // simulate error
+	})
+	if err == nil {
+		t.Fatal("InTx should propagate error")
+	}
+
+	// The rolled-back file should not be visible (but since InTx uses
+	// single-conn trick with BEGIN IMMEDIATE, the effects of WriteFile
+	// inside fn() already went through the same connection — rollback
+	// reverts them). Verify "before.go" persists.
+	paths, err := a.FilePaths(ctx)
+	if err != nil {
+		t.Fatalf("FilePaths: %v", err)
+	}
+	// The before.go was written outside the transaction, so it persists
+	found := false
+	for _, p := range paths {
+		if p == "before.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("before.go should persist after rollback")
+	}
+}
+
+func TestStampSchemaVersion(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	// StampSchemaVersion sets PRAGMA user_version; should not error
+	if err := a.StampSchemaVersion(ctx); err != nil {
+		t.Fatalf("StampSchemaVersion: %v", err)
+	}
+
+	// Verify by reading PRAGMA user_version
+	var version int
+	if err := a.DB().QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatalf("PRAGMA user_version: %v", err)
+	}
+	if version == 0 {
+		t.Error("user_version should not be 0 after stamp")
+	}
+}

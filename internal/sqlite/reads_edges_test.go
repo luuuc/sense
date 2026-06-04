@@ -209,3 +209,311 @@ func TestQueryFiltersAndLimit(t *testing.T) {
 		t.Fatalf("name=Foo should return only Foo, got %v", byName)
 	}
 }
+
+func TestFileMeta(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	// Missing file
+	id, hash, err := a.FileMeta(ctx, "nonexistent.go")
+	if err != nil {
+		t.Fatalf("FileMeta missing: %v", err)
+	}
+	if id != 0 || hash != "" {
+		t.Errorf("FileMeta missing = (%d, %q), want (0, \"\")", id, hash)
+	}
+
+	// Existing file
+	seedFile(t, a, "main.go", "go", "abc123")
+	id, hash, err = a.FileMeta(ctx, "main.go")
+	if err != nil {
+		t.Fatalf("FileMeta: %v", err)
+	}
+	if id == 0 {
+		t.Error("FileMeta should return non-zero id")
+	}
+	if hash != "abc123" {
+		t.Errorf("FileMeta hash = %q, want abc123", hash)
+	}
+}
+
+func TestFileHashMap(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	seedFile(t, a, "a.go", "go", "h1")
+	seedFile(t, a, "b.rb", "ruby", "h2")
+
+	m, err := a.FileHashMap(ctx)
+	if err != nil {
+		t.Fatalf("FileHashMap: %v", err)
+	}
+	if len(m) != 2 {
+		t.Fatalf("FileHashMap len = %d, want 2", len(m))
+	}
+	if m["a.go"].Hash != "h1" {
+		t.Errorf("a.go hash = %q, want h1", m["a.go"].Hash)
+	}
+	if m["b.rb"].Hash != "h2" {
+		t.Errorf("b.rb hash = %q, want h2", m["b.rb"].Hash)
+	}
+	if m["a.go"].ID == 0 {
+		t.Error("a.go ID should be non-zero")
+	}
+}
+
+func TestSymbolRefs(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "app.go", "go", "h1")
+	seedSymbol(t, a, fid, "Order", "pkg.Order", "class")
+	seedSymbol(t, a, fid, "Process", "pkg.Process", "function")
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("SymbolRefs len = %d, want 2", len(refs))
+	}
+	// Should be ordered by id ascending
+	if refs[0].ID >= refs[1].ID {
+		t.Error("SymbolRefs not ordered by ascending id")
+	}
+	seen := map[string]bool{}
+	for _, r := range refs {
+		seen[r.Qualified] = true
+	}
+	if !seen["pkg.Order"] {
+		t.Error("missing ref for pkg.Order")
+	}
+	if !seen["pkg.Process"] {
+		t.Error("missing ref for pkg.Process")
+	}
+}
+
+func TestSymbolRefsCarriesReceiver(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "price.rb", "ruby", "h1")
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "zero", Qualified: "PriceValue.zero",
+		Kind: model.KindMethod, Receiver: "singleton", LineStart: 1, LineEnd: 3,
+	}); err != nil {
+		t.Fatalf("WriteSymbol singleton: %v", err)
+	}
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "zero?", Qualified: "PriceValue#zero?",
+		Kind: model.KindMethod, Receiver: "instance", LineStart: 5, LineEnd: 7,
+	}); err != nil {
+		t.Fatalf("WriteSymbol instance: %v", err)
+	}
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.Qualified] = r.Receiver
+	}
+	if got["PriceValue.zero"] != "singleton" {
+		t.Errorf("PriceValue.zero Receiver = %q, want singleton", got["PriceValue.zero"])
+	}
+	if got["PriceValue#zero?"] != "instance" {
+		t.Errorf("PriceValue#zero? Receiver = %q, want instance", got["PriceValue#zero?"])
+	}
+}
+
+func TestSymbolRefsCarriesLanguage(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	rb := seedFile(t, a, "app/models/user.rb", "ruby", "h1")
+	js := seedFile(t, a, "app/javascript/controllers/application.js", "javascript", "h2")
+	seedSymbol(t, a, rb, "User", "User", "class")
+	seedSymbol(t, a, js, "application", "application", "constant")
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.Qualified] = r.Language
+	}
+	if got["User"] != "ruby" {
+		t.Errorf("User Language = %q, want ruby (left-joined from sense_files)", got["User"])
+	}
+	if got["application"] != "javascript" {
+		t.Errorf("application Language = %q, want javascript", got["application"])
+	}
+}
+
+func TestSymbolRefsCarriesPath(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	app := seedFile(t, a, "app/models/user.rb", "ruby", "h1")
+	test := seedFile(t, a, "test/models/user_test.rb", "ruby", "h2")
+	seedSymbol(t, a, app, "User", "User", "class")
+	seedSymbol(t, a, test, "UserTest", "UserTest", "class")
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.Qualified] = r.Path
+	}
+	if got["User"] != "app/models/user.rb" {
+		t.Errorf("User Path = %q, want app/models/user.rb (left-joined from sense_files)", got["User"])
+	}
+	if got["UserTest"] != "test/models/user_test.rb" {
+		t.Errorf("UserTest Path = %q, want test/models/user_test.rb", got["UserTest"])
+	}
+}
+
+func TestSymbolRefsScanError(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "app/x.rb", "ruby", "h1")
+	sid := seedSymbol(t, a, fid, "X", "X", "class")
+	// Corrupt file_id to a non-integer so the row fails to scan into int64
+	// (SQLite is dynamically typed), exercising the scan-error path. The write
+	// is done on a pinned connection with FK enforcement off so the bad value
+	// lands; reads don't check FKs, so SymbolRefs still hits the scan failure.
+	// The connection is released before SymbolRefs — the adapter caps the pool
+	// at one connection, so holding it would deadlock the subsequent read.
+	conn, err := a.DB().Conn(ctx)
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+		t.Fatalf("disable FK: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "UPDATE sense_symbols SET file_id='not-an-int' WHERE id=?", sid); err != nil {
+		t.Fatalf("corrupt file_id: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close conn: %v", err)
+	}
+	if _, err := a.SymbolRefs(ctx); err == nil {
+		t.Error("expected a scan error for a non-integer file_id")
+	}
+}
+
+func TestEdgesOfKind(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "edge.go", "go", "h1")
+	s1 := seedSymbol(t, a, fid, "A", "pkg.A", "class")
+	s2 := seedSymbol(t, a, fid, "B", "pkg.B", "class")
+
+	line := 5
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: &s1, TargetID: s2, Kind: model.EdgeInherits,
+		FileID: fid, Line: &line, Confidence: 1.0,
+	}); err != nil {
+		t.Fatalf("WriteEdge: %v", err)
+	}
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: &s1, TargetID: s2, Kind: model.EdgeCalls,
+		FileID: fid, Confidence: 0.9,
+	}); err != nil {
+		t.Fatalf("WriteEdge calls: %v", err)
+	}
+
+	edges, err := a.EdgesOfKind(ctx, model.EdgeInherits)
+	if err != nil {
+		t.Fatalf("EdgesOfKind: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("EdgesOfKind inherits len = %d, want 1", len(edges))
+	}
+	if edges[0].Kind != model.EdgeInherits {
+		t.Errorf("edge kind = %v, want inherits", edges[0].Kind)
+	}
+	if edges[0].SourceID == nil || *edges[0].SourceID != s1 {
+		t.Error("edge source should be s1")
+	}
+	if edges[0].Line == nil || *edges[0].Line != 5 {
+		t.Error("edge line should be 5")
+	}
+
+	// Query the other kind
+	callEdges, err := a.EdgesOfKind(ctx, model.EdgeCalls)
+	if err != nil {
+		t.Fatalf("EdgesOfKind calls: %v", err)
+	}
+	if len(callEdges) != 1 {
+		t.Fatalf("EdgesOfKind calls len = %d, want 1", len(callEdges))
+	}
+}
+
+func TestFileIDsByLanguage(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	seedFile(t, a, "a.go", "go", "h1")
+	seedFile(t, a, "b.go", "go", "h2")
+	seedFile(t, a, "c.rb", "ruby", "h3")
+
+	goFiles, err := a.FileIDsByLanguage(ctx, "go")
+	if err != nil {
+		t.Fatalf("FileIDsByLanguage go: %v", err)
+	}
+	if len(goFiles) != 2 {
+		t.Errorf("go files = %d, want 2", len(goFiles))
+	}
+
+	rubyFiles, err := a.FileIDsByLanguage(ctx, "ruby")
+	if err != nil {
+		t.Fatalf("FileIDsByLanguage ruby: %v", err)
+	}
+	if len(rubyFiles) != 1 {
+		t.Errorf("ruby files = %d, want 1", len(rubyFiles))
+	}
+
+	// Non-existent language
+	pyFiles, err := a.FileIDsByLanguage(ctx, "python")
+	if err != nil {
+		t.Fatalf("FileIDsByLanguage python: %v", err)
+	}
+	if len(pyFiles) != 0 {
+		t.Errorf("python files = %d, want 0", len(pyFiles))
+	}
+}
+
+func TestReadSymbol(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "app.go", "go", "h1")
+	sid := seedSymbol(t, a, fid, "Order", "pkg.Order", "class")
+
+	sc, err := a.ReadSymbol(ctx, sid)
+	if err != nil {
+		t.Fatalf("ReadSymbol: %v", err)
+	}
+	if sc.Symbol.Name != "Order" {
+		t.Errorf("Symbol.Name = %q, want Order", sc.Symbol.Name)
+	}
+	if sc.Symbol.Qualified != "pkg.Order" {
+		t.Errorf("Symbol.Qualified = %q, want pkg.Order", sc.Symbol.Qualified)
+	}
+	if sc.File.Path != "app.go" {
+		t.Errorf("File.Path = %q, want app.go", sc.File.Path)
+	}
+
+	// Non-existent symbol
+	_, err = a.ReadSymbol(ctx, 99999)
+	if err == nil {
+		t.Error("ReadSymbol nonexistent should return error")
+	}
+}
