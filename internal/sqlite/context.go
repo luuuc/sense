@@ -204,8 +204,6 @@ type labeledItems struct {
 // Lines are added in priority order (highest first). When a line
 // would exceed contextBudget, its items are truncated to fit. If
 // even one item won't fit, remaining lines are dropped.
-//
-//nolint:gocyclo // 27-07: retired by the storage/query split
 func formatSymbolContext(filePath string, sym symbolCtx, edges symbolEdges) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "File: %s\n", filePath)
@@ -215,31 +213,36 @@ func formatSymbolContext(filePath string, sym symbolCtx, edges symbolEdges) stri
 	} else {
 		fmt.Fprintf(&b, "%s %s", sym.kind, sym.qualified)
 	}
-	header := b.String()
 
-	// Relationship lines in priority order (highest first).
-	// Truncation removes from the bottom: defines, then calls,
-	// then included by, then includes, then composes.
+	return fitGroups(b.String(), relationshipGroups(edges))
+}
+
+// relationshipGroups collects a symbol's non-empty relationship edges into
+// labeled groups in priority order (highest first). Truncation in fitGroups
+// removes from the bottom of this list: defines, then calls, then included by,
+// then includes, then composes.
+func relationshipGroups(edges symbolEdges) []labeledItems {
 	var groups []labeledItems
-	if len(edges.inherits) > 0 {
-		groups = append(groups, labeledItems{"inherits", edges.inherits})
+	for _, g := range []labeledItems{
+		{"inherits", edges.inherits},
+		{"composes", edges.composes},
+		{"includes", edges.includes},
+		{"included by", edges.includedBy},
+		{"calls", edges.calls},
+		{"defines", edges.defines},
+	} {
+		if len(g.items) > 0 {
+			groups = append(groups, g)
+		}
 	}
-	if len(edges.composes) > 0 {
-		groups = append(groups, labeledItems{"composes", edges.composes})
-	}
-	if len(edges.includes) > 0 {
-		groups = append(groups, labeledItems{"includes", edges.includes})
-	}
-	if len(edges.includedBy) > 0 {
-		groups = append(groups, labeledItems{"included by", edges.includedBy})
-	}
-	if len(edges.calls) > 0 {
-		groups = append(groups, labeledItems{"calls", edges.calls})
-	}
-	if len(edges.defines) > 0 {
-		groups = append(groups, labeledItems{"defines", edges.defines})
-	}
+	return groups
+}
 
+// fitGroups appends relationship lines to header until contextBudget is
+// reached. A whole line that fits is taken intact; the first line that would
+// overflow is truncated item-by-item to fill the remaining budget, after which
+// all further lines are dropped.
+func fitGroups(header string, groups []labeledItems) string {
 	out := header
 	for _, g := range groups {
 		line := "\n" + g.label + ": " + strings.Join(g.items, ", ")
