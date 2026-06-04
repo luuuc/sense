@@ -95,63 +95,75 @@ func (w *walker) methodVisibility(scope []string) string {
 // free function (not a walker method) so the harvest pass can reuse it without
 // the walker's mutable state. filePath supplies the file-based name an anonymous
 // default export is synthesized under (matching handleDefaultExport).
-//
-//nolint:gocognit // 27-11: retired by the tsjs/rust extractor split
 func collectExportedNames(root *sitter.Node, source []byte, filePath string) (exported, defaultExports map[string]bool) {
 	exported = map[string]bool{}
 	defaultExports = map[string]bool{}
 	_ = extract.WalkNamedDescendants(root, "export_statement", func(es *sitter.Node) error {
-		// A re-export (`export { X } from './x'`, `export * from './x'`) names
-		// symbols defined in another module, not local declarations —
-		// handleReexport emits and marks those public itself. Skip it here so a
-		// re-export clause's name is not mistaken for a local export.
-		if reexportSource(es, source) != "" {
-			return nil
-		}
-		isDefault := hasDefaultKeyword(es, source)
-
-		// `export { g }` / `export { g as h }`: the LOCAL name is the specifier's
-		// `name` field (g), exported under the alias if present.
-		for i := uint(0); i < es.NamedChildCount(); i++ {
-			clause := es.NamedChild(i)
-			if clause == nil || clause.Kind() != "export_clause" {
-				continue
-			}
-			for j := uint(0); j < clause.NamedChildCount(); j++ {
-				spec := clause.NamedChild(j)
-				if spec == nil || spec.Kind() != "export_specifier" {
-					continue
-				}
-				if name := extract.Text(spec.ChildByFieldName("name"), source); name != "" && name != "default" {
-					exported[name] = true
-				}
-			}
-		}
-
-		// `export [default] <declaration>`: a function/class/interface/enum/type
-		// declaration or a `const` lexical declaration carried in the
-		// `declaration` field.
-		if decl := es.ChildByFieldName("declaration"); decl != nil {
-			for _, name := range declaredNames(decl, source) {
-				exported[name] = true
-				if isDefault {
-					defaultExports[name] = true
-				}
-			}
-			return nil
-		}
-
-		// `export default <expr>`: a named identifier (`export default foo`) or an
-		// anonymous function/class expression synthesized under the file-based name.
-		if isDefault {
-			if name := defaultExportName(es, source, filePath); name != "" {
-				exported[name] = true
-				defaultExports[name] = true
-			}
-		}
+		collectStatementExports(es, source, filePath, exported, defaultExports)
 		return nil
 	})
 	return exported, defaultExports
+}
+
+// collectStatementExports records the local names one export_statement
+// exports, into the shared exported/defaultExports sets. It handles the
+// three local-export forms (clause, declaration, bare default expression)
+// and skips re-exports, which name other modules' symbols and are owned by
+// handleReexport.
+func collectStatementExports(es *sitter.Node, source []byte, filePath string, exported, defaultExports map[string]bool) {
+	// A re-export (`export { X } from './x'`, `export * from './x'`) names
+	// symbols defined in another module, not local declarations —
+	// handleReexport emits and marks those public itself. Skip it here so a
+	// re-export clause's name is not mistaken for a local export.
+	if reexportSource(es, source) != "" {
+		return
+	}
+	isDefault := hasDefaultKeyword(es, source)
+
+	collectClauseExports(es, source, exported)
+
+	// `export [default] <declaration>`: a function/class/interface/enum/type
+	// declaration or a `const` lexical declaration carried in the
+	// `declaration` field.
+	if decl := es.ChildByFieldName("declaration"); decl != nil {
+		for _, name := range declaredNames(decl, source) {
+			exported[name] = true
+			if isDefault {
+				defaultExports[name] = true
+			}
+		}
+		return
+	}
+
+	// `export default <expr>`: a named identifier (`export default foo`) or an
+	// anonymous function/class expression synthesized under the file-based name.
+	if isDefault {
+		if name := defaultExportName(es, source, filePath); name != "" {
+			exported[name] = true
+			defaultExports[name] = true
+		}
+	}
+}
+
+// collectClauseExports records the local names in an export_statement's
+// `export { g }` / `export { g as h }` clauses: the LOCAL name is the
+// specifier's `name` field (g), exported under the alias if present.
+func collectClauseExports(es *sitter.Node, source []byte, exported map[string]bool) {
+	for i := uint(0); i < es.NamedChildCount(); i++ {
+		clause := es.NamedChild(i)
+		if clause == nil || clause.Kind() != "export_clause" {
+			continue
+		}
+		for j := uint(0); j < clause.NamedChildCount(); j++ {
+			spec := clause.NamedChild(j)
+			if spec == nil || spec.Kind() != "export_specifier" {
+				continue
+			}
+			if name := extract.Text(spec.ChildByFieldName("name"), source); name != "" && name != "default" {
+				exported[name] = true
+			}
+		}
+	}
 }
 
 // declaredNames returns the names a declaration node introduces: the `name`

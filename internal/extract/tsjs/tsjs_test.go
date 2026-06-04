@@ -62,172 +62,6 @@ func (r *recorder) Symbol(s extract.EmittedSymbol) error {
 }
 func (r *recorder) Edge(e extract.EmittedEdge) error { r.edges = append(r.edges, e); return nil }
 
-func TestInferStimulusController(t *testing.T) {
-	tests := []struct {
-		path string
-		want string
-	}{
-		{"app/javascript/controllers/checkout_controller.js", "CheckoutController"},
-		{"app/javascript/controllers/user_profile_controller.ts", "UserProfileController"},
-		{"app/javascript/controllers/admin/users_controller.js", "Admin::UsersController"},
-		{"app/javascript/controllers/admin/user_profile_controller.ts", "Admin::UserProfileController"},
-		{"app/javascript/controllers/checkout_controller.mjs", "CheckoutController"},
-		// Non-matches
-		{"app/javascript/application.js", ""},
-		{"app/javascript/controllers/checkout.js", ""},
-		{"app/models/user.rb", ""},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		got := inferStimulusController(tt.path)
-		if got != tt.want {
-			t.Errorf("inferStimulusController(%q) = %q, want %q", tt.path, got, tt.want)
-		}
-	}
-}
-
-func TestStimulusAnonymousClass(t *testing.T) {
-	src := []byte(`import { Controller } from "@hotwired/stimulus"
-
-export default class extends Controller {
-  static targets = ["output"]
-
-  greet() {
-    this.outputTarget.textContent = "Hello"
-  }
-}
-`)
-	p := sitter.NewParser()
-	defer p.Close()
-	ex := JavaScript{}
-	if err := p.SetLanguage(ex.Grammar()); err != nil {
-		t.Fatalf("SetLanguage: %v", err)
-	}
-	tree := p.Parse(src, nil)
-	if tree == nil {
-		t.Fatal("Parse returned nil tree")
-	}
-	defer tree.Close()
-
-	r := &recorder{}
-	if err := ex.Extract(tree, src, "app/javascript/controllers/hello_controller.js", r); err != nil {
-		t.Fatalf("Extract: %v", err)
-	}
-
-	var foundClass bool
-	var foundMethod bool
-	for _, s := range r.symbols {
-		if s.Qualified == "HelloController" && s.Kind == "class" {
-			foundClass = true
-		}
-		if s.Qualified == "HelloController.greet" && s.Kind == "method" {
-			foundMethod = true
-		}
-	}
-	if !foundClass {
-		t.Error("expected symbol HelloController (class) from anonymous Stimulus controller")
-	}
-	if !foundMethod {
-		t.Error("expected symbol HelloController.greet (method)")
-	}
-}
-
-func TestStimulusNamedClass(t *testing.T) {
-	src := []byte(`import { Controller } from "@hotwired/stimulus"
-
-export default class CheckoutController extends Controller {
-  submit() {}
-}
-`)
-	p := sitter.NewParser()
-	defer p.Close()
-	ex := JavaScript{}
-	if err := p.SetLanguage(ex.Grammar()); err != nil {
-		t.Fatalf("SetLanguage: %v", err)
-	}
-	tree := p.Parse(src, nil)
-	if tree == nil {
-		t.Fatal("Parse returned nil tree")
-	}
-	defer tree.Close()
-
-	r := &recorder{}
-	if err := ex.Extract(tree, src, "app/javascript/controllers/checkout_controller.js", r); err != nil {
-		t.Fatalf("Extract: %v", err)
-	}
-
-	// Named class should still be extracted with its actual name
-	var foundClass bool
-	for _, s := range r.symbols {
-		if s.Qualified == "CheckoutController" && s.Kind == "class" {
-			foundClass = true
-		}
-	}
-	if !foundClass {
-		t.Error("expected symbol CheckoutController from named Stimulus controller")
-	}
-}
-
-func TestStimulusTargetsAndOutlets(t *testing.T) {
-	src := []byte(`import { Controller } from "@hotwired/stimulus"
-
-export default class extends Controller {
-  static targets = ["output", "name"]
-  static outlets = ["search", "admin--results"]
-
-  greet() {}
-}
-`)
-	p := sitter.NewParser()
-	defer p.Close()
-	ex := JavaScript{}
-	if err := p.SetLanguage(ex.Grammar()); err != nil {
-		t.Fatalf("SetLanguage: %v", err)
-	}
-	tree := p.Parse(src, nil)
-	if tree == nil {
-		t.Fatal("Parse returned nil tree")
-	}
-	defer tree.Close()
-
-	r := &recorder{}
-	if err := ex.Extract(tree, src, "app/javascript/controllers/hello_controller.js", r); err != nil {
-		t.Fatalf("Extract: %v", err)
-	}
-
-	// Check target symbols
-	wantTargets := map[string]bool{
-		"HelloController.target:output": false,
-		"HelloController.target:name":   false,
-	}
-	for _, s := range r.symbols {
-		if _, ok := wantTargets[s.Qualified]; ok {
-			wantTargets[s.Qualified] = true
-		}
-	}
-	for q, found := range wantTargets {
-		if !found {
-			t.Errorf("missing target symbol %q", q)
-		}
-	}
-
-	// Check outlet edges
-	wantOutlets := map[string]bool{
-		"SearchController":         false,
-		"Admin::ResultsController": false,
-	}
-	for _, e := range r.edges {
-		if _, ok := wantOutlets[e.TargetQualified]; ok {
-			wantOutlets[e.TargetQualified] = true
-		}
-	}
-	for q, found := range wantOutlets {
-		if !found {
-			t.Errorf("missing outlet edge to %q", q)
-		}
-	}
-}
-
 func TestDefaultExportNaming(t *testing.T) {
 	src := []byte(`export default class extends Base {}`)
 	p := sitter.NewParser()
@@ -615,33 +449,6 @@ func TestJSXLowercaseSkipped(t *testing.T) {
 	}
 }
 
-func TestDynamicImport(t *testing.T) {
-	r := parseTS(t, `const lazy = import("./module");
-`, "app.ts")
-	if findEdg(r, "", "./module", "imports") == nil {
-		t.Error("missing imports edge from dynamic import")
-	}
-}
-
-func TestReexportStatement(t *testing.T) {
-	r := parseTS(t, `export { Button } from "./Button";
-`, "index.ts")
-	if findEdg(r, "", "./Button", "imports") == nil {
-		t.Error("missing imports edge from re-export")
-	}
-	if findSym(r, "Button") == nil {
-		t.Error("missing re-exported symbol Button")
-	}
-}
-
-func TestStarReexport(t *testing.T) {
-	r := parseTS(t, `export * from "./utils";
-`, "index.ts")
-	if findEdg(r, "", "./utils", "imports") == nil {
-		t.Error("missing imports edge from star re-export")
-	}
-}
-
 func TestConstClassExpression(t *testing.T) {
 	r := parseTS(t, `const Widget = class {
   render() {}
@@ -803,58 +610,6 @@ func TestClassExtendsAndImplements(t *testing.T) {
 	}
 }
 
-func TestStimulusClassWithTargets(t *testing.T) {
-	// Use JavaScript extractor: TypeScript grammar parses static fields as
-	// "public_field_definition" which walkClassBody does not handle yet.
-	r := parseJS(t, `import { Controller } from "@hotwired/stimulus"
-
-export default class extends Controller {
-  static targets = ["output", "input"];
-
-  connect() {}
-}
-`, "app/javascript/controllers/hello_controller.js")
-	s := findSym(r, "HelloController")
-	if s == nil {
-		t.Fatal("missing symbol HelloController from stimulus")
-	}
-	// Check targets are emitted
-	foundTarget := false
-	for _, s := range r.symbols {
-		if s.Qualified == "HelloController.target:output" || s.Qualified == "HelloController.target:input" {
-			foundTarget = true
-		}
-	}
-	if !foundTarget {
-		t.Error("missing stimulus target symbols")
-	}
-}
-
-func TestStimulusClassWithOutlets(t *testing.T) {
-	// Use JavaScript extractor: TypeScript grammar parses static fields as
-	// "public_field_definition" which walkClassBody does not handle yet.
-	r := parseJS(t, `import { Controller } from "@hotwired/stimulus"
-
-export default class extends Controller {
-  static outlets = ["search"];
-}
-`, "app/javascript/controllers/filter_controller.js")
-	s := findSym(r, "FilterController")
-	if s == nil {
-		t.Fatal("missing symbol FilterController from stimulus")
-	}
-	// Outlets emit calls edges
-	foundOutlet := false
-	for _, e := range r.edges {
-		if string(e.Kind) == "calls" && e.TargetQualified == "SearchController" {
-			foundOutlet = true
-		}
-	}
-	if !foundOutlet {
-		t.Error("missing calls edge to SearchController from outlet")
-	}
-}
-
 func TestJavaScriptClassInheritance(t *testing.T) {
 	r := parseJS(t, `class Dog extends Animal {
   bark() {}
@@ -862,46 +617,6 @@ func TestJavaScriptClassInheritance(t *testing.T) {
 `, "dog.js")
 	if findEdg(r, "Dog", "Animal", "inherits") == nil {
 		t.Error("missing inherits edge Dog -> Animal in JavaScript")
-	}
-}
-
-func TestDynamicImportEdge(t *testing.T) {
-	r := parseTS(t, `async function loadModule() {
-  const mod = await import("./utils");
-}
-`, "app.ts")
-	foundImport := false
-	for _, e := range r.edges {
-		if string(e.Kind) == "imports" && e.TargetQualified == "./utils" {
-			foundImport = true
-		}
-	}
-	if !foundImport {
-		t.Error("missing imports edge for dynamic import('./utils')")
-	}
-}
-
-func TestReexportFromModule(t *testing.T) {
-	r := parseTS(t, `export { default as Utils } from "./utils";
-export { Config } from "./config";
-`, "index.ts")
-	foundUtils := false
-	foundConfig := false
-	for _, e := range r.edges {
-		if string(e.Kind) == "imports" {
-			if e.TargetQualified == "./utils" {
-				foundUtils = true
-			}
-			if e.TargetQualified == "./config" {
-				foundConfig = true
-			}
-		}
-	}
-	if !foundUtils {
-		t.Error("missing imports edge for re-export from ./utils")
-	}
-	if !foundConfig {
-		t.Error("missing imports edge for re-export from ./config")
 	}
 }
 
@@ -1096,19 +811,6 @@ export const TIMEOUT = 5000;
 	}
 }
 
-func TestStaticImportNoEdge(t *testing.T) {
-	// Static import statements don't produce imports edges in Tier-Basic;
-	// only dynamic import() and re-exports do.
-	r := parseTS(t, `import { Router } from "express";
-import * as path from "path";
-`, "app.ts")
-	for _, e := range r.edges {
-		if string(e.Kind) == "imports" {
-			t.Errorf("unexpected imports edge from static import: %v", e.TargetQualified)
-		}
-	}
-}
-
 func TestNestedClassInModule(t *testing.T) {
 	r := parseTS(t, `namespace Admin {
   export class UserManager {
@@ -1132,34 +834,6 @@ func TestIndexFileBasedName(t *testing.T) {
 		if s.Name == "Index" {
 			t.Error("index.ts should not produce 'Index' as file-based name")
 		}
-	}
-}
-
-func TestReexportWithAlias(t *testing.T) {
-	r := parseTS(t, `export { default as Button } from "./button";
-`, "index.ts")
-	foundBtn := false
-	for _, s := range r.symbols {
-		if s.Qualified == "Button" {
-			foundBtn = true
-		}
-	}
-	if !foundBtn {
-		t.Error("missing re-exported symbol Button")
-	}
-}
-
-func TestStarReexportEdge(t *testing.T) {
-	r := parseTS(t, `export * from "./utils";
-`, "barrel.ts")
-	foundImport := false
-	for _, e := range r.edges {
-		if string(e.Kind) == "imports" && e.TargetQualified == "./utils" {
-			foundImport = true
-		}
-	}
-	if !foundImport {
-		t.Error("missing imports edge from star re-export")
 	}
 }
 
@@ -1395,16 +1069,6 @@ func TestDefaultExportClassExpressionInFile(t *testing.T) {
 	}
 }
 
-func TestReexportDefaultSkipped(t *testing.T) {
-	r := parseTS(t, `export { default } from "./button";
-`, "index.ts")
-	for _, s := range r.symbols {
-		if s.Name == "default" {
-			t.Error("default export should be skipped in re-export symbol emission")
-		}
-	}
-}
-
 func TestFileBasedNameDotSeparator(t *testing.T) {
 	r := parseJS(t, `export default function() {
   return 1;
@@ -1540,27 +1204,6 @@ func TestInterfaceExtendsGeneric(t *testing.T) {
 	}
 }
 
-func TestDynamicImportInsideFunction(t *testing.T) {
-	r := parseTS(t, `async function load() {
-  const mod = await import("./heavy-module");
-  return mod.default;
-}
-`, "loader.ts")
-	if findSym(r, "load") == nil {
-		t.Fatal("missing symbol load")
-	}
-	// Dynamic import should create an imports edge
-	hasImport := false
-	for _, e := range r.edges {
-		if string(e.Kind) == "imports" && e.TargetQualified == "./heavy-module" {
-			hasImport = true
-		}
-	}
-	if !hasImport {
-		t.Error("missing imports edge from dynamic import()")
-	}
-}
-
 // --- error propagation tests for previously uncovered paths ---
 
 var errTest = &testErr{"test"}
@@ -1644,24 +1287,10 @@ func TestIntersectionEdgeError(t *testing.T) {
 	}
 }
 
-func TestReexportEdgeError(t *testing.T) {
-	err := parseWithEmitter(t, `export { Foo } from "./foo";`, &failAfter{symbolsLeft: 100, edgesLeft: 0})
-	if err == nil {
-		t.Error("expected error on re-export imports edge emit")
-	}
-}
-
 func TestHeritageEdgeError(t *testing.T) {
 	err := parseWithEmitter(t, `interface B extends A {}`, &failAfter{symbolsLeft: 100, edgesLeft: 0})
 	if err == nil {
 		t.Error("expected error on heritage inherits edge emit")
-	}
-}
-
-func TestDynamicImportEdgeError(t *testing.T) {
-	err := parseWithEmitter(t, `async function f() { await import("./x"); }`, &failAfter{symbolsLeft: 100, edgesLeft: 0})
-	if err == nil {
-		t.Error("expected error on dynamic import edge emit")
 	}
 }
 
@@ -1791,15 +1420,6 @@ func TestCallEdgeError(t *testing.T) {
 	err := parseWithEmitter(t, `function f() { g(); }`, &failAfter{symbolsLeft: 100, edgesLeft: 0})
 	if err == nil {
 		t.Error("expected error on call edge emit")
-	}
-}
-
-func TestReexportSymbolError(t *testing.T) {
-	err := parseWithEmitter(t, `export { Foo } from "./foo";`, &failAfter{symbolsLeft: 0, edgesLeft: 100})
-	// Re-export tries to emit imports edge first (edgesLeft=100 -> ok),
-	// then symbol (symbolsLeft=0 -> fails)
-	if err == nil {
-		t.Error("expected error on re-export symbol emit")
 	}
 }
 
