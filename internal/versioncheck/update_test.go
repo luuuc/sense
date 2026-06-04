@@ -438,3 +438,14 @@ func TestInGopathBin(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateDevBuild(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Update(&stdout, &stderr)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("development build")) {
+		t.Errorf("stderr = %q, expected development build message", stderr.String())
+	}
+}

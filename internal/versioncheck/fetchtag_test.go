@@ -1,7 +1,6 @@
 package versioncheck
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -149,16 +148,5 @@ func TestFetchLatestTag_Unreachable(t *testing.T) {
 	_, err := fetchLatestTag()
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
-	}
-}
-
-func TestUpdateDevBuild(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := Update(&stdout, &stderr)
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
-	}
-	if !bytes.Contains(stderr.Bytes(), []byte("development build")) {
-		t.Errorf("stderr = %q, expected development build message", stderr.String())
 	}
 }
