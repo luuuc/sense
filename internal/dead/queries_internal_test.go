@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/luuuc/sense/internal/extract"
 )
 
 // memDB opens a fresh in-memory SQLite handle for the error-path and meta
@@ -105,82 +107,94 @@ func TestFindLiveContainersNoContainers(t *testing.T) {
 	}
 }
 
-// TestReadFrameworksMeta covers the missing-row, corrupt-JSON, and valid
-// branches of readFrameworks against a real sense_meta table.
-func TestReadFrameworksMeta(t *testing.T) {
+// TestStructuralQueryHelpersReturnRows covers the happy paths of the
+// soundness-critical structural queries against a hand-built index — the rows
+// the error-path tests above never exercise. These queries decide which
+// zero-edge symbols are kept open-world (controller concerns, value objects,
+// included modules, interface methods, test targets); a wrong result here is a
+// false `dead` or a missed one, so the SELECTs are pinned, not assumed.
+func TestStructuralQueryHelpersReturnRows(t *testing.T) {
 	db := memDB(t)
 	ctx := context.Background()
-	mustExec(t, db, `CREATE TABLE sense_meta(key TEXT PRIMARY KEY, value TEXT)`)
+	mustExec(t, db, `CREATE TABLE sense_symbols(id INTEGER PRIMARY KEY, name TEXT, qualified TEXT, kind TEXT, parent_id INTEGER)`)
+	mustExec(t, db, `CREATE TABLE sense_edges(kind TEXT, source_id INTEGER, target_id INTEGER)`)
 
-	if got := readFrameworks(ctx, db); len(got) != 0 {
-		t.Errorf("readFrameworks (missing) = %v, want empty", got)
+	mustExec(t, db, `INSERT INTO sense_symbols(id, name, qualified, kind, parent_id) VALUES
+		(1,  'FooController',   'FooController',   'class',     NULL),
+		(2,  'Auditable',       'Auditable',       'module',    NULL),
+		(5,  'Money',           'Money',           'class',     NULL),
+		(10, 'Struct',          '`+extract.RubyCoreStruct+`', 'class',     NULL),
+		(20, 'Serializer',      'Serializer',      'interface', NULL),
+		(21, 'serialize',       'Serializer#serialize', 'method', 20),
+		(30, 'Trackable',       'Trackable',       'module',    NULL),
+		(99, 'PlainClass',      'PlainClass',      'class',     NULL),
+		(40, 'tested_method',   'Thing#tested_method', 'method', NULL)`)
+	mustExec(t, db, `INSERT INTO sense_edges(kind, source_id, target_id) VALUES
+		('includes', 1,  2),
+		('includes', 99, 30),
+		('inherits', 5,  10),
+		('tests',    50, 40)`)
+
+	t.Run("controller concern modules", func(t *testing.T) {
+		got, err := queryControllerConcernModuleIDs(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Only the include INTO a *Controller counts; the include into PlainClass
+		// (module 30) must not leak in.
+		assertIDSet(t, got, 2)
+	})
+	t.Run("value-object classes", func(t *testing.T) {
+		got, err := queryValueObjectClassIDs(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The class inheriting the synthetic ruby-core:Struct base.
+		assertIDSet(t, got, 5)
+	})
+	t.Run("included modules", func(t *testing.T) {
+		got, err := queryIncludedModuleIDs(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Every includes target, regardless of the including class.
+		assertIDSet(t, got, 2, 30)
+	})
+	t.Run("interface method names", func(t *testing.T) {
+		got, err := queryInterfaceMethodNames(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("got %v, want exactly {serialize}", got)
+		}
+		if _, ok := got["serialize"]; !ok {
+			t.Errorf("got %v, want serialize", got)
+		}
+	})
+	t.Run("tests targets", func(t *testing.T) {
+		got, err := queryTestsTargets(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertIDSet(t, got, 40)
+	})
+}
+
+// assertIDSet fails unless got holds exactly the given IDs.
+func assertIDSet(t *testing.T, got map[int64]struct{}, want ...int64) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want exactly %v", got, want)
 	}
-	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('frameworks', '{bad')`)
-	if got := readFrameworks(ctx, db); len(got) != 0 {
-		t.Errorf("readFrameworks (corrupt) = %v, want empty", got)
-	}
-	mustExec(t, db, `UPDATE sense_meta SET value='["Rails","Sidekiq"]' WHERE key='frameworks'`)
-	if _, ok := readFrameworks(ctx, db)["Rails"]; !ok {
-		t.Error("readFrameworks (valid) should contain Rails")
+	for _, id := range want {
+		if _, ok := got[id]; !ok {
+			t.Errorf("got %v, missing %d", got, id)
+		}
 	}
 }
 
-// TestReadHarvestedLangsMeta covers the missing-row, corrupt-JSON, and valid
-// branches of readHarvestedLangs against a real sense_meta table.
-func TestReadHarvestedLangsMeta(t *testing.T) {
-	db := memDB(t)
-	ctx := context.Background()
-	mustExec(t, db, `CREATE TABLE sense_meta(key TEXT PRIMARY KEY, value TEXT)`)
-
-	if got := readHarvestedLangs(ctx, db); len(got) != 0 {
-		t.Errorf("readHarvestedLangs (missing) = %v, want empty", got)
-	}
-	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('harvested_langs', '{bad')`)
-	if got := readHarvestedLangs(ctx, db); len(got) != 0 {
-		t.Errorf("readHarvestedLangs (corrupt) = %v, want empty", got)
-	}
-	mustExec(t, db, `UPDATE sense_meta SET value='["ruby","go"]' WHERE key='harvested_langs'`)
-	got := readHarvestedLangs(ctx, db)
-	if _, ok := got["ruby"]; !ok {
-		t.Error("readHarvestedLangs (valid) should contain ruby")
-	}
-	if _, ok := got["go"]; !ok {
-		t.Error("readHarvestedLangs (valid) should contain go")
-	}
-}
-
-// TestReadDispatchNamesMeta covers the per-language reader's branches: missing,
-// a legacy union key (ignored), a corrupt per-language value (self-heals to an
-// empty set), and a valid per-language value parsed under its language.
-func TestReadDispatchNamesMeta(t *testing.T) {
-	db := memDB(t)
-	ctx := context.Background()
-	mustExec(t, db, `CREATE TABLE sense_meta(key TEXT PRIMARY KEY, value TEXT)`)
-
-	// Missing → empty.
-	if got := readDispatchNames(ctx, db); len(got) != 0 {
-		t.Errorf("readDispatchNames (missing) = %v, want empty", got)
-	}
-	// A legacy union key (no language suffix) does not match the per-language
-	// GLOB, so it is ignored — a pre-feature index harvests no languages.
-	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('dispatch_names', '["legacy"]')`)
-	if got := readDispatchNames(ctx, db); len(got) != 0 {
-		t.Errorf("readDispatchNames (legacy union key) = %v, want empty (ignored)", got)
-	}
-	// Corrupt per-language value → that language is present with an empty set.
-	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('dispatch_names:ruby', '{bad')`)
-	if got := readDispatchNames(ctx, db); len(got) != 1 || got["ruby"] == nil || len(got["ruby"]) != 0 {
-		t.Errorf("readDispatchNames (corrupt ruby) = %v, want ruby present-but-empty", got)
-	}
-	// Valid per-language value → names parsed under the language.
-	mustExec(t, db, `UPDATE sense_meta SET value='["process","perform"]' WHERE key='dispatch_names:ruby'`)
-	if _, ok := readDispatchNames(ctx, db)["ruby"]["process"]; !ok {
-		t.Error("readDispatchNames (valid) should contain ruby/process")
-	}
-	// An empty language suffix (the bare prefix plus a colon) is skipped — it
-	// names no language, so it can never mark a harvest.
-	mustExec(t, db, `INSERT INTO sense_meta(key, value) VALUES('dispatch_names:', '["x"]')`)
-	if _, ok := readDispatchNames(ctx, db)[""]; ok {
-		t.Error("readDispatchNames must skip an empty language suffix")
-	}
-}
+// The meta-reader tests (readFrameworks, readHarvestedLangs, readDispatchNames,
+// the per-language no-leakage primitive, and the flat-set wiring) live in
+// meta_readers_internal_test.go, beside the code under test. memDB and mustExec
+// above are shared package-test helpers.
