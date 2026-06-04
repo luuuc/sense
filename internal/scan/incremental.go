@@ -30,8 +30,6 @@ type IncrementalOptions struct {
 // RunIncremental re-indexes a specific set of changed files and removes
 // deleted ones. It uses the same per-file processing, edge resolution,
 // and embedding logic as the full scan but scoped to the provided paths.
-//
-//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, error) {
 	out := opts.Output
 	if out == nil {
@@ -48,15 +46,13 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 		parsers = NewParserCache()
 	}
 
-	wc := newWarningCollector()
-
 	h := &harness{
 		ctx:           ctx,
 		idx:           opts.Idx,
 		out:           out,
 		warn:          warn,
 		progress:      newProgress(out, true),
-		collector:     wc,
+		collector:     newWarningCollector(),
 		parsers:       parsers.parsers,
 		matcher:       opts.Matcher,
 		maxFileSizeKB: opts.MaxFileSizeKB,
@@ -86,45 +82,15 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 
 	if len(opts.Removed) > 0 {
 		t0 = time.Now()
-		err := h.idx.InTx(ctx, func() error {
-			for _, rel := range opts.Removed {
-				if err := h.idx.DeleteFile(ctx, rel); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, fmt.Errorf("remove deleted files: %w", err)
+		if err := h.removeDeleted(opts.Removed); err != nil {
+			return nil, err
 		}
 		h.removed = len(opts.Removed)
 		phases.RemoveStale = time.Since(t0)
 	}
 
-	t0 = time.Now()
-	if err := h.resolveAndWriteEdges(); err != nil {
-		return nil, fmt.Errorf("resolve edges: %w", err)
-	}
-	phases.ResolveEdges = time.Since(t0)
-
-	t0 = time.Now()
-	if err := h.associateTests(); err != nil {
-		return nil, fmt.Errorf("associate tests: %w", err)
-	}
-	phases.AssociateTests = time.Since(t0)
-
-	t0 = time.Now()
-	if err := h.namingConventionEdges(); err != nil {
-		return nil, fmt.Errorf("naming convention edges: %w", err)
-	}
-	phases.NamingConventions = time.Since(t0)
-
-	if opts.EmbeddingsEnabled {
-		t0 = time.Now()
-		if err := h.embedSymbols(); err != nil {
-			return nil, fmt.Errorf("embed symbols: %w", err)
-		}
-		phases.Embed = time.Since(t0)
+	if err := h.deriveIncremental(opts.EmbeddingsEnabled, &phases); err != nil {
+		return nil, err
 	}
 
 	if h.changed > 0 || h.removed > 0 {
@@ -134,9 +100,62 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 		}
 	}
 
-	elapsed := time.Since(start)
+	return buildIncrementalResult(h, opts, time.Since(start), phases), nil
+}
 
-	res := &Result{
+// removeDeleted deletes the given relative paths from the index in one
+// transaction; FK CASCADE removes their symbols and edges.
+func (h *harness) removeDeleted(removed []string) error {
+	err := h.idx.InTx(h.ctx, func() error {
+		for _, rel := range removed {
+			if err := h.idx.DeleteFile(h.ctx, rel); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("remove deleted files: %w", err)
+	}
+	return nil
+}
+
+// deriveIncremental runs the post-walk edge passes an incremental scan needs —
+// resolve, associate tests, naming conventions, and (when enabled) embedding —
+// recording each phase's timing.
+func (h *harness) deriveIncremental(embeddingsEnabled bool, phases *PhaseTiming) error {
+	t0 := time.Now()
+	if err := h.resolveAndWriteEdges(); err != nil {
+		return fmt.Errorf("resolve edges: %w", err)
+	}
+	phases.ResolveEdges = time.Since(t0)
+
+	t0 = time.Now()
+	if err := h.associateTests(); err != nil {
+		return fmt.Errorf("associate tests: %w", err)
+	}
+	phases.AssociateTests = time.Since(t0)
+
+	t0 = time.Now()
+	if err := h.namingConventionEdges(); err != nil {
+		return fmt.Errorf("naming convention edges: %w", err)
+	}
+	phases.NamingConventions = time.Since(t0)
+
+	if embeddingsEnabled {
+		t0 = time.Now()
+		if err := h.embedSymbols(); err != nil {
+			return fmt.Errorf("embed symbols: %w", err)
+		}
+		phases.Embed = time.Since(t0)
+	}
+	return nil
+}
+
+// buildIncrementalResult assembles the incremental run summary from the harness
+// tallies. Files counts only the changed set an incremental scan was handed.
+func buildIncrementalResult(h *harness, opts IncrementalOptions, elapsed time.Duration, phases PhaseTiming) *Result {
+	return &Result{
 		Files:      len(opts.Changed),
 		Indexed:    h.indexed,
 		Changed:    h.changed,
@@ -146,10 +165,8 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 		Edges:      h.edges,
 		Embedded:   h.embedded,
 		Unresolved: h.unresolved,
-		Warnings:   wc.count(),
+		Warnings:   h.collector.count(),
 		Duration:   elapsed,
 		Phases:     phases,
 	}
-
-	return res, nil
 }

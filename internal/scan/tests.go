@@ -27,28 +27,12 @@ import (
 // mirror trees (Rails: spec/models/user_spec.rb → app/models/user.rb)
 // are handled by mirrorImpl. Other frameworks (Django, etc.) remain
 // same-directory only until a real case demands it.
-//
-//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func (h *harness) associateTests() error {
 	if len(h.indexedFiles) == 0 {
 		return nil
 	}
 
-	// Build two maps over the indexed-file list: path → id so we can
-	// look up an implementation-file's id after deriving its path
-	// from a test file, and implPath → list of test file ids so we
-	// pair test files with their impl targets in one pass.
-	idByPath := make(map[string]int64, len(h.indexedFiles))
-	testsForImpl := map[string][]int64{}
-	for _, f := range h.indexedFiles {
-		idByPath[f.Path] = f.ID
-		if implPath, ok := implSibling(f.Path, f.Language); ok {
-			testsForImpl[implPath] = append(testsForImpl[implPath], f.ID)
-		}
-		for _, mp := range mirrorImpl(f.Path, f.Language) {
-			testsForImpl[mp] = append(testsForImpl[mp], f.ID)
-		}
-	}
+	idByPath, testsForImpl := buildTestPairs(h.indexedFiles)
 	if len(testsForImpl) == 0 {
 		return nil
 	}
@@ -61,6 +45,37 @@ func (h *harness) associateTests() error {
 	}
 	sort.Strings(implPaths)
 
+	written, err := h.writeTestEdges(implPaths, idByPath, testsForImpl)
+	if err != nil {
+		return err
+	}
+	h.edges += written
+	return nil
+}
+
+// buildTestPairs derives, from the indexed-file list, a path→id lookup and an
+// implPath→test-file-ids map. The two pairings (same-directory siblings via
+// implSibling, cross-directory mirror trees via mirrorImpl) are folded in one
+// pass so a test file is paired with its implementation without re-querying
+// sense_files.
+func buildTestPairs(files []indexedFile) (map[string]int64, map[string][]int64) {
+	idByPath := make(map[string]int64, len(files))
+	testsForImpl := map[string][]int64{}
+	for _, f := range files {
+		idByPath[f.Path] = f.ID
+		if implPath, ok := implSibling(f.Path, f.Language); ok {
+			testsForImpl[implPath] = append(testsForImpl[implPath], f.ID)
+		}
+		for _, mp := range mirrorImpl(f.Path, f.Language) {
+			testsForImpl[mp] = append(testsForImpl[mp], f.ID)
+		}
+	}
+	return idByPath, testsForImpl
+}
+
+// writeTestEdges drains the impl→tests pairing into `tests` edges in one
+// transaction, skipping impl paths that weren't indexed or have no symbols.
+func (h *harness) writeTestEdges(implPaths []string, idByPath map[string]int64, testsForImpl map[string][]int64) (int, error) {
 	var written int
 	err := h.idx.InTx(h.ctx, func() error {
 		for _, implPath := range implPaths {
@@ -75,39 +90,47 @@ func (h *harness) associateTests() error {
 			if len(implSymbols) == 0 {
 				continue
 			}
-			testFileIDs := testsForImpl[implPath]
-			sort.Slice(testFileIDs, func(i, j int) bool { return testFileIDs[i] < testFileIDs[j] })
-			for _, testFileID := range testFileIDs {
-				testSymbols, err := h.idx.Query(h.ctx, index.Filter{FileID: testFileID})
-				if err != nil {
-					return fmt.Errorf("query test symbols: %w", err)
-				}
-				sourceID, ok := representativeTestSymbol(testSymbols)
-				if !ok {
-					continue // test file had no symbols (empty or parse-failed).
-				}
-				for _, implSym := range implSymbols {
-					edge := &model.Edge{
-						SourceID:   &sourceID,
-						TargetID:   implSym.ID,
-						Kind:       model.EdgeTests,
-						FileID:     testFileID,
-						Confidence: extract.ConfidenceTests,
-					}
-					if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
-						return fmt.Errorf("write tests edge: %w", werr)
-					}
-					written++
-				}
+			n, err := h.writeTestEdgesForImpl(implSymbols, testsForImpl[implPath])
+			if err != nil {
+				return err
 			}
+			written += n
 		}
 		return nil
 	})
-	if err != nil {
-		return err
+	return written, err
+}
+
+// writeTestEdgesForImpl writes one `tests` edge per implementation symbol,
+// sourced from a representative symbol in each paired test file. Test file ids
+// are sorted so the edge set is deterministic regardless of map order.
+func (h *harness) writeTestEdgesForImpl(implSymbols []model.Symbol, testFileIDs []int64) (int, error) {
+	sort.Slice(testFileIDs, func(i, j int) bool { return testFileIDs[i] < testFileIDs[j] })
+	var written int
+	for _, testFileID := range testFileIDs {
+		testSymbols, err := h.idx.Query(h.ctx, index.Filter{FileID: testFileID})
+		if err != nil {
+			return written, fmt.Errorf("query test symbols: %w", err)
+		}
+		sourceID, ok := representativeTestSymbol(testSymbols)
+		if !ok {
+			continue // test file had no symbols (empty or parse-failed).
+		}
+		for _, implSym := range implSymbols {
+			edge := &model.Edge{
+				SourceID:   &sourceID,
+				TargetID:   implSym.ID,
+				Kind:       model.EdgeTests,
+				FileID:     testFileID,
+				Confidence: extract.ConfidenceTests,
+			}
+			if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
+				return written, fmt.Errorf("write tests edge: %w", werr)
+			}
+			written++
+		}
 	}
-	h.edges += written
-	return nil
+	return written, nil
 }
 
 // implSibling returns the expected implementation-file path for a
@@ -115,19 +138,12 @@ func (h *harness) associateTests() error {
 // convention. Matching is suffix / prefix -based and same-directory
 // only; cross-directory mirror trees (Rails, Django) are not
 // handled.
-//
-//nolint:gocyclo // 27-06: retired by the scan-pipeline split
 func implSibling(path, language string) (string, bool) {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 	switch language {
 	case "ruby":
-		for _, suffix := range []string{"_test.rb", "_spec.rb"} {
-			if strings.HasSuffix(base, suffix) {
-				stem := strings.TrimSuffix(base, suffix)
-				return filepath.Join(dir, stem+".rb"), true
-			}
-		}
+		return siblingBySuffix(dir, base, []string{"_test.rb", "_spec.rb"}, ".rb")
 	case "python":
 		if strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") {
 			stem := strings.TrimSuffix(strings.TrimPrefix(base, "test_"), ".py")
@@ -136,34 +152,42 @@ func implSibling(path, language string) (string, bool) {
 	case "typescript":
 		// TSX files arrive with language "tsx" (separate extractor
 		// registration), so only .ts siblings belong here.
-		for _, suffix := range []string{".test.ts", ".spec.ts"} {
-			if strings.HasSuffix(base, suffix) {
-				stem := strings.TrimSuffix(base, suffix)
-				return filepath.Join(dir, stem+".ts"), true
-			}
-		}
+		return siblingBySuffix(dir, base, []string{".test.ts", ".spec.ts"}, ".ts")
 	case "tsx":
-		for _, suffix := range []string{".test.tsx", ".spec.tsx"} {
-			if strings.HasSuffix(base, suffix) {
-				stem := strings.TrimSuffix(base, suffix)
-				return filepath.Join(dir, stem+".tsx"), true
-			}
-		}
+		return siblingBySuffix(dir, base, []string{".test.tsx", ".spec.tsx"}, ".tsx")
 	case "javascript":
-		for _, suffix := range []string{".test.js", ".spec.js", ".test.jsx", ".spec.jsx"} {
-			if strings.HasSuffix(base, suffix) {
-				stem := strings.TrimSuffix(base, suffix)
-				ext := ".js"
-				if strings.HasSuffix(suffix, ".jsx") {
-					ext = ".jsx"
-				}
-				return filepath.Join(dir, stem+ext), true
-			}
-		}
+		return jsImplSibling(dir, base)
 	case "go":
-		if strings.HasSuffix(base, "_test.go") {
-			stem := strings.TrimSuffix(base, "_test.go")
-			return filepath.Join(dir, stem+".go"), true
+		return siblingBySuffix(dir, base, []string{"_test.go"}, ".go")
+	}
+	return "", false
+}
+
+// siblingBySuffix returns the impl path for base when it ends with one of the
+// test suffixes, swapping that suffix for implExt. Returns (_, false) when no
+// suffix matches.
+func siblingBySuffix(dir, base string, suffixes []string, implExt string) (string, bool) {
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(base, suffix) {
+			stem := strings.TrimSuffix(base, suffix)
+			return filepath.Join(dir, stem+implExt), true
+		}
+	}
+	return "", false
+}
+
+// jsImplSibling is the JavaScript case of implSibling: the implementation
+// extension follows the test suffix (.jsx tests map to .jsx, the rest to .js),
+// so it can't share siblingBySuffix's single fixed implExt.
+func jsImplSibling(dir, base string) (string, bool) {
+	for _, suffix := range []string{".test.js", ".spec.js", ".test.jsx", ".spec.jsx"} {
+		if strings.HasSuffix(base, suffix) {
+			stem := strings.TrimSuffix(base, suffix)
+			ext := ".js"
+			if strings.HasSuffix(suffix, ".jsx") {
+				ext = ".jsx"
+			}
+			return filepath.Join(dir, stem+ext), true
 		}
 	}
 	return "", false

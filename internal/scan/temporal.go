@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -25,8 +26,6 @@ const (
 
 // extractTemporalCoupling derives temporal edges from git co-change history.
 // No-op if git is absent or the git log exceeds gitTimeout.
-//
-//nolint:gocyclo,gocognit // 27-06: retired by the scan-pipeline split
 func (h *harness) extractTemporalCoupling() error {
 	ctx, cancel := context.WithTimeout(h.ctx, gitTimeout)
 	defer cancel()
@@ -52,23 +51,10 @@ func (h *harness) extractTemporalCoupling() error {
 	}
 
 	pairs, fileCounts := countCoChanges(commits, indexedFiles)
-
-	var significant []pairKey
-	for pair, count := range pairs {
-		if count < minCoChanges {
-			continue
-		}
-		significant = append(significant, pair)
-	}
+	significant := significantPairs(pairs)
 	if len(significant) == 0 {
 		return nil
 	}
-	sort.Slice(significant, func(i, j int) bool {
-		if significant[i].a != significant[j].a {
-			return significant[i].a < significant[j].a
-		}
-		return significant[i].b < significant[j].b
-	})
 
 	repSymbols, err := h.representativeSymbols(indexedFiles)
 	if err != nil {
@@ -79,8 +65,42 @@ func (h *harness) extractTemporalCoupling() error {
 		return err
 	}
 
+	written, err := h.writeTemporalEdges(significant, repSymbols, pairs, fileCounts)
+	if err != nil {
+		return fmt.Errorf("temporal coupling: %w", err)
+	}
+	if written > 0 {
+		h.edges += written
+	}
+	return nil
+}
+
+// significantPairs returns the co-change pairs that met the minCoChanges
+// threshold, sorted deterministically so the temporal edge set is stable across
+// runs regardless of map iteration order.
+func significantPairs(pairs map[pairKey]int) []pairKey {
+	var significant []pairKey
+	for pair, count := range pairs {
+		if count < minCoChanges {
+			continue
+		}
+		significant = append(significant, pair)
+	}
+	sort.Slice(significant, func(i, j int) bool {
+		if significant[i].a != significant[j].a {
+			return significant[i].a < significant[j].a
+		}
+		return significant[i].b < significant[j].b
+	})
+	return significant
+}
+
+// writeTemporalEdges writes both directions of each significant co-change pair
+// as temporal edges in one transaction, skipping pairs whose representative
+// symbol is missing on either side.
+func (h *harness) writeTemporalEdges(significant []pairKey, repSymbols map[string]model.Symbol, pairs map[pairKey]int, fileCounts map[string]int) (int, error) {
 	var written int
-	err = h.idx.InTx(h.ctx, func() error {
+	err := h.idx.InTx(h.ctx, func() error {
 		edgeStmt, serr := h.idx.PrepareEdgeStmt(h.ctx)
 		if serr != nil {
 			return serr
@@ -101,37 +121,42 @@ func (h *harness) extractTemporalCoupling() error {
 			}
 			strength := float64(coCount) / float64(maxChanges)
 
-			for _, dir := range []struct{ src, tgt model.Symbol }{
-				{symA, symB},
-				{symB, symA},
-			} {
-				srcID := dir.src.ID
-				coChanges := coCount
-				// Line stores co-change count for temporal edges (not a source line number).
-				edge := &model.Edge{
-					SourceID:   &srcID,
-					TargetID:   dir.tgt.ID,
-					Kind:       model.EdgeTemporal,
-					FileID:     dir.src.FileID,
-					Line:       &coChanges,
-					Confidence: strength,
-				}
-				if _, werr := sqlite.ExecEdgeStmt(h.ctx, edgeStmt, edge); werr != nil {
-					return fmt.Errorf("write temporal edge: %w", werr)
-				}
-				written++
+			n, werr := writeTemporalPair(h.ctx, edgeStmt, symA, symB, coCount, strength)
+			if werr != nil {
+				return werr
 			}
+			written += n
 		}
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("temporal coupling: %w", err)
-	}
+	return written, err
+}
 
-	if written > 0 {
-		h.edges += written
+// writeTemporalPair writes the two directed temporal edges for one co-changing
+// symbol pair. The edge Line field stores the co-change count (not a source line
+// number), as the temporal reader documents.
+func writeTemporalPair(ctx context.Context, edgeStmt *sql.Stmt, symA, symB model.Symbol, coCount int, strength float64) (int, error) {
+	var written int
+	for _, dir := range []struct{ src, tgt model.Symbol }{
+		{symA, symB},
+		{symB, symA},
+	} {
+		srcID := dir.src.ID
+		coChanges := coCount
+		edge := &model.Edge{
+			SourceID:   &srcID,
+			TargetID:   dir.tgt.ID,
+			Kind:       model.EdgeTemporal,
+			FileID:     dir.src.FileID,
+			Line:       &coChanges,
+			Confidence: strength,
+		}
+		if _, werr := sqlite.ExecEdgeStmt(ctx, edgeStmt, edge); werr != nil {
+			return written, fmt.Errorf("write temporal edge: %w", werr)
+		}
+		written++
 	}
-	return nil
+	return written, nil
 }
 
 // gitPresent checks whether the root is inside a git repository.
