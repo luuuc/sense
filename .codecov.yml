@@ -1,11 +1,19 @@
-# Codecov is INFORMATIONAL only. The build-failing coverage gate is the
-# deterministic total-% floor in `make cover` (no upload dependency, so a flaky
-# Codecov upload never reds the build). These statuses surface per-file coverage
-# for visibility but must not fail CI.
+# Codecov is INFORMATIONAL only. The build-failing coverage gate is local:
+# `make cover` enforces a per-file 92% line AND function floor over the packages
+# in scripts/coveragegate (coveredPackages), plus a total-% backstop. It has no
+# upload dependency, so a flaky Codecov upload never reds the build. These
+# statuses surface per-file coverage for visibility but must not fail CI.
 #
-# The real per-file 95% floor — scoped to the packages cycle 27 covers — is a
-# 27-13 deliverable. Until then Codecov stays advisory and the total-% floor in
-# `make cover` is the only hard coverage gate.
+# Note: Go coverage is STATEMENT-based; Codecov reports LINE-based. A gated file
+# can read 88-90% here and still clear the 92% statement floor in `make cover`.
+# Do not chase Codecov's line % on gated packages (scan, blast, sqlite,
+# extract/*, …) — the gate already governs them on the statement metric.
+#
+# The `ignore` list mirrors the gate's exclusion philosophy for NON-PRODUCT code
+# only (tooling, test helpers, fixtures, entry-point wiring). The untested
+# product tail (cli, setup, summary, profile, freshen, …) is left VISIBLE on
+# purpose — it is honest coverage debt, "excluded, not hidden". Bringing one of
+# those under the real gate is a one-line edit to coveredPackages.
 coverage:
   status:
     project:
@@ -25,3 +33,10 @@ ignore:
   - "internal/index/indextest/"
   # CLI entry point — wiring only, smoke-tested
   - "cmd/sense/main.go"
+  # the coverage gate's own CLI tooling — not shipped product
+  - "scripts/"
+  # test-helper packages the real gate also refuses to gate (peers of indextest)
+  - "internal/scan/scantest/"
+  - "internal/embed/embedtest/"
+  # test fixtures
+  - "**/testdata/"
