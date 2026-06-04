@@ -128,84 +128,104 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //     blast's floor as an unverified cross-scope guess unless the
 //     qualifier can be verified — see isUnverifiedCrossScope.
 //  4. No match ⇒ ok=false.
-//
-//nolint:gocyclo,gocognit // 27-07: retired by the storage/query split
 func (ix *Index) Resolve(req Request) (Result, bool) {
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)
 	gatedKind := req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests || req.Kind == model.EdgeReferences
 
-	// A bare target emitted at ConfidenceUnresolved means the extractor could
-	// not type the receiver, so the name is a leaf, not a qualified name. Any
-	// exact byQualified hit on it is a coincidence with a same-named symbol;
-	// skip the shortcut and let the gated fallback handle (and demote) it.
-	_, targetSep := unqualifiedNameSep(target)
-	bareGuess := targetSep == "" && req.BaseConfidence <= extract.ConfidenceUnresolved
-
-	if !bareGuess {
-		if matches := ix.byQualified[target]; len(matches) > 0 {
-			if gatedKind && !isSyntheticTarget(target) {
-				matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
-				matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
-			}
-			if len(matches) > 0 {
-				return pickBest(matches, req.SourceFileID, req.BaseConfidence), true
-			}
-			// The qualified name matched only cross-language or test-only
-			// symbols: a coincidence, not a real edge. Drop it rather than
-			// leaf-fallback into more coincidences.
-			return Result{}, false
-		}
+	// Step 1-2: exact qualified-name match. A terminal answer here (a hit, or a
+	// coincidence-only match dropped) short-circuits; otherwise fall through.
+	if r, ok, done := ix.resolveQualified(target, req, gatedKind); done {
+		return r, ok
 	}
 
+	// Step 3: unqualified leaf fallback, gated kinds only.
 	if gatedKind {
-		// Unqualified fallback: find symbols whose trailing segment
-		// matches the target's trailing segment. Applies to bare
-		// targets ("say" ⇒ byName["say"]) as well as dotted targets
-		// whose full qualified form missed ("mod.Sprintf" ⇒
-		// byName["Sprintf"]). byQualified and byName are different
-		// indexes, so looking up the same key in both is not
-		// duplicate work.
-		if name, sep := unqualifiedNameSep(target); name != "" {
-			// A target still carrying a `self.`/`Self::` prefix here means
-			// rewriteReceiver had no parent to bind it to (e.g. a template
-			// file-level call). Its trailing `.` is the sentinel separator,
-			// not a class-method dispatch, so the dispatch kind is unknown and
-			// receiver filtering must not narrow on it.
-			if strings.HasPrefix(target, "self.") || strings.HasPrefix(target, "Self::") {
-				sep = ""
-			}
-			matches := ix.byName[name]
-			matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
-			matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
-			matches, receiverContradicted := filterByReceiver(matches, sep)
-			if len(matches) > 0 {
-				r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
-				if r.Confidence > ambiguousConfidence {
-					r.Confidence = ambiguousConfidence
-				}
-				if r.Ambiguous {
-					// Bare-name fallback among multiple same-named symbols is the
-					// weakest resolution — no receiver type disambiguates it. Drop
-					// it below blast's floor so impact analysis ignores the guess;
-					// it still counts for dead-code liveness.
-					r.Confidence = nameCollisionConfidence
-				}
-				if r.Confidence > nameCollisionConfidence &&
-					ix.isUnverifiedCrossScope(target, name, sep, req.SourceFileID, req.BaseConfidence, receiverContradicted) {
-					// The leaf bound but the qualifier (namespace or receiver type)
-					// could not be verified — a cross-scope guess such as
-					// `Stripe::StripeError#message` landing on a same-named test
-					// method. Demote below blast's floor even on a single match, so
-					// impact analysis ignores it while it still counts for dead-code
-					// liveness. See isUnverifiedCrossScope for the per-separator rule.
-					r.Confidence = nameCollisionConfidence
-				}
-				return r, true
-			}
+		if r, ok := ix.resolveByLeaf(target, req); ok {
+			return r, true
 		}
 	}
 
 	return Result{}, false
+}
+
+// resolveQualified attempts an exact byQualified match. The bool done reports
+// whether the lookup reached a terminal decision: true with a hit, true with a
+// coincidence-only drop ({}, false), or false meaning "no exact entry — let the
+// leaf fallback handle it".
+func (ix *Index) resolveQualified(target string, req Request, gatedKind bool) (Result, bool, bool) {
+	// A bare target emitted at ConfidenceUnresolved means the extractor could
+	// not type the receiver, so the name is a leaf, not a qualified name. Any
+	// exact byQualified hit on it is a coincidence with a same-named symbol;
+	// skip the shortcut and let the gated fallback handle (and demote) it.
+	if _, targetSep := unqualifiedNameSep(target); targetSep == "" && req.BaseConfidence <= extract.ConfidenceUnresolved {
+		return Result{}, false, false
+	}
+
+	matches := ix.byQualified[target]
+	if len(matches) == 0 {
+		return Result{}, false, false
+	}
+	if gatedKind && !isSyntheticTarget(target) {
+		matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
+		matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
+	}
+	if len(matches) > 0 {
+		return pickBest(matches, req.SourceFileID, req.BaseConfidence), true, true
+	}
+	// The qualified name matched only cross-language or test-only symbols: a
+	// coincidence, not a real edge. Drop it rather than leaf-fallback into more
+	// coincidences.
+	return Result{}, false, true
+}
+
+// resolveByLeaf is the unqualified fallback: find symbols whose trailing segment
+// matches the target's trailing segment. Applies to bare targets ("say" ⇒
+// byName["say"]) as well as dotted targets whose full qualified form missed
+// ("mod.Sprintf" ⇒ byName["Sprintf"]). byQualified and byName are different
+// indexes, so looking up the same key in both is not duplicate work.
+func (ix *Index) resolveByLeaf(target string, req Request) (Result, bool) {
+	name, sep := unqualifiedNameSep(target)
+	if name == "" {
+		return Result{}, false
+	}
+	// A target still carrying a `self.`/`Self::` prefix here means
+	// rewriteReceiver had no parent to bind it to (e.g. a template file-level
+	// call). Its trailing `.` is the sentinel separator, not a class-method
+	// dispatch, so the dispatch kind is unknown and receiver filtering must not
+	// narrow on it.
+	if strings.HasPrefix(target, "self.") || strings.HasPrefix(target, "Self::") {
+		sep = ""
+	}
+	matches := ix.byName[name]
+	matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
+	matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
+	matches, receiverContradicted := filterByReceiver(matches, sep)
+	if len(matches) == 0 {
+		return Result{}, false
+	}
+
+	r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
+	if r.Confidence > ambiguousConfidence {
+		r.Confidence = ambiguousConfidence
+	}
+	if r.Ambiguous {
+		// Bare-name fallback among multiple same-named symbols is the weakest
+		// resolution — no receiver type disambiguates it. Drop it below blast's
+		// floor so impact analysis ignores the guess; it still counts for
+		// dead-code liveness.
+		r.Confidence = nameCollisionConfidence
+	}
+	if r.Confidence > nameCollisionConfidence &&
+		ix.isUnverifiedCrossScope(target, name, sep, req.SourceFileID, req.BaseConfidence, receiverContradicted) {
+		// The leaf bound but the qualifier (namespace or receiver type) could
+		// not be verified — a cross-scope guess such as
+		// `Stripe::StripeError#message` landing on a same-named test method.
+		// Demote below blast's floor even on a single match, so impact analysis
+		// ignores it while it still counts for dead-code liveness. See
+		// isUnverifiedCrossScope for the per-separator rule.
+		r.Confidence = nameCollisionConfidence
+	}
+	return r, true
 }
 
 // isUnverifiedCrossScope reports whether a successful unqualified-fallback
@@ -521,20 +541,32 @@ func filterByTestDirection(matches []model.SymbolRef, sourceIsTest bool, fileIsT
 // prefix, and a `Test`/`Tests` filename suffix — are stable across the
 // supported languages.
 //
-//nolint:gocyclo // 27-07: retired by the storage/query split
+// testPathInfixes and testPathPrefixes are the path conventions isTestPath
+// recognizes as a whole-path substring or a leading prefix, respectively. Held
+// as tables so the check is a pair of loops rather than a long `||` chain.
+var (
+	testPathInfixes  = []string{"_test.", ".test.", "_spec.", "/test/", "/tests/", "/testdata/", "/spec/"}
+	testPathPrefixes = []string{"test/", "tests/", "spec/"}
+)
+
 func isTestPath(path string) bool {
-	if strings.Contains(path, "_test.") ||
-		strings.Contains(path, ".test.") ||
-		strings.Contains(path, "_spec.") ||
-		strings.Contains(path, "/test/") ||
-		strings.Contains(path, "/tests/") ||
-		strings.Contains(path, "/testdata/") ||
-		strings.Contains(path, "/spec/") ||
-		strings.HasPrefix(path, "test/") ||
-		strings.HasPrefix(path, "tests/") ||
-		strings.HasPrefix(path, "spec/") {
-		return true
+	for _, infix := range testPathInfixes {
+		if strings.Contains(path, infix) {
+			return true
+		}
 	}
+	for _, prefix := range testPathPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return isTestBaseName(path)
+}
+
+// isTestBaseName reports whether a path's filename follows a test naming
+// convention not anchored to a directory: a `test_` prefix or a `Test`/`Tests`
+// stem suffix (e.g. `FooTest.java`).
+func isTestBaseName(path string) bool {
 	base := path
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		base = path[i+1:]

@@ -190,7 +190,7 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 | **PHP** | Classes, interfaces, traits (`\` scoping) |
 | **Scala** | Classes, traits, objects |
 
-Standard-tier languages use a table-driven generic extractor. Each is ~25 lines of config, not a handwritten walker. See [LANGUAGES.md](LANGUAGES.md) for how to add a new language or framework.
+Standard-tier languages use a table-driven generic extractor. Each is ~25 lines of config, not a handwritten walker. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) for how to add a new language or framework.
 
 ## Feedback
 

@@ -541,6 +541,42 @@ func TestCallersOfTargetsMaxPerTarget(t *testing.T) {
 	}
 }
 
+func TestCallersOfTargetsDefaultMaxPerTarget(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	now := time.Now()
+	intPtr := func(v int) *int { return &v }
+
+	fid, _ := a.WriteFile(ctx, &model.File{
+		Path: "main.go", Language: "go", Hash: "aaa", Symbols: 3, IndexedAt: now,
+	})
+	targetID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Target", Qualified: "pkg.Target", Kind: "function", LineStart: 1, LineEnd: 5,
+	})
+	callerID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Caller", Qualified: "pkg.Caller", Kind: "function", LineStart: 10, LineEnd: 15,
+	})
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: model.Int64Ptr(callerID), TargetID: targetID, Kind: model.EdgeCalls, FileID: fid, Line: intPtr(11),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// maxPerTarget=0 takes the default cap (20), so the single caller is kept.
+	result, err := a.CallersOfTargets(ctx, []int64{targetID}, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result[targetID]) != 1 {
+		t.Fatalf("expected 1 caller with default cap, got %d", len(result[targetID]))
+	}
+}
+
 func TestCallersOfTargetsEmpty(t *testing.T) {
 	ctx := context.Background()
 	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))

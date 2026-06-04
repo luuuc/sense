@@ -226,6 +226,20 @@ func TestAnnotationEmitErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestMethodAnnotationEmitErrorPropagates covers the func-side emitAnnotation
+// error branch: a class with no annotation (so its own symbol emits cleanly)
+// but an annotated method, whose LangspecAnnotatedName failure must surface.
+func TestMethodAnnotationEmitErrorPropagates(t *testing.T) {
+	ex := extract.ForExtension(".java")
+	src := `class Plain {
+    @Test public void shouldRun() {}
+}`
+	tree := parse(t, ex.Grammar(), src)
+	if err := ex.Extract(tree, []byte(src), "Plain.java", errEmitter{failAnnotated: true}); err == nil {
+		t.Error("expected error from annotated method LangspecAnnotatedName to propagate")
+	}
+}
+
 func TestVisibilityFlowsThroughExtract(t *testing.T) {
 	// End-to-end: the emitted symbol carries the visibility the fn computes.
 	em := &harvestEmitter{}
