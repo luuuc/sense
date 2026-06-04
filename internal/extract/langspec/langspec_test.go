@@ -640,6 +640,32 @@ public class Foo { }`
 	}
 }
 
+// TestKindBasedInheritanceEdgeError covers the error branch of the kind-based
+// inheritance walk (emitInheritance → emitInheritTargets) using C#'s base_list:
+// a failing edge emitter must surface the error from the kind-based path, which
+// the field-based Java tests never reach.
+func TestKindBasedInheritanceEdgeError(t *testing.T) {
+	spec := langSpec{
+		Name:      "csharp-kind-inherit-err",
+		Exts:      []string{".cs"},
+		Grammar:   grammars.CSharp(),
+		Tier:      extract.TierStandard,
+		Separator: ".",
+
+		FuncTypes:    []string{"method_declaration"},
+		ClassTypes:   []string{"class_declaration"},
+		InheritKinds: []string{"base_list"},
+		NameField:    "name",
+	}
+	src := `class Child : Parent { }`
+	tree := parse(t, spec.Grammar, src)
+	ex := New(spec)
+	err := ex.Extract(tree, []byte(src), "Child.cs", &failAfterN{symbolsLeft: 100, edgesLeft: 0})
+	if err == nil {
+		t.Error("expected error on kind-based inheritance edge emit")
+	}
+}
+
 func javaSpec() langSpec {
 	return langSpec{
 		Name:    "java",

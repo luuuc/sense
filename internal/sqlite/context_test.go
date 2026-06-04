@@ -224,6 +224,100 @@ func TestContextForFileReverseIncludes(t *testing.T) {
 	}
 }
 
+// An inherits edge populates the "inherits" relationship line, exercising the
+// inherits arm of the contextEdges switch.
+func TestContextForFileInherits(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: "app/models/admin.rb", Language: "ruby",
+		Hash: "inh", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseFile, _ := a.WriteFile(ctx, &model.File{
+		Path: "app/models/user.rb", Language: "ruby",
+		Hash: "base", Symbols: 1, IndexedAt: time.Now(),
+	})
+	baseID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: baseFile, Name: "User", Qualified: "User",
+		Kind: model.KindClass, LineStart: 1, LineEnd: 20,
+	})
+	adminID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Admin", Qualified: "Admin",
+		Kind: model.KindClass, LineStart: 1, LineEnd: 20,
+	})
+	if _, err := a.WriteEdge(ctx, &model.Edge{
+		SourceID: model.Int64Ptr(adminID), TargetID: baseID,
+		Kind: model.EdgeInherits, FileID: fid, Confidence: 1.0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.ContextForFile(ctx, fid)
+	if err != nil {
+		t.Fatalf("ContextForFile: %v", err)
+	}
+	if !strings.Contains(result[adminID], "inherits: User") {
+		t.Errorf("expected inherits line, got: %q", result[adminID])
+	}
+}
+
+// When the header alone is already at the budget, even a relationship line's
+// label prefix overflows, so fitGroups appends nothing and breaks. The result
+// is exactly the header.
+func TestContextForFileHeaderFillsBudget(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	// Tune the path so the header ("File: <path>\nclass Thing") lands just
+	// under the 800-char budget — close enough that even the shortest relation
+	// prefix ("\ndefines: ") overflows, so fitGroups appends nothing.
+	// header = len("File: ") + len(path) + len("\nclass Thing") = 6 + len(path) + 12.
+	// Target header length 795: len(path) = 777.
+	longPath := strings.Repeat("a", 777)
+	fid, err := a.WriteFile(ctx, &model.File{
+		Path: longPath, Language: "ruby", Hash: "long", Symbols: 1, IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	classID, _ := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "Thing", Qualified: "Thing",
+		Kind: model.KindClass, LineStart: 1, LineEnd: 100,
+	})
+	// Give it a child so a "defines" group exists to be dropped.
+	childID := classID
+	if _, err := a.WriteSymbol(ctx, &model.Symbol{
+		FileID: fid, Name: "do_it", Qualified: "Thing#do_it",
+		Kind: model.KindMethod, LineStart: 5, LineEnd: 9, ParentID: &childID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.ContextForFile(ctx, fid)
+	if err != nil {
+		t.Fatalf("ContextForFile: %v", err)
+	}
+	got := result[classID]
+	if len(got) > 800 {
+		t.Errorf("context exceeds budget: %d chars", len(got))
+	}
+	if strings.Contains(got, "defines:") {
+		t.Errorf("defines line should be dropped when prefix overflows: %q", got)
+	}
+}
+
 func TestContextForFileTruncation(t *testing.T) {
 	ctx := context.Background()
 	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))

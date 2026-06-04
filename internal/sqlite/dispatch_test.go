@@ -111,6 +111,17 @@ func TestDispatchNoParent(t *testing.T) {
 	}
 }
 
+func TestDispatchMethodIDsMissingSymbol(t *testing.T) {
+	db := openDispatchDB(t)
+	ctx := context.Background()
+
+	// No symbol with this id: the lookup row scan returns ErrNoRows, which
+	// DispatchMethodIDs wraps as an error rather than returning nil.
+	if _, err := sqlite.DispatchMethodIDs(ctx, db, 999); err == nil {
+		t.Fatal("expected error for nonexistent symbol id, got nil")
+	}
+}
+
 func TestDispatchMultipleImplementors(t *testing.T) {
 	db := openDispatchDB(t)
 	ctx := context.Background()

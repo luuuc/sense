@@ -113,6 +113,73 @@ func TestReadSymbolGraphDirectCallersNotDiluted(t *testing.T) {
 	}
 }
 
+// foldMemberCallers skips edges that blast would filter: temporal (co-change)
+// noise and below-floor low-confidence guesses are not folded into the class's
+// callers, while a genuine high-confidence caller of a method is. A second
+// high-confidence caller of the same external symbol is deduped to one edge.
+func TestReadSymbolGraphFoldCallersFilters(t *testing.T) {
+	a, fileID := newFoldAdapter(t)
+	ctx := context.Background()
+
+	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Ledger", Qualified: "Ledger", Kind: model.KindClass, LineStart: 1, LineEnd: 80})
+	methodA := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "post", Qualified: "Ledger#post", Kind: model.KindMethod, ParentID: &classID, LineStart: 5, LineEnd: 10})
+	methodB := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "void", Qualified: "Ledger#void", Kind: model.KindMethod, ParentID: &classID, LineStart: 12, LineEnd: 16})
+
+	realCaller := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Boot", Qualified: "Boot", Kind: model.KindFunction, LineStart: 20, LineEnd: 30})
+	dupCaller := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Boot2", Qualified: "Boot2", Kind: model.KindFunction, LineStart: 32, LineEnd: 40})
+	lowConfCaller := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Guess", Qualified: "Guess", Kind: model.KindFunction, LineStart: 42, LineEnd: 50})
+	temporalCaller := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Chg", Qualified: "Chg", Kind: model.KindFunction, LineStart: 52, LineEnd: 60})
+
+	// Two high-confidence callers of methodA: realCaller and dupCaller.
+	mustEdge(t, a, &model.Edge{SourceID: &realCaller, TargetID: methodA, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+	mustEdge(t, a, &model.Edge{SourceID: &dupCaller, TargetID: methodA, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+	// dupCaller also calls methodB — folds to the same target id once.
+	mustEdge(t, a, &model.Edge{SourceID: &dupCaller, TargetID: methodB, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+	// A below-floor guess: must not be folded.
+	mustEdge(t, a, &model.Edge{SourceID: &lowConfCaller, TargetID: methodA, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.3})
+	// A temporal (co-change) edge: must not be folded.
+	mustEdge(t, a, &model.Edge{SourceID: &temporalCaller, TargetID: methodA, Kind: model.EdgeTemporal, FileID: fileID, Confidence: 1.0})
+
+	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
+	if err != nil {
+		t.Fatalf("ReadSymbolGraph: %v", err)
+	}
+
+	seen := map[int64]int{}
+	for _, e := range gr.Root.Inbound {
+		seen[e.Target.ID]++
+	}
+	if seen[realCaller] == 0 {
+		t.Error("high-confidence method caller should be folded in")
+	}
+	if seen[dupCaller] != 1 {
+		t.Errorf("duplicate caller across two methods should appear once, got %d", seen[dupCaller])
+	}
+	if seen[lowConfCaller] != 0 {
+		t.Error("below-floor caller must not be folded")
+	}
+	if seen[temporalCaller] != 0 {
+		t.Error("temporal caller must not be folded")
+	}
+}
+
+// A container class with no child symbols at all takes the empty-children
+// early return in foldMemberCallers without erroring.
+func TestReadSymbolGraphFoldCallersNoChildren(t *testing.T) {
+	a, fileID := newFoldAdapter(t)
+	ctx := context.Background()
+
+	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Lonely", Qualified: "Lonely", Kind: model.KindClass, LineStart: 1, LineEnd: 5})
+
+	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
+	if err != nil {
+		t.Fatalf("ReadSymbolGraph: %v", err)
+	}
+	if len(gr.Root.Inbound) != 0 {
+		t.Errorf("childless class inbound = %d, want 0", len(gr.Root.Inbound))
+	}
+}
+
 // A non-container root (a method) never folds — its graph is exactly its own edges.
 func TestReadSymbolGraphMethodRootNotFolded(t *testing.T) {
 	a, fileID := newFoldAdapter(t)
