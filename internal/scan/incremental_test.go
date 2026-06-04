@@ -259,3 +259,96 @@ func TestRunIncrementalEmbeddingsEnabledNoChanges(t *testing.T) {
 
 // Suppress unused import warnings — sql is used via adapter.DB().
 var _ = sql.ErrNoRows
+
+func TestRunIncremental_ChangedFileDeletedFromDisk(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc Keep() {}\n")
+	writeFile(t, filepath.Join(root, "b.go"), "package a\n\nfunc Gone() {}\n")
+
+	ctx := context.Background()
+
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("initial scan: %v", err)
+	}
+
+	// Delete b.go from disk but report it as changed (simulating a race
+	// where the watcher saw a modify event but the file was then deleted).
+	if err := os.Remove(filepath.Join(root, "b.go")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	matcher, err := ignore.Build(root, nil)
+	if err != nil {
+		t.Fatalf("build matcher: %v", err)
+	}
+
+	var warnBuf bytes.Buffer
+	res, err := scan.RunIncremental(ctx, scan.IncrementalOptions{
+		Root:          root,
+		Idx:           adapter,
+		Matcher:       matcher,
+		MaxFileSizeKB: 512,
+		Output:        io.Discard,
+		Warnings:      &warnBuf,
+		Changed:       []string{"b.go"},
+	})
+	if err != nil {
+		t.Fatalf("RunIncremental: %v", err)
+	}
+	// File was deleted — should produce a warning, not a crash.
+	if res.Warnings == 0 {
+		t.Error("expected warning for file that was deleted between event and parse")
+	}
+	if res.Changed != 0 {
+		t.Errorf("Changed = %d, want 0 (file was unreadable)", res.Changed)
+	}
+}
+
+func TestRunIncremental_NilParsersCreatesTemporary(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc Hello() {}\n")
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("initial scan: %v", err)
+	}
+
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nfunc Hello() {}\nfunc World() {}\n")
+
+	dbPath := filepath.Join(root, ".sense", "index.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open adapter: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	matcher, err := ignore.Build(root, nil)
+	if err != nil {
+		t.Fatalf("build matcher: %v", err)
+	}
+
+	// Parsers: nil — should create a temporary ParserCache internally.
+	res, err := scan.RunIncremental(ctx, scan.IncrementalOptions{
+		Root:          root,
+		Idx:           adapter,
+		Matcher:       matcher,
+		MaxFileSizeKB: 512,
+		Output:        io.Discard,
+		Warnings:      io.Discard,
+		Parsers:       nil,
+		Changed:       []string{"a.go"},
+	})
+	if err != nil {
+		t.Fatalf("RunIncremental: %v", err)
+	}
+	if res.Changed != 1 {
+		t.Errorf("Changed = %d, want 1", res.Changed)
+	}
+}

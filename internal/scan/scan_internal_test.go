@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -236,5 +237,29 @@ func TestParseFileCoreHashSkip(t *testing.T) {
 	fr := parseFileCore(po, path, "x.go", func(string) bool { return true })
 	if fr != nil {
 		t.Errorf("expected nil when skip returns true, got %+v", fr)
+	}
+}
+
+func TestAddWarning(t *testing.T) {
+	wc := newWarningCollector()
+	p := &progress{
+		out:     &bytes.Buffer{},
+		enabled: false,
+		done:    make(chan struct{}),
+	}
+	p.phase.Store("")
+
+	h := &harness{
+		collector: wc,
+		progress:  p,
+	}
+
+	h.addWarning(warnParseFailed, "test.go (%s)", "broken syntax")
+
+	if wc.count() != 1 {
+		t.Errorf("warning count = %d, want 1", wc.count())
+	}
+	if p.warnings.Load() != 1 {
+		t.Errorf("progress warnings = %d, want 1", p.warnings.Load())
 	}
 }

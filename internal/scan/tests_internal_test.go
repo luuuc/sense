@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
@@ -192,4 +193,42 @@ func TestMigrateEmbeddingModel(t *testing.T) {
 	if err == nil {
 		t.Error("expected embedding_model meta to be deleted")
 	}
+}
+
+func TestRepresentativeTestSymbol(t *testing.T) {
+	t.Run("empty slice", func(t *testing.T) {
+		_, ok := representativeTestSymbol(nil)
+		if ok {
+			t.Error("expected false for nil slice")
+		}
+	})
+
+	t.Run("picks earliest line", func(t *testing.T) {
+		symbols := []model.Symbol{
+			{ID: 10, Name: "TestB", LineStart: 20},
+			{ID: 5, Name: "TestA", LineStart: 5},
+			{ID: 8, Name: "TestC", LineStart: 15},
+		}
+		id, ok := representativeTestSymbol(symbols)
+		if !ok {
+			t.Fatal("expected true")
+		}
+		if id != 5 {
+			t.Errorf("got ID %d, want 5 (TestA at line 5)", id)
+		}
+	})
+
+	t.Run("ties broken by ID", func(t *testing.T) {
+		symbols := []model.Symbol{
+			{ID: 10, Name: "TestB", LineStart: 1},
+			{ID: 3, Name: "TestA", LineStart: 1},
+		}
+		id, ok := representativeTestSymbol(symbols)
+		if !ok {
+			t.Fatal("expected true")
+		}
+		if id != 3 {
+			t.Errorf("got ID %d, want 3 (lower ID tie-break)", id)
+		}
+	})
 }

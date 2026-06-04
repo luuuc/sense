@@ -109,3 +109,62 @@ func TestSatisfyInterfacesSymbolQueryError(t *testing.T) {
 		t.Fatal("expected error querying symbols when the load fails")
 	}
 }
+
+func TestMethodSetSatisfies(t *testing.T) {
+	methods := map[string]bool{"Read": true, "Write": true, "Close": true}
+
+	if !methodSetSatisfies(methods, []string{"Read", "Write"}) {
+		t.Error("should satisfy subset")
+	}
+	if !methodSetSatisfies(methods, []string{"Read", "Write", "Close"}) {
+		t.Error("should satisfy exact set")
+	}
+	if methodSetSatisfies(methods, []string{"Read", "Flush"}) {
+		t.Error("should not satisfy with missing method")
+	}
+	if !methodSetSatisfies(methods, nil) {
+		t.Error("nil required should satisfy")
+	}
+}
+
+func TestPromoteEmbeddedMethods(t *testing.T) {
+	outer := &structInfo{methods: map[string]bool{"Own": true}}
+	inner := &structInfo{methods: map[string]bool{"Read": true, "Write": true}}
+
+	structs := map[int64]*structInfo{
+		1: outer,
+		2: inner,
+	}
+	embeddings := map[int64][]int64{
+		1: {2},
+	}
+
+	promoteEmbeddedMethods(outer, 1, embeddings, structs, 3)
+
+	if !outer.methods["Read"] {
+		t.Error("expected Read promoted from embedded struct")
+	}
+	if !outer.methods["Write"] {
+		t.Error("expected Write promoted from embedded struct")
+	}
+	if !outer.methods["Own"] {
+		t.Error("expected Own to remain")
+	}
+}
+
+func TestPromoteEmbeddedMethodsDepthLimit(t *testing.T) {
+	a := &structInfo{methods: map[string]bool{}}
+	b := &structInfo{methods: map[string]bool{}}
+	c := &structInfo{methods: map[string]bool{"Deep": true}}
+
+	structs := map[int64]*structInfo{1: a, 2: b, 3: c}
+	embeddings := map[int64][]int64{1: {2}, 2: {3}}
+
+	promoteEmbeddedMethods(a, 1, embeddings, structs, 1)
+
+	// Depth=1 means we only go one hop. b's methods get promoted,
+	// but c's methods should not (they need depth=2).
+	if a.methods["Deep"] {
+		t.Error("expected depth limit to prevent promoting from 2 hops away")
+	}
+}
