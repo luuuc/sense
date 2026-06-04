@@ -953,3 +953,56 @@ func TestBuildBlastResponseSnippetsTruncated(t *testing.T) {
 		t.Errorf("snippets with content = %d, want %d", withSnippet, SnippetCap)
 	}
 }
+
+func TestSegmentBlastCallers(t *testing.T) {
+	resp := &BlastResponse{
+		DirectCallers: []BlastCaller{
+			{File: "app/service.go"},
+			{File: "app/service_test.go"},
+		},
+		IndirectCallers: []BlastIndirect{
+			{Symbol: "helper", Via: "service", Hops: 2},
+		},
+		AffectedSubclasses: []BlastCaller{
+			{File: "test/sub_test.go"},
+		},
+		AffectedViaComposition: []BlastCaller{
+			{File: "app/composer.go"},
+		},
+		AffectedViaIncludes: []BlastCaller{
+			{File: "test/includes_test.go"},
+		},
+		AffectedTests: []string{
+			"test/something_test.go",
+		},
+	}
+
+	segmentBlastCallers(resp)
+
+	// Prod: service.go (direct) + 1 indirect + composer.go (composition) = 3
+	// Test: service_test.go (direct) + sub_test.go (subclass) + includes_test.go (includes) + something_test.go (tests) = 4
+	if resp.ProductionAffected != 3 {
+		t.Errorf("ProductionAffected = %d, want 3", resp.ProductionAffected)
+	}
+	if resp.TestAffected != 4 {
+		t.Errorf("TestAffected = %d, want 4", resp.TestAffected)
+	}
+}
+
+func TestRiskRank(t *testing.T) {
+	cases := []struct {
+		risk string
+		want int
+	}{
+		{"high", 3},
+		{"medium", 2},
+		{"low", 1},
+		{"unknown", 0},
+		{"", 0},
+	}
+	for _, c := range cases {
+		if got := riskRank(c.risk); got != c.want {
+			t.Errorf("riskRank(%q) = %d, want %d", c.risk, got, c.want)
+		}
+	}
+}

@@ -50,3 +50,32 @@ func TestWatchStateSetIndexedSnapshot(t *testing.T) {
 		t.Errorf("pending = %d, want 7", pending)
 	}
 }
+
+func TestWatchStateSetGet(t *testing.T) {
+	ws := &WatchState{}
+
+	on, since := ws.Get()
+	if on {
+		t.Error("initial state should be off")
+	}
+	if !since.IsZero() {
+		t.Error("initial since should be zero")
+	}
+
+	now := time.Now().UTC()
+	ws.Set(true, now)
+
+	on, since = ws.Get()
+	if !on {
+		t.Error("expected watching=true after Set")
+	}
+	if !since.Equal(now) {
+		t.Errorf("since = %v, want %v", since, now)
+	}
+
+	ws.Set(false, time.Time{})
+	on, _ = ws.Get()
+	if on {
+		t.Error("expected watching=false after Set(false)")
+	}
+}

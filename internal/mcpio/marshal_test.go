@@ -773,3 +773,64 @@ func TestEstimateJSONTokens(t *testing.T) {
 		t.Errorf("estimateJSONTokens returned %d, want > 0", n)
 	}
 }
+
+func TestMarshalStatusNilStructure(t *testing.T) {
+	resp := StatusResponse{
+		Languages: nil,
+		NextSteps: nil,
+	}
+
+	raw, err := MarshalStatus(resp)
+	if err != nil {
+		t.Fatalf("MarshalStatus: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	langs, ok := out["languages"]
+	if !ok {
+		t.Fatal("missing languages key")
+	}
+	if langs == nil {
+		t.Error("languages should be {} not null")
+	}
+}
+
+func TestMarshalStatusWithStructure(t *testing.T) {
+	resp := StatusResponse{
+		Languages: map[string]StatusLanguage{"go": {Files: 10, Symbols: 100}},
+		Structure: &StatusStructure{
+			TopNamespaces: nil,
+			HubSymbols:    nil,
+			EntryPoints:   nil,
+		},
+		NextSteps: nil,
+	}
+
+	raw, err := MarshalStatus(resp)
+	if err != nil {
+		t.Fatalf("MarshalStatus: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	structure, ok := out["structure"].(map[string]any)
+	if !ok {
+		t.Fatal("missing structure")
+	}
+	if structure["top_namespaces"] == nil {
+		t.Error("top_namespaces should be [] not null")
+	}
+}
+
+func TestEstimateJSONTokensEmpty(t *testing.T) {
+	if got := estimateJSONTokens([]byte("{}")); got != 1 {
+		t.Errorf("estimateJSONTokens({}) = %d, want 1", got)
+	}
+}
