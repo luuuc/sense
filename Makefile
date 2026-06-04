@@ -42,13 +42,20 @@ HERMETIC_PKGS := \
 test-hermetic:
 	go test $(HERMETIC_PKGS)
 
-# Coverage floor (scaffold). Measured under this exact invocation
-# (-race -coverpkg=./...): 91.9% on 2026-06-03, so the floor sits just under
-# it with headroom for run-to-run and cross-platform variance. This is the
-# gross-regression scaffold that ratchets toward the cycle's 95% target; the
-# per-file 95% floor (scoped to covered packages) lands in 27-13. The hard
-# fail is this local `go tool cover` check, NOT a Codecov status, so a flaky
-# upload never reds the build.
+# Coverage gate. Two floors over one profile:
+#   1. Per-file (PRIMARY) — scripts/coveragegate asserts every production file in
+#      the cycle's covered packages holds >= 92% line AND function coverage. This
+#      is the cycle's goal-3 acceptance test, replacing 27-01's interim total-%
+#      scaffold. Its covered-set / straggler-exception / excluded-tail lists are
+#      config-as-code in that package, with a unit test that reds a synthetic
+#      sub-floor file. The long tail (cli, summary, profile, …) is excluded, not
+#      hidden — bringing one under the gate is a one-line edit there.
+#   2. Total-% (BACKSTOP) — a coarse gross-regression check; the suite measured
+#      94.0% on 2026-06-04, so the floor sits below it with headroom for
+#      run-to-run and cross-platform variance.
+#
+# The hard fail is these local checks, NOT a Codecov status, so a flaky upload
+# never reds the build.
 #
 # The onnx_integration tag is set here (and ONLY here) so the gate exercises the
 # CGO embedding shell (internal/embed/onnx.go) for real — the one place the
@@ -57,26 +64,28 @@ test-hermetic:
 # somehow absent. The plain `go test ./...` / `make test` / `make test-hermetic`
 # paths carry NO tag, so unit tests stay ONNX-free; the tag lives only in the
 # coverage gate, which already requires the deps `make build` fetches.
-COVER_FLOOR ?= 91
+COVER_FLOOR ?= 92
 cover: fetch-deps
 	go test -race -count=1 -tags onnx_integration -coverprofile=coverage.txt -coverpkg=./... ./...
-	@# Parse depends on `go tool cover`'s total line being last and %-suffixed.
-	@# If that format ever changes, t becomes 0 and the gate fails closed (safe).
+	go run ./scripts/coveragegate -profile=coverage.txt
+	@# Backstop. Parse depends on `go tool cover`'s total line being last and
+	@# %-suffixed. If that format ever changes, t becomes 0 and the gate fails
+	@# closed (safe).
 	@total=$$(go tool cover -func=coverage.txt | awk 'END {gsub(/%/,"",$$NF); print $$NF}'); \
 	awk -v t="$$total" -v f="$(COVER_FLOOR)" 'BEGIN { \
 		printf "total coverage: %s%% (floor: %s%%)\n", t, f; \
 		if (t+0 < f+0) { printf "FAIL: coverage %s%% is below the %s%% floor\n", t, f; exit 1 } \
 	}'
 
-# Complexity-ledger burndown. Every inline //nolint:gocyclo/gocognit is tracked
-# debt a 27-05→12 split/extractor pitch retires. This asserts the ledger never
-# GROWS: new complexity must be decomposed, not suppressed. Lower LEDGER_MAX as
-# pitches retire entries. 27-12 retired the last eight extractor entries
-# (python/golang/langspec); the two survivors are 27-07's resolver.go entries
-# (storage/query split), which that pitch left behind — a follow-up should retire
-# them to reach the cycle's intended zero.
-# (Matches gocyclo/gocognit only — an unrelated gocritic suppression is not debt.)
-LEDGER_MAX ?= 2
+# Complexity-ledger burndown — now at its terminal value, ZERO. Every inline
+# //nolint:gocyclo/gocognit was tracked debt a 27-05→13 split/decompose pitch
+# retired; the cycle's mechanical exit condition is `grep -rc 'nolint:goc' == 0`.
+# 27-13 retired the last two survivors (27-07's resolver.go entries) by splitting
+# Resolve into resolveQualified/resolveByLeaf and isTestPath into a table-driven
+# form. A new //nolint:gocyclo/gocognit now reds CI: decompose the function, do
+# not suppress it. (Matches gocyclo/gocognit only — an unrelated gocritic
+# suppression is not debt.)
+LEDGER_MAX ?= 0
 ledger:
 	@n=$$(grep -rnE 'nolint:goc(yclo|ognit)' --include='*.go' internal cmd | wc -l | tr -d ' '); \
 	echo "complexity ledger: $$n entries (cap: $(LEDGER_MAX))"; \
@@ -100,7 +109,7 @@ fmt:
 	@$(ensure-golangci)
 	@PATH="$$PATH:$$(go env GOPATH)/bin" golangci-lint fmt
 
-ci: build cover lint
+ci: build cover lint ledger
 	@echo "All CI checks passed!"
 
 smoke:
