@@ -167,6 +167,53 @@ func TestEnrichFromGraphInjectsGraphSource(t *testing.T) {
 	}
 }
 
+func TestSearchPropagatesAdapterError(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close() // closed adapter → the prepare phase's first query fails
+
+	e := NewEngine(a, nil, nil)
+	if _, _, err := e.Search(ctx, Options{Query: "anything", Limit: 5}); err == nil {
+		t.Fatal("Search on closed adapter: want error, got nil")
+	}
+}
+
+// Each pipeline phase surfaces an adapter error rather than swallowing it.
+// Exercised against a closed adapter so the first DB call inside each phase
+// fails, covering the error-propagation branch the decomposition isolated.
+func TestSearchPhasesPropagateErrors(t *testing.T) {
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Close()
+	e := NewEngine(a, nil, nil)
+
+	t.Run("fuseQueries", func(t *testing.T) {
+		sc := &searchContext{queries: []string{"x"}, candidateLimit: 50}
+		if _, _, _, err := e.fuseQueries(ctx, Options{}, sc); err == nil {
+			t.Fatal("want error from keyword retrieval on closed adapter")
+		}
+	})
+	t.Run("rankResults", func(t *testing.T) {
+		// A result with no Qualified forces hydrateResults to hit the adapter.
+		fused := []Result{{SymbolID: 1}}
+		if err := e.rankResults(ctx, Options{}, &searchContext{}, fused); err == nil {
+			t.Fatal("want error from hydrate on closed adapter")
+		}
+	})
+	t.Run("enrichResults", func(t *testing.T) {
+		fused := []Result{{SymbolID: 1, Qualified: "pkg.A"}}
+		if _, err := e.enrichResults(ctx, Options{Limit: 5}, fused); err == nil {
+			t.Fatal("want error from graph enrichment on closed adapter")
+		}
+	})
+}
+
 func TestSubstringFallbackEarlyReturn(t *testing.T) {
 	// At or above the threshold, keyword results are returned untouched
 	// without consulting the substring index.
