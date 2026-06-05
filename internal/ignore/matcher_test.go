@@ -201,3 +201,108 @@ func TestQuestionMark(t *testing.T) {
 		t.Error("ab.txt should NOT match ?.txt")
 	}
 }
+
+func TestDefaultPatterns(t *testing.T) {
+	got := DefaultPatterns()
+	if len(got) == 0 {
+		t.Fatal("DefaultPatterns should not be empty")
+	}
+	// Returned slice must be a copy: mutating it must not affect later calls.
+	got[0] = "MUTATED"
+	again := DefaultPatterns()
+	if again[0] == "MUTATED" {
+		t.Error("DefaultPatterns must return a defensive copy")
+	}
+	want := map[string]bool{
+		"vendor/": true, "node_modules/": true, "dist/": true, "build/": true,
+		"*.min.js": true, "*.bundle.js": true, "*.min.css": true,
+	}
+	for _, p := range again {
+		if !want[p] {
+			t.Errorf("unexpected default pattern %q", p)
+		}
+	}
+}
+
+func TestQuestionMarkRunsOut(t *testing.T) {
+	// "a?" needs a char after 'a'; "a" alone has nothing for '?' to consume.
+	m := New("a?")
+	if m.Match("a", false) {
+		t.Error("a should NOT match a? (no char for ?)")
+	}
+	if !m.Match("ab", false) {
+		t.Error("ab should match a?")
+	}
+}
+
+func TestCharacterClassRunsOut(t *testing.T) {
+	// "x[ab]" needs a char after 'x'; "x" alone has nothing for the class.
+	m := New("x[ab]")
+	if m.Match("x", false) {
+		t.Error("x should NOT match x[ab] (no char for class)")
+	}
+	if !m.Match("xa", false) {
+		t.Error("xa should match x[ab]")
+	}
+}
+
+func TestCharacterClassUnterminated(t *testing.T) {
+	// No closing bracket — the class never matches.
+	m := New("[ab")
+	if m.Match("a", false) {
+		t.Error("a should NOT match unterminated class [ab")
+	}
+}
+
+func TestCharacterClassRange(t *testing.T) {
+	m := New("[a-z].txt")
+	if !m.Match("m.txt", false) {
+		t.Error("m.txt should match [a-z].txt")
+	}
+	if m.Match("9.txt", false) {
+		t.Error("9.txt should NOT match [a-z].txt")
+	}
+}
+
+func TestCharacterClassNegated(t *testing.T) {
+	m := New("[!a].txt")
+	if !m.Match("b.txt", false) {
+		t.Error("b.txt should match [!a].txt (a is excluded)")
+	}
+	if m.Match("a.txt", false) {
+		t.Error("a.txt should NOT match [!a].txt")
+	}
+}
+
+func TestAnchoredDirOnlyMatchesChildren(t *testing.T) {
+	// "/vendor/" is anchored AND dir-only. A non-dir child path must match
+	// via matchAsParent's anchored branch.
+	m := New("/vendor/")
+	if !m.Match("vendor/gems/foo.rb", false) {
+		t.Error("vendor/gems/foo.rb should match anchored dir-only /vendor/")
+	}
+	if m.Match("sub/vendor/gems/foo.rb", false) {
+		t.Error("sub/vendor/... should NOT match anchored /vendor/")
+	}
+	if m.Match("vendor", false) {
+		t.Error("vendor file (not dir) should NOT match dir-only /vendor/")
+	}
+}
+
+func TestAddFromFileSkipsCommentsAndBlanks(t *testing.T) {
+	dir := t.TempDir()
+	gi := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(gi, []byte("# a comment\n\n   \n*.o\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := New()
+	if err := m.AddFromFile(gi, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Match("foo.o", false) {
+		t.Error("foo.o should be ignored")
+	}
+	if m.Match("# a comment", false) {
+		t.Error("comment line should not become a pattern")
+	}
+}

@@ -874,6 +874,222 @@ func TestClaudeCodeAgentWriteError(t *testing.T) {
 	}
 }
 
+// --- resolveTools / configureTool / printSetupSummary branch coverage ---
+
+func TestResolveToolsCurrentOnly(t *testing.T) {
+	// CurrentOnly routes through DetectCurrent, which always returns one tool.
+	tools := resolveTools(&Options{CurrentOnly: true})
+	if len(tools) != 1 {
+		t.Fatalf("resolveTools(CurrentOnly) = %d tools, want 1", len(tools))
+	}
+}
+
+func TestResolveToolsFallsBackWhenNoneDetected(t *testing.T) {
+	// Strip every detection signal so DetectAll finds nothing, forcing the
+	// Claude Code fallback branch.
+	t.Setenv("CLAUDE_CODE", "")
+	t.Setenv("CURSOR_TRACE_ID", "")
+	t.Setenv("CURSOR_SESSION_ID", "")
+	t.Setenv("OPENCODE", "")
+	t.Setenv("PATH", "")
+	t.Setenv("HOME", t.TempDir())
+
+	tools := resolveTools(nil)
+	if len(tools) != 1 || tools[0] != ToolClaudeCode {
+		t.Fatalf("resolveTools(nil) with no tools detected = %v, want [claude-code]", tools)
+	}
+}
+
+func TestConfigureToolUnknown(t *testing.T) {
+	_, err := configureTool(t.TempDir(), Tool("bogus-tool"))
+	if err == nil {
+		t.Fatal("expected error for unknown tool")
+	}
+	if !strings.Contains(err.Error(), "unknown tool") {
+		t.Errorf("error = %q, want mention of unknown tool", err)
+	}
+}
+
+func TestPrintSetupSummaryEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	printSetupSummary(&buf, &Result{})
+	if buf.Len() != 0 {
+		t.Errorf("printSetupSummary with no tools wrote %q, want nothing", buf.String())
+	}
+}
+
+// --- configureClaudeCode error-path coverage ---
+
+func TestConfigureClaudeCodeSettingsError(t *testing.T) {
+	root := t.TempDir()
+	// .claude as a regular file makes writeClaudeSettings' MkdirAll fail,
+	// after writeMCPJSON has already succeeded.
+	if err := os.WriteFile(filepath.Join(root, ".claude"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureClaudeCode(root)
+	if err == nil {
+		t.Fatal("expected error when .claude is a file")
+	}
+	if !strings.Contains(err.Error(), ".claude/settings.json") {
+		t.Errorf("error = %q, want mention of settings.json", err)
+	}
+}
+
+func TestConfigureClaudeCodeClaudeMDError(t *testing.T) {
+	root := t.TempDir()
+	// CLAUDE.md as a directory makes writeClaudeMD fail, after .mcp.json and
+	// .claude/settings.json have been written.
+	if err := os.MkdirAll(filepath.Join(root, "CLAUDE.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureClaudeCode(root)
+	if err == nil {
+		t.Fatal("expected error when CLAUDE.md is a directory")
+	}
+	if !strings.Contains(err.Error(), "CLAUDE.md") {
+		t.Errorf("error = %q, want mention of CLAUDE.md", err)
+	}
+}
+
+func TestConfigureClaudeCodeSkillsError(t *testing.T) {
+	root := t.TempDir()
+	// Pre-create .claude so settings.json writes fine, but block the skills
+	// subdir by occupying its path with a file.
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "skills"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureClaudeCode(root)
+	if err == nil {
+		t.Fatal("expected error when .claude/skills is a file")
+	}
+	if !strings.Contains(err.Error(), ".claude/skills") {
+		t.Errorf("error = %q, want mention of skills", err)
+	}
+}
+
+// --- configureCursor error-path coverage ---
+
+func TestConfigureCursorMCPError(t *testing.T) {
+	root := t.TempDir()
+	// .cursor as a file makes writeCursorMCPJSON's MkdirAll fail.
+	if err := os.WriteFile(filepath.Join(root, ".cursor"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureCursor(root)
+	if err == nil {
+		t.Fatal("expected error when .cursor is a file")
+	}
+	if !strings.Contains(err.Error(), ".cursor/mcp.json") {
+		t.Errorf("error = %q, want mention of cursor mcp.json", err)
+	}
+}
+
+func TestConfigureCursorRulesError(t *testing.T) {
+	root := t.TempDir()
+	// .cursorrules as a directory makes writeCursorRules fail, after
+	// .cursor/mcp.json was written successfully.
+	if err := os.MkdirAll(filepath.Join(root, ".cursorrules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureCursor(root)
+	if err == nil {
+		t.Fatal("expected error when .cursorrules is a directory")
+	}
+	if !strings.Contains(err.Error(), ".cursorrules") {
+		t.Errorf("error = %q, want mention of .cursorrules", err)
+	}
+}
+
+// --- configureCodexCLI error-path coverage ---
+
+func TestConfigureCodexMCPError(t *testing.T) {
+	root := t.TempDir()
+	// .mcp.json as a directory makes writeMCPJSON's readJSONFile fail.
+	if err := os.MkdirAll(filepath.Join(root, ".mcp.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureCodexCLI(root)
+	if err == nil {
+		t.Fatal("expected error when .mcp.json is a directory")
+	}
+	if !strings.Contains(err.Error(), ".mcp.json") {
+		t.Errorf("error = %q, want mention of .mcp.json", err)
+	}
+}
+
+func TestConfigureCodexAgentsError(t *testing.T) {
+	root := t.TempDir()
+	// AGENTS.md as a directory makes writeAgentsMD fail, after .mcp.json
+	// was written successfully.
+	if err := os.MkdirAll(filepath.Join(root, "AGENTS.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureCodexCLI(root)
+	if err == nil {
+		t.Fatal("expected error when AGENTS.md is a directory")
+	}
+	if !strings.Contains(err.Error(), "AGENTS.md") {
+		t.Errorf("error = %q, want mention of AGENTS.md", err)
+	}
+}
+
+// --- writeMCPJSON / writeClaudeSettings error-path coverage ---
+
+func TestWriteMCPJSONWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("write-permission checks are bypassed when running as root")
+	}
+	root := t.TempDir()
+	// An empty, read-only .mcp.json: readJSONFile succeeds (empty -> {}),
+	// but writeJSONFile's truncating open is denied.
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte{}, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeMCPJSON(root)
+	if err == nil {
+		t.Fatal("expected error writing to a read-only .mcp.json")
+	}
+}
+
+func TestWriteClaudeSettingsReadError(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid JSON makes readJSONFile fail (and back up the file).
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte("not json{{{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeClaudeSettings(root)
+	if err == nil {
+		t.Fatal("expected error when settings.json is invalid JSON")
+	}
+}
+
+func TestWriteClaudeSettingsWriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("write-permission checks are bypassed when running as root")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Empty, read-only settings.json: readJSONFile succeeds, writeJSONFile fails.
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte{}, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeClaudeSettings(root)
+	if err == nil {
+		t.Fatal("expected error writing to a read-only settings.json")
+	}
+}
+
 func TestBackupOnInvalidJSON(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".mcp.json")
