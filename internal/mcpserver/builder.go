@@ -51,6 +51,34 @@ func resolveDiag(opts RunOptions) io.Writer {
 	return os.Stderr
 }
 
+// deps are buildMCPServer's process-edge collaborators, injected so the
+// orchestration error paths — a working-directory fault, a self-healing
+// rebuild whose scan or reopen fails, a one-shot embed that finds no work or
+// cannot reload its vectors — are reachable in a test without a live ONNX
+// runtime or a forced on-disk corruption. Production wires the real functions
+// via defaultDeps; the public Run / RunWithOptions signatures carry no seam.
+// This mirrors the lifecycle-collaborator pattern internal/watch already uses.
+type deps struct {
+	getwd          func() (string, error)
+	openIndex      func(context.Context, string) (*sqlite.Adapter, error)
+	scanRun        func(context.Context, scan.Options) (*scan.Result, error)
+	embedPending   func(context.Context, *sqlite.Adapter, string) (int, error)
+	loadEmbeddings func(context.Context, *sqlite.Adapter) (map[int64][]float32, error)
+}
+
+// defaultDeps wires the builder's collaborators to the real implementations.
+func defaultDeps() deps {
+	return deps{
+		getwd:        os.Getwd,
+		openIndex:    cli.OpenIndex,
+		scanRun:      scan.Run,
+		embedPending: scan.EmbedPending,
+		loadEmbeddings: func(ctx context.Context, a *sqlite.Adapter) (map[int64][]float32, error) {
+			return a.LoadEmbeddings(ctx)
+		},
+	}
+}
+
 // Run starts the MCP stdio server with default options.
 func Run(dir string) error {
 	return RunWithOptions(RunOptions{Dir: dir})
@@ -73,15 +101,22 @@ func RunWithOptions(opts RunOptions) error {
 // engine, start the background freshener and one-shot embed, then assemble the
 // server.
 func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), error) {
+	return buildMCPServerWithDeps(opts, defaultDeps())
+}
+
+// buildMCPServerWithDeps is buildMCPServer's testable core: identical
+// orchestration, but the process edges arrive through d so a test can drive the
+// error paths. Production calls it through buildMCPServer with defaultDeps.
+func buildMCPServerWithDeps(opts RunOptions, d deps) (*server.MCPServer, *handlers, func(), error) {
 	diag := resolveDiag(opts)
 
-	dir, err := resolveDir(opts)
+	dir, err := resolveDir(opts, d)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	ctx := context.Background()
-	adapter, err := openIndexWithRebuild(ctx, dir, diag)
+	adapter, err := openIndexWithRebuild(ctx, dir, diag, d)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -97,7 +132,7 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 	embeddingsEnabled := cli.EmbeddingsEnabled(dir)
 
 	freshenSvc, watchState, serviceStarted := startFreshenService(ctx, dir, embeddingsEnabled, opts.WatchState, adapter, engine)
-	cancelEmbed, embedDone := startOneShotEmbed(ctx, dir, embeddingsEnabled, serviceStarted, opts.WatchState, adapter, engine)
+	cancelEmbed, embedDone := startOneShotEmbed(ctx, dir, embeddingsEnabled, serviceStarted, opts.WatchState, adapter, engine, d)
 
 	tracker := metrics.NewTracker(adapter.DB())
 
@@ -139,11 +174,11 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 
 // resolveDir returns the index directory, falling back to the working
 // directory when Dir is blank.
-func resolveDir(opts RunOptions) (string, error) {
+func resolveDir(opts RunOptions, d deps) (string, error) {
 	if opts.Dir != "" {
 		return opts.Dir, nil
 	}
-	wd, err := os.Getwd()
+	wd, err := d.getwd()
 	if err != nil {
 		return "", fmt.Errorf("sense mcp: getwd: %w", err)
 	}
@@ -153,8 +188,8 @@ func resolveDir(opts RunOptions) (string, error) {
 // openIndexWithRebuild opens the index and, when cli.OpenIndex reports a schema
 // version mismatch, runs a fresh scan and reopens before returning. The two
 // rebuild diagnostics are written to diag.
-func openIndexWithRebuild(ctx context.Context, dir string, diag io.Writer) (*sqlite.Adapter, error) {
-	adapter, err := cli.OpenIndex(ctx, dir)
+func openIndexWithRebuild(ctx context.Context, dir string, diag io.Writer, d deps) (*sqlite.Adapter, error) {
+	adapter, err := d.openIndex(ctx, dir)
 	if err != nil {
 		return nil, fmt.Errorf("sense mcp: %w", err)
 	}
@@ -164,7 +199,7 @@ func openIndexWithRebuild(ctx context.Context, dir string, diag io.Writer) (*sql
 
 	_ = adapter.Close()
 	_, _ = fmt.Fprintf(diag, "sense mcp: schema version mismatch — rebuilding index...\n")
-	if _, err := scan.Run(ctx, scan.Options{
+	if _, err := d.scanRun(ctx, scan.Options{
 		Root:              dir,
 		Output:            os.Stderr,
 		Warnings:          os.Stderr,
@@ -173,7 +208,7 @@ func openIndexWithRebuild(ctx context.Context, dir string, diag io.Writer) (*sql
 	}); err != nil {
 		return nil, fmt.Errorf("sense mcp: rebuild scan: %w", err)
 	}
-	adapter, err = cli.OpenIndex(ctx, dir)
+	adapter, err = d.openIndex(ctx, dir)
 	if err != nil {
 		return nil, fmt.Errorf("sense mcp: reopen after rebuild: %w", err)
 	}
@@ -227,7 +262,7 @@ func startFreshenService(ctx context.Context, dir string, embeddingsEnabled bool
 // the live engine, upgrading search to hybrid in place. It always returns a
 // cancel function and a done channel (closed immediately when no embed runs)
 // so cleanup can drain it uniformly.
-func startOneShotEmbed(ctx context.Context, dir string, embeddingsEnabled, serviceStarted bool, externalWatch *mcpio.WatchState, adapter *sqlite.Adapter, engine *search.Engine) (context.CancelFunc, <-chan struct{}) {
+func startOneShotEmbed(ctx context.Context, dir string, embeddingsEnabled, serviceStarted bool, externalWatch *mcpio.WatchState, adapter *sqlite.Adapter, engine *search.Engine, d deps) (context.CancelFunc, <-chan struct{}) {
 	embedCtx, cancelEmbed := context.WithCancel(ctx)
 	embedDone := make(chan struct{})
 
@@ -244,7 +279,7 @@ func startOneShotEmbed(ctx context.Context, dir string, embeddingsEnabled, servi
 
 	go func() {
 		defer close(embedDone)
-		n, err := scan.EmbedPending(embedCtx, adapter, dir)
+		n, err := d.embedPending(embedCtx, adapter, dir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "sense mcp: background embed failed: %v\n", err)
 			return
@@ -254,7 +289,7 @@ func startOneShotEmbed(ctx context.Context, dir string, embeddingsEnabled, servi
 		}
 		// Rebuild the flat index from the freshly written embeddings so
 		// search upgrades from keyword-only to hybrid in place.
-		embeddings, lerr := adapter.LoadEmbeddings(embedCtx)
+		embeddings, lerr := d.loadEmbeddings(embedCtx, adapter)
 		if lerr != nil {
 			fmt.Fprintf(os.Stderr, "sense mcp: reload embeddings after embed: %v\n", lerr)
 			return
