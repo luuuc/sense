@@ -94,7 +94,7 @@ func detectGoMiddleware(symbols []symbolRow, edges []edgeRow, symbolByID map[int
 		return nil
 	}
 	sort.Slice(factories, func(i, j int) bool {
-		return factories[i].EdgeCount > factories[j].EdgeCount
+		return lessExample(factories[i], factories[j])
 	})
 	totalFuncs := countByKind(symbols, "function")
 	return []Convention{{

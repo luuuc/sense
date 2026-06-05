@@ -67,20 +67,47 @@ func hasMatchingExample(examples []Example, domain string) bool {
 	return false
 }
 
+// sortExamples orders examples for alphabetical grouping by Path, with a Name
+// tiebreak so same-Path examples have a defined order. It is Path-first by
+// intent (the one exception to the EdgeCount-first lessExample family), so it
+// keeps its own inline cascade rather than sharing lessExample.
 func sortExamples(examples []Example) {
 	sort.Slice(examples, func(i, j int) bool {
-		return examples[i].Path < examples[j].Path
+		a, b := examples[i], examples[j]
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		return a.Name < b.Name
 	})
+}
+
+// lessExample is the shared EdgeCount-first total order for ranking examples by
+// importance: EdgeCount descending, then Name ascending, then Path ascending.
+// Every cascade falls through on equality so sort.Slice is well-defined (strict
+// weak ordering). This is the single correct cascade for the EdgeCount-first
+// sites to copy; sortExamples (Path-first) keeps its own shape by intent.
+func lessExample(a, b Example) bool {
+	if a.EdgeCount != b.EdgeCount {
+		return a.EdgeCount > b.EdgeCount
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.Path < b.Path
 }
 
 func PickRepresentatives(examples []Example, limit int) []string {
 	if len(examples) == 0 {
 		return nil
 	}
-	sorted := make([]Example, len(examples))
-	copy(sorted, examples)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].EdgeCount > sorted[j].EdgeCount
+	// Dedupe by Name+Path so the sort below is a true total order: detectNaming
+	// emits many examples sharing a (Name, Path), and enrichEdgeCounts collapses
+	// them to the same EdgeCount, so EdgeCount/Name/Path can all tie and a bare
+	// tiebreak would still leave map order showing. Dedupe makes Name+Path unique
+	// by construction, then sort EdgeCount → Name → Path.
+	sorted := dedupeExamples(examples)
+	sort.Slice(sorted, func(i, j int) bool {
+		return lessExample(sorted[i], sorted[j])
 	})
 	n := limit
 	if n > len(sorted) {

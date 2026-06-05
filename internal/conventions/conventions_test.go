@@ -407,7 +407,7 @@ func TestPickRepresentatives(t *testing.T) {
 			{Name: "C", Path: "c", EdgeCount: 5},
 			{Name: "D", Path: "d", EdgeCount: 1},
 		}, 3, []string{"B", "C", "A"}},
-		{"zero edge counts preserves input order", []Example{
+		{"zero edge counts sort by name ascending", []Example{
 			{Name: "A", Path: "a"}, {Name: "B", Path: "b"}, {Name: "C", Path: "c"},
 			{Name: "D", Path: "d"}, {Name: "E", Path: "e"}, {Name: "F", Path: "f"},
 		}, 3, []string{"A", "B", "C"}},

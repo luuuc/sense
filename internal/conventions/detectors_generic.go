@@ -472,7 +472,14 @@ func detectKeyTypes(symbols []symbolRow, edges []edgeRow, filePathByID map[int64
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].count > candidates[j].count
+		a, b := candidates[i], candidates[j]
+		if a.count != b.count {
+			return a.count > b.count
+		}
+		if a.sym.name != b.sym.name {
+			return a.sym.name < b.sym.name
+		}
+		return a.path < b.path
 	})
 
 	const maxKeyTypes = 8
