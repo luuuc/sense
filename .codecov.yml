@@ -1,19 +1,22 @@
 # Codecov is INFORMATIONAL only. The build-failing coverage gate is local:
-# `make cover` enforces a per-file 92% line AND function floor over the packages
-# in scripts/coveragegate (coveredPackages), plus a total-% backstop. It has no
-# upload dependency, so a flaky Codecov upload never reds the build. These
-# statuses surface per-file coverage for visibility but must not fail CI.
+# `make cover` enforces a per-file 92% line AND function floor over the production
+# tree (scripts/coveragegate), plus a total-% backstop. It has no upload
+# dependency, so a flaky Codecov upload never reds the build. These statuses
+# surface per-file coverage for visibility but must not fail CI. `make cover` is
+# the single coverage bar a contributor is held to — a green local build never
+# shows a failing coverage check here.
 #
 # Note: Go coverage is STATEMENT-based; Codecov reports LINE-based. A gated file
 # can read 88-90% here and still clear the 92% statement floor in `make cover`.
 # Do not chase Codecov's line % on gated packages (scan, blast, sqlite,
 # extract/*, …) — the gate already governs them on the statement metric.
 #
-# The `ignore` list mirrors the gate's exclusion philosophy for NON-PRODUCT code
-# only (tooling, test helpers, fixtures, entry-point wiring). The untested
-# product tail (cli, setup, summary, profile, freshen, …) is left VISIBLE on
-# purpose — it is honest coverage debt, "excluded, not hidden". Bringing one of
-# those under the real gate is a one-line edit to coveredPackages.
+# The `ignore` list mirrors the gate's NON-PRODUCT exclusions (tooling, test-
+# support packages, vendored fixtures) so codecov and the gate agree on what
+# product code is. As of cycle 28 the gate governs the whole production tree —
+# the old "untested tail" (cli, setup, summary, profile, benchmark, …) is now
+# tested and gated, so it is left VISIBLE here, not ignored. Only genuine
+# non-product code is hidden below.
 coverage:
   status:
     project:
@@ -24,15 +27,10 @@ coverage:
         informational: true
 
 ignore:
-  # benchmark harness and vendored fixture repos
+  # vendored benchmark fixture repos
   - "bench/"
-  # benchmark CLI tooling, not core analysis
-  - "internal/benchmark/"
-  - "internal/cli/benchmark.go"
   # test conformance suite (test infra, not product code)
   - "internal/index/indextest/"
-  # CLI entry point — wiring only, smoke-tested
-  - "cmd/sense/main.go"
   # the coverage gate's own CLI tooling — not shipped product
   - "scripts/"
   # test-helper packages the real gate also refuses to gate (peers of indextest)
