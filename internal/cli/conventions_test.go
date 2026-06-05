@@ -117,6 +117,14 @@ func TestRunConventionsMinStrength(t *testing.T) {
 	}
 }
 
+func TestRunConventionsParseErrorExit1(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := RunConventions([]string{"--bogus-flag"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()})
+	if code != ExitGeneralError {
+		t.Errorf("exit = %d, want %d for an unknown flag", code, ExitGeneralError)
+	}
+}
+
 func TestRunConventionsMissingIndex(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer

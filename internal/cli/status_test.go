@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,6 +182,205 @@ func TestEmbeddingsEnabled(t *testing.T) {
 				t.Errorf("EmbeddingsEnabled() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunStatusParseErrorExit1(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := RunStatus([]string{"--bogus-flag"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()})
+	if code != ExitGeneralError {
+		t.Errorf("exit = %d, want %d for an unknown flag", code, ExitGeneralError)
+	}
+}
+
+// TestRunStatusSenseDirEnv pins the SENSE_DIR override: when the env
+// var is set, buildCLIStatusResponse reads the index from there
+// rather than <dir>/.sense.
+func TestRunStatusSenseDirEnv(t *testing.T) {
+	dir := t.TempDir()
+	customDir := filepath.Join(dir, "elsewhere")
+	if err := os.MkdirAll(customDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(customDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.WriteFile(ctx, &model.File{Path: "main.go", Language: "go", Hash: "h", Symbols: 1, IndexedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	_ = adapter.Close()
+
+	t.Setenv("SENSE_DIR", customDir)
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	var stdout, stderr bytes.Buffer
+	// Dir points somewhere with no .sense — success proves SENSE_DIR won.
+	code := RunStatus(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Files:") {
+		t.Errorf("expected rendered status from SENSE_DIR index, got:\n%s", stdout.String())
+	}
+}
+
+func TestComputeHealthStaleFilesDegraded(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+
+	stale := 3
+	resp := mcpio.StatusResponse{
+		Version:   &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: true},
+		Freshness: mcpio.Freshness{StaleFilesSeen: &stale},
+	}
+	resp.Index.Symbols = 0 // skip the embedding-percentage branch
+	h := computeHealth(ctx, db, t.TempDir(), resp)
+
+	if h.verdict != "degraded" {
+		t.Errorf("verdict = %q, want degraded", h.verdict)
+	}
+	if h.detail != "3 stale files" {
+		t.Errorf("detail = %q, want '3 stale files'", h.detail)
+	}
+}
+
+func TestQueryLangBreakdownQueryError(t *testing.T) {
+	got := queryLangBreakdown(context.Background(), closedQueryDB(t))
+	if len(got) != 0 {
+		t.Errorf("queryLangBreakdown on closed DB = %v, want empty map", got)
+	}
+}
+
+func TestEmbeddingDebtCLIError(t *testing.T) {
+	if got := embeddingDebtCLI(context.Background(), closedQueryDB(t)); got != -1 {
+		t.Errorf("embeddingDebtCLI on closed DB = %d, want -1", got)
+	}
+}
+
+func TestAbs(t *testing.T) {
+	if got := abs(-5); got != 5 {
+		t.Errorf("abs(-5) = %d, want 5", got)
+	}
+	if got := abs(7); got != 7 {
+		t.Errorf("abs(7) = %d, want 7", got)
+	}
+}
+
+func TestCountStaleFilesCLIQueryError(t *testing.T) {
+	if got := countStaleFilesCLI(context.Background(), closedQueryDB(t), t.TempDir()); got != 0 {
+		t.Errorf("countStaleFilesCLI on closed DB = %d, want 0", got)
+	}
+}
+
+// TestCountStaleFilesCLIUnparseableTimestamp drives the time.Parse
+// failure continue: a row with a garbage indexed_at is skipped rather
+// than counted or fatal.
+func TestCountStaleFilesCLIUnparseableTimestamp(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'main.go', 'go', 'h', 1, 'not-a-timestamp')`)
+	if got := countStaleFilesCLI(ctx, db, t.TempDir()); got != 0 {
+		t.Errorf("countStaleFilesCLI with bad timestamp = %d, want 0", got)
+	}
+}
+
+func TestBuildVersionInfoError(t *testing.T) {
+	if got := buildVersionInfo(context.Background(), closedQueryDB(t)); got != nil {
+		t.Errorf("buildVersionInfo on closed DB = %+v, want nil", got)
+	}
+}
+
+func TestQueryLifetimeCountersError(t *testing.T) {
+	if got := queryLifetimeCounters(context.Background(), closedQueryDB(t)); got != nil {
+		t.Errorf("queryLifetimeCounters on closed DB = %+v, want nil", got)
+	}
+}
+
+// TestComputeCLIFreshnessLastUpdate drives the branch where the last
+// file update (MAX(indexed_at)) is meaningfully newer-or-older than
+// the recorded last_scan_at, so LastUpdate is reported separately.
+func TestComputeCLIFreshnessLastUpdate(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	// File indexed two hours ago; last_scan_at recorded as "now". The
+	// >60s gap between scan age and update age trips the LastUpdate
+	// reporting branch.
+	if _, err := adapter.WriteFile(ctx, &model.File{Path: "main.go", Language: "go", Hash: "h", Symbols: 1, IndexedAt: time.Now().Add(-2 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.DB().ExecContext(ctx,
+		`INSERT INTO sense_meta (key, value) VALUES ('last_scan_at', ?)`,
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+
+	f := computeCLIFreshness(ctx, adapter.DB(), dir)
+	if f.LastScan == nil {
+		t.Fatal("expected LastScan to be set from last_scan_at meta")
+	}
+	if f.LastUpdate == nil {
+		t.Error("expected LastUpdate to be reported when file update age differs from scan age by >60s")
+	}
+}
+
+// TestRenderStatusHumanFullResponse exercises the optional render
+// branches: embeddings-disabled line, separate LastUpdate line, and
+// the Pending line.
+func TestRenderStatusHumanFullResponse(t *testing.T) {
+	t.Setenv("SENSE_EMBEDDINGS", "false")
+	dir := t.TempDir()
+
+	lastScan := "2026-06-05T00:00:00Z"
+	lastUpdate := "2026-06-05T01:00:00Z"
+	var scanAge, updateAge int64 = 120, 60
+	stale := 2
+	watching := true
+	pending := 4
+
+	resp := mcpio.StatusResponse{
+		Freshness: mcpio.Freshness{
+			LastScan:              &lastScan,
+			IndexAgeSeconds:       &scanAge,
+			LastUpdate:            &lastUpdate,
+			IndexUpdateAgeSeconds: &updateAge,
+			StaleFilesSeen:        &stale,
+			Watching:              &watching,
+			Pending:               &pending,
+		},
+		Version: &mcpio.StatusVersion{
+			Binary: "test", Schema: sqlite.SchemaVersion, SchemaCurrent: true,
+			EmbeddingModel: "m", EmbeddingModelCurrent: true,
+		},
+	}
+	resp.Index.Path = ".sense/index.db"
+	resp.Index.SizeBytes = 2048
+	resp.Index.Files = 3
+	resp.Index.Symbols = 10
+
+	var stdout bytes.Buffer
+	renderStatusHuman(IO{Stdout: &stdout, Dir: dir}, resp, healthInfo{verdict: "degraded", detail: "2 stale files"})
+	out := stdout.String()
+	for _, want := range []string{
+		"Embeddings: disabled",
+		"Last update:",
+		"Stale files: 2",
+		"Watching:    yes",
+		"Pending:     4 symbols awaiting embeddings",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing %q\ngot:\n%s", want, out)
+		}
 	}
 }
 
