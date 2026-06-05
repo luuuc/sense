@@ -91,25 +91,31 @@ func TestRunHookDispatches(t *testing.T) {
 }
 
 // TestRunQueryCommandsDispatch drives every query/config subcommand against an
-// empty working directory. None find an index, so they exit non-zero — the point
-// is that run's dispatch arm for each command executes (and does not panic).
+// empty working directory and pins the exit code run returns for each — proving
+// the dispatch arm not only executes but returns the documented code. setup
+// --help short-circuits to success; the index readers report a missing index
+// (3); doctor diagnoses the missing index as a general error (1).
 func TestRunQueryCommandsDispatch(t *testing.T) {
-	cases := [][]string{
-		{"setup", "--help"},
-		{"search", "needle"},
-		{"graph", "Sym"},
-		{"blast", "Sym"},
-		{"dead"},
-		{"conventions"},
-		{"status"},
-		{"benchmark"},
-		{"doctor"},
+	cases := []struct {
+		args []string
+		want int
+	}{
+		{[]string{"setup", "--help"}, 0},  // help: ExitSuccess
+		{[]string{"search", "needle"}, 3}, // ExitIndexMissing
+		{[]string{"graph", "Sym"}, 3},     // ExitIndexMissing
+		{[]string{"blast", "Sym"}, 3},     // ExitIndexMissing
+		{[]string{"dead"}, 3},             // ExitIndexMissing
+		{[]string{"conventions"}, 3},      // ExitIndexMissing
+		{[]string{"status"}, 3},           // ExitIndexMissing
+		{[]string{"benchmark"}, 3},        // ExitIndexMissing
+		{[]string{"doctor"}, 1},           // ExitGeneralError
 	}
-	for _, args := range cases {
-		t.Run(args[0], func(t *testing.T) {
+	for _, c := range cases {
+		t.Run(c.args[0], func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			// Must not panic; exit code is whatever the command decides.
-			_ = run(args, strings.NewReader(""), io.Discard, io.Discard)
+			if got := run(c.args, strings.NewReader(""), io.Discard, io.Discard); got != c.want {
+				t.Errorf("run(%v) = %d, want %d", c.args, got, c.want)
+			}
 		})
 	}
 }
@@ -234,7 +240,8 @@ func TestMainExitsWithRunCode(t *testing.T) {
 
 // silenceStdout/silenceStderr redirect the real stream to /dev/null for the
 // duration of a test that exercises code writing to os.Stdout/os.Stderr
-// directly. The returned func restores the original.
+// directly. The returned func restores the original. NOT parallel-safe: they
+// swap a process global, so callers must not run under t.Parallel().
 func silenceStdout(t *testing.T) func() {
 	t.Helper()
 	orig := os.Stdout
