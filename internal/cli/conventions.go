@@ -83,7 +83,7 @@ func RunConventions(args []string, cio IO) int {
 				Category:       string(c.Category),
 				Description:    c.Description,
 				Strength:       mcpio.Confidence(c.Strength),
-				Instances:      conventions.PickRepresentatives(c.Examples, 3),
+				Instances:      conventions.RepresentativeLabels(c.Examples, 3),
 				TotalInstances: c.Instances,
 			}
 		}

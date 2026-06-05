@@ -44,13 +44,17 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 		},
 	}
 	for _, c := range results {
-		instances := conventions.PickRepresentatives(c.Examples, instanceCap)
-		snippets := lookupInstanceSnippets(ctx, h.db, instances, 3)
+		// Display labels disambiguate same-named representatives; snippet lookup
+		// keys on the raw symbol names (sense_symbols.name), so it must use the
+		// bare PickRepresentatives output, not the labels.
+		labels := conventions.RepresentativeLabels(c.Examples, instanceCap)
+		rawNames := conventions.PickRepresentatives(c.Examples, instanceCap)
+		snippets := lookupInstanceSnippets(ctx, h.db, rawNames, 3)
 		resp.Conventions = append(resp.Conventions, mcpio.ConventionEntry{
 			Category:       string(c.Category),
 			Description:    c.Description,
 			Strength:       mcpio.Confidence(c.Strength),
-			Instances:      instances,
+			Instances:      labels,
 			TotalInstances: c.Instances,
 			KeySymbol:      c.KeySymbol,
 			Snippets:       snippets,
