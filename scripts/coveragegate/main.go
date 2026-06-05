@@ -29,8 +29,8 @@ func run(profile string) int {
 
 	violations := Check(lineCov, funcCov)
 
-	fmt.Printf("per-file coverage gate: floor %.0f%% (line AND function) over %d covered packages, %d straggler exceptions\n",
-		floor, len(coveredPackages), len(stragglerExceptions))
+	fmt.Printf("per-file coverage gate: floor %.0f%% (line AND function) over the whole production tree, %d excluded dirs, %d straggler exceptions\n",
+		floor, len(excludedDirs), len(stragglerExceptions))
 	if len(violations) == 0 {
 		fmt.Println("PASS: every gated file meets the floor")
 		return 0
