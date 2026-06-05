@@ -124,7 +124,7 @@ func detectRailsCallbacks(symbols []symbolRow, _ []edgeRow, _ map[int64]symbolRo
 		return nil
 	}
 	sort.Slice(examples, func(i, j int) bool {
-		return examples[i].EdgeCount > examples[j].EdgeCount
+		return lessExample(examples[i], examples[j])
 	})
 	totalClasses := countByKind(symbols, "class")
 	return []Convention{{
@@ -144,7 +144,7 @@ func detectScopes(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]sym
 		return nil
 	}
 	sort.Slice(examples, func(i, j int) bool {
-		return examples[i].EdgeCount > examples[j].EdgeCount
+		return lessExample(examples[i], examples[j])
 	})
 	totalClasses := countByKind(symbols, "class")
 	return []Convention{{

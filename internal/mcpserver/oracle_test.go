@@ -158,7 +158,7 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // not computed at runtime: a behavior-preserving split must leave it unchanged.
 // When a response changes on purpose, run the test with -v, copy the logged
 // digest here, and update it in the same commit.
-const oracleGolden = "da4fa4f45680b6b647dac0f42f499408986cba204ed4c1060c308e7bc5125b7d"
+const oracleGolden = "f432b5297d85bb445e5986024e6a7146b27b235ef354a2eb5c16968c04a21e49"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))
