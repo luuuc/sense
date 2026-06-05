@@ -210,6 +210,129 @@ func TestPctEdgeCases(t *testing.T) {
 	}
 }
 
+func TestPctOverflowClamp(t *testing.T) {
+	// p > 100 pushes the computed index past the slice; pct must clamp it to
+	// the last element rather than panic.
+	vals := []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond}
+	if got := pct(vals, 150); got != 3*time.Millisecond {
+		t.Errorf("pct(_, 150) = %v, want 3ms", got)
+	}
+}
+
+func TestQueryIndexStatsMissingTables(t *testing.T) {
+	tests := []struct {
+		name string
+		drop string
+	}{
+		{"no files table", "sense_files"},
+		{"no symbols table", "sense_symbols"},
+		{"no edges table", "sense_edges"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			adapter, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "stats.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = adapter.Close() }()
+
+			dropTable(t, adapter, tt.drop)
+
+			if err := queryIndexStats(ctx, adapter.DB(), &Report{}); err == nil {
+				t.Fatalf("expected error when %s is missing", tt.drop)
+			}
+		})
+	}
+}
+
+// TestSelectSymbolsRankedQueryError keeps the symbols (so total > 0) but drops
+// the edges table the ranked fan-in subquery joins against, forcing the inner
+// scan helper and the hub assignment to surface their error.
+func TestSelectSymbolsRankedQueryError(t *testing.T) {
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "ranked.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	if _, err := BuildFixture(ctx, adapter, 50); err != nil {
+		t.Fatal(err)
+	}
+	dropTable(t, adapter, "sense_edges")
+
+	if _, _, _, err := selectSymbols(ctx, adapter.DB()); err == nil {
+		t.Fatal("expected error when sense_edges is missing")
+	}
+}
+
+func TestRunDefaultsIterations(t *testing.T) {
+	ctx := context.Background()
+	dir := setupBenchFixture(t, 20)
+
+	// Iterations <= 0 must default to 100 internally while still reporting the
+	// raw value back on the report.
+	report, err := Run(ctx, dir, Options{Iterations: 0, SkipScan: true, SkipSearch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Iterations != 100 {
+		t.Errorf("Iterations = %d, want 100", report.Iterations)
+	}
+}
+
+func TestRunWithScan(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping scan measurement in short mode")
+	}
+	ctx := context.Background()
+	dir := setupBenchFixture(t, 20)
+
+	report, err := Run(ctx, dir, Options{Iterations: 2, SkipScan: false, SkipSearch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.SymbolCount == 0 {
+		t.Error("SymbolCount should be > 0")
+	}
+}
+
+// TestRunEmptyIndex builds a schema-only index with no symbols so selectSymbols
+// fails and Run propagates the error.
+func TestRunEmptyIndex(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	sensePath := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(sensePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := sqlite.Open(ctx, filepath.Join(sensePath, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = adapter.Close()
+
+	if _, err := Run(ctx, dir, Options{Iterations: 2, SkipScan: true, SkipSearch: true}); err == nil {
+		t.Fatal("expected error for an index with no symbols")
+	}
+}
+
+// TestRunAdapterOpenError points the index path at a directory so sqlite.Open
+// cannot open it.
+func TestRunAdapterOpenError(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	// Make .sense/index.db a directory rather than a file.
+	if err := os.MkdirAll(filepath.Join(dir, ".sense", "index.db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Run(ctx, dir, Options{Iterations: 2, SkipScan: true, SkipSearch: true}); err == nil {
+		t.Fatal("expected error when the index path is not a file")
+	}
+}
+
 func TestSplitQualified(t *testing.T) {
 	tests := []struct {
 		input string

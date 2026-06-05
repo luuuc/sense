@@ -83,6 +83,38 @@ func TestWriteCursorMCPJSON_OverwritesStaleSense(t *testing.T) {
 	}
 }
 
+func TestWriteCursorMCPJSON_MkdirError(t *testing.T) {
+	root := t.TempDir()
+	// .cursor as a regular file makes MkdirAll fail.
+	if err := os.WriteFile(filepath.Join(root, ".cursor"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeCursorMCPJSON(root)
+	if err == nil {
+		t.Error("expected error when .cursor is a file")
+	}
+}
+
+func TestWriteCursorMCPJSON_WriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("write-permission checks are bypassed when running as root")
+	}
+	root := t.TempDir()
+	cursorDir := filepath.Join(root, ".cursor")
+	if err := os.MkdirAll(cursorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Empty, read-only mcp.json: readJSONFile succeeds (empty -> {}), but
+	// writeJSONFile's truncating open is denied.
+	if err := os.WriteFile(filepath.Join(cursorDir, "mcp.json"), []byte{}, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	_, err := writeCursorMCPJSON(root)
+	if err == nil {
+		t.Error("expected error writing to a read-only mcp.json")
+	}
+}
+
 func TestWriteCursorMCPJSON_InvalidJSON(t *testing.T) {
 	root := t.TempDir()
 	cursorDir := filepath.Join(root, ".cursor")

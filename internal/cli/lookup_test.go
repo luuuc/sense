@@ -254,6 +254,138 @@ func TestLookupSQLInjectionPayloads(t *testing.T) {
 	}
 }
 
+// closedQueryDB returns an opened-then-closed *sql.DB so any
+// QueryContext / QueryRowContext on it fails with "database is
+// closed" — the real-world signature of an index whose handle was
+// torn down mid-flight. It drives the query-error returns in the
+// CLI's DB helpers, which a healthy, schema-healed index never
+// reaches through the Run* entrypoints.
+func closedQueryDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func TestLookupEmptyQuery(t *testing.T) {
+	db := seedLookupDB(t)
+	matches, err := Lookup(context.Background(), db, "")
+	if err != nil {
+		t.Fatalf("Lookup(\"\"): %v", err)
+	}
+	if matches != nil {
+		t.Errorf("empty query should return nil matches, got %+v", matches)
+	}
+}
+
+// TestLookupQueryErrorPropagates drives the tier-1 / scanMatches
+// query-error return: a closed DB makes the first SELECT fail, and
+// Lookup surfaces the error instead of swallowing it.
+func TestLookupQueryErrorPropagates(t *testing.T) {
+	db := closedQueryDB(t)
+	if _, err := Lookup(context.Background(), db, "Anything"); err == nil {
+		t.Error("expected error from Lookup on a closed DB")
+	}
+}
+
+func TestLookupFuzzyQueryError(t *testing.T) {
+	db := closedQueryDB(t)
+	if _, err := lookupFuzzy(context.Background(), db, "abcdef"); err == nil {
+		t.Error("expected error from lookupFuzzy on a closed DB")
+	}
+}
+
+func TestEdgeCountsEmptyIDs(t *testing.T) {
+	db := seedLookupDB(t)
+	counts, err := EdgeCounts(context.Background(), db, nil)
+	if err != nil {
+		t.Fatalf("EdgeCounts(nil): %v", err)
+	}
+	if counts != nil {
+		t.Errorf("EdgeCounts(nil) = %v, want nil", counts)
+	}
+}
+
+func TestEdgeCountsQueryError(t *testing.T) {
+	db := closedQueryDB(t)
+	if _, err := EdgeCounts(context.Background(), db, []int64{1, 2}); err == nil {
+		t.Error("expected error from EdgeCounts on a closed DB")
+	}
+}
+
+// seedFuzzyManyHitsDB builds a fixture where a single typo query
+// ("Zexar") has no exact / suffix / containment match but lands
+// within Levenshtein distance 2 of seven distinct top-level symbols —
+// four at distance 1, three at distance 2. That forces lookupFuzzy
+// through its sort comparator on both the differing-distance and the
+// equal-distance (qualified tiebreak) branch, and over the
+// fuzzyMaxResults cap so the truncation runs.
+func seedFuzzyManyHitsDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	fid, err := adapter.WriteFile(ctx, &model.File{Path: "app/x.rb", Language: "ruby", Hash: "z", IndexedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	// All names are length-5 top-level identifiers (qualified == name,
+	// no namespace separators) so the distance is exactly
+	// levenshtein("zexar", name). dist 1: one substitution; dist 2: two.
+	names := []string{
+		"Aexar", "Zaxar", "Zezar", "Zexor", // distance 1
+		"Aaxar", "Aezor", "Zazor", // distance 2
+	}
+	for i, name := range names {
+		if _, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: name, Qualified: name, Kind: "class",
+			LineStart: i + 1, LineEnd: i + 2,
+		}); err != nil {
+			t.Fatalf("WriteSymbol %s: %v", name, err)
+		}
+	}
+	return adapter.DB()
+}
+
+func TestLookupFuzzySortsAndCaps(t *testing.T) {
+	db := seedFuzzyManyHitsDB(t)
+	ctx := context.Background()
+
+	matches, err := Lookup(ctx, db, "Zexar")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if matches[0].Resolution != ResFuzzy {
+		t.Fatalf("resolution = %q, want fuzzy (no exact/suffix/containment hit expected)", matches[0].Resolution)
+	}
+	// Seven candidates within distance 2, capped at fuzzyMaxResults.
+	if len(matches) != fuzzyMaxResults {
+		t.Fatalf("fuzzy returned %d matches, want cap of %d", len(matches), fuzzyMaxResults)
+	}
+	// Distance-1 names sort ahead of distance-2 names; within equal
+	// distance the qualified name breaks the tie ascending.
+	dist1 := map[string]bool{"Aexar": true, "Zaxar": true, "Zezar": true, "Zexor": true}
+	for i := 1; i < len(matches); i++ {
+		prev, cur := matches[i-1].Qualified, matches[i].Qualified
+		if dist1[prev] && dist1[cur] && prev > cur {
+			t.Errorf("equal-distance pair out of order: %q before %q", prev, cur)
+		}
+		if !dist1[prev] && dist1[cur] {
+			t.Errorf("distance-2 %q sorted ahead of distance-1 %q", prev, cur)
+		}
+	}
+}
+
 func TestLevenshtein(t *testing.T) {
 	cases := []struct {
 		a, b string

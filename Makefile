@@ -44,12 +44,13 @@ test-hermetic:
 
 # Coverage gate. Two floors over one profile:
 #   1. Per-file (PRIMARY) — scripts/coveragegate asserts every production file in
-#      the cycle's covered packages holds >= 92% line AND function coverage. This
-#      is the cycle's goal-3 acceptance test, replacing 27-01's interim total-%
-#      scaffold. Its covered-set / straggler-exception / excluded-tail lists are
-#      config-as-code in that package, with a unit test that reds a synthetic
-#      sub-floor file. The long tail (cli, summary, profile, …) is excluded, not
-#      hidden — bringing one under the gate is a one-line edit there.
+#      the whole tree holds >= 92% line AND function coverage. Deny-by-default:
+#      gated unless a _test.go file, a justified straggler-exception, or in a
+#      pinned excludedDir (test-support packages + the gate's own tooling). Its
+#      excludedDir / straggler-exception lists are config-as-code in that package,
+#      with unit tests that red a synthetic sub-floor file and prove a brand-new
+#      package is gated automatically. Code in a new package holds the floor with
+#      no allow-list edit (28-02 inverted the cycle-27 allow-list).
 #   2. Total-% (BACKSTOP) — a coarse gross-regression check; the suite measured
 #      94.0% on 2026-06-04, so the floor sits below it with headroom for
 #      run-to-run and cross-platform variance.

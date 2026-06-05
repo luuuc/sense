@@ -69,6 +69,38 @@ func TestSilentRunStdinReadError(t *testing.T) {
 	}
 }
 
+func TestSilentRunOpenError(t *testing.T) {
+	dir := t.TempDir()
+	// Create .sense/index.db as a directory: os.Stat succeeds (so we get
+	// past the existence check) but sqlite.Open fails to open it.
+	dbPath := filepath.Join(dir, ".sense", "index.db")
+	if err := os.MkdirAll(dbPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	code := Run("session-start", dir, strings.NewReader("{}"), &buf)
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if buf.String() != "{}\n" {
+		t.Errorf("output = %q, want {} (open error)", buf.String())
+	}
+}
+
+func TestSilentRunMarshalError(t *testing.T) {
+	dir := indexedDir(t)
+	// A handler returning a non-nil but unmarshalable value (a channel)
+	// drives the json.Marshal error branch.
+	fn := func(_ context.Context, _ json.RawMessage, _ *sqlite.Adapter, _ string) (any, error) {
+		return make(chan int), nil
+	}
+	var buf bytes.Buffer
+	silentRun(dir, strings.NewReader("{}"), &buf, fn)
+	if buf.String() != "{}\n" {
+		t.Errorf("output = %q, want {} (marshal error)", buf.String())
+	}
+}
+
 func TestIndexPathHonorsSENSEDIR(t *testing.T) {
 	t.Setenv("SENSE_DIR", "/tmp/sense-override")
 	got := indexPath("/some/project")

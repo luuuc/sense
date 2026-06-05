@@ -82,6 +82,38 @@ func seedBlastProject(t *testing.T) string {
 	return dir
 }
 
+// degradeIndexColumn models a partially-migrated index: it reopens a
+// fully-populated on-disk index and drops a single non-indexed column
+// from one table, then stamps the current schema version. The column
+// must be free of any index, constraint, or FTS reference so the table
+// keeps its indexes and full-text triggers intact — that way
+// sqlite.Open's schema re-apply (CREATE ... IF NOT EXISTS) stays a
+// no-op and OpenIndex returns the adapter cleanly, while any later
+// query that reads the dropped column fails for real with "no such
+// column". This is the same degraded-index technique the hook/profile
+// tests use (a table missing a column a query needs), seeded on disk
+// so the Run* command opens it itself and the user-facing error exit
+// codes get exercised. A missing column is one genuinely-possible
+// shape of a half-migrated index: sqlite.Open only rebuilds on a
+// user_version mismatch and otherwise heals via CREATE TABLE IF NOT
+// EXISTS, which cannot restore a column on a table that still exists.
+func degradeIndexColumn(t *testing.T, dir, table, column string) {
+	t.Helper()
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(dir, ".sense", "index.db"))
+	if err != nil {
+		t.Fatalf("reopen index: %v", err)
+	}
+	defer func() { _ = adapter.Close() }()
+	db := adapter.DB()
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, column)); err != nil {
+		t.Fatalf("drop %s.%s: %v", table, column, err)
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", sqlite.SchemaVersion)); err != nil {
+		t.Fatalf("stamp user_version: %v", err)
+	}
+}
+
 func TestRunBlastHumanSuccess(t *testing.T) {
 	dir := seedBlastProject(t)
 	var stdout, stderr bytes.Buffer
@@ -439,6 +471,37 @@ func TestRunBlastDiffBadRefErrors(t *testing.T) {
 	}
 }
 
+// TestRunBlastParseErrorExit1 drives the non-help parse-error return:
+// an out-of-range --min-confidence is rejected by parseBlastArgs and
+// RunBlast maps it to exit 1.
+func TestRunBlastParseErrorExit1(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := RunBlast([]string{"--min-confidence", "5", "Foo"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()})
+	if code != ExitGeneralError {
+		t.Errorf("exit = %d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "min-confidence") {
+		t.Errorf("expected --min-confidence complaint, got: %s", stderr.String())
+	}
+}
+
+// TestRunBlastDiffMissingIndexExit3 covers the diff form's
+// index-open error path: a real git repo (so GitDiffHunks succeeds)
+// whose .sense index has been removed maps to exit 3.
+func TestRunBlastDiffMissingIndexExit3(t *testing.T) {
+	dir, ref := seedBlastGitProject(t)
+	if err := os.RemoveAll(filepath.Join(dir, ".sense")); err != nil {
+		t.Fatalf("rm .sense: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := RunBlast([]string{"--diff", ref},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitIndexMissing {
+		t.Errorf("exit = %d, want %d (ExitIndexMissing)", code, ExitIndexMissing)
+	}
+}
+
 // seedAmbiguousBlastProject creates a project with two symbols
 // sharing the same name but in different files.
 func seedAmbiguousBlastProject(t *testing.T) string {
@@ -493,5 +556,78 @@ func TestRunBlastAmbiguousSymbol(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Multiple symbols match") {
 		t.Errorf("expected disambiguation message, got: %s", stderr.String())
+	}
+}
+
+// TestRunBlastSymbolLookupQueryError drives the symbol form's lookup
+// failure path: dropping sense_symbols.line_start (a non-indexed,
+// non-FTS column the resolver selects) makes the lookup query fail
+// with "no such column", which RunBlast maps to the general-error exit
+// with a "sense blast:" diagnostic.
+func TestRunBlastSymbolLookupQueryError(t *testing.T) {
+	dir := seedBlastProject(t)
+	degradeIndexColumn(t, dir, "sense_symbols", "line_start")
+	var stdout, stderr bytes.Buffer
+	code := RunBlast([]string{"App::Services::CheckoutService"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Fatalf("exit = %d, want %d (ExitGeneralError)", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "sense blast:") {
+		t.Errorf("expected 'sense blast:' diagnostic, got: %s", stderr.String())
+	}
+}
+
+// TestRunBlastSymbolComputeError drives the blast.Compute failure
+// path: lookup and sibling resolution read only sense_symbols/files
+// (left intact), but the BFS reads sense_edges.confidence — dropped
+// here — so the frontier-expansion query fails inside Compute.
+func TestRunBlastSymbolComputeError(t *testing.T) {
+	dir := seedBlastProject(t)
+	degradeIndexColumn(t, dir, "sense_edges", "confidence")
+	var stdout, stderr bytes.Buffer
+	code := RunBlast([]string{"App::Services::CheckoutService"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Fatalf("exit = %d, want %d (ExitGeneralError)", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "sense blast:") {
+		t.Errorf("expected 'sense blast:' diagnostic, got: %s", stderr.String())
+	}
+}
+
+// TestRunBlastDiffSymbolsInChangedLinesError drives the diff form's
+// first index query failure: GitDiffHunks succeeds against the real
+// repo, OpenIndex opens the degraded index cleanly, then
+// SymbolsInChangedLines fails on the dropped sense_symbols.line_end.
+func TestRunBlastDiffSymbolsInChangedLinesError(t *testing.T) {
+	dir, ref := seedBlastGitProject(t)
+	degradeIndexColumn(t, dir, "sense_symbols", "line_end")
+	var stdout, stderr bytes.Buffer
+	code := RunBlast([]string{"--diff", ref},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Fatalf("exit = %d, want %d (ExitGeneralError)", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "sense blast:") {
+		t.Errorf("expected 'sense blast:' diagnostic, got: %s", stderr.String())
+	}
+}
+
+// TestRunBlastDiffComputeError drives the diff form's per-symbol
+// blast.Compute failure: SymbolsInChangedLines resolves the changed
+// CheckoutService span against intact sense_symbols/files, then the
+// per-symbol BFS hits the dropped sense_edges.confidence and errors.
+func TestRunBlastDiffComputeError(t *testing.T) {
+	dir, ref := seedBlastGitProject(t)
+	degradeIndexColumn(t, dir, "sense_edges", "confidence")
+	var stdout, stderr bytes.Buffer
+	code := RunBlast([]string{"--diff", ref},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Fatalf("exit = %d, want %d (ExitGeneralError)", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "sense blast:") {
+		t.Errorf("expected 'sense blast:' diagnostic, got: %s", stderr.String())
 	}
 }

@@ -365,6 +365,36 @@ func TestRunGraphDepthExceedsMax(t *testing.T) {
 	}
 }
 
+// TestRunGraphInvalidDirectionExit1 drives the non-help parse-error
+// return: an unrecognized --direction value is rejected by
+// parseGraphArgs and RunGraph maps it to exit 1.
+func TestRunGraphInvalidDirectionExit1(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := RunGraph([]string{"--direction", "sideways", "Foo"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()})
+	if code != ExitGeneralError {
+		t.Errorf("exit = %d, want %d", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "--direction must be one of") {
+		t.Errorf("expected --direction complaint, got: %s", stderr.String())
+	}
+}
+
+// TestRunGraphDepthBelowOneClamped pins the depth floor: --depth 0 is
+// clamped up to 1 rather than rejected, and the query still resolves.
+func TestRunGraphDepthBelowOneClamped(t *testing.T) {
+	dir := seedGraphProject(t)
+	var stdout, stderr bytes.Buffer
+	code := RunGraph([]string{"--depth", "0", "App::Services::CheckoutService"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "CheckoutService  (class)") {
+		t.Errorf("expected resolved symbol with clamped depth, got:\n%s", stdout.String())
+	}
+}
+
 func TestRunGraphMissingIndexExit3(t *testing.T) {
 	dir := t.TempDir() // no .sense/ inside
 	var stdout, stderr bytes.Buffer
@@ -441,6 +471,46 @@ func TestRunGraphUnreadableIndexExit1(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "corrupt") {
 		t.Errorf("permission error should not be labeled corrupt, got: %s", stderr.String())
+	}
+}
+
+// TestRunGraphLookupQueryError drives RunGraph's lookup failure path:
+// dropping sense_symbols.line_start (a non-indexed, non-FTS column the
+// resolver selects) makes the lookup query fail with "no such column",
+// mapped to the general-error exit and a "sense graph:" diagnostic.
+// degradeIndexColumn models a partially migrated index that OpenIndex
+// still opens cleanly.
+func TestRunGraphLookupQueryError(t *testing.T) {
+	dir := seedGraphProject(t)
+	degradeIndexColumn(t, dir, "sense_symbols", "line_start")
+	var stdout, stderr bytes.Buffer
+	code := RunGraph([]string{"App::Services::CheckoutService"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Fatalf("exit = %d, want %d (ExitGeneralError)", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "sense graph:") {
+		t.Errorf("expected 'sense graph:' diagnostic, got: %s", stderr.String())
+	}
+}
+
+// TestRunGraphReadSymbolGraphError drives RunGraph's graph-read
+// failure path: lookup reads only sense_symbols/files (left intact)
+// and resolves the subject, but ReadSymbolGraph reads
+// sense_edges.confidence — dropped here — so the graph query fails and
+// RunGraph returns the general-error exit with a "sense graph:"
+// diagnostic.
+func TestRunGraphReadSymbolGraphError(t *testing.T) {
+	dir := seedGraphProject(t)
+	degradeIndexColumn(t, dir, "sense_edges", "confidence")
+	var stdout, stderr bytes.Buffer
+	code := RunGraph([]string{"App::Services::CheckoutService"},
+		IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitGeneralError {
+		t.Fatalf("exit = %d, want %d (ExitGeneralError)", code, ExitGeneralError)
+	}
+	if !strings.Contains(stderr.String(), "sense graph:") {
+		t.Errorf("expected 'sense graph:' diagnostic, got: %s", stderr.String())
 	}
 }
 

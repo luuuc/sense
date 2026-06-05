@@ -43,142 +43,184 @@ Commands:
 Run 'sense <command> --help' for per-command usage and exit codes.
 `
 
-func main() {
-	ctx := context.Background()
+// osExit indirects os.Exit so the one-line main wrapper is testable without
+// terminating the test process. Production behaviour is unchanged: it is
+// os.Exit. A test swaps it to capture the code main passes through.
+var osExit = os.Exit
 
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, helpText)
-		os.Exit(2)
+// main is the binary's shell: it owns the process-global edges (os.Args, the
+// real stdio streams, the exit code) and does nothing else. All dispatch logic
+// lives in run, which takes its inputs explicitly so it can be unit-tested.
+func main() {
+	osExit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// run is the functional core of the CLI: it dispatches args[0] to the matching
+// subcommand and returns the process exit code (0 success, 1 general error, 2
+// usage/symbol issue, 3 missing index, 4 corrupt index — the table in
+// .doc/definition/06-mcp-and-cli.md). It takes its streams as parameters rather
+// than reaching for os.Stdin/Stdout/Stderr, and resolves the project root from
+// "." (the cwd, the same default scan and hook already use) rather than
+// os.Getwd, so a test drives it with buffers and a temp working directory.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) < 1 {
+		_, _ = fmt.Fprint(stderr, helpText)
+		return 2
 	}
 
-	cmd := os.Args[1]
+	cmd := args[0]
+	rest := args[1:]
+	cio := cli.IO{Stdout: stdout, Stderr: stderr, Dir: "."}
 
 	switch cmd {
 	case "version", "--version", "-v":
-		fmt.Printf("sense %s (schema v%d, embeddings: %s)\n",
+		_, _ = fmt.Fprintf(stdout, "sense %s (schema v%d, embeddings: %s)\n",
 			version.Version, sqlite.SchemaVersion, embed.ModelID)
+		return 0
 
 	case "help", "--help", "-h":
-		fmt.Print(helpText)
+		_, _ = fmt.Fprint(stdout, helpText)
+		return 0
 
 	case "scan":
-		fs := flag.NewFlagSet("sense scan", flag.ContinueOnError)
-		fs.SetOutput(os.Stderr)
-		watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
-		rebuildFlag := fs.Bool("rebuild", false, "drop and rebuild the index from source (preserves lifetime metrics)")
-		embedFlag := fs.Bool("embed", false, "block until embeddings complete (default: defer to MCP server)")
-		quietFlag := fs.Bool("quiet", false, "suppress warnings")
-		dir := fs.String("dir", ".", "project root")
-		cpuprofile := fs.String("cpuprofile", "", "write CPU profile to file")
-		memprofile := fs.String("memprofile", "", "write heap profile to file on exit")
-		if err := fs.Parse(os.Args[2:]); err != nil {
-			os.Exit(1)
-		}
-
-		if *cpuprofile != "" {
-			f, err := os.Create(*cpuprofile)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "sense scan: create cpuprofile:", err)
-				os.Exit(1)
-			}
-			if err := pprof.StartCPUProfile(f); err != nil {
-				fmt.Fprintln(os.Stderr, "sense scan: start cpuprofile:", err)
-				_ = f.Close()
-				os.Exit(1)
-			}
-			defer func() { pprof.StopCPUProfile(); _ = f.Close() }()
-		}
-
-		var warnSink io.Writer
-		if *quietFlag {
-			warnSink = io.Discard
-		}
-
-		if *watchFlag {
-			if err := watch.Run(ctx, watch.RunOptions{
-				Root:              *dir,
-				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
-			}); err != nil {
-				fmt.Fprintln(os.Stderr, "sense scan --watch:", err)
-				os.Exit(1) //nolint:gocritic // exitAfterDefer: pprof defer only matters on success path
-			}
-		} else {
-			if _, err := scan.Run(ctx, scan.Options{
-				Root:              *dir,
-				Warnings:          warnSink,
-				Quiet:             *quietFlag,
-				EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
-				Embed:             *embedFlag,
-				Rebuild:           *rebuildFlag,
-			}); err != nil {
-				fmt.Fprintln(os.Stderr, "sense scan:", err)
-				os.Exit(1)
-			}
-		}
-
-		if *memprofile != "" {
-			f, err := os.Create(*memprofile)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "sense scan: create memprofile:", err)
-				os.Exit(1)
-			}
-			if err := pprof.WriteHeapProfile(f); err != nil {
-				fmt.Fprintln(os.Stderr, "sense scan: write memprofile:", err)
-			}
-			_ = f.Close()
-		}
+		return runScan(rest, stderr)
 
 	case "setup":
-		os.Exit(cli.RunSetup(os.Args[2:], cli.DefaultIO()))
+		return cli.RunSetup(rest, cio)
 
 	case "search":
-		os.Exit(cli.RunSearch(os.Args[2:], cli.DefaultIO()))
+		return cli.RunSearch(rest, cio)
 
 	case "graph":
-		os.Exit(cli.RunGraph(os.Args[2:], cli.DefaultIO()))
+		return cli.RunGraph(rest, cio)
 
 	case "blast":
-		os.Exit(cli.RunBlast(os.Args[2:], cli.DefaultIO()))
+		return cli.RunBlast(rest, cio)
 
 	case "dead":
-		os.Exit(cli.RunDead(os.Args[2:], cli.DefaultIO()))
+		return cli.RunDead(rest, cio)
 
 	case "conventions":
-		os.Exit(cli.RunConventions(os.Args[2:], cli.DefaultIO()))
+		return cli.RunConventions(rest, cio)
 
 	case "status":
-		os.Exit(cli.RunStatus(os.Args[2:], cli.DefaultIO()))
+		return cli.RunStatus(rest, cio)
 
 	case "benchmark":
-		os.Exit(cli.RunBenchmark(os.Args[2:], cli.DefaultIO()))
+		return cli.RunBenchmark(rest, cio)
 
 	case "doctor":
-		os.Exit(cli.RunDoctor(os.Args[2:], cli.DefaultIO()))
+		return cli.RunDoctor(rest, cio)
 
 	case "hook":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: sense hook <pre-tool-use|pre-compact|subagent-start|session-start>")
-			os.Exit(1)
+		if len(rest) < 1 {
+			_, _ = fmt.Fprintln(stderr, "usage: sense hook <pre-tool-use|pre-compact|subagent-start|session-start>")
+			return 1
 		}
-		os.Exit(hook.Run(os.Args[2], ".", os.Stdin, os.Stdout))
+		return hook.Run(rest[0], ".", stdin, stdout)
 
 	case "mcp":
 		fs := flag.NewFlagSet("sense mcp", flag.ContinueOnError)
-		fs.SetOutput(os.Stderr)
+		fs.SetOutput(stderr)
 		dir := fs.String("dir", ".", "project root containing .sense/")
-		if err := fs.Parse(os.Args[2:]); err != nil {
-			os.Exit(1)
+		if err := fs.Parse(rest); err != nil {
+			return 1
 		}
 		if err := mcpserver.Run(*dir); err != nil {
-			fmt.Fprintln(os.Stderr, "sense mcp:", err)
-			os.Exit(1)
+			_, _ = fmt.Fprintln(stderr, "sense mcp:", err)
+			return 1
 		}
+		return 0
 
 	case "update":
-		os.Exit(versioncheck.Update(os.Stdout, os.Stderr))
+		return versioncheck.Update(stdout, stderr)
 
 	default:
-		fmt.Fprintf(os.Stderr, "sense: unknown command %q. Run 'sense help'.\n", cmd)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(stderr, "sense: unknown command %q. Run 'sense help'.\n", cmd)
+		return 1
 	}
+}
+
+// runScan handles `sense scan`, including the --watch and profiling flags. Split
+// from run so the CPU-profile lifecycle scopes to one function: the profile is
+// stopped and flushed only on the success path, matching the prior behaviour
+// where an error exit skipped the deferred StopCPUProfile (an incomplete run
+// writes no profile).
+func runScan(args []string, stderr io.Writer) int {
+	ctx := context.Background()
+
+	fs := flag.NewFlagSet("sense scan", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	watchFlag := fs.Bool("watch", false, "keep running and re-index on file changes")
+	rebuildFlag := fs.Bool("rebuild", false, "drop and rebuild the index from source (preserves lifetime metrics)")
+	embedFlag := fs.Bool("embed", false, "block until embeddings complete (default: defer to MCP server)")
+	quietFlag := fs.Bool("quiet", false, "suppress warnings")
+	dir := fs.String("dir", ".", "project root")
+	cpuprofile := fs.String("cpuprofile", "", "write CPU profile to file")
+	memprofile := fs.String("memprofile", "", "write heap profile to file on exit")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	// stopProfile is non-nil only when CPU profiling is active. It is invoked
+	// explicitly on the success path (never via defer) so an error return leaves
+	// the profile unwritten, as the os.Exit-based shell did before.
+	var stopProfile func()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "sense scan: create cpuprofile:", err)
+			return 1
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			_, _ = fmt.Fprintln(stderr, "sense scan: start cpuprofile:", err)
+			_ = f.Close()
+			return 1
+		}
+		stopProfile = func() { pprof.StopCPUProfile(); _ = f.Close() }
+	}
+
+	var warnSink io.Writer
+	if *quietFlag {
+		warnSink = io.Discard
+	}
+
+	if *watchFlag {
+		if err := watch.Run(ctx, watch.RunOptions{
+			Root:              *dir,
+			EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
+		}); err != nil {
+			_, _ = fmt.Fprintln(stderr, "sense scan --watch:", err)
+			return 1
+		}
+	} else {
+		if _, err := scan.Run(ctx, scan.Options{
+			Root:              *dir,
+			Warnings:          warnSink,
+			Quiet:             *quietFlag,
+			EmbeddingsEnabled: cli.EmbeddingsEnabled(*dir),
+			Embed:             *embedFlag,
+			Rebuild:           *rebuildFlag,
+		}); err != nil {
+			_, _ = fmt.Fprintln(stderr, "sense scan:", err)
+			return 1
+		}
+	}
+
+	if *memprofile != "" {
+		f, err := os.Create(*memprofile)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "sense scan: create memprofile:", err)
+			return 1
+		}
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			_, _ = fmt.Fprintln(stderr, "sense scan: write memprofile:", err)
+		}
+		_ = f.Close()
+	}
+
+	if stopProfile != nil {
+		stopProfile()
+	}
+	return 0
 }

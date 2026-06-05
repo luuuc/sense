@@ -398,6 +398,62 @@ func TestDoctorOrphanedEdgesFail(t *testing.T) {
 	}
 }
 
+func TestDoctorParseErrorExit1(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor([]string{"--bogus-flag"}, IO{Stdout: &stdout, Stderr: &stderr, Dir: t.TempDir()})
+	if code != ExitGeneralError {
+		t.Errorf("exit = %d, want %d for an unknown flag", code, ExitGeneralError)
+	}
+}
+
+// TestDoctorEmbeddingCompletenessNoSymbols drives the "No symbols to
+// embed" pass branch: embeddings enabled but the index holds zero
+// symbols.
+func TestDoctorEmbeddingCompletenessNoSymbols(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "true")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Errorf("exit=%d, want %d\n%s", code, ExitSuccess, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "No symbols to embed") {
+		t.Errorf("expected 'No symbols to embed', got:\n%s", stdout.String())
+	}
+}
+
+// TestDoctorEmbeddingCompletenessComplete drives the pct==100 pass
+// branch: every symbol has an embedding.
+func TestDoctorEmbeddingCompletenessComplete(t *testing.T) {
+	dir := t.TempDir()
+	db := createTestDB(t, dir, sqlite.SchemaVersion)
+	ctx := context.Background()
+	for i := 0; i < 4; i++ {
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_symbols VALUES (?, 1, 'Foo', ?, 'function', 'public', NULL, 1, 1, NULL, NULL, NULL)`, i+1, fmt.Sprintf("Foo%d", i))
+		_, _ = db.ExecContext(ctx, `INSERT INTO sense_embeddings VALUES (?, X'00')`, i+1)
+	}
+	_ = db.Close()
+
+	t.Setenv("SENSE_EMBEDDINGS", "true")
+	var stdout, stderr bytes.Buffer
+	code := RunDoctor(nil, IO{Stdout: &stdout, Stderr: &stderr, Dir: dir})
+	if code != ExitSuccess {
+		t.Errorf("exit=%d, want %d\n%s", code, ExitSuccess, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "complete (4/4)") {
+		t.Errorf("expected 'complete (4/4)', got:\n%s", stdout.String())
+	}
+}
+
+func TestFindUnknownExtensionsQueryError(t *testing.T) {
+	if got := findUnknownExtensions(context.Background(), closedQueryDB(t)); got != nil {
+		t.Errorf("findUnknownExtensions on closed DB = %v, want nil", got)
+	}
+}
+
 func TestDoctorPassesOnHealthyIndex(t *testing.T) {
 	dir := t.TempDir()
 	senseDir := filepath.Join(dir, ".sense")

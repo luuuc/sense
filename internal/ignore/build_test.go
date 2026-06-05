@@ -192,6 +192,33 @@ func TestBuildUnreadableSenseignore(t *testing.T) {
 	}
 }
 
+func TestBuildSkipsUnreadableDir(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root — permission test won't work")
+	}
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, ".gitignore"), "*.log\n")
+	bad := filepath.Join(root, "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Execute but no read: path resolution still works (so the ENOENT open of
+	// bad/.gitignore is a no-op), but ReadDir fails, making WalkDir invoke the
+	// callback a second time with a non-nil walk error. Build must skip it.
+	if err := os.Chmod(bad, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bad, 0o755) })
+
+	m, err := Build(root, nil)
+	if err != nil {
+		t.Fatalf("Build should tolerate an unreadable dir: %v", err)
+	}
+	if !m.Match("app.log", false) {
+		t.Error("root .gitignore should still apply despite unreadable subdir")
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

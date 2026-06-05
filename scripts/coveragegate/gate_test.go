@@ -31,16 +31,27 @@ func TestCheckHonoursFloorBoundary(t *testing.T) {
 	}
 }
 
-func TestCheckExemptsStragglersAndTail(t *testing.T) {
+func TestCheckExemptsStragglersExcludedDirsAndTests(t *testing.T) {
 	line := map[string]float64{
-		"internal/embed/onnx.go":        50.0, // straggler exception: exempt
-		"internal/mcpserver/builder.go": 50.0, // straggler exception: exempt
-		"internal/cli/root.go":          50.0, // tail (not a covered package): exempt
-		"internal/scan/scan_test.go":    10.0, // test file: never gated
+		"internal/embed/onnx.go":            50.0, // straggler exception: exempt
+		"internal/extract/rust/compose.go":  50.0, // straggler exception: exempt
+		"internal/scan/scantest/harness.go": 50.0, // excludedDir: exempt
+		"scripts/coveragegate/gate.go":      50.0, // excludedDir (the gate itself)
+		"internal/scan/scan_test.go":        10.0, // test file: never gated
 	}
 	v := Check(line, nil)
 	if len(v) != 0 {
-		t.Fatalf("stragglers, tail, and test files must be exempt, got %+v", v)
+		t.Fatalf("stragglers, excluded dirs, and test files must be exempt, got %+v", v)
+	}
+}
+
+// TestCheckGatesNewProductionPackageByDefault is the inversion's reason to
+// exist: a sub-floor file in a package that no list ever named still reds. Under
+// the old allow-list this file would have slipped through ungated.
+func TestCheckGatesNewProductionPackageByDefault(t *testing.T) {
+	v := Check(map[string]float64{"internal/brandnew/feature.go": 80.0}, nil)
+	if len(v) != 1 || v[0].File != "internal/brandnew/feature.go" {
+		t.Fatalf("a new production package must be gated by default, got %+v", v)
 	}
 }
 
@@ -97,13 +108,17 @@ func TestGatedClassification(t *testing.T) {
 		file string
 		want bool
 	}{
-		{"internal/scan/scan.go", true},              // covered package
-		{"internal/scan/scan_test.go", false},        // test file
-		{"internal/scan/scantest/harness.go", false}, // sub-package, not covered set
-		{"internal/cli/root.go", false},              // tail
-		{"internal/embed/onnx.go", false},            // straggler exception
-		{"internal/embed/embedder.go", true},         // covered package, not excepted
-		{"cmd/sense/main.go", false},                 // not a covered package
+		{"internal/scan/scan.go", true},                    // production: gated
+		{"internal/scan/scan_test.go", false},              // test file: never gated
+		{"internal/scan/scantest/harness.go", false},       // excludedDir: test-support
+		{"internal/index/indextest/conformance.go", false}, // excludedDir
+		{"internal/embed/embedtest/embedtest.go", false},   // excludedDir
+		{"scripts/coveragegate/gate.go", false},            // excludedDir: the gate itself
+		{"internal/cli/root.go", true},                     // was tail, now gated by default
+		{"cmd/sense/main.go", true},                        // entry point, now gated
+		{"internal/embed/onnx.go", false},                  // straggler exception
+		{"internal/embed/embedder.go", true},               // production: gated, not excepted
+		{"internal/brandnew/feature.go", true},             // unnamed new package: gated
 	}
 	for _, c := range cases {
 		if got := gated(c.file); got != c.want {

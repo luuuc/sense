@@ -412,6 +412,105 @@ func C3() { Hub(); Other() }
 	}
 }
 
+// scanAdapter scans a root and returns an open adapter over its index.
+func scanAdapter(t *testing.T, root string) *sqlite.Adapter {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, scan.Options{
+		Root:     root,
+		Output:   &bytes.Buffer{},
+		Warnings: io.Discard,
+	}); err != nil {
+		t.Fatalf("scan.Run: %v", err)
+	}
+	adapter, err := sqlite.Open(ctx, filepath.Join(root, ".sense", "index.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	return adapter
+}
+
+// TestGenerateTruncatesMidSection drives the in-block truncation path (remaining > 80).
+func TestGenerateTruncatesMidSection(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "main.go"), `package main
+
+func main() {}
+`)
+	// A long README so the Project section is large enough to overflow but
+	// leave a sizeable remaining budget after the Fingerprint section.
+	writeFile(t, filepath.Join(root, "README.md"),
+		"# Proj\n\n"+strings.Repeat("Useful detail about this project. ", 10)+"\n")
+
+	adapter := scanAdapter(t, root)
+
+	t.Setenv("SENSE_SUMMARY_TOKENS", "70")
+
+	outDir := t.TempDir()
+	if err := summary.Generate(context.Background(), adapter, outDir, root); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "summary.md"))
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if !strings.Contains(string(data), "truncated") {
+		t.Errorf("expected mid-section truncation marker, got:\n%s", data)
+	}
+}
+
+// TestGenerateFileCountQueryError surfaces the error path when sense_files is gone.
+func TestGenerateFileCountQueryError(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	adapter := scanAdapter(t, root)
+
+	if _, err := adapter.DB().ExecContext(context.Background(), "DROP TABLE sense_files"); err != nil {
+		t.Fatal(err)
+	}
+	if err := summary.Generate(context.Background(), adapter, t.TempDir(), ""); err == nil {
+		t.Error("expected error when sense_files is missing")
+	}
+}
+
+// TestGenerateMkdirError surfaces the error path when the sense dir cannot be created.
+func TestGenerateMkdirError(t *testing.T) {
+	ctx := context.Background()
+	senseDir := t.TempDir()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+
+	// fileCount == 0 path: target a sense dir whose parent is a regular file.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(blocker, "sub")
+	if err := summary.Generate(ctx, adapter, out, ""); err == nil {
+		t.Error("expected MkdirAll error when parent is a file")
+	}
+}
+
+// TestGenerateWriteMetaError surfaces the error path when project_description cannot be persisted.
+func TestGenerateWriteMetaError(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	writeFile(t, filepath.Join(root, "README.md"), "# Proj\n\nA real description here.\n")
+	adapter := scanAdapter(t, root)
+
+	// Drop sense_meta so WriteMeta (project_description) fails while files exist.
+	if _, err := adapter.DB().ExecContext(context.Background(), "DROP TABLE sense_meta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := summary.Generate(context.Background(), adapter, t.TempDir(), root); err == nil {
+		t.Error("expected WriteMeta error when sense_meta is missing")
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

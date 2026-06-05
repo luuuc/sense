@@ -35,7 +35,7 @@ func TestStartOneShotEmbedReportsEmbedderFailure(t *testing.T) {
 	}
 
 	cancel, done := startOneShotEmbed(ctx, ts.handlers.dir, true, false, nil,
-		ts.handlers.adapter, ts.handlers.search)
+		ts.handlers.adapter, ts.handlers.search, defaultDeps())
 	defer cancel()
 
 	// Drain the goroutine: it either fails to build the embedder (no model) and
@@ -61,7 +61,7 @@ func TestStartOneShotEmbedCancelledReportsFailure(t *testing.T) {
 	}
 
 	cancel, done := startOneShotEmbed(ctx, ts.handlers.dir, true, false, nil,
-		ts.handlers.adapter, ts.handlers.search)
+		ts.handlers.adapter, ts.handlers.search, defaultDeps())
 	// Cancel immediately so EmbedPending aborts mid-flight rather than draining
 	// the debt; the failure path logs and returns.
 	cancel()
@@ -86,7 +86,7 @@ func TestStartOneShotEmbedNoDebtClosesImmediately(t *testing.T) {
 
 	engine := search.NewEngine(adapter, nil, nil)
 	// No symbols → no debt → fast path, no goroutine.
-	cancel, done := startOneShotEmbed(ctx, dir, true, false, nil, adapter, engine)
+	cancel, done := startOneShotEmbed(ctx, dir, true, false, nil, adapter, engine, defaultDeps())
 	defer cancel()
 
 	select {
@@ -105,7 +105,7 @@ func TestStartOneShotEmbedSkipsWhenServiceOwnsEmbedding(t *testing.T) {
 	ctx := context.Background()
 
 	cancel, done := startOneShotEmbed(ctx, ts.handlers.dir, true, true /*serviceStarted*/, nil,
-		ts.handlers.adapter, ts.handlers.search)
+		ts.handlers.adapter, ts.handlers.search, defaultDeps())
 	defer cancel()
 
 	select {
