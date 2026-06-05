@@ -96,7 +96,12 @@ func lessExample(a, b Example) bool {
 	return a.Path < b.Path
 }
 
-func PickRepresentatives(examples []Example, limit int) []string {
+// pickRepresentatives is the shared pick: dedupe by Name+Path, sort by the
+// EdgeCount-first total order, and take the top `limit` examples. The two public
+// renderers build on it — PickRepresentatives projects the raw Names (a lookup
+// key into sense_symbols), RepresentativeLabels disambiguates collisions for
+// display. They must select the identical set, so the pick lives here once.
+func pickRepresentatives(examples []Example, limit int) []Example {
 	if len(examples) == 0 {
 		return nil
 	}
@@ -113,15 +118,146 @@ func PickRepresentatives(examples []Example, limit int) []string {
 	if n > len(sorted) {
 		n = len(sorted)
 	}
-	names := make([]string, n)
-	for i := 0; i < n; i++ {
-		names[i] = sorted[i].Name
+	return sorted[:n]
+}
+
+// PickRepresentatives returns the raw Names of the top representatives. These
+// are symbol/file names used as a lookup key (lookupInstanceSnippets keys on
+// sense_symbols.name), so they stay bare even when two share a name — use
+// RepresentativeLabels for anything shown to a reader.
+func PickRepresentatives(examples []Example, limit int) []string {
+	picked := pickRepresentatives(examples, limit)
+	if len(picked) == 0 {
+		return nil
+	}
+	names := make([]string, len(picked))
+	for i, e := range picked {
+		names[i] = e.Name
 	}
 	return names
 }
 
+// RepresentativeLabels returns display labels for the top representatives: bare
+// Name when unique within the picked set, else the Name with the shortest
+// trailing path segments that distinguish it from its same-named siblings, e.g.
+// "_add_modal.html.erb (categories/categorizations)". The same convention can
+// surface the same displayed name from several distinct files; a bare repeat
+// reads as one example shown N times rather than N real files.
+func RepresentativeLabels(examples []Example, limit int) []string {
+	picked := pickRepresentatives(examples, limit)
+	return disambiguateLabels(picked)
+}
+
 func topNames(examples []Example) string {
-	return strings.Join(PickRepresentatives(examples, maxDescriptionNames), ", ")
+	return strings.Join(RepresentativeLabels(examples, maxDescriptionNames), ", ")
+}
+
+// disambiguateLabels labels each picked example: bare Name when its Name is
+// unique in the set, else Name + " (suffix)" where suffix is the shortest
+// trailing directory segments of its Path that distinguish it from its
+// same-named siblings. dedupeExamples guarantees every picked example has a
+// distinct (Name, Path), so a group's full Paths are always distinct — when the
+// per-member dir suffixes still collide (a dir suffix and a full-Path fallback
+// live in different string spaces, so a shallow member's fallback can equal a
+// deeper sibling's suffix), escalateColliding relabels the whole group with full
+// Paths, guaranteeing every label in a group is unique.
+func disambiguateLabels(picked []Example) []string {
+	groups := make(map[string][]int, len(picked))
+	for i, e := range picked {
+		groups[e.Name] = append(groups[e.Name], i)
+	}
+	labels := make([]string, len(picked))
+	for i, e := range picked {
+		group := groups[e.Name]
+		if len(group) == 1 {
+			labels[i] = e.Name
+			continue
+		}
+		labels[i] = e.Name + " (" + uniqueDirSuffix(e.Path, siblingPaths(picked, group, i)) + ")"
+	}
+	escalateColliding(picked, groups, labels)
+	return labels
+}
+
+// siblingPaths returns the Paths of the group members other than i.
+func siblingPaths(picked []Example, group []int, i int) []string {
+	paths := make([]string, 0, len(group)-1)
+	for _, j := range group {
+		if j != i {
+			paths = append(paths, picked[j].Path)
+		}
+	}
+	return paths
+}
+
+// uniqueDirSuffix returns the shortest join of trailing directory segments of
+// target that no sibling shares at the same depth. The depth grows one segment
+// at a time (one segment is not always enough: two files can share a trailing
+// dir, e.g. .../categories/categorizations and .../navigations/categorizations).
+// If the directory segments are exhausted without distinguishing target — its
+// only dir suffix is shared by a deeper sibling, or a sibling differs only in
+// basename — the full target Path is returned as the fallback.
+func uniqueDirSuffix(target string, siblings []string) string {
+	segs := dirSegments(target)
+	for k := 1; k <= len(segs); k++ {
+		cand := suffixOf(segs, k)
+		collision := false
+		for _, s := range siblings {
+			other := dirSegments(s)
+			if len(other) >= k && suffixOf(other, k) == cand {
+				collision = true
+				break
+			}
+		}
+		if !collision {
+			return cand
+		}
+	}
+	return target
+}
+
+// escalateColliding is the airtight backstop. A dir-suffix label and a full-Path
+// fallback occupy different string spaces, so a shallow member's fallback can
+// still equal a deeper sibling's dir suffix (e.g. fallback "foo/bar" vs suffix
+// "foo/bar"). If any same-named group still holds a duplicate label, relabel that
+// whole group with full Paths, distinct by dedupeExamples. It only fires on the
+// rare residual collision, leaving the minimal dir-suffix labels untouched.
+func escalateColliding(picked []Example, groups map[string][]int, labels []string) {
+	for _, group := range groups {
+		if len(group) < 2 || labelsDistinct(group, labels) {
+			continue
+		}
+		for _, i := range group {
+			labels[i] = picked[i].Name + " (" + picked[i].Path + ")"
+		}
+	}
+}
+
+// labelsDistinct reports whether the labels at the given indices are all unique.
+func labelsDistinct(group []int, labels []string) bool {
+	seen := make(map[string]bool, len(group))
+	for _, i := range group {
+		if seen[labels[i]] {
+			return false
+		}
+		seen[labels[i]] = true
+	}
+	return true
+}
+
+// dirSegments splits the directory portion of a path into segments, dropping the
+// basename. A path with no directory (root-level file) yields no segments.
+func dirSegments(p string) []string {
+	dir := path.Dir(p)
+	if dir == "." || dir == "/" || dir == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimPrefix(dir, "/"), "/")
+}
+
+// suffixOf joins the last k segments with "/".
+func suffixOf(segs []string, k int) string {
+	return strings.Join(segs[len(segs)-k:], "/")
 }
 
 func extractFileSuffix(basename string) string {
