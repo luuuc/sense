@@ -540,41 +540,12 @@ allows it.
 
 ## Adding framework support to an existing language
 
-Framework inference adds domain-specific edges on top of a language's base
-extraction. Two patterns exist:
-
-- **Pattern A — separate file** (recommended for non-trivial frameworks). Python
-  uses this: `internal/extract/python/framework.go` holds all Django/FastAPI
-  logic as methods on the same `walker`. The base extractor calls into framework
-  methods at integration points; a non-match returns nil and base extraction
-  continues unchanged.
-- **Pattern B — inline** (for a handful of `case` branches). Ruby's `dispatchCall`
-  routes on method name (`case "has_many", "belongs_to": …`). Move to a separate
-  file when it grows.
-
-**What framework extractors emit:** `composes` for ORM associations/typed fields
-(Rails `has_many :orders`, Django `ForeignKey(User)`); `calls` for lifecycle
-callbacks and route-to-handler wiring (Rails `before_action`, FastAPI
-`@app.get`); `imports` for module inclusion. Framework edges use
-`ConfidenceConvention` (0.9) — they rely on naming patterns, not syntactic proof.
-
-**Cross-language edges.** Some frameworks bridge languages. The ERB extractor
-connects templates to JS: `data-controller="checkout"` → `CheckoutController`,
-`<turbo-stream-from>` → `turbo-channel:` prefix. Cross-language resolution works
-through synthetic qualified-name prefixes defined in `extract/extractor.go`
-(`PrefixTurboChannel`, `PrefixImportmap`, …); **both** emitter and receiver must
-produce the same qualified name. The shared helper
-`extract.StimulusControllerQualified()` keeps ERB and TS/JS in agreement.
-
-**RawExtractor (non-tree-sitter languages).** Template languages like ERB have no
-grammar. Implement `RawExtractor` (`ExtractRaw(source, filePath, emit) error`)
-instead; when an extractor implements both, the harness calls `ExtractRaw` and
-skips parsing, and `Grammar()` returns nil. See
-[`internal/extract/erb/`](internal/extract/erb/).
-
-**Fixtures.** Add framework fixtures alongside the language's existing ones
-(`testdata/ruby/rails_associations.rb` + `.golden.json`), including negative
-cases — patterns that look like framework code but should emit nothing.
+Adding a framework (Rails on Ruby, Django on Python, React on TypeScript) has its
+own dedicated guide: [`CONTRIBUTING-A-FRAMEWORK.md`](CONTRIBUTING-A-FRAMEWORK.md).
+It covers both halves of the job, emitting the framework's edges (associations,
+routes, callbacks, cross-language wiring, the `RawExtractor` path) and the
+dead-code fine-graining that keeps a framework's invisibly-reached symbols out of
+the dead report. Start there rather than here once your language is full-tier.
 
 ---
 

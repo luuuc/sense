@@ -1,5 +1,33 @@
 # Contributing to Sense
 
+## What we accept
+
+Sense is feature-complete for v1. To keep it focused and maintainable, outside
+contributions are accepted in **three areas only**:
+
+1. **New languages and frameworks.** A tree-sitter-backed language, or framework
+   support on top of an existing one. Start with
+   [`CONTRIBUTING-A-LANGUAGE.md`](CONTRIBUTING-A-LANGUAGE.md); for a framework on
+   a language Sense already parses, go straight to
+   [`CONTRIBUTING-A-FRAMEWORK.md`](CONTRIBUTING-A-FRAMEWORK.md).
+2. **Dead-code fine-graining.** Teaching the dead-code analyzer about a language
+   or framework's invisible-reach idioms (decorators, routes, associations, FFI
+   exports) so those symbols are not falsely flagged dead. This is one half of
+   framework support and lives in the dead-code section of
+   [`CONTRIBUTING-A-FRAMEWORK.md`](CONTRIBUTING-A-FRAMEWORK.md).
+3. **AI-tool integration.** Adding or tuning an AI coding tool (Claude Code,
+   Cursor, Codex, Opencode, Aider, ...). See
+   [`CONTRIBUTING-AN-AI-TOOL.md`](CONTRIBUTING-AN-AI-TOOL.md).
+
+Bug fixes for existing behavior are always welcome.
+
+**Everything else we are not taking**, even if well-built: new commands, new
+query or output formats, configuration knobs, performance rewrites, dependency
+swaps, and net-new features. The query surface and CLI are deliberately small
+and considered done. Please open an issue before investing time in anything
+outside the three lanes above; an unsolicited feature PR will be closed with
+thanks rather than merged. This is not a judgement of the work, only of scope.
+
 ## Dev setup
 
 Requires Go 1.25+.
@@ -63,12 +91,20 @@ chore(ci): pin golangci-lint version
 
 Fill out the PR template: what changed, how you tested, and which issue (if any) the work addresses.
 
-## Adding a language
+## The contribution guides
 
-Adding support for a new programming language has its own step-by-step guide:
-[`CONTRIBUTING-A-LANGUAGE.md`](CONTRIBUTING-A-LANGUAGE.md). It covers both the
-standard tier (a ~30-line table-driven declaration) and the full tier (a bespoke
-extractor), from vendoring the tree-sitter grammar to generating goldens.
+Each accepted lane has its own step-by-step guide, written to be followed
+literally by an AI agent or a human with no prior knowledge of the codebase:
+
+- [`CONTRIBUTING-A-LANGUAGE.md`](CONTRIBUTING-A-LANGUAGE.md) for a new language.
+  It covers the standard tier (a ~30-line table-driven declaration) and the full
+  tier (a bespoke extractor), from vendoring the tree-sitter grammar to
+  generating goldens.
+- [`CONTRIBUTING-A-FRAMEWORK.md`](CONTRIBUTING-A-FRAMEWORK.md) for framework
+  support on a language Sense already parses, plus the dead-code fine-graining
+  that keeps a framework's invisibly-reached symbols out of the dead report.
+- [`CONTRIBUTING-AN-AI-TOOL.md`](CONTRIBUTING-AN-AI-TOOL.md) for a new AI coding
+  tool integration, or tuning the guidance an existing one receives.
 
 ## Larger changes
 

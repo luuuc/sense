@@ -71,12 +71,12 @@ Parses your code with tree-sitter, extracts symbols and relationships, embeds ev
 cd /path/to/project && sense setup
 ```
 
-Auto-detects installed AI tools (Claude Code, Cursor, Codex CLI) and writes integration configs:
+Auto-detects installed AI tools (Claude Code, Cursor, Codex CLI, and OpenCode) and writes each one's integration configs:
 
-- **`.mcp.json`**, MCP server config (Claude Code, Cursor, any MCP client)
+- **`.mcp.json`** / **`.cursor/mcp.json`** / **`opencode.json`**, the MCP server entry for the detected tool (or any MCP client)
+- **`CLAUDE.md`** / **`.cursorrules`** / **`AGENTS.md`**, routing guidance with a tool substitution table, written from a single shared source
 - **`.claude/settings.json`**, lifecycle hooks that nudge Claude toward Sense tools
-- **`CLAUDE.md`**, routing guidance with a substitution table
-- **`.claude/skills/`**, workflow skills for exploration, impact analysis, and conventions
+- **`.claude/skills/`** and **`.opencode/skills/`**, workflow skills for exploration, impact analysis, and conventions
 
 No manual setup. Run `sense setup` and your AI has structural understanding.
 
@@ -190,7 +190,7 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 | **PHP** | Classes, interfaces, traits (`\` scoping) |
 | **Scala** | Classes, traits, objects |
 
-Standard-tier languages use a table-driven generic extractor. Each is ~25 lines of config, not a handwritten walker. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) for how to add a new language or framework.
+Standard-tier languages use a table-driven generic extractor. Each is ~25 lines of config, not a handwritten walker. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) to add a new language, and [CONTRIBUTING-A-FRAMEWORK.md](CONTRIBUTING-A-FRAMEWORK.md) to add framework support (plus the dead-code fine-graining that goes with it).
 
 ## Feedback
 
@@ -205,6 +205,14 @@ make lint     # run linters
 make ci       # all of the above
 ```
 
+## Contributing
+
+Sense is feature-complete for v1. Outside contributions are accepted in three areas: new languages and frameworks, dead-code fine-graining for a language or framework, and AI-tool integrations. Bug fixes are always welcome; net-new features are not. The full scope and step-by-step guides are in [CONTRIBUTING.md](CONTRIBUTING.md):
+
+- [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md), a new language.
+- [CONTRIBUTING-A-FRAMEWORK.md](CONTRIBUTING-A-FRAMEWORK.md), framework support and dead-code fine-graining.
+- [CONTRIBUTING-AN-AI-TOOL.md](CONTRIBUTING-AN-AI-TOOL.md), a new AI coding tool integration.
+
 ## License
 
-O'Saasy. MIT-style with SaaS-competition rights reserved. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
