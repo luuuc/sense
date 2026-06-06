@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [0.99.2] - 2026-06-06
+
+### Refactoring
+
+- drive tool integration from a registry
+- drive DetectCurrent from the registry
 ## [0.99.1] - 2026-06-06
 
 ### Bug Fixes
