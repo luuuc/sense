@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.0.0] - 2026-06-06
+
+### Features
+
+- Sense 1.0, first stable release
 ## [0.99.2] - 2026-06-06
 
 ### Refactoring
