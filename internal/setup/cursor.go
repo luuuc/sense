@@ -1,30 +1,64 @@
 package setup
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
-const cursorrules = `<!-- sense:start -->
-## Sense — codebase understanding
+// detectCursor looks for evidence that Cursor is installed.
+func detectCursor() DetectResult {
+	r := DetectResult{Tool: ToolCursor}
+	if hasCursorEnv() {
+		r.Found = true
+		r.Evidence = "CURSOR_* env var set"
+		return r
+	}
+	if _, err := exec.LookPath("cursor"); err == nil {
+		r.Found = true
+		r.Evidence = "cursor on PATH"
+		return r
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".cursor")); err == nil {
+			r.Found = true
+			r.Evidence = "~/.cursor/ directory"
+			return r
+		}
+	}
+	return r
+}
 
-This project has a Sense index. Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
+// hasCursorEnv reports whether a Cursor session env var is set. Shared by
+// detectCursor and DetectCurrent.
+func hasCursorEnv() bool {
+	for _, key := range []string{"CURSOR_TRACE_ID", "CURSOR_SESSION_ID"} {
+		if os.Getenv(key) != "" {
+			return true
+		}
+	}
+	return false
+}
 
-**Use Sense MCP tools for ALL codebase understanding:**
+// configureCursor writes Cursor's MCP config and its .cursorrules guidance.
+func configureCursor(root string) (*ToolResult, error) {
+	tr := &ToolResult{Tool: ToolCursor}
 
-| Question | Tool |
-|---|---|
-| Who calls X? What does X call? | sense_graph |
-| Find code related to a concept | sense_search |
-| What breaks if I change X? | sense_blast |
-| What patterns does this project follow? | sense_conventions |
-| Index health, what's indexed | sense_status |
+	if wrote, err := writeCursorMCPJSON(root); err != nil {
+		return nil, fmt.Errorf("write .cursor/mcp.json: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".cursor/mcp.json")
+	}
 
-**When NOT to use Sense** (use grep instead):
-- Exact text/string search (regex, log messages, string literals)
-- Reading file contents → use your file reading tool
-- Editing code → Sense is read-only
-<!-- sense:end -->`
+	if wrote, err := writeCursorRules(root); err != nil {
+		return nil, fmt.Errorf("write .cursorrules: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".cursorrules")
+	}
+
+	return tr, nil
+}
 
 // writeCursorMCPJSON creates or merges the Sense MCP server entry into
 // .cursor/mcp.json (Cursor's MCP config location).
@@ -61,5 +95,5 @@ func writeCursorMCPJSON(root string) (bool, error) {
 // writeCursorRules creates or updates the Sense section in .cursorrules.
 // Uses the same marker-comment strategy as CLAUDE.md for idempotent merges.
 func writeCursorRules(root string) (bool, error) {
-	return writeMarkerFile(filepath.Join(root, ".cursorrules"), cursorrules)
+	return writeMarkerFile(filepath.Join(root, ".cursorrules"), guidanceMarkdown)
 }

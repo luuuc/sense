@@ -3,6 +3,12 @@
 // routing guidance, hooks, skills) so that AI tools discover and
 // prefer Sense without manual configuration.
 //
+// The set of tools is a registry (registry.go): each tool is one entry
+// pairing a detector with a configurer, and each tool's files live in
+// its own file (claude.go, cursor.go, codex.go, opencode.go). Adding a
+// tool touches a new file plus one registry line; see
+// CONTRIBUTING-AN-AI-TOOL.md.
+//
 // All writes are idempotent: JSON files are deep-merged, Markdown
 // files use marker comments, skill files are overwritten. Running
 // setup twice produces the same result.
@@ -11,11 +17,7 @@ package setup
 import (
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
-
-	"github.com/luuuc/sense/internal/mcpio"
 )
 
 // Options controls which tools setup configures.
@@ -77,97 +79,6 @@ func resolveTools(opts *Options) []Tool {
 	return tools
 }
 
-func configureTool(root string, t Tool) (*ToolResult, error) {
-	switch t {
-	case ToolClaudeCode:
-		return configureClaudeCode(root)
-	case ToolCursor:
-		return configureCursor(root)
-	case ToolCodexCLI:
-		return configureCodexCLI(root)
-	case ToolOpencode:
-		return configureOpencode(root)
-	default:
-		return nil, fmt.Errorf("unknown tool: %s", t)
-	}
-}
-
-func configureClaudeCode(root string) (*ToolResult, error) {
-	tr := &ToolResult{Tool: ToolClaudeCode}
-
-	if wrote, err := writeMCPJSON(root); err != nil {
-		return nil, fmt.Errorf("write .mcp.json: %w", err)
-	} else if wrote {
-		tr.Files = append(tr.Files, ".mcp.json")
-	}
-
-	if wrote, err := writeClaudeSettings(root); err != nil {
-		return nil, fmt.Errorf("write .claude/settings.json: %w", err)
-	} else if wrote {
-		tr.Files = append(tr.Files, ".claude/settings.json")
-	}
-
-	if wrote, err := writeClaudeMD(root); err != nil {
-		return nil, fmt.Errorf("write CLAUDE.md: %w", err)
-	} else if wrote {
-		tr.Files = append(tr.Files, "CLAUDE.md")
-	}
-
-	n, err := writeSkills(root)
-	if err != nil {
-		return nil, fmt.Errorf("write .claude/skills: %w", err)
-	}
-	if n > 0 {
-		tr.Files = append(tr.Files, fmt.Sprintf("%d skill files in .claude/skills/", n))
-	}
-
-	na, err := writeAgents(root)
-	if err != nil {
-		return nil, fmt.Errorf("write .claude/agents: %w", err)
-	}
-	if na > 0 {
-		tr.Files = append(tr.Files, fmt.Sprintf("%d agent files in .claude/agents/", na))
-	}
-
-	return tr, nil
-}
-
-func configureCursor(root string) (*ToolResult, error) {
-	tr := &ToolResult{Tool: ToolCursor}
-
-	if wrote, err := writeCursorMCPJSON(root); err != nil {
-		return nil, fmt.Errorf("write .cursor/mcp.json: %w", err)
-	} else if wrote {
-		tr.Files = append(tr.Files, ".cursor/mcp.json")
-	}
-
-	if wrote, err := writeCursorRules(root); err != nil {
-		return nil, fmt.Errorf("write .cursorrules: %w", err)
-	} else if wrote {
-		tr.Files = append(tr.Files, ".cursorrules")
-	}
-
-	return tr, nil
-}
-
-func configureCodexCLI(root string) (*ToolResult, error) {
-	tr := &ToolResult{Tool: ToolCodexCLI}
-
-	if wrote, err := writeMCPJSON(root); err != nil {
-		return nil, fmt.Errorf("write .mcp.json: %w", err)
-	} else if wrote {
-		tr.Files = append(tr.Files, ".mcp.json")
-	}
-
-	if wrote, err := writeAgentsMD(root); err != nil {
-		return nil, fmt.Errorf("write AGENTS.md: %w", err)
-	} else if wrote {
-		tr.Files = append(tr.Files, "AGENTS.md")
-	}
-
-	return tr, nil
-}
-
 func printSetupSummary(out io.Writer, res *Result) {
 	if len(res.Tools) == 0 {
 		return
@@ -200,133 +111,4 @@ func joinNames(names []string) string {
 	default:
 		return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
 	}
-}
-
-// writeMCPJSON creates or merges the Sense MCP server entry into .mcp.json.
-func writeMCPJSON(root string) (bool, error) {
-	path := filepath.Join(root, ".mcp.json")
-
-	senseCfg := map[string]any{
-		"command":            "sense",
-		"args":               []any{"mcp"},
-		"serverInstructions": mcpio.ServerInstructions,
-	}
-
-	existing, err := readJSONFile(path)
-	if err != nil {
-		return false, err
-	}
-
-	servers, _ := existing["mcpServers"].(map[string]any)
-	if servers == nil {
-		servers = map[string]any{}
-	}
-	servers["sense"] = senseCfg
-	existing["mcpServers"] = servers
-
-	if err := writeJSONFile(path, existing); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// writeClaudeSettings creates or merges hook config and permissions
-// into .claude/settings.json.
-func writeClaudeSettings(root string) (bool, error) {
-	dir := filepath.Join(root, ".claude")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, err
-	}
-	path := filepath.Join(dir, "settings.json")
-
-	existing, err := readJSONFile(path)
-	if err != nil {
-		return false, err
-	}
-
-	hooks := map[string]any{
-		"PreToolUse": []any{
-			map[string]any{
-				"matcher": "Grep|Glob|Agent|Bash",
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": "sense hook pre-tool-use",
-						"timeout": 5000,
-					},
-				},
-			},
-		},
-		"PreCompact": []any{
-			map[string]any{
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": "sense hook pre-compact",
-						"timeout": 5000,
-					},
-				},
-			},
-		},
-		"SubagentStart": []any{
-			map[string]any{
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": "sense hook subagent-start",
-						"timeout": 5000,
-					},
-				},
-			},
-		},
-		"SessionStart": []any{
-			map[string]any{
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": "sense hook session-start",
-						"timeout": 5000,
-					},
-				},
-			},
-		},
-	}
-
-	mergeHooks(existing, hooks)
-	// Retire the synchronous PostToolUse re-index hook (pitch 26-01): the
-	// embedded watcher in `sense mcp` plus per-query read-repair now keep
-	// the index fresh off the agent's critical path. Strip any Sense entry
-	// an earlier setup wrote so re-running setup migrates old configs.
-	removeRetiredHook(existing, "PostToolUse")
-	mergePermissions(existing, []string{"mcp__sense__*"})
-
-	if err := writeJSONFile(path, existing); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// ParseTools parses a comma-separated list of tool names into Tool values.
-// Returns an error if any name is unrecognized.
-func ParseTools(s string) ([]Tool, error) {
-	if s == "" {
-		return nil, nil
-	}
-	var tools []Tool
-	for _, name := range strings.Split(s, ",") {
-		name = strings.TrimSpace(name)
-		switch name {
-		case "claude-code":
-			tools = append(tools, ToolClaudeCode)
-		case "cursor":
-			tools = append(tools, ToolCursor)
-		case "codex-cli":
-			tools = append(tools, ToolCodexCLI)
-		case "opencode":
-			tools = append(tools, ToolOpencode)
-		default:
-			return nil, fmt.Errorf("unknown tool %q (valid: claude-code, cursor, codex-cli, opencode)", name)
-		}
-	}
-	return tools, nil
 }
