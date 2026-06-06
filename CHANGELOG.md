@@ -1,172 +1,490 @@
 # Changelog
 
 All notable changes to Sense.
+## [0.99.1] - 2026-06-06
 
-## [Unreleased]
+### Bug Fixes
 
-### Added
+- install git-cliff on PATH so auto-release actually tags
+## [0.99.0] - 2026-06-05
 
-- The Standard-tier (`langspec`) languages — Java, Kotlin, C#, Scala, C++, PHP,
-  C — now carry `Symbol.Visibility` and get specific dead-code reasons instead of
-  the blanket `core_no_language_voice`. The table-driven walker gained three
-  per-grammar fields: `VisibilityFn` maps each grammar's access modifiers to a
-  visibility (Java package-private default → `package`, C# member default →
-  `private`, C `static` → file-local, C++ from the positional `public:`/`private:`
-  section), which makes the core library-API gate fire for these languages;
-  `AnnotationKinds` harvests every annotated/attributed symbol (`@Service`,
-  `[Fact]`, `#[Route]`) to the `langspec_annotated` set; `MentionKinds` opts a
-  grammar into the soundness mention harvest. The new `langspecVoice`
-  (`internal/dead/voice_langspec.go`, registered once per language) raises
-  `ls_annotated` (framework-dispatched), `ls_interface_method` (reached through an
-  implementor), `ls_public_no_framework` (a public symbol a Spring/JPA/JUnit/ASP.NET
-  path may reach — Sense models no framework here), `ls_reflective_type` (a
-  reflectively-loadable class/type/constant), `ls_dynamic` (a private PHP callable;
-  reflection is pervasive), and `ls_unvalidated` (a private callable in a static
-  language with no benchmark to validate a `dead` tier). **Java is the sixth
-  language to earn `dead`**, and only narrowly: an explicitly `private`
-  (class-local) callable that is unreferenced, non-annotated, not an interface
-  method, and absent from Java's mention set. Validated on the `javalin` benchmark
-  (313 symbols, 28 unreferenced, **zero false `dead`** — every unreferenced symbol
-  is public/annotated/interface and correctly held `possibly_dead`) plus a
-  two-sided synthetic control. The other six ship reasons-only: PHP is fixed
-  (reflection-pervasive), and Kotlin/C#/Scala/C++/C have no benchmark repo, so they
-  fail closed (`ls_unvalidated`) until one exists — only Java wires `MentionKinds`
-  and harvests mentions.
+### Bug Fixes
 
-- Python is the fifth language whose symbols can earn the `dead` verdict, and
-  `Symbol.Visibility` is now populated for Python. An underscore pre-pass
-  (`internal/extract/python/visibility.go`) marks each symbol `private` (a
-  leading-underscore non-dunder name — `_helper`, `__mangled`) or `public`
-  (a dunder like `__init__`, or any non-underscore name). Python has no enforced
-  privacy, so the underscore is the only structural "not public API" signal, and
-  the `pythonVoice` (`internal/dead/voice_python.go`) earns `dead` only for an
-  **underscore-private function or method** with no caller, no mention, and no
-  invisible-reach idiom — the Ruby rule applied. Everything else stays
-  `possibly_dead` with an exact reason: `py_dunder` (a `__x__` protocol method,
-  matched by pattern so PEP 562 module `__getattr__` and dataclass
-  `__post_init__` are covered), `py_route` (a Flask `@app.route` / FastAPI
-  `@app.get`/`@router.post` handler the framework's router dispatches), `py_django`
-  (a `@receiver` signal handler or `@admin.register`), `py_decorator` (any other
-  decorated symbol — `@property`, `@pytest.fixture`, `@click.command`),
-  `py_all_export` (a name in `__all__`, re-exported by `import *`, overriding the
-  underscore convention), `py_public` (a public function/method reachable by
-  duck-typed dispatch), and `py_class` / `py_constant` (no Python class or
-  constant ever earns `dead`, reachable via importlib / getattr / `__subclasses__`
-  / metaclass registries). The extractor harvests its own mention set, the
-  getattr/setattr/hasattr dispatch set, the decorator/route/Django reach sets, and
-  the `__all__` export set. The binding gate is hand-labeled precision on a
-  synthetic corpus (100%) plus a before/after run on the `flask` benchmark repo
-  (one earned `dead`, verified genuinely unused, zero false `dead`). `py_django`'s
-  model-field/`Meta` cases rest on the synthetic corpus and `py_class` — the
-  benchmark suite has no Django repo, so `py_django` is exercised only
-  synthetically and through its decorator paths.
+- make example ordering deterministic
+- disambiguate repeated representative labels
 
-- TypeScript is the fourth language whose symbols can earn the `dead` verdict,
-  and `Symbol.Visibility` is now populated for the whole TS/JS family. The TS/JS
-  extractor marks each symbol `public` (exported in any form — `export`, `export
-  default`, an `export { g }` clause, or a re-export) or `private` (module-local).
-  With no compiler dead-code lint to bind against, the closed-world signal is the
-  module system: the `tsVoice` earns `dead` only for a **module-private `.ts`/`.tsx`
-  function / const / class** with no caller, no mention, and no framework idiom.
-  Everything export- or framework-reachable stays `possibly_dead` with an exact
-  reason: `ts_decorator` (an `@Component`/`@Injectable`/`@Controller` or
-  route-decorated class/method a DI container dispatches), `ts_framework_route` (a
-  Next.js `app/` page/layout/route or any `pages/` export rendered by file-system
-  routing), `ts_jsx` (an exported PascalCase `.tsx`/`.jsx` component used as
-  `<Component/>`), `ts_default_export` (imported by path, not by name), `ts_exported`
-  (a re-export / dynamic `import()` / external consumer may reach it), `ts_method` (a
-  method may satisfy an interface or a framework protocol like React's
-  `componentDidMount`), and `ts_type` (an interface/type reached structurally or by
-  declaration-merging). **Plain JavaScript stays conservative:** a module-private
-  `.js` symbol that would earn `dead` in TypeScript is held `possibly_dead`
-  (`js_dynamic`) instead — CommonJS mutation and the absence of types make the
-  closed-world bet unsound for JS. A symbol earns `dead` only in an ES *module* (a
-  file with a top-level import/export); a global *script* (no module syntax — a
-  bundler runtime, an ambient file) has concatenation-reachable symbols that never
-  earn `dead`. `.d.ts` and test-fixture directories (`testdata/`, `test/`,
-  `__testfixtures__/`) are excluded from candidacy. The extractor harvests its own
-  mention set, computed-property dispatch keys (`obj["render"]`), decorator names,
-  and default-export names. There is no compiler oracle as clean as `staticcheck` /
-  `cargo` here, so the binding gate is hand-labeled precision on a synthetic corpus
-  (100%) plus a before/after run on the `nextjs` benchmark repo (zero false `dead`).
+### Refactoring
 
-- Rust is the third language whose symbols can earn the `dead` verdict. The Rust
-  voice earns `dead` only for a non-`pub` fn / method / type / struct / enum /
-  trait with no caller, no mention, and no invisible-reach idiom; everything else
-  stays `possibly_dead` with an exact reason: `rust_trait_impl` (a method in an
-  `impl Trait for Type` block, or named on an indexed/std trait like `Display` /
-  `Iterator` / serde's `Deserializer`), `rust_derive` (a `#[derive(...)]`-synthesized
-  method name like `clone` / `fmt` / `eq` / `serialize`), `rust_ffi` (a
-  `#[no_mangle]` / `#[export_name]` function called from C), `rust_used` (a
-  `#[no_mangle]` / `#[used]` static kept alive by the linker), `rust_test` (a
-  `#[test]` / `#[bench]` or `#[cfg(test)]` item, including scoped `#[tokio::test]`),
-  `rust_allow_dead` (an `#[allow(dead_code)]` / `#[allow(unused)]` item the author
-  intentionally retained), `rust_module` (rustc lints items inside a module, never
-  the `mod`), and `rust_pub` (another crate may use it). The Rust extractor harvests
-  its own mention set (the per-language soundness gate), `Any::downcast` dispatch
-  targets, FFI / `#[used]` exports, test symbols, `impl Trait for` method names, and
-  `#[allow(dead_code)]` markers. The verdict is validated against `cargo check`
-  `dead_code` as a compiler-grade oracle (binding invariant: Sense `dead` for Rust
-  ⊆ cargo `dead_code` — zero false `dead` on the `axum` benchmark repo).
+- inject the embedder behind an unexported factory seam
+- extract extractLib from ensureORTLib for testability
+- put the index behind an unexported indexStore seam
+- split server.go into concern files (pure move)
+- decompose buildMCPServer and add io.Writer diagnostics seam
+- decompose handleGraph, handleSearch, resolveDispatchCallers
+- decompose buildStatusResponse into index-count and version helpers
+- rename graph lookup closure local to avoid shadowing params
+- extract collector sink + harvested-name partition
+- move parse + util helpers out of scan.go
+- decompose walkTree into four phase helpers
+- decompose Run into phase helpers
+- decompose the eight smaller scan-package functions
+- split adapter.go into reads/writes/graph/embeddings; decompose ReadSymbolGraph
+- split search.go into fusion/ranking/enrich/fallback; decompose Search
+- decompose Compute into a bfsState BFS over named hop steps
+- split detectors into per-family files and decompose
+- split the dead-code package into cohesive files
+- split test-DSL and symbols into tests.go/symbols.go
+- split call resolution and type inference into calls.go/typeinfer.go
+- split constant/DSL machinery into constants.go
+- extract Rails/route DSL edge emitters into rails.go
+- split extractor by concern, cover handlers, decompose walk
+- split extractor by concern, cover types, decompose impl/derive/compose
+- decompose importTarget into grammar-agnostic strategies
+- extract type inference into typeinfer.go
+- split framework.go by Django/annotation/FastAPI concern
+- decompose Resolve and isTestPath to clear the ledger
+- extract a testable run() seam over main
+- inject builder process edges behind a deps seam
 
-- Go is the second language whose symbols can earn the `dead` verdict. The Go
-  voice earns `dead` only for an unexported func / method / type with no caller,
-  no mention, and no invisible-reach idiom; everything else stays `possibly_dead`
-  with an exact reason: `go_init` (runtime-invoked package initializer),
-  `go_interface` (satisfies an indexed or stdlib interface — `String`, `Error`,
-  `MarshalJSON`, …), `go_cgo` (called from C via a `//export` directive),
-  `go_generated` (`*.pb.go` / `*_gen.go` / `*_generated.go`), `go_exported` (an
-  external package may use it), and `go_const` (an unexported const/var may anchor
-  an iota sequence). The Go extractor harvests its own mention set (the
-  per-language soundness gate), reflective dispatch targets
-  (`reflect.MethodByName` / `FieldByName`, struct-tag fields), and cgo `//export`
-  names. The verdict is validated against `staticcheck -checks U1000` as a
-  compiler-grade oracle (binding invariant: Sense `dead` for Go ⊆ U1000 — zero
-  false `dead` on the `gin` and `sense` benchmark repos). `testdata/` fixtures are
-  excluded from dead-code candidacy, matching the Go toolchain's universe.
+### Style
 
-### Breaking Changes
+- goimports -local regroup + gofmt, no behavior change
+## [0.98.0] - 2026-06-03
 
-- Dead-code analysis now emits honest verdicts. The `sense_graph dead_code=true`
-  MCP response and `sense dead --json` output replace the flat `dead_symbols`
-  array with `unreferenced_symbols`, split into an earned `dead` list (provably
-  safe to remove, each with a per-symbol `verify` grep) and `possibly_dead`
-  groups (a hidden caller could exist, grouped by reason, each with a `verify`
-  recipe). The two-value `confidence` field is removed. A symbol earns `dead`
-  only when a language voice can prove closed-world for its language; Ruby and Go
-  ship voices, so all other stacks report `possibly_dead`. This makes a
-  confident-but-wrong `dead` impossible on unsupported stacks.
+### Bug Fixes
 
-### Fixed
+- repoint dead --force advice at sense scan --rebuild
+- refresh pending count when background embed completes
 
-- Blast radius no longer fans out across temporal co-change hops. A temporal
-  (git co-change) edge was traversed transitively, so a shared co-changed test
-  file could bridge two unrelated models and then pull in the whole hub's
-  `references` callers — e.g. changing `Shipping::Rate` falsely implicated
-  `Country`'s address-form and geolocation callers. A temporal edge is now a
-  sink: a node reached *only* via temporal coupling is still reported (it stays
-  a co-change caller and still raises risk) but is not expanded, so co-change
-  cannot launder into a transitive structural path. Nodes reached by any real
-  (`calls`/`composes`/`tests`/…) edge are unaffected. On a real Rails app this
-  cut the false-positive radius of a hub-adjacent model by ~40% while retaining
-  every genuine caller.
-- Dead-code `dead` precision on real-world Ruby. The closed-world proof assumed
-  the resolver binds every call, which is false on a dynamic language (inherited
-  bare calls, `**splat` args, chain receivers, `validate :sym` symbol arguments
-  all go unbound), so live methods were falsely reported `dead` (0.22 precision
-  on a real Rails app). A soundness gate now withholds `dead` unless the symbol's
-  name is absent from a project-wide *mention set* harvested at scan time —
-  mentioned nowhere it could be an unresolved caller. A live-but-unbindable call
-  still leaves a textual mention, so the symbol stays `possibly_dead` (new reason
-  `core_name_mentioned`) instead of becoming a false `dead`. This raised
-  precision to 1.00 on the same app while preserving the genuinely-dead findings.
-  The gate fails closed: if the mention harvest is unavailable (a pre-feature
-  index), no symbol earns `dead` until the next full rescan.
-- `validate :method` custom-validation callbacks now emit a `calls` edge to the
-  named predicate (added to the Rails callback set), so validation methods
-  resolve to their framework caller in `sense_graph`/`sense_blast` instead of
-  reading as unreferenced.
+### Features
 
+- unify index reset into one metrics-preserving primitive
+- add sense scan --rebuild flag
+- track last re-index time and embedding debt in WatchState
+- add watch toggle for the embedded watcher
+- add background freshening service with single-writer lock
+- host embedded watcher and read-repair stale files on query
+- report watching and pending embeddings in sense status
+
+### Refactoring
+
+- replace PostToolUse re-index with session-start reconcile
+- extract envOrConfigBool to share toggle fallback
+## [0.97.0] - 2026-06-02
+
+### Bug Fixes
+
+- treat framework apps as non-library so internal methods aren't mislabeled
+- gate unqualified fallback by language and demote cross-namespace guesses
+- surface view templates as the source of inbound view edges
+- demote unverified cross-scope guesses; seed diff-blast by changed line range
+- gate the exact byQualified path; never bind production code to test symbols
+- treat temporal co-change edges as a sink, not a bridge
+
+### Features
+
+- capture Ruby method visibility and reflective dispatch names
+- replace dead-code cascade with open/closed-world arbiter
+- harvest mentioned-name set into sense_meta
+- gate the dead verdict on the mention set
+- emit calls edge for validate :method callbacks
+- add min_confidence to sense_graph; surface hidden callers
+- per-language soundness gate for the dead verdict
+- harvest Go mentions, reflection, and cgo exports
+- Go language voice earns the dead verdict
+- harvest Rust mentions, attributes, and trait impls
+- persist Rust harvest sets to sense_meta
+- Rust language voice earns the dead verdict
+- TypeScript/JavaScript export visibility and dead-code harvest
+- persist the TS/JS decorator and default-export harvest
+- TypeScript earns the dead verdict; JavaScript stays conservative
+- Python underscore visibility and dead-code harvest
+- persist the Python visibility and harvest sets
+- Python earns the dead verdict via pythonVoice
+- langspec visibility, annotation, and mention harvest
+- persist langspec annotated-name set
+- langspec voice earns dead for Java, reasons for six
+
+### Refactoring
+
+- extract warnMetaWrite for graceful meta-write degradation
+- extract shared HarvestMentions mention walker
+
+### Style
+
+- gofmt struct-field alignment
+## [0.96.0] - 2026-05-30
+
+### Bug Fixes
+
+- detect view reach by edge file_id, not caller symbol
+- drop framework-accessor and core-reflection calls
+
+### Features
+
+- honest view_edges signal, stop calling Hotwire dispatch a blind spot
+- expose ExtractEmbeddedCalls for cross-package fragment parsing
+- parse embedded Ruby in tags with the Ruby grammar
+- resolve render-collection and form-model edges
+- emit Rails route-helper symbols from the route DSL
+- retarget *_path/*_url view references to route: symbols
+- promote ERB from Basic to Full tier
+
+### Style
+
+- positive validity check in isRouteHelperName (staticcheck QF1001)
+## [0.95.2] - 2026-05-30
+
+### Bug Fixes
+
+- filter synthetic ruby-core base symbols from results
+
+### Features
+
+- attribute nested Struct/Data/Class.new value objects as classes
+- recognize value objects, retain framework-gated predicate softening
+- scope dead-code verify_cmd to call sites with too-common flag
+## [0.95.1] - 2026-05-30
+
+### Bug Fixes
+
+- exact flat vector index, sorted fusion, drop HNSW + reranker
+
+### Features
+
+- query-shape-aware fusion + generic-token penalty + mode hatch
+## [0.94.0] - 2026-05-29
+
+### Bug Fixes
+
+- report honest result provenance instead of hardcoded "structural"
+- populate tests_affected_count in diff blast response
+
+### Features
+
+- bound graph and blast responses to a token budget
+- demote test symbols after normalization so impl ranks first
+- stop flagging Rails/Hotwire framework entry points as dead
+## [0.90.4] - 2026-05-29
+
+### Bug Fixes
+
+- aggregate class callees and floor low-confidence edges
+- tier Ruby predicate methods as possibly-dead, add verify grep
+- persist lifetime metrics write-through on each query
+
+### Features
+
+- resolve calls on rescue-bound exception variables
+## [0.90.0] - 2026-05-29
+
+### Bug Fixes
+
+- tier Ruby service and result-object methods as possibly-dead
+
+### Features
+
+- sharpen Ruby/Rails graph and ERB indexing
+## [0.89.0] - 2026-05-29
+
+### Bug Fixes
+
+- surface inheritors in sense_graph for trait/base symbols
+- record Ruby constant and class references as edges
+- close noise-filter gap and lift Ruby reference coverage
+- filter ambiguous edges from blast, fold member callers, gate Ruby dead-code tiering
+
+### Features
+
+- plumb docstring field from extractor to sqlite
+- emit godoc as docstring
+- emit RDoc as docstring
+- emit JSDoc as docstring
+- emit PEP 257 docstring
+- emit /// and /** */ as docstring
+
+### Refactoring
+
+- tighten docstring extractors to hit coverage floor
+## [0.88.1] - 2026-05-22
+
+### Features
+
+- add SKILL.md for Smithery listing
+- emit compact JSON and prune out-of-scope edge buckets
+- alias hallucinated argument keys to canonical schema
+- annotate graph/blast/dead with language-specific index caveats
+- dockerize the harness with per-tool images
+- judge CLI fallback, path-resolved grounding, serena onboarding overhead
+## [0.84.3] - 2026-05-15
+
+### Bug Fixes
+
+- resolve outdir to absolute in build-mcpb.sh
+## [0.84.2] - 2026-05-15
+
+### Bug Fixes
+
+- correct scoring engine biases and aggregation
+- four bugs surfaced by the 2-iter e2e run
+
+### Features
+
+- track last_scan_at and show health verdict
+- fold wall-time into fairness and score failed runs
+- average across runs and guard fairness layer
+- record iteration history and continue past rollbacks
+- record model in run_meta.json
+- add citation extraction and grounding library
+- emit citation_grounding from scorer
+- surface citation grounding in reports
+- rephrase scenario step prompts in AI-agent voice
+- add per-scenario rubrics for LLM judge
+- add LLM-as-judge harness with prompt v1
+- combine LLM quality + citation grounding into fairness
+- add improvement-loop audit harnesses
+- wire Phase 4 audit into improve-loop
+- convergence-aware improvement loop with held-out anchor
+- per-repo MAX_BUDGET_USD tiers + honest cost defaults
+- build .mcpb bundles per platform
+
+### Refactoring
+
+- consolidate harness — promote bench2/ to bench/
+
+### Bench2
+
+- add scoring doc, README updates, bench script
+## [0.84.1] - 2026-05-12
+
+### Bug Fixes
+
+- relax second-scan timing threshold for CI
+## [0.84.0] - 2026-05-12
+
+### Features
+
+- add affected_symbols, affected_files, and graph_edges_traversed to blast response
+- add EdgeReferences edge kind
+- emit references edges for constants and variables
+- include constants in dead code detection and blast radius
+- add call-site context snippets to graph and blast responses
+- add index freshness check and drop sense_status from session start
+- add also_called_by enrichment for small repos
+- add quick orientation section with entry points, hubs, and test structure
+- tag adoption checks and calibrate scenarios
+
+### Refactoring
+
+- introduce two-layer fairness/adoption scoring model
+- simplify improvement loop to single-loop iteration model
+## [0.78.0] - 2026-05-12
+
+### Features
+
+- add verification hints and ref field to graph/blast responses
+- replace deny/advise with nudge responses for non-blocking UX
+- inject summary.md into SessionStart output
+- generate deep-explore subagent via sense setup
+- upgrade SubagentStart with tool-loading instructions
+
+### Refactoring
+
+- shorten CLAUDE.md Sense section
+## [0.77.0] - 2026-05-10
+
+### Features
+
+- add structured project description extraction
+- add false-positive filters for dunder, library API, and trait impl methods
+- add parent-class rollup to blast output
+- add Seen field to SearchResultEntry for session dedup
+- implement response compaction for pitch 22-05
+- add coverage_note to list-type responses
+- add source snippets and external dependency detection
+- add substring fallback and path boosting for hybrid search
+
+### Refactoring
+
+- extract formatScanAge pure function
+## [0.65.0] - 2026-05-10
+
+### Bug Fixes
+
+- improve singularize edge cases and test coverage
+- exclude type methods from blast radius output
+
+### Features
+
+- extract calls from RSpec test blocks with synthetic scopes
+- resolve instance variable receivers via initialize type inference
+- add multi-hop chain resolution via return-type map
+- infer block parameter types from collection methods
+- add variable-based dynamic dispatch heuristic
+- add line numbers to blast and graph responses
+- add scope extraction, dedup callback symbols, qualify scope edges
+
+### Refactoring
+
+- extract shared Rails callback names to model package
+- decompose detectFrameworkIdioms into focused detectors
+## [0.62.19] - 2026-05-08
+
+### Bug Fixes
+
+- eliminate embedController race and simplify to function fields
+- drain background embed goroutine before closing resources
+- handle --help flag correctly in setup command
+
+### Features
+
+- add Opencode as a first-class AI tool target
+
+### Refactoring
+
+- extract processBatch and embedController from Run()
+- extract buildMCPServer for testability
+- remove unnecessary init() function
+## [0.61.0] - 2026-05-07
+
+### Bug Fixes
+
+- use underscore-separated tool names
+
+### Features
+
+- add ConfidenceUnresolved constant for low-confidence fallback edges
+- improve receiver resolution for Ruby call edges
+## [0.59.0] - 2026-05-06
+
+### Bug Fixes
+
+- partial matching for dotted qualifiers and module paths
+- per-repo GT generators replace generic heuristics
+- include structure and naming conventions in MCP response
+- expand test-path exclusion to 12 SQL patterns
+- sharpen CLAUDE.md prompt for evaluation runs
+- unify test-file detection on IsTestPath
+- close langspec convention detection gaps
+- expand type members into BFS seed set for class/type kinds
+
+### Features
+
+- add Project section extracted from README first paragraph
+
+### Refactoring
+
+- gen-ground-truth.sh dispatches to per-repo generators
+- collapse Record/RecordWithFallback into single method
+- collapse N+1 rg processes into 2, add --max-filesize
+- extract shared text fallback integration, add gating and dedup
+
+### Wip
+
+- ripgrep text fallback (scope card 1)
+- response labeling and metrics (scope card 2)
+- FTS5 identifier audit test (scope card 3)
+- verification pass — 9/10 queries, multi-word ranking (scope card 4)
+## [0.55.0] - 2026-05-05
+
+### Bug Fixes
+
+- neutralize user-level hooks and MCP during benchmark runs
+
+### Features
+
+- add TopSymbolsByReach and TopCallers queries
+- add KeySymbolEntry to conventions and status wire types
+- wire key symbols into conventions and status handlers
+
+### Refactoring
+
+- collapse tiered defaults into single DefaultParams()
+- use Adapter.TopSymbolsByReach for key abstractions
+## [0.54.0] - 2026-05-04
+
+### Bug Fixes
+
+- deduplicate Known Noise entries with overlapping patterns
+- apply council review blockers
+- resolve new linter warnings across codebase
+- log corrupt frameworks meta instead of silently swallowing
+
+### Features
+
+- make summary.md step 1 in cold-start instructions
+- write stub summary.md when no scan data exists
+- restructure sections to Fingerprint, Main Areas, Key Abstractions, Reading Path, Known Noise
+- add Next: tool hints to Main Areas, Key Abstractions, Reading Path
+- filter utility hubs and noisy paths from Key Abstractions
+- strip sense_metrics from MCP responses and cap next_steps
+- per-edge-kind decay with lowered floor for structural edges
+- resolve callers through interface dispatch
+
+### Refactoring
+
+- remove sense.orient tool
+- extract interface dispatch queries from dead-code detector
+- unexport scoring constants, document relative scores
+
+### Wip
+
+- search centrality + dead-code tuning (pitch 17-12)
+## [0.50.0] - 2026-05-03
+
+### Features
+
+- rank representatives by edge count, lower interface threshold
+- add key domain types detector and orient section
+- add Go type alias and middleware factory detectors
+## [0.47.4] - 2026-05-03
+
+### Bug Fixes
+
+- resolve latest version via redirect to avoid GitHub API rate limits
+## [0.47.3] - 2026-05-03
+
+### Bug Fixes
+
+- filter NULL source_id in interface alive query
+- stop blocking Grep/Bash fallbacks, pass Glob through
+
+### Features
+
+- add tier-aware orient budget and bump conventions caps
+- default callers depth to 2
+- add test file demotion for JS/TS, JVM, Python
+
+### Refactoring
+
+- extract shared token estimator, fail closed on error
+## [0.47.0] - 2026-05-02
+
+### Bug Fixes
+
+- harden ground-truth generator against contamination
+- normalize Ruby/Python namespaces and add bidirectional partial matching
+- add setup timeout to scan.sh and run.sh
+
+### Features
+
+- add rescore-all.sh to batch-score all transcripts
+- isolate benchmark repos outside project tree
+- add rescan.sh for standalone cold-start scan timing
+- consolidate setup.sh and rescan.sh into scan.sh
+- add Direction type and multi-hop graph result types
+- add multi-hop BFS traversal (depth 1-3)
+- add relevance tier filtering and response shaping
+- add sense.orient tool for codebase orientation
+- promote parent symbols when children cluster in top-K
+- add PascalCase class qualifier partial matching
+- add design pattern, framework idiom, and architecture layer detection
+- add interface awareness, test-ref exclusion, and confidence annotation
+- generate cold-start codebase summary at scan time
+
+### Performance
+
+- optimize dead-code ground-truth generation ~30x
 ## [0.43.0] - 2026-05-01
 
 ### Features
@@ -248,7 +566,7 @@ All notable changes to Sense.
 
 ### Features
 
-- add structural orientation to sense_status response
+- add structural orientation to sense.status response
 - prepend one-sentence summary to conventions response
 ## [0.34.0] - 2026-04-28
 
@@ -303,7 +621,7 @@ All notable changes to Sense.
 - add next-step hint logic to all MCP handlers
 - add dead code detection query engine
 - add dead code response types and builder
-- add dead_code parameter to sense_graph
+- add dead_code parameter to sense.graph
 - add temporal edge kind and response types
 - add temporal coupling extraction from git history
 - expand BFS frontier through temporal edges
@@ -573,7 +891,7 @@ All notable changes to Sense.
 - add convention detection engine
 - add ConventionsResponse types and MarshalConventions
 - add `sense conventions` command
-- add sense_conventions tool to MCP server
+- add sense.conventions tool to MCP server
 ## [0.9.0] - 2026-04-20
 
 ### Features
@@ -582,7 +900,7 @@ All notable changes to Sense.
 - add HNSW vector index, query embedding, and RRF fusion engine
 - add SearchResponse types and MarshalSearch
 - add `sense search` command with hybrid search
-- add sense_search tool to MCP server
+- add sense.search tool to MCP server
 ## [0.8.0] - 2026-04-20
 
 ### Features
