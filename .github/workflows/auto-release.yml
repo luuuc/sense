@@ -23,19 +23,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      # taiki-e/install-action puts the git-cliff binary on PATH for the
+      # plain `run:` steps below. orhun/git-cliff-action only runs git-cliff
+      # inside its own sandbox, so bare `git-cliff` calls would not resolve.
       - name: Install git-cliff
-        uses: orhun/git-cliff-action@v4
+        uses: taiki-e/install-action@v2
         with:
-          args: --version
+          tool: git-cliff
 
       - name: Compute next version
         id: version
         run: |
           CURRENT=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          NEXT=$(git-cliff --bumped-version 2>/dev/null || echo "")
+          # No `|| echo ""` fallback: a git-cliff failure must fail the run
+          # loudly, not masquerade as "no bump needed".
+          NEXT=$(git-cliff --bumped-version)
           if [ -z "$NEXT" ] || [ "$NEXT" = "$CURRENT" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No version bump needed"
+            echo "No version bump needed (current=$CURRENT, next=$NEXT)"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
