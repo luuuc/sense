@@ -175,15 +175,15 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 |---|---|
 | **Ruby** | Rails (associations, callbacks, routes), Stimulus, Turbo |
 | **TypeScript / JavaScript** | React (JSX component calls) |
-| **Python** | Django (models, URL patterns), FastAPI (routes, Depends) |
 | **Go** | - |
-| **Rust** | - |
 | **ERB** | Stimulus, Turbo (cross-language edges to JS controllers) |
 
-**Standard tier.** Symbols, calls, inheritance, imports, blast radius, and semantic search (no framework inference):
+**Standard tier.** Symbols, calls, inheritance, imports, blast radius, and semantic search:
 
 | Language | Notes |
 |---|---|
+| **Python** | Django (models, URL patterns), FastAPI (routes, Depends) |
+| **Rust** | Structs, traits, enums, impl blocks |
 | **Java** | Classes, interfaces, enums, records |
 | **Kotlin** | Classes, interfaces, objects |
 | **C#** | Classes, interfaces, structs, namespaces |
@@ -192,7 +192,7 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 | **PHP** | Classes, interfaces, traits (`\` scoping) |
 | **Scala** | Classes, traits, objects |
 
-Standard-tier languages use a table-driven generic extractor. Each is ~25 lines of config, not a handwritten walker. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) to add a new language, and [CONTRIBUTING-A-FRAMEWORK.md](CONTRIBUTING-A-FRAMEWORK.md) to add framework support (plus the dead-code fine-graining that goes with it).
+Java, Kotlin, C#, C++, C, PHP, and Scala use a table-driven generic extractor, each ~25 lines of config rather than a handwritten walker. Python and Rust have dedicated extractors, and Python adds Django and FastAPI inference. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) to add a new language, and [CONTRIBUTING-A-FRAMEWORK.md](CONTRIBUTING-A-FRAMEWORK.md) to add framework support (plus the dead-code fine-graining that goes with it).
 
 ## Feedback
 
