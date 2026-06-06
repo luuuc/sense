@@ -30,10 +30,14 @@ func detectCursor() DetectResult {
 	return r
 }
 
-// hasCursorEnv reports whether a Cursor session env var is set. Shared by
-// detectCursor and DetectCurrent.
+// cursorSessionEnvs are the env vars whose presence means the user is running
+// inside Cursor right now. Single source: detectCursor reads them via
+// hasCursorEnv, and the registry exposes them to DetectCurrent as currentEnv.
+var cursorSessionEnvs = []string{"CURSOR_TRACE_ID", "CURSOR_SESSION_ID"}
+
+// hasCursorEnv reports whether a Cursor session env var is set.
 func hasCursorEnv() bool {
-	for _, key := range []string{"CURSOR_TRACE_ID", "CURSOR_SESSION_ID"} {
+	for _, key := range cursorSessionEnvs {
 		if os.Getenv(key) != "" {
 			return true
 		}

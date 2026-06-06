@@ -34,8 +34,14 @@ type tool struct {
     displayName string
     detect      func() DetectResult        // is this tool installed?
     configure   func(root string) (*ToolResult, error) // write its files
+    currentEnv  []string                   // env vars that mean "running inside this tool now"
 }
 ```
+
+`currentEnv` feeds `DetectCurrent`, which `sense scan` uses on first run to
+configure only the tool the user is currently inside. It is optional: a tool with
+no live-session env var still detects and configures normally, it just never wins
+`DetectCurrent` (which falls back to Claude Code).
 
 Every public entry point loops over that slice, so the registry is the only place
 the tool list is enumerated:
@@ -237,15 +243,19 @@ Add one line to `registry()` in
 ```go
 func registry() []tool {
     return []tool{
-        {id: ToolClaudeCode, displayName: "Claude Code", detect: detectClaudeCode, configure: configureClaudeCode},
+        {id: ToolClaudeCode, displayName: "Claude Code", detect: detectClaudeCode, configure: configureClaudeCode, currentEnv: []string{"CLAUDE_CODE"}},
         // ...
-        {id: ToolAider, displayName: "Aider", detect: detectAider, configure: configureAider},
+        {id: ToolAider, displayName: "Aider", detect: detectAider, configure: configureAider, currentEnv: []string{"AIDER"}},
     }
 }
 ```
 
 That is the whole wiring. `AllTools`, `DetectAll`, `Detect`, `configureTool`,
-`ParseTools`, and `DisplayName` now all include Aider with no further edits.
+`ParseTools`, `DisplayName`, and `DetectCurrent` now all include Aider with no
+further edits. Set `currentEnv` to the env var(s) the tool sets in its own
+sessions (omit the field if it has none); that is what makes the
+"one file plus one registry line" promise literally true, including for
+`sense scan`'s current-tool first-run path.
 
 ### Step 5. Add tests
 

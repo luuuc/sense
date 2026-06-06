@@ -35,18 +35,16 @@ func DetectAll() []DetectResult {
 	return results
 }
 
-// DetectCurrent returns the tool the user is currently running inside,
-// based on environment variables. Falls back to Claude Code as the
-// default consumer.
+// DetectCurrent returns the tool the user is currently running inside, based on
+// each tool's live-session env vars (registry currentEnv), in display order.
+// Falls back to Claude Code as the default consumer when no signal is present.
 func DetectCurrent() Tool {
-	if os.Getenv("CLAUDE_CODE") != "" {
-		return ToolClaudeCode
-	}
-	if hasCursorEnv() {
-		return ToolCursor
-	}
-	if os.Getenv("OPENCODE") != "" {
-		return ToolOpencode
+	for _, t := range registry() {
+		for _, key := range t.currentEnv {
+			if os.Getenv(key) != "" {
+				return t.id
+			}
+		}
 	}
 	return ToolClaudeCode
 }

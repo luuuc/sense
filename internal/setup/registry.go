@@ -21,18 +21,28 @@ type tool struct {
 	// twice produces the same result (JSON is deep-merged, Markdown uses
 	// marker comments, skills/agents are overwritten).
 	configure func(root string) (*ToolResult, error)
+	// currentEnv lists env vars whose presence means the user is running inside
+	// this tool right now. DetectCurrent uses it to pick the active tool for
+	// scan first-run. Leave empty when the tool exposes no live-session signal
+	// (a tool with none can still be detected and configured; it just never
+	// wins DetectCurrent, which falls back to Claude Code).
+	currentEnv []string
 }
 
 // registry returns every tool Sense knows how to configure, in display order.
 // To add a tool, append one entry here and implement its detect/configure pair
 // in a new file (see claude.go as the template, CONTRIBUTING-AN-AI-TOOL.md for
 // the walkthrough).
+//
+// The slice is rebuilt on each call rather than memoized: the set is tiny and
+// callers are not hot, so a fresh slice keeps the function pure and dodges
+// init-order questions. Do not "optimize" it into a package var.
 func registry() []tool {
 	return []tool{
-		{id: ToolClaudeCode, displayName: "Claude Code", detect: detectClaudeCode, configure: configureClaudeCode},
-		{id: ToolCursor, displayName: "Cursor", detect: detectCursor, configure: configureCursor},
+		{id: ToolClaudeCode, displayName: "Claude Code", detect: detectClaudeCode, configure: configureClaudeCode, currentEnv: []string{"CLAUDE_CODE"}},
+		{id: ToolCursor, displayName: "Cursor", detect: detectCursor, configure: configureCursor, currentEnv: cursorSessionEnvs},
 		{id: ToolCodexCLI, displayName: "Codex CLI", detect: detectCodexCLI, configure: configureCodexCLI},
-		{id: ToolOpencode, displayName: "Opencode", detect: detectOpencode, configure: configureOpencode},
+		{id: ToolOpencode, displayName: "Opencode", detect: detectOpencode, configure: configureOpencode, currentEnv: []string{"OPENCODE"}},
 	}
 }
 
