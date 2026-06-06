@@ -153,10 +153,12 @@ Measured on Sense's own codebase (382 files, 4,032 symbols). Run `sense benchmar
 | Linux amd64 | Supported |
 | Linux arm64 | Supported |
 | macOS Apple Silicon (arm64) | Supported |
-| macOS Intel (amd64) | Supported |
+| macOS Intel (amd64) | Supported (legacy) |
 | Windows | Supported using WSL2 |
 
 Windows native builds are not yet available. Use WSL2 with the Linux binary.
+
+macOS Intel still ships a binary and works, but it requires macOS 10.15 (Catalina) or later and is pinned to an older bundled runtime (ONNX Runtime 1.23.1) because Microsoft dropped macOS x86_64 runtime builds after that version. That dependency is frozen and cannot advance, so Apple Silicon is the recommended Mac target.
 
 ## Requirements
 
