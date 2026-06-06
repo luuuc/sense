@@ -1,30 +1,52 @@
 package setup
 
-import "path/filepath"
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+)
 
-const agentsMD = `<!-- sense:start -->
-## Sense — codebase understanding
+// detectCodexCLI looks for evidence that the Codex CLI is installed.
+func detectCodexCLI() DetectResult {
+	r := DetectResult{Tool: ToolCodexCLI}
+	if _, err := exec.LookPath("codex"); err == nil {
+		r.Found = true
+		r.Evidence = "codex on PATH"
+		return r
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".codex")); err == nil {
+			r.Found = true
+			r.Evidence = "~/.codex/ directory"
+			return r
+		}
+	}
+	return r
+}
 
-This project has a Sense index. Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
+// configureCodexCLI writes the shared .mcp.json server entry and the AGENTS.md
+// guidance Codex reads.
+func configureCodexCLI(root string) (*ToolResult, error) {
+	tr := &ToolResult{Tool: ToolCodexCLI}
 
-**Use Sense MCP tools for ALL codebase understanding:**
+	if wrote, err := writeMCPJSON(root); err != nil {
+		return nil, fmt.Errorf("write .mcp.json: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".mcp.json")
+	}
 
-| Question | Tool |
-|---|---|
-| Who calls X? What does X call? | sense_graph |
-| Find code related to a concept | sense_search |
-| What breaks if I change X? | sense_blast |
-| What patterns does this project follow? | sense_conventions |
-| Index health, what's indexed | sense_status |
+	if wrote, err := writeAgentsMD(root); err != nil {
+		return nil, fmt.Errorf("write AGENTS.md: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, "AGENTS.md")
+	}
 
-**When NOT to use Sense** (use grep instead):
-- Exact text/string search (regex, log messages, string literals)
-- Reading file contents → use your file reading tool
-- Editing code → Sense is read-only
-<!-- sense:end -->`
+	return tr, nil
+}
 
 // writeAgentsMD creates or updates the Sense section in AGENTS.md.
 // Uses the same marker-comment strategy as CLAUDE.md.
 func writeAgentsMD(root string) (bool, error) {
-	return writeMarkerFile(filepath.Join(root, "AGENTS.md"), agentsMD)
+	return writeMarkerFile(filepath.Join(root, "AGENTS.md"), guidanceMarkdown)
 }

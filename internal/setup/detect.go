@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 )
 
-// Tool identifies an AI coding tool that Sense can integrate with.
+// Tool identifies an AI coding tool that Sense can integrate with. Its string
+// value is also the --tools flag name (see ParseTools). Detection, configure
+// dispatch, and display names all live in the registry (registry.go); the
+// per-tool detect/configure pair lives in that tool's own file.
 type Tool string
 
 const (
@@ -17,27 +18,6 @@ const (
 	ToolCodexCLI   Tool = "codex-cli"
 	ToolOpencode   Tool = "opencode"
 )
-
-// AllTools returns every tool Sense knows how to configure, in display order.
-func AllTools() []Tool {
-	return []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI, ToolOpencode}
-}
-
-// DisplayName returns the human-readable name for a tool.
-func (t Tool) DisplayName() string {
-	switch t {
-	case ToolClaudeCode:
-		return "Claude Code"
-	case ToolCursor:
-		return "Cursor"
-	case ToolCodexCLI:
-		return "Codex CLI"
-	case ToolOpencode:
-		return "Opencode"
-	default:
-		return string(t)
-	}
-}
 
 // DetectResult holds whether a tool was found and what evidence was seen.
 type DetectResult struct {
@@ -55,97 +35,18 @@ func DetectAll() []DetectResult {
 	return results
 }
 
-// Detect checks for evidence of a single tool's installation.
-func Detect(t Tool) DetectResult {
-	switch t {
-	case ToolClaudeCode:
-		return detectClaudeCode()
-	case ToolCursor:
-		return detectCursor()
-	case ToolCodexCLI:
-		return detectCodexCLI()
-	case ToolOpencode:
-		return detectOpencode()
-	default:
-		return DetectResult{Tool: t}
-	}
-}
-
-// DetectCurrent returns the tool the user is currently running inside,
-// based on environment variables. Falls back to Claude Code as the
-// default consumer.
+// DetectCurrent returns the tool the user is currently running inside, based on
+// each tool's live-session env vars (registry currentEnv), in display order.
+// Falls back to Claude Code as the default consumer when no signal is present.
 func DetectCurrent() Tool {
-	if os.Getenv("CLAUDE_CODE") != "" {
-		return ToolClaudeCode
-	}
-	if hasCursorEnv() {
-		return ToolCursor
-	}
-	if os.Getenv("OPENCODE") != "" {
-		return ToolOpencode
+	for _, t := range registry() {
+		for _, key := range t.currentEnv {
+			if os.Getenv(key) != "" {
+				return t.id
+			}
+		}
 	}
 	return ToolClaudeCode
-}
-
-func detectClaudeCode() DetectResult {
-	r := DetectResult{Tool: ToolClaudeCode}
-	if os.Getenv("CLAUDE_CODE") != "" {
-		r.Found = true
-		r.Evidence = "CLAUDE_CODE env var set"
-		return r
-	}
-	if _, err := exec.LookPath("claude"); err == nil {
-		r.Found = true
-		r.Evidence = "claude on PATH"
-		return r
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if _, err := os.Stat(filepath.Join(home, ".claude")); err == nil {
-			r.Found = true
-			r.Evidence = "~/.claude/ directory"
-			return r
-		}
-	}
-	return r
-}
-
-func detectCursor() DetectResult {
-	r := DetectResult{Tool: ToolCursor}
-	if hasCursorEnv() {
-		r.Found = true
-		r.Evidence = "CURSOR_* env var set"
-		return r
-	}
-	if _, err := exec.LookPath("cursor"); err == nil {
-		r.Found = true
-		r.Evidence = "cursor on PATH"
-		return r
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if _, err := os.Stat(filepath.Join(home, ".cursor")); err == nil {
-			r.Found = true
-			r.Evidence = "~/.cursor/ directory"
-			return r
-		}
-	}
-	return r
-}
-
-func detectCodexCLI() DetectResult {
-	r := DetectResult{Tool: ToolCodexCLI}
-	if _, err := exec.LookPath("codex"); err == nil {
-		r.Found = true
-		r.Evidence = "codex on PATH"
-		return r
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if _, err := os.Stat(filepath.Join(home, ".codex")); err == nil {
-			r.Found = true
-			r.Evidence = "~/.codex/ directory"
-			return r
-		}
-	}
-	return r
 }
 
 // PrintDetection writes a summary of detected tools to out.
@@ -160,35 +61,4 @@ func PrintDetection(out io.Writer) {
 		}
 	}
 	_, _ = fmt.Fprintln(out, "")
-}
-
-func detectOpencode() DetectResult {
-	r := DetectResult{Tool: ToolOpencode}
-	if os.Getenv("OPENCODE") != "" {
-		r.Found = true
-		r.Evidence = "OPENCODE env var set"
-		return r
-	}
-	if _, err := exec.LookPath("opencode"); err == nil {
-		r.Found = true
-		r.Evidence = "opencode on PATH"
-		return r
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		if _, err := os.Stat(filepath.Join(home, ".config", "opencode")); err == nil {
-			r.Found = true
-			r.Evidence = "~/.config/opencode/ directory"
-			return r
-		}
-	}
-	return r
-}
-
-func hasCursorEnv() bool {
-	for _, key := range []string{"CURSOR_TRACE_ID", "CURSOR_SESSION_ID"} {
-		if os.Getenv(key) != "" {
-			return true
-		}
-	}
-	return false
 }

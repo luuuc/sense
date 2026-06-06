@@ -11,7 +11,7 @@ import (
 const setupHelp = `usage: sense setup [flags]
 
 Configure AI tool integrations for this project. Auto-detects installed
-tools (Claude Code, Cursor, Codex CLI) and writes integration files.
+tools (Claude Code, Cursor, Codex CLI, Opencode) and writes integration files.
 
 Flags:
   --tools   comma-separated list of tools to configure (overrides detection)
@@ -19,7 +19,7 @@ Flags:
 Examples:
   sense setup                           # auto-detect and configure all
   sense setup --tools cursor            # configure Cursor only
-  sense setup --tools claude-code,codex-cli
+  sense setup --tools claude-code,codex-cli,opencode
 `
 
 // RunSetup configures AI tool integrations for the project.
@@ -27,7 +27,7 @@ func RunSetup(args []string, cio IO) int {
 	fs := flag.NewFlagSet("sense setup", flag.ContinueOnError)
 	fs.SetOutput(cio.Stderr)
 	fs.Usage = func() { _, _ = fmt.Fprint(cio.Stderr, setupHelp) }
-	toolsFlag := fs.String("tools", "", "comma-separated list of tools to configure (claude-code,cursor,codex-cli)")
+	toolsFlag := fs.String("tools", "", "comma-separated list of tools to configure (claude-code,cursor,codex-cli,opencode)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return ExitSuccess

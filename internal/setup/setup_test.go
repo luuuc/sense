@@ -740,34 +740,52 @@ func TestResolveToolsDefaultsToClaudeCode(t *testing.T) {
 	}
 }
 
-func TestSenseSectionContent(t *testing.T) {
-	if !strings.Contains(senseSection, "sense_graph") {
-		t.Error("senseSection must include tool table with sense_graph")
+func TestGuidanceMarkdownContent(t *testing.T) {
+	for _, tool := range []string{"sense_graph", "sense_search", "sense_blast", "sense_conventions", "sense_status"} {
+		if !strings.Contains(guidanceMarkdown, tool) {
+			t.Errorf("guidanceMarkdown must include %s in the tool table", tool)
+		}
 	}
-	if !strings.Contains(senseSection, "sense_search") {
-		t.Error("senseSection must include tool table with sense_search")
+	if !strings.Contains(guidanceMarkdown, "MUST NOT") {
+		t.Error("guidanceMarkdown must include MUST NOT rules")
 	}
-	if !strings.Contains(senseSection, "sense_blast") {
-		t.Error("senseSection must include tool table with sense_blast")
+	if strings.Contains(guidanceMarkdown, "FIRST action in every conversation") {
+		t.Error("guidanceMarkdown must not include cold-start protocol (now handled by SessionStart hook)")
 	}
-	if !strings.Contains(senseSection, "sense_conventions") {
-		t.Error("senseSection must include tool table with sense_conventions")
+	if strings.Contains(guidanceMarkdown, "sense_orient") || strings.Contains(guidanceMarkdown, "sense.orient") {
+		t.Error("guidanceMarkdown must not reference the removed orient tool")
 	}
-	if !strings.Contains(senseSection, "MUST NOT") {
-		t.Error("senseSection must include MUST NOT rules")
-	}
-	if strings.Contains(senseSection, "FIRST action in every conversation") {
-		t.Error("senseSection must not include cold-start protocol (now handled by SessionStart hook)")
-	}
-	if strings.Contains(senseSection, "sense_orient") || strings.Contains(senseSection, "sense.orient") {
-		t.Error("senseSection must not reference the removed orient tool")
+	// The guidance is tool-agnostic on purpose: a single source feeds every
+	// tool's instructions file, so it must not name one tool's UI.
+	for _, leak := range []string{"Explore/deep-explore", ".cursorrules", "Claude Code"} {
+		if strings.Contains(guidanceMarkdown, leak) {
+			t.Errorf("guidanceMarkdown must stay tool-agnostic, found %q", leak)
+		}
 	}
 	if strings.Contains(mcpio.ServerInstructions, "sense.orient") {
 		t.Error("ServerInstructions must not reference the removed orient tool")
 	}
-	lines := strings.Count(senseSection, "\n")
-	if lines > 20 {
-		t.Errorf("senseSection should be ≤20 lines (cold-start protocol removed), got %d", lines)
+	if lines := strings.Count(guidanceMarkdown, "\n"); lines > 20 {
+		t.Errorf("guidanceMarkdown should be ≤20 lines, got %d", lines)
+	}
+}
+
+// TestGuidanceMarkdownIsSingleSource asserts every tool's instructions file
+// receives the same guidance body, so tuning it is a one-place edit.
+func TestGuidanceMarkdownIsSingleSource(t *testing.T) {
+	root := t.TempDir()
+	opts := &Options{Tools: []Tool{ToolClaudeCode, ToolCursor, ToolCodexCLI, ToolOpencode}}
+	if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, rel := range []string{"CLAUDE.md", ".cursorrules", "AGENTS.md"} {
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if !strings.Contains(string(data), guidanceMarkdown) {
+			t.Errorf("%s does not contain the canonical guidanceMarkdown", rel)
+		}
 	}
 }
 
