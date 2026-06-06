@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -13,28 +12,34 @@ const (
 	markerEnd   = "<!-- sense:end -->"
 )
 
-const senseSection = `<!-- sense:start -->
-## IMPORTANT: This project has a Sense index — you MUST use it
+// guidanceMarkdown is the single source of truth for the Sense routing guidance
+// every tool's instructions file receives (CLAUDE.md, .cursorrules, AGENTS.md).
+// One source keeps the message consistent across tools; to tune what every AI
+// tool is told, edit this block. It is tool-agnostic on purpose: a phrasing
+// that only makes sense for one tool does not belong here.
+//
+// The one guidance surface NOT defined here is the MCP `serverInstructions`
+// string sent to a client at connect time. That lives in mcpio.ServerInstructions
+// because the running `sense mcp` server also sends it; setup only forwards it
+// (see writeMCPJSON). Keep the two in spirit, not in lockstep: this block is
+// the in-repo prompt, ServerInstructions is the protocol-level one-liner.
+const guidanceMarkdown = `<!-- sense:start -->
+## Use the Sense index for codebase understanding
 
-Sense tools are loaded at session start. Use them for ALL codebase understanding.
+Sense gives you structural understanding of the codebase (symbols, relationships, patterns) without reading dozens of files. Prefer it over grep, glob, and file-walking for any structural or semantic question.
 
 | Question | Tool |
 |---|---|
-| Who calls X? What does X call? | ` + "`sense_graph symbol=\"X\"`" + ` |
-| Find code related to a concept | ` + "`sense_search query=\"description\"`" + ` |
-| What breaks if I change X? | ` + "`sense_blast symbol=\"X\"`" + ` |
-| What patterns does this project follow? | ` + "`sense_conventions`" + ` |
+| Who calls X? What does X call? | sense_graph |
+| Find code related to a concept | sense_search |
+| What breaks if I change X? | sense_blast |
+| What patterns does this project follow? | sense_conventions |
+| Index health, what's indexed | sense_status |
 
-**You MUST NOT:** spawn Explore/deep-explore agents, use grep/glob for symbol lookup, or skip Sense because tools are deferred.
+**You MUST NOT** use grep/glob for symbol lookup, or skip Sense because its tools load on demand. For list outputs (dead code, blast radius, callers), spot-check a sample with grep before relying on them.
 
-**Verify list results:** For list outputs (dead code, blast radius, callers), verify a sample with grep before finalizing.
+**When NOT to use Sense** (use grep instead): exact text/string search, reading file contents, editing code (Sense is read-only).
 <!-- sense:end -->`
-
-// writeClaudeMD creates or updates the Sense section in CLAUDE.md.
-// Uses marker comments for idempotent updates.
-func writeClaudeMD(root string) (bool, error) {
-	return writeMarkerFile(filepath.Join(root, "CLAUDE.md"), senseSection)
-}
 
 // writeMarkerFile creates or updates a marker-delimited Sense section
 // in the file at path. If the file already contains markers, the section

@@ -225,6 +225,20 @@ func TestDetectCursorHomeDir(t *testing.T) {
 	}
 }
 
+func TestDetectCodexCLIPath(t *testing.T) {
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	_ = os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\n"), 0o755)
+
+	result := detectCodexCLI()
+	if !result.Found {
+		t.Error("expected Found=true for codex on PATH")
+	}
+	if result.Evidence != "codex on PATH" {
+		t.Errorf("expected PATH evidence, got %q", result.Evidence)
+	}
+}
+
 func TestDetectCodexCLIHomeDir(t *testing.T) {
 	t.Setenv("PATH", "")
 	home := t.TempDir()
