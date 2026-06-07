@@ -60,6 +60,7 @@ type JSONIndex struct {
 }
 
 type JSONMemory struct {
+	QueryLiveBytes  uint64 `json:"query_live_bytes"`
 	QueryAllocBytes uint64 `json:"query_alloc_bytes"`
 }
 
@@ -91,6 +92,7 @@ func MarshalJSON(r *Report) ([]byte, error) {
 			BytesPerSymbol: r.Index.BytesPerSymbol,
 		},
 		Memory: JSONMemory{
+			QueryLiveBytes:  r.Memory.QueryLiveBytes,
 			QueryAllocBytes: r.Memory.QueryAllocBytes,
 		},
 		Iterations: r.Iterations,
@@ -148,7 +150,8 @@ func WriteHuman(w io.Writer, r *Report) {
 	_, _ = fmt.Fprintln(w)
 
 	_, _ = fmt.Fprintf(w, "\nMemory\n")
-	_, _ = fmt.Fprintf(w, "  RSS (query serving) .... %s\n", fmtBytes(int64(r.Memory.QueryAllocBytes)))
+	_, _ = fmt.Fprintf(w, "  live heap (serving) .... %s\n", fmtBytes(int64(r.Memory.QueryLiveBytes)))
+	_, _ = fmt.Fprintf(w, "  alloc churn (queries) .. %s\n", fmtBytes(int64(r.Memory.QueryAllocBytes)))
 }
 
 func printLatency(w io.Writer, label string, l Latency) {

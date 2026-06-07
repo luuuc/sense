@@ -54,6 +54,11 @@ type IndexMetrics struct {
 }
 
 type MemoryMetrics struct {
+	// QueryLiveBytes is the live heap retained after the query suite settles
+	// (post-GC HeapInuse). It is the resident-set proxy for query serving.
+	QueryLiveBytes uint64
+	// QueryAllocBytes is the cumulative heap allocated during the query suite
+	// (TotalAlloc delta). It is allocation churn, not resident memory.
 	QueryAllocBytes uint64
 }
 
@@ -145,6 +150,15 @@ func Run(ctx context.Context, dir string, opts Options) (*Report, error) {
 		}
 	}
 
+	// Measure query-serving memory here, while the index and query structures
+	// are still live but before scan/cold-start allocate (and free) unrelated
+	// memory. GC first so HeapInuse reflects retained working set, not garbage.
+	runtime.GC()
+	var memAfter runtime.MemStats
+	runtime.ReadMemStats(&memAfter)
+	report.Memory.QueryLiveBytes = memAfter.HeapInuse
+	report.Memory.QueryAllocBytes = memAfter.TotalAlloc - memBefore.TotalAlloc
+
 	report.Index = measureIndex(dir, report.SymbolCount)
 
 	if opts.Binary != "" {
@@ -154,10 +168,6 @@ func Run(ctx context.Context, dir string, opts Options) (*Report, error) {
 	if !opts.SkipScan {
 		report.Scan = measureScan(ctx, dir)
 	}
-
-	var memAfter runtime.MemStats
-	runtime.ReadMemStats(&memAfter)
-	report.Memory.QueryAllocBytes = memAfter.TotalAlloc - memBefore.TotalAlloc
 
 	return report, nil
 }

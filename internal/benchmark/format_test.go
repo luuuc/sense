@@ -158,6 +158,33 @@ func TestMarshalJSONOptionalFields(t *testing.T) {
 	}
 }
 
+func TestMarshalJSONMemory(t *testing.T) {
+	r := &Report{
+		Dir: "/tmp/test",
+		Memory: MemoryMetrics{
+			QueryLiveBytes:  1048576,
+			QueryAllocBytes: 5242880,
+		},
+	}
+
+	data, err := MarshalJSON(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed JSONReport
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	if parsed.Memory.QueryLiveBytes != 1048576 {
+		t.Errorf("QueryLiveBytes = %d, want 1048576", parsed.Memory.QueryLiveBytes)
+	}
+	if parsed.Memory.QueryAllocBytes != 5242880 {
+		t.Errorf("QueryAllocBytes = %d, want 5242880", parsed.Memory.QueryAllocBytes)
+	}
+}
+
 func TestWriteHuman(t *testing.T) {
 	r := &Report{
 		Dir:         "/tmp/test",
@@ -186,6 +213,7 @@ func TestWriteHuman(t *testing.T) {
 			BytesPerSymbol: 10240,
 		},
 		Memory: MemoryMetrics{
+			QueryLiveBytes:  1048576,
 			QueryAllocBytes: 5242880,
 		},
 	}
@@ -215,7 +243,8 @@ func TestWriteHuman(t *testing.T) {
 		"Index",
 		"database size",
 		"Memory",
-		"RSS (query serving)",
+		"live heap (serving)",
+		"alloc churn (queries)",
 	}
 
 	for _, s := range want {
