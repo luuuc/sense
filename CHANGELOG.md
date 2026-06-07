@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.0.1] - 2026-06-07
+
+### Bug Fixes
+
+- report live heap for query serving, not alloc churn
 ## [1.0.0] - 2026-06-06
 
 ### Features
