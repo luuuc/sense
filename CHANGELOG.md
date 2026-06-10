@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.1.0] - 2026-06-10
+
+### Features
+
+- add code-intel MCP benchmark leaderboard page
 ## [1.0.1] - 2026-06-07
 
 ### Bug Fixes
