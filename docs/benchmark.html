@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-41CSSC12Q9"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag("js", new Date());
+      gtag("config", "G-41CSSC12Q9");
+    </script>
+
+    <title>Code Intelligence MCP Servers, Benchmarked — Sense, Serena, Probe, GitNexus vs grep</title>
+    <meta
+      name="description"
+      content="Head-to-head benchmark of code-intelligence MCP servers for AI coding agents: Sense, Serena, Probe, GitNexus, and a no-MCP grep baseline. Six real repos, Claude Code Opus 4.7, open methodology. Two of four MCP servers scored below plain grep."
+    />
+    <meta
+      name="keywords"
+      content="code intelligence MCP, MCP server benchmark, Serena vs Sense, GitNexus, Probe, Claude Code MCP, AI coding agent, codebase understanding, blast radius, symbol graph, semantic code search"
+    />
+    <link rel="canonical" href="https://luuuc.github.io/sense/benchmark.html" />
+
+    <!-- Open Graph / social -->
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Code Intelligence MCP Servers, Benchmarked" />
+    <meta
+      property="og:description"
+      content="Six real repos, Claude Code Opus 4.7, open methodology. Two of four code-intel MCP servers scored below plain grep. The full scorecard, including where every tool loses."
+    />
+    <meta property="og:url" content="https://luuuc.github.io/sense/benchmark.html" />
+    <meta property="og:image" content="https://luuuc.github.io/sense/bench-leaderboard.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Code Intelligence MCP Servers, Benchmarked" />
+    <meta
+      name="twitter:description"
+      content="Six real repos, Claude Code Opus 4.7, open methodology. Two of four code-intel MCP servers scored below plain grep."
+    />
+    <meta name="twitter:image" content="https://luuuc.github.io/sense/bench-leaderboard.svg" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0a0d12;
+        --bg-2: #0d1118;
+        --bg-3: #11151d;
+        --line: #1b2230;
+        --line-2: #232c3d;
+        --ink: #e6ecf5;
+        --ink-2: #aab4c4;
+        --ink-3: #6b7689;
+        --ink-4: #454e5f;
+        --accent: oklch(0.82 0.14 220);
+        --accent-dim: oklch(0.62 0.12 220);
+        --accent-deep: oklch(0.42 0.09 220);
+        --gold: oklch(0.82 0.13 85);
+        --warn: oklch(0.72 0.14 40);
+        --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+        --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      body {
+        background:
+          radial-gradient(1200px 600px at 50% -200px, rgba(90, 160, 220, 0.06), transparent 60%),
+          radial-gradient(800px 400px at 90% 20%, rgba(90, 160, 220, 0.03), transparent 60%),
+          var(--bg);
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      /* ----- Top chrome ----- */
+      .chrome {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        backdrop-filter: blur(12px);
+        background: rgba(10, 13, 18, 0.72);
+        border-bottom: 1px solid var(--line);
+      }
+      .chrome-inner {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 12px 28px;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        font-size: 13px;
+      }
+      .repo-crumb {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--ink-2);
+      }
+      .repo-crumb .slash {
+        color: var(--ink-4);
+      }
+      .repo-crumb .name {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .repo-pill {
+        margin-left: 4px;
+        padding: 2px 8px;
+        border: 1px solid var(--line-2);
+        border-radius: 999px;
+        font-size: 11px;
+        color: var(--ink-3);
+        letter-spacing: 0.02em;
+      }
+      .chrome-nav {
+        margin-left: auto;
+        display: flex;
+        gap: 18px;
+        color: var(--ink-3);
+        font-size: 12.5px;
+      }
+      .chrome-nav a:hover {
+        color: var(--ink);
+      }
+      .star-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+        background: var(--bg-2);
+        color: var(--ink-2);
+        font-family: var(--mono);
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .star-btn:hover {
+        border-color: var(--accent-deep);
+        color: var(--ink);
+      }
+      .star-count {
+        color: var(--ink-3);
+        padding-left: 8px;
+        margin-left: 2px;
+        border-left: 1px solid var(--line-2);
+      }
+
+      /* ----- Layout ----- */
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 28px;
+      }
+
+      /* ----- Header block ----- */
+      .head {
+        padding: 84px 0 36px;
+        border-bottom: 1px solid var(--line);
+      }
+      .eyebrow {
+        font-size: 11.5px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--accent-dim);
+        margin-bottom: 20px;
+      }
+      h1 {
+        font-size: clamp(30px, 5vw, 46px);
+        line-height: 1.08;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 0 0 22px;
+        max-width: 16ch;
+      }
+      .lede {
+        font-family: var(--sans);
+        font-size: 18px;
+        line-height: 1.55;
+        color: var(--ink-2);
+        max-width: 64ch;
+        margin: 0 0 8px;
+      }
+      .lede strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        margin-top: 26px;
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+      .meta-row .tag {
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--bg-2);
+      }
+      .disclosure {
+        margin-top: 24px;
+        padding: 12px 16px;
+        border: 1px solid var(--line-2);
+        border-left: 2px solid var(--accent-deep);
+        border-radius: 6px;
+        background: var(--bg-2);
+        font-size: 12.5px;
+        color: var(--ink-2);
+        max-width: 72ch;
+      }
+      .disclosure b {
+        color: var(--ink);
+      }
+
+      /* ----- Sections ----- */
+      section {
+        padding: 48px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      h2 {
+        font-size: 13px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+        font-weight: 600;
+        margin: 0 0 6px;
+      }
+      .section-lede {
+        font-family: var(--sans);
+        font-size: 16px;
+        color: var(--ink-2);
+        max-width: 70ch;
+        margin: 0 0 26px;
+      }
+
+      /* ----- Tables ----- */
+      .table-scroll {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--bg-2);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        min-width: 720px;
+      }
+      thead th {
+        text-align: right;
+        font-weight: 500;
+        color: var(--ink-3);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line-2);
+        white-space: nowrap;
+      }
+      thead th:nth-child(1),
+      thead th:nth-child(2) {
+        text-align: left;
+      }
+      tbody td {
+        padding: 13px 16px;
+        text-align: right;
+        border-bottom: 1px solid var(--line);
+        color: var(--ink-2);
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      tbody td:nth-child(1),
+      tbody td:nth-child(2) {
+        text-align: left;
+      }
+      .rank {
+        color: var(--ink-3);
+        font-weight: 600;
+      }
+      .toolname {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .toolname .sub {
+        display: block;
+        color: var(--ink-3);
+        font-weight: 400;
+        font-size: 11px;
+        font-family: var(--sans);
+      }
+      tr.win td {
+        background: rgba(90, 160, 220, 0.06);
+      }
+      tr.win .toolname {
+        color: var(--accent);
+      }
+      .best {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .below {
+        color: var(--warn);
+      }
+      .pill-below {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 1px 7px;
+        border: 1px solid var(--warn);
+        border-radius: 999px;
+        font-size: 10px;
+        color: var(--warn);
+        letter-spacing: 0.02em;
+        vertical-align: 1px;
+      }
+      .medal {
+        font-size: 13px;
+      }
+      .note {
+        font-family: var(--sans);
+        font-size: 13px;
+        color: var(--ink-3);
+        margin-top: 14px;
+        max-width: 74ch;
+      }
+
+      /* ----- Method grid ----- */
+      .formula {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--ink-2);
+        background: var(--bg-3);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px 20px;
+        margin: 0 0 24px;
+        white-space: pre;
+        overflow-x: auto;
+        line-height: 1.7;
+      }
+      .formula .w {
+        color: var(--accent);
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px;
+        background: var(--bg-2);
+      }
+      .card h3 {
+        font-size: 12.5px;
+        margin: 0 0 8px;
+        color: var(--ink);
+        letter-spacing: 0.02em;
+      }
+      .card p {
+        font-family: var(--sans);
+        font-size: 13px;
+        color: var(--ink-3);
+        margin: 0;
+        line-height: 1.55;
+      }
+
+      /* ----- Loses list ----- */
+      .loses {
+        display: grid;
+        gap: 12px;
+      }
+      .lose-row {
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        gap: 18px;
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--bg-2);
+      }
+      .lose-row .who {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .lose-row .who .rk {
+        display: block;
+        color: var(--ink-4);
+        font-size: 11px;
+        font-weight: 400;
+        margin-top: 2px;
+      }
+      .lose-row .what {
+        font-family: var(--sans);
+        font-size: 13.5px;
+        color: var(--ink-2);
+        line-height: 1.55;
+      }
+      .lose-row.self {
+        border-color: var(--accent-deep);
+        border-left-width: 2px;
+      }
+      .lose-row.self .who {
+        color: var(--accent);
+      }
+
+      /* ----- CTA ----- */
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 8px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        border: 1px solid var(--line-2);
+        border-radius: 7px;
+        background: var(--bg-2);
+        color: var(--ink-2);
+        font-size: 13px;
+        transition: all 0.15s;
+      }
+      .btn:hover {
+        border-color: var(--accent-deep);
+        color: var(--ink);
+      }
+      .btn.primary {
+        border-color: var(--accent-deep);
+        color: var(--ink);
+        background: rgba(90, 160, 220, 0.08);
+      }
+      .repro {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--ink-2);
+        background: var(--bg-3);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px 18px;
+        margin: 22px 0 0;
+        white-space: pre;
+        overflow-x: auto;
+        line-height: 1.8;
+      }
+      .repro .c {
+        color: var(--ink-4);
+      }
+
+      /* ----- Footer ----- */
+      footer {
+        padding: 40px 0 60px;
+      }
+      .foot-tail {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+      .foot-tail a {
+        color: var(--ink-2);
+      }
+      .foot-tail a:hover {
+        color: var(--ink);
+      }
+      .braille-logo {
+        font-size: 18px;
+        letter-spacing: 0.1em;
+        color: var(--accent-dim);
+        margin-bottom: 14px;
+      }
+
+      @media (max-width: 640px) {
+        .lose-row {
+          grid-template-columns: 1fr;
+          gap: 6px;
+        }
+        .chrome-nav {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Top chrome -->
+    <div class="chrome">
+      <div class="chrome-inner">
+        <div class="repo-crumb">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 010-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 11-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z"
+              fill="currentColor"
+            />
+          </svg>
+          <span class="owner">luuuc</span>
+          <span class="slash">/</span>
+          <span class="name">sense</span>
+          <span class="repo-pill">benchmark</span>
+        </div>
+        <nav class="chrome-nav">
+          <a href="./index.html">Home</a>
+          <a href="https://github.com/luuuc/sense/tree/main/bench">Bench code</a>
+          <a href="https://github.com/luuuc/sense/blob/main/bench/results/report-for-humans.md"
+            >Full report</a
+          >
+          <a href="https://github.com/luuuc/sense">Code</a>
+        </nav>
+        <a class="star-btn" href="https://github.com/luuuc/sense" id="star">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"
+              fill="currentColor"
+            />
+          </svg>
+          Star
+          <span class="star-count" id="starCount"></span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="head">
+      <div class="wrap">
+        <div class="eyebrow">Code intelligence for AI agents · benchmark</div>
+        <h1>Code Intelligence MCP Servers, Benchmarked</h1>
+        <p class="lede">
+          Four code-intelligence tools for AI coding agents, plus a no-MCP grep baseline, run through
+          the same six end-to-end exploration scenarios on six real repositories.
+          <strong>Two of the four MCP servers scored below plain grep.</strong> Here is the full
+          scorecard, the method, and where every tool loses, including the one I built.
+        </p>
+        <div class="meta-row">
+          <span class="tag">6 real repos</span>
+          <span class="tag">Claude Code · Opus 4.7 · 1M ctx</span>
+          <span class="tag">Open methodology</span>
+          <span class="tag">Replayable</span>
+          <span class="tag">Updated 2026-05-14</span>
+        </div>
+        <p class="disclosure">
+          <b>Disclosure, up front.</b> I am the author of Sense, one of the five entries below. So the
+          scorecard is built to be checked, not believed: open code, frozen held-out scenarios with
+          hand-graded reference scores, a Spearman ≥ 0.85 anchor against my own grading, and a
+          published list of every place Sense loses. Don't take my word for any single number.
+          <a href="https://github.com/luuuc/sense/tree/main/bench" style="color: var(--accent-dim)"
+            >Audit the whole thing →</a
+          >
+        </p>
+      </div>
+    </header>
+
+    <!-- Leaderboard -->
+    <section>
+      <div class="wrap">
+        <h2>Aggregate leaderboard</h2>
+        <p class="section-lede">
+          Ranked by <b style="color: var(--ink-2)">fairness</b>: a weighted composite of answer
+          quality, citation grounding, efficiency, and a keyword smoke test (formula below). Averaged
+          across all six scenarios. Best value in each column is highlighted.
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Tool</th>
+                <th>Fairness</th>
+                <th>Judge quality</th>
+                <th>Grounding</th>
+                <th>Avg tokens</th>
+                <th>Avg time</th>
+                <th>Total cost</th>
+                <th>vs baseline</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="win">
+                <td class="rank"><span class="medal">🥇</span> #1</td>
+                <td class="toolname">
+                  sense<span class="sub">symbol graph + embeddings over MCP</span>
+                </td>
+                <td class="best">81.3%</td>
+                <td class="best">85.4%</td>
+                <td class="best">89.2%</td>
+                <td class="best">10,896</td>
+                <td class="best">141.5s</td>
+                <td class="best">$6.22</td>
+                <td class="best">+17.8%</td>
+              </tr>
+              <tr>
+                <td class="rank"><span class="medal">🥈</span> #2</td>
+                <td class="toolname">
+                  probe<span class="sub">stateless tree-sitter + ripgrep</span>
+                </td>
+                <td>77.7%</td>
+                <td>84.8%</td>
+                <td>72.8%</td>
+                <td>12,119</td>
+                <td>162.7s</td>
+                <td>$6.23</td>
+                <td>+17.7%</td>
+              </tr>
+              <tr>
+                <td class="rank"><span class="medal">🥉</span> #3</td>
+                <td class="toolname">
+                  baseline<span class="sub">Claude Code · grep / find / Read · no MCP</span>
+                </td>
+                <td>77.2%</td>
+                <td>84.2%</td>
+                <td>80.8%</td>
+                <td>12,716</td>
+                <td>185.4s</td>
+                <td>$7.57</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td class="rank">#4</td>
+                <td class="toolname">
+                  serena<span class="sub">LSP-driven symbol cache</span>
+                </td>
+                <td class="below">75.2% <span class="pill-below">below grep</span></td>
+                <td>83.4%</td>
+                <td class="below">61.9%</td>
+                <td>14,800</td>
+                <td>191.4s</td>
+                <td>$7.57</td>
+                <td>0.0%</td>
+              </tr>
+              <tr>
+                <td class="rank">#5</td>
+                <td class="toolname">
+                  gitnexus<span class="sub">code knowledge graph · Cypher-style</span>
+                </td>
+                <td class="below">74.9% <span class="pill-below">below grep</span></td>
+                <td>84.5%</td>
+                <td>76.9%</td>
+                <td>12,964</td>
+                <td>173.8s</td>
+                <td>$6.87</td>
+                <td>+9.2%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          The finding that should give every team pause: attaching serena or gitnexus, as configured
+          out of the box, made Claude Code <b style="color: var(--ink-2)">worse</b> than no MCP at
+          all on the headline fairness score. An MCP server is not free. It has to earn back the
+          friction it adds. Per-scenario tables for all six repos (axum, discourse, flask, gin,
+          javalin, next.js) are in the
+          <a
+            href="https://github.com/luuuc/sense/blob/main/bench/results/report-for-humans.md"
+            style="color: var(--accent-dim)"
+            >full report</a
+          >.
+        </p>
+      </div>
+    </section>
+
+    <!-- The field -->
+    <section>
+      <div class="wrap">
+        <h2>The field</h2>
+        <p class="section-lede">
+          Five ways an AI agent can navigate an unfamiliar codebase. Same Claude Code harness, same
+          six repos pinned at the same commits. Only the MCP configuration changes between runs.
+        </p>
+        <div class="cards">
+          <div class="card">
+            <h3>sense · v0.84.1</h3>
+            <p>
+              Pre-built symbol graph plus embeddings, served over four MCP tools: search, graph
+              (callers/callees), blast (impact), conventions. Local Go binary.
+            </p>
+          </div>
+          <div class="card">
+            <h3>probe · v0.6.0</h3>
+            <p>
+              No index. Every query parses touched files on the fly with tree-sitter and ripgrep,
+              with MCP scoping. Zero setup, stateless.
+            </p>
+          </div>
+          <div class="card">
+            <h3>baseline · Claude Code</h3>
+            <p>
+              No MCP at all. grep, find, Read, the same primitives a human dev uses. The floor every
+              real tool has to beat.
+            </p>
+          </div>
+          <div class="card">
+            <h3>serena · v1.3.0</h3>
+            <p>
+              Spins up real language servers (Pyright, gopls, rust-analyzer), caches their symbol
+              graphs, exposes find_symbol / find_references over MCP.
+            </p>
+          </div>
+          <div class="card">
+            <h3>gitnexus · v1.6.3</h3>
+            <p>
+              Builds a graph database from the repo and exposes Cypher-like queries plus a cross-repo
+              registry over MCP.
+            </p>
+          </div>
+        </div>
+        <p class="note">
+          The field will grow. This is a living scorecard, and the harness can score any code-intel
+          MCP that runs as a drop-in server in Claude Code. New tools get added as they appear.
+        </p>
+      </div>
+    </section>
+
+    <!-- Method -->
+    <section>
+      <div class="wrap">
+        <h2>How a tool earns its rank</h2>
+        <p class="section-lede">
+          One judge score is not a benchmark. The other axes exist to catch what a single quality
+          score misses: a beautiful but unverifiable answer is penalized on grounding, a slow drift
+          through grep is penalized on efficiency.
+        </p>
+        <div class="formula"><span class="w">fairness</span> = 0.10 · keyword_coverage   <span class="c" style="color: var(--ink-4)"># per-scenario smoke test</span>
+         + <span class="w">0.55</span> · llm_quality        <span class="c" style="color: var(--ink-4)"># Opus-4.7 judge, per-step rubric — the headline</span>
+         + 0.15 · citation_grounding  <span class="c" style="color: var(--ink-4)"># every file:line verified against the pinned checkout</span>
+         + 0.20 · efficiency          <span class="c" style="color: var(--ink-4)"># half tokens, half wall-time, calibrated per repo</span></div>
+        <div class="cards">
+          <div class="card">
+            <h3>Citations verified, not trusted</h3>
+            <p>
+              Every file:line reference in an answer is checked against the repo at the pinned
+              commit. A line past end-of-file is flagged as a hallucination, not paraphrase. Sense
+              grounded 89.2% of its citations; serena, the lowest, 61.9%.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Adoption never feeds the rank</h3>
+            <p>
+              How often the agent reaches for the MCP is computed separately and never folded into
+              fairness. Otherwise the no-MCP baseline takes a structural zero. That separation is how
+              baseline can, and does, beat two of the MCP servers.
+            </p>
+          </div>
+          <div class="card">
+            <h3>An anchor the tuning can't touch</h3>
+            <p>
+              Three held-out scenarios with hand-graded scores, SHA256-locked. The scoring is only
+              trusted when it correlates above 0.85 (Spearman) with my own grading. Goodhart's Law
+              applies to your own benchmark too.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Keyword checks read prose only</h3>
+            <p>
+              Keyword hits are searched in the agent's answer text, never its tool-call inputs.
+              Otherwise grepping for a symbol would score a "hit" even when grep returned nothing, a
+              tax on tools that don't use grep.
+            </p>
+          </div>
+        </div>
+        <p class="note">
+          Full scoring definitions:
+          <a
+            href="https://github.com/luuuc/sense/blob/main/bench/SCORING.md"
+            style="color: var(--accent-dim)"
+            >SCORING.md</a
+          >.
+        </p>
+      </div>
+    </section>
+
+    <!-- Where each loses -->
+    <section>
+      <div class="wrap">
+        <h2>Where each tool loses</h2>
+        <p class="section-lede">
+          No tool wins everywhere, including the one that wins on aggregate. If a benchmark only lists
+          where the author's tool shines, it's a press release. This is the honest column.
+        </p>
+        <div class="loses">
+          <div class="lose-row self">
+            <div class="who">sense<span class="rk">#1 aggregate</span></div>
+            <div class="what">
+              Needs a one-time <code>sense scan</code> before the first query (minutes on most repos,
+              about 20 on a 75k-symbol monorepo like Next.js). On tiny codebases where the agent can
+              just read the file, the index earns nothing. Line numbers drifted on one Rust citation.
+              The <code>.sense/</code> index lives on disk per repo, worth sizing inside small CI
+              containers.
+            </div>
+          </div>
+          <div class="lose-row">
+            <div class="who">probe<span class="rk">#2</span></div>
+            <div class="what">
+              Roughly 11% more tokens and 15% more wall-time than sense. Lowest adoption of any MCP
+              tool (0.30), agents keep reaching for grep alongside it. On harder scenarios it answers
+              in prose more than file:line, so its citation count drops (15 of 40 on next.js).
+            </div>
+          </div>
+          <div class="lose-row">
+            <div class="who">baseline<span class="rk">#3 · grep</span></div>
+            <div class="what">
+              Judge quality is competitive (within 1.2 points of the top), but it reads broadly: 21%
+              more wall-time and about $1.35 more per six-scenario run than sense. Sometimes invents
+              citations when it reasons from a file it didn't fully open.
+            </div>
+          </div>
+          <div class="lose-row">
+            <div class="who">serena<span class="rk">#4 · below grep</span></div>
+            <div class="what">
+              Slowest tool overall (avg 191s) and the most tokens (avg 14,800). Lowest citation
+              grounding of any tool, 61.9%: the LSP cache often points at the right symbol but the
+              wrong line. Each language needs its own healthy language server running.
+            </div>
+          </div>
+          <div class="lose-row">
+            <div class="who">gitnexus<span class="rk">#5 · below grep</span></div>
+            <div class="what">
+              Last on aggregate fairness. Spends more tokens than the baseline on three of six
+              scenarios. On javalin its grounding collapsed to 0 of 6 citations: the graph schema
+              doesn't seem to capture Java handler-registration patterns. Strong on Go and Ruby when
+              configured well.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Reproduce -->
+    <section>
+      <div class="wrap">
+        <h2>Run it yourself</h2>
+        <p class="section-lede">
+          Nothing here can drift from the raw data. Every cell is derived from per-run transcripts,
+          scores, and judge outputs committed in the repo. The whole benchmark replays end to end.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/luuuc/sense/tree/main/bench"
+            >Benchmark repo →</a
+          >
+          <a
+            class="btn"
+            href="https://github.com/luuuc/sense/blob/main/bench/results/report-for-humans.md"
+            >Full report →</a
+          >
+          <a class="btn" href="https://github.com/luuuc/sense/blob/main/bench/SCORING.md"
+            >Scoring methodology →</a
+          >
+          <a class="btn" href="./index.html">What is Sense? →</a>
+        </div>
+        <div class="repro"><span class="c"># index/check all tools across the six repos</span>
+bash bench/run.sh
+<span class="c"># score keyword + grounding + efficiency, then LLM-judge each step</span>
+bash bench/score.sh && bash bench/judge.sh
+<span class="c"># render the report</span>
+bash bench/report.sh --md</div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div class="wrap">
+        <div class="braille-logo">⠎⠑⠝⠎⠑</div>
+        <div class="foot-tail">
+          <div>
+            Benchmark &copy; 2026 <a href="https://github.com/luuuc">luuuc</a> · methodology and raw
+            data open at
+            <a href="https://github.com/luuuc/sense/tree/main/bench">github.com/luuuc/sense/bench</a>
+          </div>
+          <div style="display: flex; gap: 18px">
+            <a href="./index.html">Sense home</a>
+            <a href="https://github.com/luuuc/sense">GitHub →</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // Live star count, same source as the homepage.
+      fetch("https://api.github.com/repos/luuuc/sense")
+        .then((r) => r.json())
+        .then((d) => {
+          if (d && typeof d.stargazers_count === "number") {
+            document.getElementById("starCount").textContent = d.stargazers_count;
+          }
+        })
+        .catch(() => {});
+    </script>
+  </body>
+</html>
