@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.2.0] - 2026-06-14
+
+### Features
+
+- register Sense MCP with Codex via .codex/config.toml
 ## [1.1.0] - 2026-06-10
 
 ### Features
