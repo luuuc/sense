@@ -70,20 +70,25 @@ def parse_transcript(path):
                         if text:
                             text_blocks.append(text)
 
-            # Result event: cost, duration, usage at top-level of obj
+            # Result event: cost, duration, usage at top-level of obj.
+            # Accumulate across result events so a multi-turn session run (one
+            # result per resumed turn) reports CUMULATIVE cost/time/usage. A
+            # single-turn run has exactly one result event, so this is identical
+            # to the old overwrite behavior — no regression for the single-task
+            # scenarios.
             if obj.get("type") == "result":
-                cost_usd = obj.get("total_cost_usd", cost_usd)
-                duration_ms = obj.get("duration_ms", duration_ms)
+                rc = obj.get("total_cost_usd")
+                if rc is not None:
+                    cost_usd = (cost_usd or 0.0) + rc
+                rd = obj.get("duration_ms")
+                if rd is not None:
+                    duration_ms = (duration_ms or 0) + rd
                 result_usage = obj.get("usage", {})
                 if isinstance(result_usage, dict):
-                    if result_usage.get("input_tokens"):
-                        usage["input_tokens"] = result_usage["input_tokens"]
-                    if result_usage.get("output_tokens"):
-                        usage["output_tokens"] = result_usage["output_tokens"]
-                    if result_usage.get("cache_read_input_tokens"):
-                        usage["cache_read_input_tokens"] = result_usage["cache_read_input_tokens"]
-                    if result_usage.get("cache_creation_input_tokens"):
-                        usage["cache_creation_input_tokens"] = result_usage["cache_creation_input_tokens"]
+                    usage["input_tokens"] += result_usage.get("input_tokens", 0) or 0
+                    usage["output_tokens"] += result_usage.get("output_tokens", 0) or 0
+                    usage["cache_read_input_tokens"] += result_usage.get("cache_read_input_tokens", 0) or 0
+                    usage["cache_creation_input_tokens"] += result_usage.get("cache_creation_input_tokens", 0) or 0
 
     return {
         "tool_calls": tool_calls,
@@ -664,6 +669,12 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     # scored.json + judged.json; scorer.py emits the components only.
     citation_grounding = ground_citations(answer_text, repo_checkout)
 
+    # Gold-target recall (reported alongside fairness, never folded into it).
+    # Measures coverage against a fixed per-scenario denominator, unlike
+    # citation_grounding's grounded/emitted rate. None when no gold declared.
+    from gold import score_gold_recall
+    gold_recall = score_gold_recall(answer_text, scenario.get("gold"))
+
     scored = {
         "scenario": scenario["name"],
         "repo": scenario["repo"],
@@ -675,6 +686,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
         "tool_fluency": round(tool_fluency, 4),
         "discoverability": round(discoverability, 4),
         "citation_grounding": citation_grounding,
+        "gold_recall": gold_recall,
         "steps": step_results,
         "misses": misses,
         "metrics": {
