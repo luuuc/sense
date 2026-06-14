@@ -1,0 +1,32 @@
+# Sense
+
+> Sense is a local MCP server that gives AI coding agents structural understanding of a codebase (symbols, relationships, conventions) without reading dozens of files. One binary, one local index, four tools. No SaaS account, no API key, no cloud dependency. It indexes a repo once with tree-sitter, then serves a symbol graph plus hybrid semantic code search over MCP to Claude Code, Cursor, Codex CLI, OpenCode, and any MCP client.
+
+Sense isn't for the human. It's for the human's AI: the agent calls Sense and acts on the result. Measured across 7 real-world codebases, agents using Sense finish the same tasks with about -47% tool calls, -32% tokens, and -26% cost at the same correctness.
+
+The four MCP tools: `sense_graph` (symbol relationships, callers, callees, inheritance, tests, dead code), `sense_search` (hybrid bi-encoder + cross-encoder semantic code search with keyword and text fallback), `sense_blast` (blast radius, affected code and tests, risk score), `sense_conventions` (detected project conventions from source). `sense_status` reports index health.
+
+Install: `curl -fsSL https://luuuc.github.io/sense/install.sh | sh`. Index a project: `sense scan` (the first scan also auto-wires detected AI tools). It is read-only, makes zero network calls after install, and the index never leaves the machine.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/luuuc/sense/main/README.md): Overview, benchmarks, install, language and platform support, full feature list.
+- [FAQ](https://raw.githubusercontent.com/luuuc/sense/main/FAQ.md): Common questions for humans evaluating Sense and for AI agents using it.
+- [CLI reference](https://raw.githubusercontent.com/luuuc/sense/main/CLI.md): Every CLI command (setup, scan, status, doctor, search, graph, blast, dead, conventions) and exit codes.
+- [Agent routing guidance](https://raw.githubusercontent.com/luuuc/sense/main/AGENTS.md): When an agent should use each Sense tool versus grep.
+
+## Benchmarks
+
+- [Benchmark leaderboard](https://luuuc.github.io/sense/benchmark.html): Head-to-head against Serena, Probe, GitNexus, and code-search MCPs versus grep.
+- [Benchmark harness](https://github.com/luuuc/sense/tree/main/bench): Open, reproducible methodology and raw data.
+- [Articles](https://raw.githubusercontent.com/luuuc/sense/main/ARTICLES.md): Deep-dives on codebase intelligence, benchmark methodology, and the reasoning behind Sense.
+
+## Optional
+
+- [Contributing](https://raw.githubusercontent.com/luuuc/sense/main/CONTRIBUTING.md): Accepted contribution areas (new languages, frameworks, AI-tool integrations).
+- [Add a language](https://raw.githubusercontent.com/luuuc/sense/main/CONTRIBUTING-A-LANGUAGE.md): Table-driven extractor guide, roughly 25 lines of config per standard-tier language.
+- [Add a framework](https://raw.githubusercontent.com/luuuc/sense/main/CONTRIBUTING-A-FRAMEWORK.md): Framework support and dead-code fine-graining.
+- [Add an AI tool](https://raw.githubusercontent.com/luuuc/sense/main/CONTRIBUTING-AN-AI-TOOL.md): Integrate a new AI coding tool.
+- [Security](https://raw.githubusercontent.com/luuuc/sense/main/SECURITY.md): Security posture, secret handling, and binary verification.
+- [Changelog](https://raw.githubusercontent.com/luuuc/sense/main/CHANGELOG.md): Release history.
+- [Full content](https://luuuc.github.io/sense/llms-full.txt): README, FAQ, CLI reference, and agent routing inlined into one file for single-fetch ingestion.
