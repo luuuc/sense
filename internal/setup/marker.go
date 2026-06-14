@@ -10,6 +10,12 @@ import (
 const (
 	markerStart = "<!-- sense:start -->"
 	markerEnd   = "<!-- sense:end -->"
+
+	// TOML config files (Codex's .codex/config.toml) can't carry HTML
+	// comments, so they delimit the Sense section with #-comment markers.
+	// writeMarkerFileWith treats them identically to the HTML pair.
+	tomlMarkerStart = "# sense:start"
+	tomlMarkerEnd   = "# sense:end"
 )
 
 // guidanceMarkdown is the single source of truth for the Sense routing guidance
@@ -41,10 +47,18 @@ Sense gives you structural understanding of the codebase (symbols, relationships
 **When NOT to use Sense** (use grep instead): exact text/string search, reading file contents, editing code (Sense is read-only).
 <!-- sense:end -->`
 
-// writeMarkerFile creates or updates a marker-delimited Sense section
-// in the file at path. If the file already contains markers, the section
-// between them is replaced. Otherwise the section is appended.
+// writeMarkerFile creates or updates an HTML-comment marker-delimited
+// Sense section (CLAUDE.md, .cursorrules, AGENTS.md). If the file already
+// contains markers, the section between them is replaced; otherwise the
+// section is appended.
 func writeMarkerFile(path, section string) (bool, error) {
+	return writeMarkerFileWith(path, section, markerStart, markerEnd)
+}
+
+// writeMarkerFileWith is the marker-replace primitive parameterised by the
+// comment delimiters, so both HTML-comment files (Markdown) and #-comment
+// files (TOML) share one idempotent create/replace/append implementation.
+func writeMarkerFileWith(path, section, start, end string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
@@ -53,13 +67,13 @@ func writeMarkerFile(path, section string) (bool, error) {
 	content := string(data)
 
 	switch {
-	case strings.Contains(content, markerStart):
-		startIdx := strings.Index(content, markerStart)
-		endIdx := strings.Index(content, markerEnd)
+	case strings.Contains(content, start):
+		startIdx := strings.Index(content, start)
+		endIdx := strings.Index(content, end)
 		if endIdx < 0 {
 			content = content[:startIdx] + section + "\n"
 		} else {
-			endIdx += len(markerEnd)
+			endIdx += len(end)
 			content = content[:startIdx] + section + content[endIdx:]
 		}
 	case len(content) == 0:
