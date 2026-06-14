@@ -450,7 +450,7 @@ func TestCodexCreatesFiles(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, path := range []string{".mcp.json", "AGENTS.md"} {
+	for _, path := range []string{".codex/config.toml", ".mcp.json", "AGENTS.md"} {
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
 			t.Errorf("expected %s to exist: %v", path, err)
 		}
@@ -459,6 +459,16 @@ func TestCodexCreatesFiles(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 	if !strings.Contains(string(data), markerStart) {
 		t.Error("AGENTS.md missing sense markers")
+	}
+
+	// The config.toml is the actual Codex MCP registration: Codex ignores
+	// .mcp.json, so this block is what makes the sense_* tools appear.
+	toml, _ := os.ReadFile(filepath.Join(root, ".codex", "config.toml"))
+	cfg := string(toml)
+	for _, want := range []string{"[mcp_servers.sense]", `command = "sense"`, `args = ["mcp"]`, tomlMarkerStart, tomlMarkerEnd} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf(".codex/config.toml missing %q\ngot:\n%s", want, cfg)
+		}
 	}
 }
 
@@ -472,6 +482,7 @@ func TestCodexIdempotent(t *testing.T) {
 
 	mcp1, _ := os.ReadFile(filepath.Join(root, ".mcp.json"))
 	agents1, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	toml1, _ := os.ReadFile(filepath.Join(root, ".codex", "config.toml"))
 
 	if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
 		t.Fatalf("second Run: %v", err)
@@ -479,12 +490,84 @@ func TestCodexIdempotent(t *testing.T) {
 
 	mcp2, _ := os.ReadFile(filepath.Join(root, ".mcp.json"))
 	agents2, _ := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	toml2, _ := os.ReadFile(filepath.Join(root, ".codex", "config.toml"))
 
 	if string(mcp1) != string(mcp2) {
 		t.Error(".mcp.json changed between runs")
 	}
 	if string(agents1) != string(agents2) {
 		t.Error("AGENTS.md changed between runs")
+	}
+	if string(toml1) != string(toml2) {
+		t.Errorf(".codex/config.toml changed between runs:\nfirst:\n%s\nsecond:\n%s", toml1, toml2)
+	}
+}
+
+func TestCodexConfigPreservesUserContentAndSkipsManualEntry(t *testing.T) {
+	t.Run("appends below existing user config", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, ".codex"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		userCfg := "model = \"gpt-5.5-codex\"\nmodel_reasoning_effort = \"high\"\n"
+		path := filepath.Join(root, ".codex", "config.toml")
+		if err := os.WriteFile(path, []byte(userCfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		opts := &Options{Tools: []Tool{ToolCodexCLI}}
+		if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+
+		got, _ := os.ReadFile(path)
+		content := string(got)
+		if !strings.Contains(content, `model = "gpt-5.5-codex"`) {
+			t.Error("user config was overwritten")
+		}
+		if !strings.Contains(content, "[mcp_servers.sense]") {
+			t.Error("sense block not appended")
+		}
+		if c := strings.Count(content, tomlMarkerStart); c != 1 {
+			t.Errorf("expected exactly 1 sense block, got %d", c)
+		}
+	})
+
+	t.Run("does not clobber a hand-written sense entry", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, ".codex"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		manual := "[mcp_servers.sense]\ncommand = \"/custom/sense\"\nargs = [\"mcp\", \"--verbose\"]\n"
+		path := filepath.Join(root, ".codex", "config.toml")
+		if err := os.WriteFile(path, []byte(manual), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		opts := &Options{Tools: []Tool{ToolCodexCLI}}
+		if _, err := Run(root, &bytes.Buffer{}, opts); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+
+		got, _ := os.ReadFile(path)
+		content := string(got)
+		if content != manual {
+			t.Errorf("hand-written entry was modified:\nwant:\n%s\ngot:\n%s", manual, content)
+		}
+		if strings.Contains(content, tomlMarkerStart) {
+			t.Error("sense markers added on top of a manual entry")
+		}
+	})
+}
+
+func TestCodexTrustNotePrinted(t *testing.T) {
+	root := t.TempDir()
+	var buf bytes.Buffer
+	if _, err := Run(root, &buf, &Options{Tools: []Tool{ToolCodexCLI}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(buf.String(), "trusted projects") {
+		t.Errorf("setup output missing Codex trust note:\n%s", buf.String())
 	}
 }
 
@@ -1036,6 +1119,40 @@ func TestConfigureCodexMCPError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), ".mcp.json") {
 		t.Errorf("error = %q, want mention of .mcp.json", err)
+	}
+}
+
+func TestConfigureCodexConfigTOMLError(t *testing.T) {
+	root := t.TempDir()
+	// .codex/config.toml as a directory makes writeCodexConfigTOML's
+	// os.ReadFile fail with a non-NotExist error before any file is written.
+	if err := os.MkdirAll(filepath.Join(root, ".codex", "config.toml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configureCodexCLI(root)
+	if err == nil {
+		t.Fatal("expected error when .codex/config.toml is a directory")
+	}
+	if !strings.Contains(err.Error(), ".codex/config.toml") {
+		t.Errorf("error = %q, want mention of .codex/config.toml", err)
+	}
+}
+
+func TestConfigureCodexConfigDirCreateError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions are not enforced")
+	}
+	root := t.TempDir()
+	// A read-only root lets ReadFile report NotExist but makes MkdirAll of
+	// .codex fail, exercising the directory-create error branch.
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	_, err := writeCodexConfigTOML(root)
+	if err == nil {
+		t.Fatal("expected error when .codex cannot be created")
 	}
 }
 

@@ -301,7 +301,7 @@ to opt into. Cover every writer branch, including the error returns.
 |---|---|---|---|
 | Claude Code | `.mcp.json` (`mcpServers`, with `serverInstructions`) | `CLAUDE.md` | `.claude/settings.json` hooks and perms, skills, agents |
 | Cursor | `.cursor/mcp.json` (`mcpServers`) | `.cursorrules` | none |
-| Codex CLI | `.mcp.json` (shared with Claude Code) | `AGENTS.md` | none |
+| Codex CLI | `.codex/config.toml` (`[mcp_servers.sense]`; Codex ignores `.mcp.json`) | `AGENTS.md` | also writes `.mcp.json` for shared-repo consistency |
 | OpenCode | `opencode.json` (`mcp` key, `{type, command, enabled}`) | `AGENTS.md` | skills as `.opencode/skills/<name>/SKILL.md` |
 
 ---

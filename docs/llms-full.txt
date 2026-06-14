@@ -1,0 +1,675 @@
+# Sense — Full Documentation
+
+> Local MCP server giving AI coding agents structural understanding of a codebase (symbols, relationships, conventions) without reading dozens of files. One binary, one local index, four tools. No SaaS, no API key, no cloud. This file inlines the core docs (README, FAQ, CLI reference, agent routing) for single-fetch ingestion. Index of links: https://luuuc.github.io/sense/llms.txt
+
+-- Source: README.md --
+
+[![CI](https://github.com/luuuc/sense/actions/workflows/ci.yml/badge.svg)](https://github.com/luuuc/sense/actions/workflows/ci.yml)  [![CodeQL](https://github.com/luuuc/sense/actions/workflows/codeql.yml/badge.svg)](https://github.com/luuuc/sense/actions/workflows/codeql.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/luuuc/sense)](https://goreportcard.com/report/github.com/luuuc/sense) [![codecov](https://codecov.io/gh/luuuc/sense/branch/main/graph/badge.svg)](https://codecov.io/gh/luuuc/sense) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12729/badge)](https://www.bestpractices.dev/projects/12729)
+
+# Sense ⠎⠑⠝⠎⠑
+
+**An MCP server for codebase context, built for AI coding agents.**
+
+![Side-by-side comparison: Without Sense (19 tool calls, 356K tokens, 121s) vs With Sense (5 tool calls, 109K tokens, 48s)](docs/comparison.svg)
+
+Your AI agent reads 19 files to answer "who calls this function?" because it has the text of your codebase but never the map. It re-derives structure on every task, burns tokens chasing grep chains, and hallucinates dependencies that don't exist. Sense indexes your repo once and serves a symbol graph plus semantic code search over MCP. Claude Code, Cursor, Codex CLI, and any MCP client finish the same task in 10 tool calls instead of 19, on 156K tokens instead of 228K, with the same correctness ([bench/](bench/)).
+
+One binary, one local index, four tools for your AI. No SaaS account, no API key, no cloud dependency.
+
+> Sense sits on your machine, has no learning curve, and isn't for you. It's for your AI.
+
+## What changes
+
+Measured across 7 real-world codebases ([Discourse](https://github.com/discourse/discourse), [Flask](https://github.com/pallets/flask), [Next.js](https://github.com/vercel/next.js/), [Axum](https://github.com/tokio-rs/axum), [Gin](https://github.com/gin-gonic/gin), [Javalin](https://github.com/javalin/javalin), and a private e-commerce repo).
+Full methodology and raw data: [`bench/`](bench/). Head-to-head leaderboard against Serena, Probe, GitNexus, code-search MCPs: [`docs/bench-leaderboard.svg`](docs/bench-leaderboard.svg).
+
+| Metric | Claude Code (Opus 4.6) | Claude Code (Opus 4.6) + Sense | Change |
+|---|---|---|---|
+| Tool calls per task | 19 | 10 | -47% |
+| Tokens per task | 228K | 156K | -32% |
+| Cost per task | $0.42 | $0.31 | -26% |
+| Session time | 91s | 73s | -19% |
+| Score per 100K tokens | 0.19 | 0.30 | +64% |
+| Score per minute | 0.28 | 0.38 | +37% |
+
+Same correctness, dramatically less work. Sense doesn't make the model smarter. It gives the model structural understanding so it stops wasting effort.
+
+### Structural tasks
+
+Tasks that require understanding code relationships, not just reading text, are where Sense pulls ahead.
+
+| Task type | Baseline | + Sense | Why |
+|---|---|---|---|
+| Blast radius | 0.17 | 0.25 | Pre-computed dependency graph vs. manual grep chains |
+| Find callers | 0.27 | 0.33 | Graph lookup vs. reading dozens of files |
+| Dead code | 0.00 | 0.05 | Baseline can't do this at all |
+| Semantic search | 0.36 | 0.38 | Two-stage retrieval (bi-encoder + cross-encoder) with text fallback |
+
+### Where Sense doesn't help
+
+Sense is structural understanding, not a general search engine. For tasks that are fundamentally text-grep (find a log message, locate a string literal), plain grep is the right tool and Sense adds nothing. Search text fallback (ripgrep) bridges some of this gap, but it's a fallback, not a replacement.
+
+## Install
+
+```bash
+curl -fsSL https://luuuc.github.io/sense/install.sh | sh
+```
+
+Or download the binary for your OS from the [latest release](https://github.com/luuuc/sense/releases/latest), unzip, and move `sense` somewhere on your `PATH`.
+
+### With Go (1.25+)
+
+```bash
+go install github.com/luuuc/sense/cmd/sense@latest
+```
+
+## Index Your Codebase
+
+```bash
+cd /path/to/project && sense scan
+```
+
+Parses your code with tree-sitter, extracts symbols and relationships, embeds everything with a bundled ONNX model, and writes a local `.sense/` index. Incremental on every run.
+
+## Connect Your AI
+
+```bash
+cd /path/to/project && sense setup
+```
+
+Auto-detects installed AI tools (Claude Code, Cursor, Codex CLI, and OpenCode) and writes each one's integration configs:
+
+- **`.mcp.json`** / **`.cursor/mcp.json`** / **`.codex/config.toml`** / **`opencode.json`**, the MCP server entry for the detected tool (or any MCP client)
+- **`CLAUDE.md`** / **`.cursorrules`** / **`AGENTS.md`**, routing guidance with a tool substitution table, written from a single shared source
+- **`.claude/settings.json`**, lifecycle hooks that nudge Claude toward Sense tools
+- **`.claude/skills/`** and **`.opencode/skills/`**, workflow skills for exploration, impact analysis, and conventions
+
+No manual setup. Run `sense setup` and your AI has structural understanding.
+
+Sense also generates `.sense/summary.md`, a cold-start map of your codebase (top namespaces, hub symbols, entry points, conventions). Your AI reads it at session start and immediately knows the shape of the project. Zero tool calls to orient.
+
+To re-configure after upgrading Sense:
+
+```bash
+sense setup
+```
+
+## Setup & forget
+
+After `sense setup`, there's nothing left to do. The MCP server your editor already launches watches your working tree in the background and re-indexes changes as they land, so the index stays current whether the edit came from your AI, your own editor, a `git pull`, or a branch switch. No second process to start, no `--watch` to remember. The summary regenerates on every scan. Your AI gets faster answers and burns fewer tokens, and you just stop noticing the friction that used to be there.
+
+## What Your AI Gets
+
+Four tools for your AI. A full CLI for you. No sprawl.
+
+| Tool | Capability |
+|---|---|
+| `sense_graph` | Symbol relationships, callers, callees, inheritance, tests, dead code |
+| `sense_search` | Hybrid bi-encoder + cross-encoder semantic code search with keyword and text fallback |
+| `sense_blast` | Blast radius, affected code, affected tests, risk score |
+| `sense_conventions` | Detected project conventions from source |
+
+Your AI stops reading 30 files to answer "who calls this?" It stops hallucinating dependencies. It stops writing code that's correct but doesn't match how your team writes code.
+
+### Convention detection
+
+Of the four tools, convention detection is the one nobody else does well. AI tools don't just struggle with structure. They struggle with style. They write correct code that doesn't follow how YOUR codebase writes code.
+
+Sense detects patterns from your actual source code: key types and their declarations, framework idioms (Rails associations, Go interfaces, Django models), architectural layers, and naming conventions. Your AI follows these patterns because it sees them, not because it was told about them. Convention detection isn't a feature. It's the thing that makes AI-written code feel like it belongs.
+
+## How It Works
+
+Sense parses your codebase with tree-sitter, extracts symbols (functions, classes, modules, methods) and their relationships (calls, imports, inheritance), embeds each symbol with a bundled quantized ONNX model, and stores everything in a local SQLite index at `.sense/`.
+
+```bash
+cd /path/to/project && sense scan
+```
+
+From that moment on, your AI can ask structural questions via MCP. These are what your AI calls. You can run them manually for verification. See [CLI.md](CLI.md) for the full reference.
+
+The MCP server does more than answer queries: for the life of the editor session it watches the working tree with a debounced filesystem watcher and re-indexes changed files in the background, off the request path. A branch switch re-indexes once from a `git diff` rather than reacting to every file. If you query a file that changed microseconds ago, the server repairs just that file inline before answering, so an edit is never missed. One project indexes at a time — a single-writer lock means a second editor window or a `sense scan --watch` in a terminal serves reads without double-indexing. Set `watch: false` in `.sense/config.yml` to turn the background watcher off.
+
+### Performance
+
+Sense disappears into your workflow. Queries resolve in milliseconds, so your AI reasons about structure without ever stalling.
+
+| Operation | Measured (p50 / p95) |
+|---|---|
+| Graph query | 0.2ms / 3ms |
+| Blast radius | 0.1ms / 10ms |
+| Conventions | 16ms / 16ms |
+| Cold start | 48ms |
+| Full scan | 4.9s |
+| Incremental scan | 2.3s |
+
+Measured on Sense's own codebase (382 files, 4,032 symbols). Run `sense benchmark` on your project for local numbers.
+
+## What Sense Is Not
+
+- **Not a code editor or modifier.** Read-only is the identity, not a limitation. Sense observes your codebase. It never modifies it. Your editor, your agent, your tools stay in control.
+- **Not a token optimizer.** Token savings are a side effect of understanding, not the goal. If LLM costs dropped to zero tomorrow, Sense would still be valuable.
+- **Not a search engine.** Code search by meaning is one of four tools, not the product. The product is structural understanding.
+- **Not a feature-count competitor.** Four tools is a choice, not a constraint. Your AI doesn't need 102 tools to choose from. It needs a few that work.
+- **Not dependent on anything.** No API keys. No Ollama. No Docker. No Python. One binary, zero external dependencies.
+
+## Supported Platforms
+
+| Platform | Status |
+|---|---|
+| Linux amd64 | Supported |
+| Linux arm64 | Supported |
+| macOS Apple Silicon (arm64) | Supported |
+| macOS Intel (amd64) | Supported (legacy) |
+| Windows | Supported using WSL2 |
+
+Windows native builds are not yet available. Use WSL2 with the Linux binary.
+
+macOS Intel still ships a binary and works, but it requires macOS 10.15 (Catalina) or later and is pinned to an older bundled runtime (ONNX Runtime 1.23.1) because Microsoft dropped macOS x86_64 runtime builds after that version. That dependency is frozen and cannot advance, so Apple Silicon is the recommended Mac target.
+
+## Requirements
+
+- ~60 MB disk for the binary
+- 100-200 MB for the `.sense/` index (varies with project size)
+
+## Language Support
+
+Sense uses tree-sitter for parsing. It ships with extractors for 13 languages across two tiers:
+
+**Full tier.** Symbols, calls, inheritance, imports, blast radius, semantic search, and framework-specific inference:
+
+| Language | Framework support |
+|---|---|
+| **Ruby** | Rails (associations, callbacks, routes), Stimulus, Turbo |
+| **TypeScript / JavaScript** | React (JSX component calls) |
+| **Go** | - |
+| **ERB** | Stimulus, Turbo (cross-language edges to JS controllers) |
+
+**Standard tier.** Symbols, calls, inheritance, imports, blast radius, and semantic search:
+
+| Language | Notes |
+|---|---|
+| **Python** | Django (models, URL patterns), FastAPI (routes, Depends) |
+| **Rust** | Structs, traits, enums, impl blocks |
+| **Java** | Classes, interfaces, enums, records |
+| **Kotlin** | Classes, interfaces, objects |
+| **C#** | Classes, interfaces, structs, namespaces |
+| **C++** | Classes, structs, namespaces (`::` scoping) |
+| **C** | Functions, structs, enums |
+| **PHP** | Classes, interfaces, traits (`\` scoping) |
+| **Scala** | Classes, traits, objects |
+
+Java, Kotlin, C#, C++, C, PHP, and Scala use a table-driven generic extractor, each ~25 lines of config rather than a handwritten walker. Python and Rust have dedicated extractors, and Python adds Django and FastAPI inference. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) to add a new language, and [CONTRIBUTING-A-FRAMEWORK.md](CONTRIBUTING-A-FRAMEWORK.md) to add framework support (plus the dead-code fine-graining that goes with it).
+
+## Articles
+
+Deep-dives on codebase intelligence, the benchmark methodology, and the thinking behind Sense: [ARTICLES.md](ARTICLES.md).
+
+## Feedback
+
+File issues at [github.com/luuuc/sense/issues](https://github.com/luuuc/sense/issues).
+
+## Development
+
+```bash
+make build    # build the binary
+make test     # run tests
+make lint     # run linters
+make ci       # all of the above
+```
+
+## Contributing
+
+Sense is feature-complete for v1. Outside contributions are accepted in three areas: new languages and frameworks, dead-code fine-graining for a language or framework, and AI-tool integrations. Bug fixes are always welcome; net-new features are not. The full scope and step-by-step guides are in [CONTRIBUTING.md](CONTRIBUTING.md):
+
+- [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md), a new language.
+- [CONTRIBUTING-A-FRAMEWORK.md](CONTRIBUTING-A-FRAMEWORK.md), framework support and dead-code fine-graining.
+- [CONTRIBUTING-AN-AI-TOOL.md](CONTRIBUTING-AN-AI-TOOL.md), a new AI coding tool integration.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+
+-- Source: FAQ.md --
+
+# Sense FAQ
+
+Common questions about Sense, for humans evaluating it and for AI agents using it.
+
+Sense is an MCP server that gives AI coding agents structural understanding of a codebase (symbols, relationships, conventions) without reading dozens of files. One binary, one local index, four tools. No SaaS, no API key, no cloud.
+
+---
+
+## The short version
+
+- **What is it?** A local index of your codebase served to your AI over MCP, plus a CLI for you.
+- **What does my AI get?** Four tools: `sense_graph`, `sense_search`, `sense_blast`, `sense_conventions` (and `sense_status`).
+- **What's the setup?** One command: `sense scan`. The first scan also auto-wires your AI tools. After that, nothing. The MCP server re-indexes changes in the background for the life of your editor session.
+- **Does it cost tokens?** No. It saves them. Roughly -32% tokens and -47% tool calls per task at the same correctness ([bench/](bench/)).
+- **Does it phone home?** No. Zero network calls after install. The index never leaves your machine.
+
+---
+
+## Getting started
+
+### How do I install Sense?
+
+```bash
+curl -fsSL https://luuuc.github.io/sense/install.sh | sh
+```
+
+Or download the binary for your OS from the [latest release](https://github.com/luuuc/sense/releases/latest) and move `sense` onto your `PATH`. With Go 1.25+: `go install github.com/luuuc/sense/cmd/sense@latest`.
+
+### How do I set it up on a project?
+
+One command:
+
+```bash
+cd /path/to/project
+sense scan
+```
+
+`sense scan` parses your code with tree-sitter, extracts symbols and relationships, embeds everything with a bundled model, and writes `.sense/`. On the **first** scan it also auto-detects your installed AI tools and writes the integration configs for you. There is no separate setup step to remember.
+
+### So when do I need `sense setup`?
+
+Rarely. The first `sense scan` already runs setup. Run `sense setup` explicitly only to:
+
+- re-configure after upgrading Sense, so the integration files pick up changes
+- target a specific tool, e.g. `sense setup --tools cursor`
+
+### What does the first scan write for my AI?
+
+- **`.mcp.json`** — MCP server config (Claude Code, Cursor, any MCP client)
+- **`.claude/settings.json`** — lifecycle hooks that nudge the AI toward Sense tools
+- **`CLAUDE.md`** — routing guidance with a tool substitution table
+- **`.claude/skills/`** — workflow skills for exploration, impact analysis, conventions
+- **`.sense/summary.md`** — a cold-start map of the codebase (top namespaces, hub symbols, entry points, conventions) the AI reads at session start
+
+### Which AI tools does it auto-detect?
+
+Claude Code, Cursor, and Codex CLI. Opencode is also supported. Any MCP-compatible client (Windsurf, Cline, others) works too, but you wire those up manually with the generated `.mcp.json`.
+
+### Do I need to re-run setup after upgrading?
+
+Yes. Run `sense setup` again after a Sense upgrade to refresh the integration files.
+
+---
+
+## Living with Sense (setup & forget)
+
+### After setup, what do I have to do?
+
+Nothing. This is the whole point. The MCP server your editor already launches watches your working tree with a debounced filesystem watcher and re-indexes changed files in the background, off the request path. This happens whether the edit came from your AI, your own editor, a `git pull`, or a branch switch.
+
+### Do I need to run `sense scan` again or keep a `--watch` running?
+
+No. There is no second process to start and no `--watch` to remember. The MCP server handles incremental indexing for the life of the editor session. `sense scan --watch` exists for terminal-only / no-MCP workflows, but you do not need it alongside an editor.
+
+### What if I query a file I just edited a moment ago?
+
+The server repairs just that file inline before answering, so an edit is never missed even if the background watcher has not caught up yet.
+
+### What happens when I switch git branches?
+
+The server re-indexes once from a `git diff` rather than reacting to every changed file individually.
+
+### Can I run two editor windows or an editor plus a terminal `sense scan --watch`?
+
+Yes. A single-writer lock means only one process indexes at a time. The others serve reads without double-indexing.
+
+### How do I turn the background watcher off?
+
+Set `watch: false` in `.sense/config.yml`.
+
+### Should I commit `.sense/` to git?
+
+No. `.sense/` is local per checkout and gitignored by default. Rebuild it anywhere with `sense scan`. It is a derived artifact, not source.
+
+---
+
+## What the AI gets (the four tools)
+
+### What are the tools and when does the AI use each?
+
+| Tool | Use it for |
+|---|---|
+| `sense_graph` | Who calls X? What does X call? Inheritance, tests, dead code. |
+| `sense_search` | Find code related to a concept (semantic, not exact-string). |
+| `sense_blast` | What breaks if I change X? Affected code, affected tests, risk score. |
+| `sense_conventions` | What patterns does this project follow? |
+| `sense_status` | Index health, what is indexed. |
+
+### Why only four tools?
+
+It is a choice, not a constraint. The AI does not need 102 tools to pick from. It needs a few that work. Fewer, sharper tools mean fewer wrong turns and less context spent deciding.
+
+### What is convention detection and why does it matter?
+
+AI tools write correct code that does not match how *your* codebase writes code. Sense detects patterns from your actual source (key types, framework idioms like Rails associations or Go interfaces, architectural layers, naming) so the AI follows them because it *sees* them, not because someone wrote them down. This is the tool nobody else does well.
+
+### Can I run these myself?
+
+Yes, the CLI mirrors them for manual verification: `sense graph`, `sense search`, `sense blast`, `sense dead`, `sense conventions`, `sense status`. See [CLI.md](CLI.md). The primary interface is MCP though. The CLI is for setup, health checks, and spot-checking.
+
+---
+
+## Value and trade-offs
+
+### Does Sense save tokens?
+
+Yes, as a side effect of understanding. Measured across 7 real-world codebases: -32% tokens, -47% tool calls, -26% cost per task, same correctness. Score per 100K tokens improves +64%. Full data in [bench/](bench/).
+
+### Does it make the model smarter?
+
+No. It gives the model structural understanding so it stops wasting effort re-deriving structure, chasing grep chains, and hallucinating dependencies that do not exist. Same correctness, dramatically less work.
+
+### Does it reduce hallucinations?
+
+It removes a common cause of them. Instead of guessing at callers or dependencies from partial file reads, the AI gets the actual symbol graph. It stops inventing relationships that are not there.
+
+### Where does Sense NOT help?
+
+Sense is structural understanding, not a general search engine. For tasks that are fundamentally text-grep (find a log message, locate a string literal), plain grep is the right tool and Sense adds nothing. There is a ripgrep text fallback in search, but it is a fallback, not a replacement.
+
+### Is Sense a token optimizer?
+
+No. Token savings are a side effect of understanding, not the goal. If LLM costs dropped to zero tomorrow, Sense would still be valuable because the structural answers are more correct than a grep chain.
+
+---
+
+## Privacy, security, dependencies
+
+### Does Sense make network calls?
+
+No. After installation the binary makes zero outbound connections. No telemetry, no analytics, no phone-home. The only network operation is `sense update`, which you run yourself.
+
+### Does my code leave my machine?
+
+No. The `.sense/` index is a local SQLite database and vector index. No cloud sync, no shared indexes, no SaaS account.
+
+### Does Sense need an API key, Ollama, Docker, or Python?
+
+No. None of them. One binary, zero external dependencies. The embedding model is bundled (a quantized ONNX model). Everything runs locally and offline.
+
+### Can Sense modify my code?
+
+No. Read-only is the identity, not a limitation. Sense never modifies source files, never writes outside `.sense/`, and never executes code from the indexed project. The only subprocess it spawns is `git`, for diff-based analysis, when git is present.
+
+### Does Sense handle secrets?
+
+Sense parses syntax trees and does not evaluate code or extract string literals into the index. It does not attempt to find or extract secrets. Note that symbol-adjacent code snippets are stored in the local index. See [SECURITY.md](SECURITY.md) for the full posture and known limitations.
+
+### How do I verify a downloaded binary?
+
+Each release ships a `checksums.txt`. Verify with `sha256sum -c` (Linux) or `shasum -a 256 -c` (macOS). See [SECURITY.md](SECURITY.md#binary-verification).
+
+---
+
+## Languages and platforms
+
+### Which languages are supported?
+
+13 across two tiers.
+
+**Full tier** (symbols, calls, inheritance, imports, blast radius, semantic search, framework inference): Ruby (Rails, Stimulus, Turbo), TypeScript / JavaScript (React), Python (Django, FastAPI), Go, Rust, ERB.
+
+**Standard tier** (everything except framework inference): Java, Kotlin, C#, C++, C, PHP, Scala.
+
+### Can I add a language or framework?
+
+Yes. Standard-tier languages use a table-driven generic extractor, roughly 25 lines of config each, not a handwritten walker. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md).
+
+### Which platforms run Sense?
+
+Linux amd64/arm64 and macOS Apple Silicon are fully supported. Windows runs via WSL2 with the Linux binary (no native Windows build yet).
+
+macOS Intel (amd64) still ships a binary and works, with two caveats: it requires macOS 10.15 (Catalina) or later, and it is pinned to an older bundled runtime (ONNX Runtime 1.23.1) because Microsoft dropped macOS x86_64 runtime builds after that version. It functions, but that dependency is frozen and cannot advance, so Apple Silicon is the recommended Mac target.
+
+### How much disk does it need?
+
+About 60 MB for the binary and 100-200 MB for the `.sense/` index, varying with project size.
+
+---
+
+## Performance and health
+
+### Is it fast enough to not interrupt the AI?
+
+Yes. Queries resolve in milliseconds, so the AI reasons about structure without stalling. On Sense's own codebase (382 files, 4,032 symbols): graph query 0.2ms p50, blast 0.1ms p50, cold start 48ms, full scan 4.9s, incremental scan 2.3s. Run `sense benchmark` for numbers on your project.
+
+### How long does the first scan take?
+
+Seconds to minutes depending on repo size. Small-to-medium repos scan in seconds. Very large repos take longer (a 75k-symbol codebase is on the order of minutes). Every scan after the first is incremental and much faster.
+
+### Can I share an index to skip the first scan on a slow machine or huge project?
+
+Yes. The `.sense/` index stores relative paths, so it is portable across machines as long as it lands at the project root. If a teammate has already built it, the first scan on a slow or old computer is the one painful step you can skip entirely:
+
+1. The teammate zips their `.sense/` folder and sends it.
+2. You unzip it at the **root** of your checkout, so the folder is `<project>/.sense/`.
+3. Run `sense scan`. It runs incrementally, repairs any files that drifted since the shared index was built, and you are done. No full cold scan.
+
+This is a manual copy, not a feature. Sense never syncs or shares indexes on its own, and the index never leaves a machine unless you move it yourself.
+
+### How do I check the index is healthy?
+
+```bash
+sense status     # file/symbol/edge counts, per-language breakdown, coverage, freshness
+sense doctor     # diagnose common index problems
+```
+
+### What does `sense dead` report, and can I trust it?
+
+It splits unreferenced symbols into honest verdicts instead of one flat "dead" list:
+
+- **`dead`** — safe to remove. Reserved for symbols Sense can reason about closed-world (every possible caller is visible to the indexer). Withheld unless the bare name is mentioned nowhere else in the index, as a guard against resolver gaps. Each carries a per-symbol `verify` grep for a final check against the live tree.
+- **`possibly_dead`** — unreferenced, but a hidden caller could exist (duck-typed dispatch, routes, views, public API). The default and majority verdict, grouped by reason, each with a `verify` recipe.
+
+A symbol earns `dead` only when a language voice can prove closed-world for its language (today: Ruby). Other stacks are always `possibly_dead`, so Sense never emits a confident lie on an unsupported stack. For any list output (dead code, blast radius, callers), spot-check a sample before relying on it.
+
+---
+
+## For AI agents reading this
+
+- Prefer Sense tools over grep, glob, and file-walking for any structural or semantic question. The index is pre-computed, faster, and more complete than re-deriving structure per task.
+- Read `.sense/summary.md` at session start to orient with zero tool calls.
+- Use grep instead for: exact text/string search, reading file contents, and editing (Sense is read-only).
+- The index updates itself. You do not need to ask the user to re-scan after edits.
+- For list outputs (dead code, blast radius, callers), spot-check a sample against the live tree before acting on them, since the index can briefly lag the working copy.
+
+---
+
+## More
+
+- [README.md](README.md) — overview, benchmarks, full feature list
+- [CLI.md](CLI.md) — complete CLI reference
+- [SECURITY.md](SECURITY.md) — security posture and reporting
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contributing to Sense
+- [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) — adding a language or framework
+- Issues: [github.com/luuuc/sense/issues](https://github.com/luuuc/sense/issues)
+
+
+-- Source: CLI.md --
+
+# Sense CLI Reference
+
+Sense is designed for your AI through its MCP interface. The CLI exists for three purposes: initial setup, health checks, and manual exploration when needed.
+
+## MCP-first design
+
+Your AI uses Sense automatically through these tools:
+
+| Tool | Purpose |
+|---|---|
+| `sense_graph` | Symbol relationships — callers, callees, inheritance, tests |
+| `sense_search` | Hybrid semantic + keyword search |
+| `sense_blast` | Blast radius for a symbol or diff |
+| `sense_conventions` | Detected project conventions |
+
+The CLI commands below mirror some of these capabilities for manual use, but the primary interface is MCP.
+
+---
+
+## Setup commands
+
+### `sense setup`
+
+Configure AI tool integrations. Auto-detects installed tools (Claude Code, Cursor, Codex CLI) and writes integration files.
+
+```bash
+sense setup                           # auto-detect and configure all
+sense setup --tools cursor            # configure Cursor only
+sense setup --tools claude-code,codex-cli
+```
+
+### `sense scan`
+
+Build or refresh the index.
+
+```bash
+sense scan              # index the current directory
+sense scan --watch      # keep running and re-index on file changes
+sense scan --embed      # block until embeddings complete
+```
+
+---
+
+## Health commands
+
+### `sense status`
+
+Show index health: file/symbol/edge counts, per-language breakdown, coverage, freshness, and version info.
+
+```bash
+sense status        # human-readable summary
+sense status --json # machine-readable output
+```
+
+### `sense doctor`
+
+Diagnose common index problems.
+
+```bash
+sense doctor
+```
+
+---
+
+## Exploration commands
+
+### `sense search`
+
+Hybrid semantic + keyword search.
+
+```bash
+sense search "retry with backoff"
+sense search "payment error handling" --min-score 0.7
+```
+
+### `sense graph`
+
+Symbol relationships.
+
+```bash
+sense graph "CheckoutService"          # callers and callees
+sense graph "User" --direction callers # callers only
+sense graph --dead                     # find dead code
+```
+
+### `sense blast`
+
+Blast radius for a symbol or diff.
+
+```bash
+sense blast "User#email_verified?"     # symbol-based
+sense blast --diff HEAD~1              # diff-based
+```
+
+### `sense dead`
+
+Find unreferenced symbols (zero incoming references), split into honest
+verdicts rather than a flat "dead" list:
+
+- **`dead`** — safe to remove. Reserved for the rare symbol Sense can reason
+  about *closed-world*: every possible caller is visible to the indexer (e.g. a
+  private Ruby method whose name is never a reflection-dispatch target), so a
+  zero-reference result is a real zero, not a gap in the graph. As a soundness
+  guard against an incomplete resolver, `dead` is withheld unless the symbol's
+  bare name is also *mentioned nowhere* in the index it could be an unresolved
+  caller — an inherited bare call, a `**splat`, a chain receiver, or a
+  `validate :sym`-style symbol argument all leave a textual mention that keeps
+  the symbol `possibly_dead` instead. Each `dead` still carries a per-symbol
+  `verify` grep — a final cheap check against the live tree, since the index can
+  lag the working copy.
+- **`possibly_dead`** — unreferenced, but a hidden caller could exist
+  (duck-typed dispatch, routes, views, public API, …). The default and
+  majority verdict, grouped by reason, each group with a `verify` recipe.
+
+A symbol earns `dead` only when a language voice can prove closed-world for
+its language; a stack with no voice (today: anything but Ruby) is always
+`possibly_dead`, so Sense never emits a confident lie on an unsupported stack.
+
+```bash
+sense dead                     # human-readable verdicts
+sense dead --language ruby     # filter by language
+sense dead --domain services   # filter by path substring
+sense dead --json              # JSON matching the sense_graph dead_code schema
+sense dead --limit 50          # cap reported symbols (dead is never truncated)
+```
+
+### `sense conventions`
+
+Detected project conventions.
+
+```bash
+sense conventions          # all conventions
+sense conventions --domain errors
+```
+
+---
+
+## Utility commands
+
+| Command | Purpose |
+|---|---|
+| `sense mcp` | Start the MCP server (stdio transport) |
+| `sense update` | Check for and install the latest version |
+| `sense version` | Print version |
+| `sense benchmark` | Run performance benchmarks on the index |
+
+---
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | General error |
+| 2 | Invalid arguments |
+| 3 | Index missing (run `sense scan` first) |
+
+
+-- Source: AGENTS.md --
+
+<!-- sense:start -->
+## Sense — codebase understanding
+
+This project has a Sense index. Sense gives you structural understanding of the codebase — symbols, relationships, patterns — without reading dozens of files.
+
+**Use Sense MCP tools for ALL codebase understanding:**
+
+| Question | Tool |
+|---|---|
+| Who calls X? What does X call? | sense_graph |
+| Find code related to a concept | sense_search |
+| What breaks if I change X? | sense_blast |
+| What patterns does this project follow? | sense_conventions |
+| Index health, what's indexed | sense_status |
+
+**When NOT to use Sense** (use grep instead):
+- Exact text/string search (regex, log messages, string literals)
+- Reading file contents → use your file reading tool
+- Editing code → Sense is read-only
+<!-- sense:end -->
+

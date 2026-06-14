@@ -73,7 +73,7 @@ cd /path/to/project && sense setup
 
 Auto-detects installed AI tools (Claude Code, Cursor, Codex CLI, and OpenCode) and writes each one's integration configs:
 
-- **`.mcp.json`** / **`.cursor/mcp.json`** / **`opencode.json`**, the MCP server entry for the detected tool (or any MCP client)
+- **`.mcp.json`** / **`.cursor/mcp.json`** / **`.codex/config.toml`** / **`opencode.json`**, the MCP server entry for the detected tool (or any MCP client)
 - **`CLAUDE.md`** / **`.cursorrules`** / **`AGENTS.md`**, routing guidance with a tool substitution table, written from a single shared source
 - **`.claude/settings.json`**, lifecycle hooks that nudge Claude toward Sense tools
 - **`.claude/skills/`** and **`.opencode/skills/`**, workflow skills for exploration, impact analysis, and conventions
@@ -193,6 +193,10 @@ Sense uses tree-sitter for parsing. It ships with extractors for 13 languages ac
 | **Scala** | Classes, traits, objects |
 
 Java, Kotlin, C#, C++, C, PHP, and Scala use a table-driven generic extractor, each ~25 lines of config rather than a handwritten walker. Python and Rust have dedicated extractors, and Python adds Django and FastAPI inference. See [CONTRIBUTING-A-LANGUAGE.md](CONTRIBUTING-A-LANGUAGE.md) to add a new language, and [CONTRIBUTING-A-FRAMEWORK.md](CONTRIBUTING-A-FRAMEWORK.md) to add framework support (plus the dead-code fine-graining that goes with it).
+
+## Articles
+
+Deep-dives on codebase intelligence, the benchmark methodology, and the thinking behind Sense: [ARTICLES.md](ARTICLES.md).
 
 ## Feedback
 

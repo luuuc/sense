@@ -35,6 +35,7 @@ type Options struct {
 type ToolResult struct {
 	Tool  Tool
 	Files []string // relative paths of files written
+	Notes []string // post-setup guidance printed after the file list
 }
 
 // Result summarises what setup wrote across all tools.
@@ -89,6 +90,9 @@ func printSetupSummary(out io.Writer, res *Result) {
 		_, _ = fmt.Fprintf(out, "Configuring %s...\n", tr.Tool.DisplayName())
 		for _, f := range tr.Files {
 			_, _ = fmt.Fprintf(out, "  wrote %s\n", f)
+		}
+		for _, n := range tr.Notes {
+			_, _ = fmt.Fprintf(out, "  note: %s\n", n)
 		}
 		_, _ = fmt.Fprintln(out, "")
 	}
