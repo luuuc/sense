@@ -56,7 +56,70 @@ func configureOpencode(root string) (*ToolResult, error) {
 		tr.Files = append(tr.Files, fmt.Sprintf("%d skill files in .opencode/skills/", n))
 	}
 
+	if wrote, err := writeOpencodePlugin(root); err != nil {
+		return nil, fmt.Errorf("write .opencode/plugin: %w", err)
+	} else if wrote {
+		tr.Files = append(tr.Files, ".opencode/plugin/sense.js")
+	}
+
 	return tr, nil
+}
+
+// opencodePluginJS is the Sense adoption plugin OpenCode loads from
+// .opencode/plugin/. It is the parallel to Sense's Claude Code PreToolUse hook:
+// OpenCode has no pre-tool *config* hook (config hooks fire only on file_edited /
+// session_completed), so the steer-toward-Sense behavior has to be a plugin. It
+// intercepts grep/glob (redirecting to the Sense MCP tools) and nudges once after
+// heavy file-reading, which a passive AGENTS.md alone does not achieve for many
+// models. Plain JS, no dependencies.
+const opencodePluginJS = `// Sense adoption plugin for OpenCode (written by ` + "`sense setup --tools opencode`" + `).
+// Steers the model toward the Sense MCP tools, the parallel to Sense's Claude
+// Code PreToolUse hook. OpenCode loads any module under .opencode/plugin/.
+export const sense = async () => {
+  let reads = 0
+  return {
+    "tool.execute.before": async (input) => {
+      const tool = input && input.tool
+      if (tool === "grep" || tool === "glob") {
+        throw new Error(
+          "Use the Sense MCP tools for symbol or structural lookups instead of " +
+          "grep/glob: sense_search (find by meaning), sense_graph (callers and " +
+          "callees), sense_blast (change impact). Use grep only for literal text " +
+          "you cannot express structurally."
+        )
+      }
+      if (tool === "read") {
+        reads++
+        // Periodic nudge (every 6th read), not once: read-happy models resume
+        // reading after a single interrupt. Name the task-right tool so the
+        // model reaches for sense_graph, not the useless sense_status.
+        if (reads % 6 === 0) {
+          throw new Error(
+            "You have read " + reads + " files. Stop reading file by file and " +
+            "navigate structurally with Sense: sense_graph for who-calls-what " +
+            "(callers and callees), sense_search to find code by meaning, " +
+            "sense_conventions for the project's patterns. Read a file only after " +
+            "Sense points you to it."
+          )
+        }
+      }
+    },
+  }
+}
+`
+
+// writeOpencodePlugin writes the Sense adoption plugin to .opencode/plugin/.
+// Overwritten on re-run to pick up template changes, matching writeOpencodeSkills.
+func writeOpencodePlugin(root string) (bool, error) {
+	dir := filepath.Join(root, ".opencode", "plugin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
+	}
+	path := filepath.Join(dir, "sense.js")
+	if err := os.WriteFile(path, []byte(opencodePluginJS), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // writeOpencodeJSON creates or merges the Sense MCP server entry into
