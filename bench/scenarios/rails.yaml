@@ -1,0 +1,225 @@
+name: Rails work session - add support for a new background-job queue backend
+repo: rails
+# Single-prompt session bench (run via bench/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for. Rails is the FRAMEWORK and a
+# huge monorepo (51k symbols); this scenario bounds the work to ActiveJob's queue
+# backend subsystem. The recurring real task is "add a queue adapter for a new
+# background-job backend": a new XAdapter subclassing
+# ActiveJob::QueueAdapters::AbstractAdapter (contract: enqueue / enqueue_at),
+# resolved by NAME via ActiveJob::QueueAdapters.lookup (camelize + "Adapter"
+# constantize) from queue_adapter=, reached from ActiveJob::Enqueuing, with a
+# per-adapter test harness. The name->class dispatch and the subclass fan-out (8
+# adapters) are grep-invisible. The headline is CUMULATIVE efficiency (tool calls,
+# billed + context tokens, time) at held accuracy: the baseline re-derives the
+# structure each step while the map is queried once and reused.
+description: 'You are a maintainer about to add support for a new background-job
+  queue backend to this framework, mirroring how the existing queue backends are
+  integrated. Work through the tasks below one at a time; each builds on what you
+  learned in the previous one. Keep every answer concrete with file:line so the
+  next step (and a teammate opening the PR) can act without re-exploring the
+  codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the machinery that hands a
+    background job off to whichever queue backend is configured live, along with
+    the shared pieces it is built on? Hand the next agent a map so they can act
+    with small, targeted lookups, not a fresh exploration of the codebase. No
+    Explore agents.
+    "
+  checks:
+  - type: word
+    value: ActiveJob
+    required: true
+  - type: word
+    value: adapter
+    required: false
+    description: Reached the per-backend integration layer, not just the job API
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Trace how a job is enqueued onto its backend
+  prompt: "Task: trace how enqueuing a job reaches the concrete object that hands it
+    to the configured backend. Start from the public enqueue call and follow it
+    down through to where the backend-specific object is selected and invoked. Give
+    file:line for each layer and the order they run.
+    "
+  checks:
+  - type: word
+    value: enqueue
+    required: true
+  - type: word
+    value: queue_adapter
+    required: true
+    description: Found the per-backend object the job is handed to
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the queue-backend family and its contract
+  prompt: "Task: a new backend integration will be built on the same shared base
+    the existing backend integrations are built on, then customize a few pieces.
+    Map the shared contract such an integration must implement to enqueue jobs now
+    and at a future time, and which existing integrations customize that behavior
+    and how each one differs. Be complete with file:line; a missed method is a
+    capability the new backend silently won't support.
+    "
+  checks:
+  - type: word
+    value: AbstractAdapter
+    required: true
+  - type: word
+    value: enqueue_at
+    required: true
+    description: Anchored on the scheduled-enqueue half of the contract
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the shared base plus the per-backend customizations
+  - type: contains
+    value: queue_adapters/abstract_adapter.rb
+    required: false
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map how a backend is registered and resolved by name
+  prompt: "Task: a backend is chosen by a short name in configuration, and that
+    name is turned into the concrete integration object. Map where that name is
+    resolved to a class, what naming rule it follows, and where a configured name
+    is turned into a live integration. Be complete with file:line.
+    "
+  checks:
+  - type: word
+    value: lookup
+    required: true
+  - type: word
+    value: Adapter
+    required: true
+    description: Found the name-to-class naming rule
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how a job crosses the boundary and is executed
+  prompt: "Task: a job has to survive being handed to an external backend and then
+    run later. Trace how a job is turned into data the backend can store and how it
+    is turned back into a running job when the backend processes it. Give file:line
+    throughout.
+    "
+  checks:
+  - type: word
+    value: serialize
+    required: true
+  - type: word
+    value: execute
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Find every site that must change to add a new queue backend
+  prompt: "Task: you will add the new backend. Find every place in the codebase
+    that must change for its integration to exist, be resolvable by name, enqueue
+    jobs, and be tested, including where the shared base is depended on and where
+    the existing backends are exercised by the shared test suite. Be complete and
+    use file:line; a missed site means the new backend can't be selected or is
+    untested.
+    "
+  checks:
+  - type: word
+    value: adapter
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Reached the name resolution and the test harness, not just one new file
+  - type: contains
+    value: test
+    required: false
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the edit map
+  prompt: "Task: produce the complete edit map for adding the new queue backend:
+    which files to create and which to change across each area you explored (the
+    integration object, the name resolution, the enqueue path, the store-and-run
+    boundary), and which tests and harness entries to add. Use file:line
+    throughout, so a teammate could open the PR from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: test
+    required: false
+  - type: contains
+    value: adapter
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold bounds the giant monorepo to the ActiveJob queue-backend subsystem. The
+# discriminator is the `adapters` group: backend integrations subclassing
+# ActiveJob::QueueAdapters::AbstractAdapter (blast high), resolved by NAME via
+# QueueAdapters.lookup (camelize + "Adapter" constantize), an inheritance +
+# name-dispatch fan-out grep cannot resolve (you cannot grep "which class handles
+# :resque"). The `dispatch` group (enqueue path + the name->class lookup + the
+# setter) and the `boundary` group (serialize/execute) are the grep-hard seams.
+# All targets are file-path matched so both mention and cited are scored. Headline
+# is CUMULATIVE efficiency at held accuracy.
+gold:
+  # dispatch, enqueue path + name->class resolution
+  - {id: enqueuing,       group: dispatch,  match: [active_job/enqueuing.rb]}
+  - {id: queue-adapter-set,group: dispatch, match: [active_job/queue_adapter.rb]}
+  - {id: queue-adapters-lookup,group: dispatch,match: [active_job/queue_adapters.rb]}
+  # the backend-integration fan-out (subclasses of AbstractAdapter, grep-invisible)
+  - {id: adapter-base,    group: adapters,  match: [queue_adapters/abstract_adapter.rb]}
+  - {id: adapter:async,   group: adapters,  match: [queue_adapters/async_adapter.rb]}
+  - {id: adapter:inline,  group: adapters,  match: [queue_adapters/inline_adapter.rb]}
+  - {id: adapter:resque,  group: adapters,  match: [queue_adapters/resque_adapter.rb]}
+  - {id: adapter:backburner,group: adapters,match: [queue_adapters/backburner_adapter.rb]}
+  - {id: adapter:delayed, group: adapters,  match: [queue_adapters/delayed_job_adapter.rb]}
+  - {id: adapter:qclassic,group: adapters,  match: [queue_adapters/queue_classic_adapter.rb]}
+  - {id: adapter:sneakers,group: adapters,  match: [queue_adapters/sneakers_adapter.rb]}
+  - {id: adapter:test,    group: adapters,  match: [queue_adapters/test_adapter.rb]}
+  # serialize/execute boundary, how a job crosses to the backend and runs back
+  - {id: core-serialize,  group: boundary,  match: [active_job/core.rb]}
+  - {id: execution,       group: boundary,  match: [active_job/execution.rb]}
+  # test matrix, the shared adapter behavior test + per-backend harness entries
+  - {id: test:queue-adapter,group: tests,   match: [cases/queue_adapter_test.rb]}
+  - {id: test:harness-async,group: tests,   match: [test/adapters/async.rb]}
+  - {id: test:harness-resque,group: tests,  match: [test/adapters/resque.rb]}
+  - {id: test:harness-inline,group: tests,  match: [test/adapters/inline.rb]}

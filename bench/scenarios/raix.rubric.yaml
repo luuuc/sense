@@ -1,0 +1,219 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on, map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/raix.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to extend Raix's tool/function
+  calling pipeline with only small, targeted follow-up lookups, not a fresh
+  exploration of the codebase. Score for that audience, not a human reader, not a
+  docs page. A perfect answer leaves the agent ready to change how functions are
+  declared, exposed, dispatched, and fed back across the mixins; a weak answer
+  forces the agent to re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that Raix is a set of mixins
+          a host class includes, and where the pipeline lives, the chat loop
+          (Raix::ChatCompletion in lib/raix/chat_completion.rb), the function DSL
+          and dispatch (Raix::FunctionDispatch in lib/raix/function_dispatch.rb),
+          the schema/adapters (function_tool_adapter.rb, message_adapters/), and the
+          MCP integration (lib/raix/mcp/)? Could the agent pick an entry point and
+          start working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (lib/raix/chat_completion.rb,
+          lib/raix/function_dispatch.rb) rather than vague ("the chat code")? Are
+          abstractions tied to actual files and module names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the design is a set of composable mixins
+          included into a host class (so behavior is added a la carte), not just
+          NAME the modules?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure how the mixins compose, does it flag that so
+          the agent doesn't act blindly?
+
+  - name: Trace a tool-call round-trip through the chat loop
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the round-trip with file:line: ChatCompletion#chat_completion
+          (lib/raix/chat_completion.rb) calling the model, detecting tool-call
+          requests in the response, executing them via FunctionDispatch, appending
+          the results to the transcript, and continuing the loop (respecting
+          max_tool_calls)? Could the agent follow the same path to change how a tool
+          call is handled?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the pieces named exactly (chat_completion, the dispatch of tool
+          functions, the transcript append, max_tool_calls) with file:line, rather
+          than "the chat loop"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the loop auto-continues after tool calls and
+          how results re-enter the conversation, not just LIST the steps?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where the loop branches (multiple tool calls in one
+          response, max_tool_calls cutoff, stop_tool_calls_and_respond) so the agent
+          verifies?
+
+  - name: Map how functions are declared and exposed to the model
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map, with file:line, how FunctionDispatch.function
+          (lib/raix/function_dispatch.rb) declares a callable function, where the
+          declarations are stored, how function_tool_adapter.rb turns them into the
+          tool schema sent to the model, and how available_tools filters the exposed
+          set? Could the agent add a new declared capability the model can call?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the pieces named exactly (the function DSL, tools, FunctionToolAdapter,
+          available_tools) with file:line, rather than "the function code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY declarations are a class-level DSL converted
+          to schema (so a host class declares tools declaratively), not just NAME
+          the methods?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where declaration/schema details are easy to get
+          wrong (parameter schema, filtering, naming) so the agent verifies?
+
+  - name: Map how the conversation is adapted before it is sent
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map the conversation transforms with file:line: the
+          message adapter base (lib/raix/message_adapters/base.rb), the transcript
+          adapter (transcript_adapter.rb), and the multimodal content adapter
+          (multimodal_content_adapter.rb), and how each fits into the chat flow
+          before the request is sent? Could the agent see what shapes the messages
+          a new capability would produce?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the adapters named concretely by file (message_adapters/base.rb,
+          transcript_adapter.rb, multimodal_content_adapter.rb) rather than "the
+          message code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the conversation is adapted before sending
+          (provider-shape normalization, multimodal content), not just LIST the
+          files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where adaptation is conditional (multimodal vs text,
+          provider differences) so the agent verifies?
+
+  - name: Map how external tools plug into the same dispatch
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map the MCP integration with file:line: where an external
+          tool is represented (Raix::MCP::Tool in lib/raix/mcp/tool.rb), how it is
+          connected to (the SSE and stdio clients in lib/raix/mcp/), and how MCP
+          tools (lib/raix/mcp.rb) join the same dispatch path the model calls? Could
+          the agent see how external and local tools share one mechanism?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the MCP pieces named concretely by file (mcp/tool.rb,
+          mcp/sse_client.rb, mcp/stdio_client.rb) rather than "the MCP code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY external tools are normalized into the same
+          dispatch as declared functions (one calling path for the model), not just
+          LIST the files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where the external path differs from local functions
+          (transport clients, schema source) so the agent verifies?
+
+  - name: Find every site that depends on the tool-call contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate everything that depends on the tool-call
+          contract: the chat loop that runs it (chat_completion.rb), the function
+          declaration + schema conversion (function_dispatch.rb,
+          function_tool_adapter.rb), the conversation adapters, the external MCP
+          tools, and the spec matrix (chat_completion_spec.rb,
+          function_dispatch_spec.rb)? The pieces are mixins composed into a host
+          class; a strong answer names that breadth with file:line. Could the agent
+          change the contract safely from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (the dispatch, the tool adapter, the MCP
+          tool, the specs) rather than "update the tool code and tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (runs vs declares vs
+          converts vs adapts vs external vs tests), not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (mixins reached
+          only when included in a host class, the MCP transport paths, fixtures) so
+          the agent knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the files to
+          change across each area (the chat loop, the function DSL + schema
+          conversion, the conversation adapters, the external-tool path) plus the
+          specs to update or add, with file:line throughout? Could a teammate open
+          the PR from this map alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and change points concrete (chat_completion.rb,
+          function_dispatch.rb, function_tool_adapter.rb, the MCP files, the specs)
+          rather than "change the tool code and tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (which part of the
+          pipeline it owns), not just LIST files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (how the loop
+          re-enters, the schema format, the MCP transports, fixtures) so the agent
+          confirms before committing?

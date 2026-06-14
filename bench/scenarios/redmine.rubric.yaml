@@ -1,0 +1,232 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on, map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/redmine.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to add support for a new
+  source-control system to Redmine (a new Repository subtype + its SCM adapter)
+  with only small, targeted follow-up lookups, not a fresh exploration of the
+  codebase. Score for that audience, not a human reader, not a docs page. A
+  perfect answer leaves the agent ready to create the repository model and the
+  adapter, register the SCM, wire the selection UI, and add tests; a weak answer
+  forces the agent to re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is Redmine (a
+          project-management app), how the Rails app is organized, and specifically
+          where repository/SCM integration lives, the Repository model
+          (app/models/repository.rb) and its per-system subclasses
+          (app/models/repository/), the SCM adapters
+          (lib/redmine/scm/adapters/, AbstractAdapter), and the registry
+          (lib/redmine/scm/base.rb)? Could the agent pick an entry point and start
+          working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (app/models/repository.rb,
+          lib/redmine/scm/adapters/abstract_adapter.rb) rather than vague ("the
+          repository code")? Are abstractions tied to actual files and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the design splits a stored Repository record
+          from an SCM adapter that shells out to the VCS (so history/files are
+          fetched lazily per tool), not just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure how the repository, adapter, and registry
+          connect, does it flag that so the agent doesn't act blindly?
+
+  - name: Trace how a repository's data is read from the version-control tool
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the path with file:line, in order: from the stored
+          Repository (RepositoriesController / Repository#scm) to
+          Repository#scm_adapter_class, which resolves the per-tool adapter that
+          runs the VCS commands (entries/revisions/cat)? Could the agent follow the
+          same path to wire a new tool?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the methods named exactly (scm_adapter_class, scm, the adapter's
+          command methods) with file:line, rather than "the repository browser"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the adapter class is resolved by convention
+          from the repository type (so a new tool plugs in by adding a matching
+          pair), not just LIST the call chain?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where resolution is dynamic (class looked up by
+          name, shelling out to an external binary) so the agent verifies?
+
+  - name: Map the version-control command family and its contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared base
+          (Redmine::Scm::Adapters::AbstractAdapter in
+          lib/redmine/scm/adapters/abstract_adapter.rb: the info / entries /
+          revisions / diff / cat / branches / tags contract) AND the existing
+          adapters that subclass it (Subversion, Git, Mercurial, Bazaar, Cvs,
+          Filesystem, each in lib/redmine/scm/adapters/<tool>_adapter.rb), with
+          file:line and how each differs? This inheritance fan-out is grep-invisible
+          (the subclass relationship is structural); a strong answer names that
+          breadth so the agent knows exactly which methods to implement.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the adapters named concretely by file (git_adapter.rb,
+          subversion_adapter.rb, mercurial_adapter.rb) and the contract methods
+          (entries, revisions, diff, cat) cited, rather than "the adapters"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY a shared adapter base abstracts the VCS
+          commands (uniform interface over different CLIs), not just LIST the
+          classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any contract method it could not confirm (an
+          optional capability one adapter overrides) so the agent checks before
+          relying on it?
+
+  - name: Map the stored-repository family and its contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared Repository base
+          (app/models/repository.rb: scm_name, available_scm, scm_adapter_class,
+          the supports_* capability flags, fetch_changesets) AND the per-system
+          subclasses (Repository::Subversion, Git, Mercurial, Bazaar, Cvs,
+          Filesystem in app/models/repository/), with file:line and how each pairs
+          with its adapter? A strong answer makes the model<->adapter pairing
+          explicit so the agent creates both halves.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the repository subclasses named concretely by file
+          (repository/git.rb, repository/subversion.rb) and the declared
+          capabilities (scm_name, supports_*) cited, rather than "the repository
+          types"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each SCM needs both a model (persisted
+          config, capabilities) and an adapter (runtime commands), not just LIST
+          the subclasses?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any capability flag it could not confirm (a
+          supports_* one subtype overrides) so the agent verifies before copying a
+          pattern?
+
+  - name: Map where the available version-control systems are registered
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer locate, with file:line, the registry
+          (Redmine::Scm::Base in lib/redmine/scm/base.rb: add / all) and
+          Repository.available_scm, plus where the admin UI offers the SCM choice
+          when configuring a repository (RepositoriesController / the repository
+          form view)? Could the agent register and expose a new SCM from this?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the registration mechanisms named exactly (Redmine::Scm::Base.add,
+          available_scm) with file:line, rather than "it gets registered"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the available set is declared centrally (so
+          the model layer and the admin UI agree on the supported systems), not
+          just NAME the registry?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where availability is gated (enabled_scm setting,
+          client availability checks) so the agent verifies?
+
+  - name: Find every site that must change to add a new source-control system
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the full fan-out: the new Repository subclass
+          under app/models/repository/, the new adapter under
+          lib/redmine/scm/adapters/, the registration (Redmine::Scm::Base /
+          available_scm / enabled_scm setting), the selection UI in
+          RepositoriesController and its views, the shared bases depended on
+          (AbstractAdapter blast, Repository blast), and the test matrix
+          (lib/redmine/scm/adapters/<tool>_adapter_test.rb,
+          repository_<tool>_test.rb)? A new SCM touches several disjoint areas; a
+          strong answer names that breadth with file:line. Could the agent open the
+          PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (a new repository/<tool>.rb, a
+          <tool>_adapter.rb, the registry add, a <tool>_adapter_test.rb) rather
+          than "add the SCM and tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (model vs adapter vs
+          registry vs UI vs shared base vs tests), not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (the adapter
+          resolved only by naming convention, fixtures/repositories needed for
+          tests, enabled_scm config) so the agent knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the new files to
+          create (the repository/<tool>.rb model, the <tool>_adapter.rb) and the
+          existing files/lines to change (the registry add, available_scm/enabled
+          settings, the selection UI, the dispatch) plus the tests and fixtures,
+          with file:line throughout? Could a teammate open the PR from this map
+          alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and insertion points concrete (new repository/<tool>.rb
+          declaring scm_name, <tool>_adapter.rb implementing the contract, the
+          registry add line, a test) rather than "create the SCM and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (model vs adapter vs
+          registry vs UI vs tests), not just LIST files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (which contract
+          methods the new tool can support, fixture repositories, enabled_scm
+          gating) so the agent confirms before committing?

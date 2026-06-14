@@ -1,0 +1,244 @@
+name: Mastodon work session - add support for a new incoming federation activity
+repo: mastodon
+# Single-prompt session bench (run via bench/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for. The recurring real task this
+# mirrors is "add a new inbound ActivityPub activity type" (QuoteRequest and
+# FeatureRequest were both added this way recently), which naturally walks the
+# inbox endpoint, the Sidekiq processing worker, the collection service, the
+# `ActivityPub::Activity.factory` dispatch, the shared `ActivityPub::Activity`
+# base and its 16 handler subclasses, the outbound serializers + distribution
+# workers, the sender-signature verification guards, and the spec matrix. The
+# headline is CUMULATIVE efficiency (tool calls, billed + context tokens, time)
+# at held accuracy: across these areas the baseline re-derives the structure each
+# step while the map is queried once and reused.
+description: 'You are a maintainer about to add support for a new kind of incoming
+  federation activity to this server, mirroring how the existing activity handling
+  is built. Work through the tasks below one at a time; each builds on what you
+  learned in the previous one. Keep every answer concrete with file:line so the
+  next step (and a teammate opening the PR) can act without re-exploring the
+  codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the machinery that receives
+    and processes incoming federation activities from other servers live, along
+    with the shared pieces it is built on? Hand the next agent a map so they can
+    act with small, targeted lookups, not a fresh exploration of the codebase.
+    No Explore agents.
+    "
+  checks:
+  - type: word
+    value: ActivityPub
+    required: true
+  - type: word
+    value: inbox
+    required: false
+    description: Named the inbound entry point, not just the protocol
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Trace an incoming activity to its concrete handler
+  prompt: "Task: trace how a single incoming activity is routed to the concrete
+    object that processes that specific kind of activity. Start from the public
+    HTTP endpoint that receives it and follow it down through to where the right
+    handler is chosen and run. Give file:line for each layer and the order they
+    run.
+    "
+  checks:
+  - type: word
+    value: factory
+    required: true
+    description: Found the dispatch that selects the handler by activity kind
+  - type: word
+    value: ProcessCollectionService
+    required: true
+  - type: word
+    value: perform
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the handler family and the shared contract
+  prompt: "Task: a new handler will be built on the same shared base that the
+    existing activity handlers are built on, then customize a few pieces. Map the
+    shared behavior such a handler inherits and, crucially, which existing handlers
+    customize that shared behavior and how each one differs. Be complete with
+    file:line; a missed customization point is behavior the new handler silently
+    won't have.
+    "
+  checks:
+  - type: word
+    value: Activity
+    required: true
+  - type: word
+    value: perform
+    required: true
+    description: Anchored on the shared contract method every handler implements
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the shared base plus the per-handler customizations
+  - type: contains
+    value: activitypub/activity.rb
+    required: false
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the outbound counterpart for the same activities
+  prompt: "Task: for the kinds of activities you just mapped on the way in, find how
+    this server emits the corresponding activity outward to other servers: where
+    the outgoing payload is built and where it is delivered. Tie each incoming
+    activity to its outgoing counterpart, with file:line.
+    "
+  checks:
+  - type: word
+    value: Serializer
+    required: true
+  - type: word
+    value: Distribution
+    required: false
+    description: Reached the delivery worker, not just the payload builder
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: serializer
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how malformed or unauthorized activities are rejected
+  prompt: "Task: not every incoming activity is processed. Trace how this server
+    rejects or drops an activity it should not act on: how it verifies the sender,
+    what guards run before processing, and what happens to an activity whose kind
+    is not recognized. Give file:line throughout.
+    "
+  checks:
+  - type: word
+    value: signature
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Find every site that must change to add a new incoming activity type
+  prompt: "Task: you will add the new kind of activity. Find every place in the
+    codebase that must change for the server to recognize, route, process, emit,
+    and test it, including where handlers are selected, where the shared base is
+    depended on, and where the existing activity handling is covered by tests. Be
+    complete and use file:line; a missed site means the new activity is silently
+    ignored or untested.
+    "
+  checks:
+  - type: word
+    value: Activity
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Reached the dispatch and the spec matrix, not just the obvious handler file
+  - type: contains
+    value: spec
+    required: false
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the edit map
+  prompt: "Task: produce the complete edit map for adding the new kind of activity:
+    which files to create and which to change across each area you explored (the
+    routing/dispatch, the shared base and its handlers, the outgoing serialization
+    and delivery, the sender-verification and validation guards), and which specs
+    and fixtures to add. Use file:line throughout, so a teammate could open the PR
+    from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+  - type: contains
+    value: serializer
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold spans the areas the "add an inbound activity type" session walks. The
+# discriminator is the `handlers` group: a new handler inherits the shared
+# `ActivityPub::Activity` base (app/lib/activitypub/activity.rb) which is
+# SUBCLASSED by 16 existing handlers and dispatched by a private `klass_for`
+# case, an inheritance + dispatch fan-out grep cannot cleanly resolve (the
+# relationship and the 53-caller blast radius, not a string, is what matters).
+# The `dispatch` group is the other grep-hard seam (the route from inbox HTTP
+# endpoint to handler hops controller -> worker -> service -> factory across four
+# dirs). All targets are file-path matched so both mention (is it on the map?)
+# and cited (pinned to path:line?) are scored. The session headline is CUMULATIVE
+# efficiency at held accuracy.
+gold:
+  # dispatch / routing, inbox HTTP endpoint down to handler selection (multi-hop, grep-tedious)
+  - {id: inbox-controller,   group: dispatch,  match: [activitypub/inboxes_controller.rb]}
+  - {id: processing-worker,  group: dispatch,  match: [activitypub/processing_worker.rb]}
+  - {id: process-collection, group: dispatch,  match: [process_collection_service.rb]}
+  - {id: activity-factory,   group: dispatch,  match: [activitypub/activity.rb]}
+  # the inbound handler fan-out (16 subclasses of the shared base, grep-invisible inheritance)
+  - {id: handler:create,     group: handlers,  match: [activity/create.rb]}
+  - {id: handler:announce,   group: handlers,  match: [activity/announce.rb]}
+  - {id: handler:delete,     group: handlers,  match: [activity/delete.rb]}
+  - {id: handler:follow,     group: handlers,  match: [activity/follow.rb]}
+  - {id: handler:like,       group: handlers,  match: [activity/like.rb]}
+  - {id: handler:block,      group: handlers,  match: [activity/block.rb]}
+  - {id: handler:update,     group: handlers,  match: [activity/update.rb]}
+  - {id: handler:undo,       group: handlers,  match: [activity/undo.rb]}
+  - {id: handler:accept,     group: handlers,  match: [activity/accept.rb]}
+  - {id: handler:reject,     group: handlers,  match: [activity/reject.rb]}
+  - {id: handler:flag,       group: handlers,  match: [activity/flag.rb]}
+  - {id: handler:add,        group: handlers,  match: [activity/add.rb]}
+  - {id: handler:remove,     group: handlers,  match: [activity/remove.rb]}
+  - {id: handler:move,       group: handlers,  match: [activity/move.rb]}
+  - {id: handler:quotereq,   group: handlers,  match: [activity/quote_request.rb]}
+  - {id: handler:featurereq, group: handlers,  match: [activity/feature_request.rb]}
+  # outbound counterpart, serializers build the payload, distribution workers deliver it
+  - {id: create-note-ser,    group: outbound,  match: [create_note_serializer.rb]}
+  - {id: announce-note-ser,  group: outbound,  match: [announce_note_serializer.rb]}
+  - {id: delete-note-ser,    group: outbound,  match: [delete_note_serializer.rb]}
+  - {id: distribution-worker,group: outbound,  match: [activitypub/distribution_worker.rb]}
+  # sender verification / validation guards (what drops an activity before processing)
+  - {id: sig-verification,   group: rejection, match: [signature_verification.rb]}
+  - {id: sig-authentication, group: rejection, match: [signature_authentication.rb]}
+  # test matrix, the per-handler spec set + the collection-processing spec
+  - {id: process-collection-spec, group: specs, match: [process_collection_service_spec.rb]}
+  - {id: spec:create,        group: specs,     match: [activity/create_spec.rb]}
+  - {id: spec:announce,      group: specs,     match: [activity/announce_spec.rb]}
+  - {id: spec:follow,        group: specs,     match: [activity/follow_spec.rb]}

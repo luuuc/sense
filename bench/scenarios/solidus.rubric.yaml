@@ -1,0 +1,251 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on, map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/solidus.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to add a new promotion type (a new
+  applicability rule + discount action + amount calculator) to Solidus's
+  SolidusPromotions system with only small, targeted follow-up lookups, not a
+  fresh exploration of the codebase. Score for that audience, not a human reader,
+  not a docs page. A perfect answer leaves the agent ready to create the new
+  Condition, Benefit, and Calculator, register them, and add specs; a weak answer
+  forces the agent to re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is Solidus (an
+          e-commerce platform) and that promotions live in the SolidusPromotions
+          engine, the applicability rules (SolidusPromotions::Condition and
+          conditions/), the discount actions (SolidusPromotions::Benefit and
+          benefits/), the amount calculators, the configuration that registers
+          them, and the OrderAdjuster that applies them? Could the agent pick an
+          entry point and start working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (solidus_promotions/condition.rb,
+          solidus_promotions/benefit.rb, lib/solidus_promotions/configuration.rb,
+          order_adjuster.rb) rather than vague ("the promotions layer")? Are
+          abstractions tied to actual files and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the architecture is shaped this way (a
+          promotion is composed of pluggable conditions + benefits, benefits
+          compute amounts via calculators, all registered centrally and applied by
+          one engine), not just NAME the pieces? Bonus for noting the legacy
+          Spree::Promotion system is the older, separate path.
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure how the layers connect or what a new
+          promotion must implement, does it flag that (including the legacy vs
+          current system ambiguity) so the agent doesn't act blindly?
+
+  - name: Trace how a promotion is applied to an order
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the application path with file:line, in order: from
+          order recalculation into SolidusPromotions::OrderAdjuster (and
+          OrderAdjuster::DiscountOrder), where eligible promotions are selected by
+          checking their conditions and their benefits compute discounts that
+          become adjustments on the order? Could the agent follow the same path to
+          see where a new promotion plugs in?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the engine pieces named exactly (OrderAdjuster, DiscountOrder,
+          eligible_benefits_for_promotable, the adjustment creation) with file:line,
+          rather than "the promotion code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY application is centralized in one adjuster
+          that evaluates conditions then applies benefits (so a new promotion is
+          applied automatically once registered), not just LIST the call chain?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where application is dynamic (conditions evaluated
+          polymorphically per promotable, recalculation triggers) so the agent
+          verifies before relying on it?
+
+  - name: Map the applicability-rule family and its contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared base (SolidusPromotions::Condition
+          in solidus_promotions/condition.rb: the eligible? contract that raises
+          NotImplementedError, applicable?/applicable_to, preload_relations) AND
+          the existing rules that subclass it (ItemTotal, Product, Taxon, User,
+          FirstOrder, NthOrder, OptionValue, Store, ShippingMethod,
+          MinimumQuantity, LineItemProduct, ... each in
+          solidus_promotions/conditions/), with file:line and how each differs?
+          This inheritance fan-out is grep-invisible (the subclass relationship is
+          structural, not a shared string); a strong answer names that breadth so
+          the agent knows exactly what to subclass and which eligible? form to
+          implement.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the rules named concretely by file (conditions/item_total.rb,
+          conditions/product.rb, conditions/user.rb) and the override point
+          (eligible?) cited, rather than "some conditions customize it"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY rules are pluggable conditions sharing one
+          base (so applicability is composable and extensible), not just LIST the
+          classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any rule it could not confirm (a condition whose
+          applicable_to / eligible? form it didn't open) so the agent checks
+          before copying a pattern?
+
+  - name: Map the discount-action family and its amount calculators
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared action base
+          (SolidusPromotions::Benefit in solidus_promotions/benefit.rb: the
+          can_discount?/discount contract, the calculator association) AND the
+          existing actions that subclass it (AdjustLineItem, AdjustShipment,
+          AdjustLineItemQuantityGroups, AdvertisePrice, CreateDiscountedItem in
+          solidus_promotions/benefits/), PLUS the calculators an action plugs in
+          (SolidusPromotions::Calculators::Percent, DistributedAmount,
+          TieredFlatRate, TieredPercent, ...), with file:line and how each differs?
+          This action + calculator fan-out is grep-invisible; a strong answer names
+          that breadth so the agent knows what to subclass and which calculator to
+          allow.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the actions and calculators named concretely by file
+          (benefits/adjust_line_item.rb, calculators/percent.rb) and the override
+          points (discount, can_discount?, the calculator) cited, rather than "the
+          action computes a discount"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the discount amount is a separate pluggable
+          calculator from the action (so the same action supports flat/percent/
+          tiered amounts), not just LIST the classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any action/calculator pairing it could not confirm
+          (which calculators a given action allows) so the agent checks before
+          wiring one?
+
+  - name: Map where the rules, actions, and calculators are registered
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer locate, with file:line, the central registry
+          (SolidusPromotions::Configuration in lib/solidus_promotions/
+          configuration.rb): the add_class_set :conditions and add_class_set
+          :benefits default lists, AND the add_nested_class_set
+          :promotion_calculators map that ties each benefit to the calculators it
+          allows? Could the agent register a new condition, benefit, and its
+          calculators from this?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the registration mechanisms named exactly (add_class_set :conditions,
+          add_class_set :benefits, add_nested_class_set :promotion_calculators) with
+          file:line, rather than "it gets registered in config"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the available set is declared centrally (so
+          the engine and the admin UI know the full set, and a host app can add or
+          remove entries), not just NAME the config?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where registration is overridable per host app or
+          deprecated (order_conditions= shims) so the agent verifies before relying
+          on a default?
+
+  - name: Find every site that must change to add a new promotion type
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the full fan-out of adding a promotion type:
+          the new Condition subclass under solidus_promotions/conditions/, the new
+          Benefit subclass under benefits/, the amount Calculator under
+          calculators/, the registration in configuration.rb (conditions, benefits,
+          and the promotion_calculators mapping), the shared bases depended on
+          (Condition/Benefit blast surfaces), and the spec matrix
+          (conditions/<x>_spec, benefits/<x>_spec, order_adjuster_spec)? A new
+          promotion touches several disjoint areas; a strong answer names that
+          breadth with file:line. Could the agent open the PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (a new conditions/<name>.rb, a
+          benefits/<name>.rb, a calculators/<name>.rb, the add_class_set lines, a
+          spec) rather than "add a condition and a benefit and tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (rule vs action vs
+          calculator vs registry vs shared base vs test matrix), not just LIST
+          them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (conditions/
+          benefits reached only via the registry + polymorphic dispatch, admin
+          views/translations for the new type, factories/fixtures) so the agent
+          knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the new files to
+          create (the conditions/<name>.rb rule, the benefits/<name>.rb action, the
+          calculators/<name>.rb if needed) and the existing files/lines to change
+          (the add_class_set + promotion_calculators entries in configuration.rb,
+          the shared bases if the contract extends) plus the specs and fixtures,
+          with file:line throughout? Could a teammate open the PR from this map
+          alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and insertion points concrete (new conditions/<name>.rb
+          implementing eligible?, benefits/<name>.rb implementing discount, the
+          configuration.rb registration lines, a spec) rather than "create the
+          promotion and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (which area it
+          belongs to and what the new promotion needs there), not just LIST files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (which eligible?
+          form the rule needs, which calculators the action should allow, fixture
+          generation) so the agent confirms before committing?

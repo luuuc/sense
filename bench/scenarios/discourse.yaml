@@ -1,153 +1,136 @@
-name: Discourse topic creation flow and authorization tracing
+name: Discourse work session - rate-limit topic creation for new users
 repo: discourse
-description: 'Trace the Discourse topic creation flow from the HTTP controller
-
-  through service objects to database persistence. Understand the
-
-  Guardian authorization system and then assess the impact of
-
-  adding a new permission check to the topic creation pipeline.
-
-  '
+# Rendered into the agent's prompt — kept NEUTRAL (states the task only, never
+# the answer's shape, locations, symbol names, or counts). Run by
+# bench/session-run.sh: each step is a separate conversational TURN in one
+# session (turn-by-turn reveal), so context accumulates the way real work does.
+# This measures the CUMULATIVE cost of doing several tasks across the codebase,
+# where re-deriving structure every task (baseline) compounds and reusing one
+# map (sense) pays off — the daily-felt value a single task can't show.
+description: 'You are a maintainer about to implement a new feature in Discourse:
+  new users may create at most a few topics per hour. Work through the tasks one
+  at a time; each builds on what you already learned. Keep answers concrete with
+  file:line so the next step (and a teammate) can act without re-exploring.'
 steps:
-- name: Orient in the Discourse codebase
-  prompt: "You're an AI coding agent about to ship work into Discourse.
-    Hand the next agent the map they need to act: what Discourse does,
-    its top-level structure, the key abstractions (Guardians, services,
-    serializers) with file paths, and the entry points to start reading.
-    The follow-up agent should need only small, targeted lookups — not
-    a fresh exploration of the codebase. No Explore agents.
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where do HTTP request handling and the
+    core domain models live? Hand the next agent a map so they can act with small,
+    targeted lookups, not a fresh exploration. No Explore agents.
     "
   checks:
-  - type: word
-    value: Guardian
-    required: true
-  - type: word
-    value: Topic
-    required: true
   - type: response_richness
-    value: '4'
+    value: '3'
     required: false
-    description: Referenced 4+ files in orientation
-  - type: word
-    value: service
+  - type: mcp_tool_used
+    value: sense_conventions
     required: false
+    layer: adoption
   - type: mcp_tool_used
     value: sense_search
     required: false
     layer: adoption
-    description: Used semantic search for Guardian/authorization orientation
-- name: Trace topic creation from controller to persistence
-  prompt: "You're about to add a permission check to topic creation.
-    Produce the map your downstream edits will need: file:line for every
-    layer in the creation flow (HTTP entry through TopicCreator and
-    PostCreator service objects to database persistence), the call-order
-    between them, and any alternate entry sites that would be affected.
-    The follow-up agent should need only small, targeted lookups — not
-    a fresh exploration of the codebase.
+- name: Trace topic creation to persistence
+  prompt: "Task: trace how a brand-new topic gets created, from the HTTP request
+    entry through to database persistence. Give file:line for each layer in the
+    path and the order they run.
     "
   checks:
-  - type: word
-    value: TopicsController
-    required: true
-  - type: word
-    value: TopicCreator
-    required: true
-  - type: word
-    value: PostCreator
-    required: true
-  - type: response_richness
-    value: '5'
-    required: true
-    description: Referenced 5+ files in the creation flow trace
-  - type: word
-    value: PostsController
-    required: true
-    description: Named the actual HTTP entry point for topic creation
-  - type: no_grep
-    value: no_grep
-    required: false
-    layer: adoption
-  - type: word
-    value: NewPostManager
-    required: false
-    description: Named the intermediary routing layer between controller and PostCreator
-  - type: mcp_tool_used
-    value: sense_search
-    required: false
-    layer: adoption
-    description: Used semantic search for topic creation flow tracing
-- name: Understand Guardian authorization
-  prompt: "You're about to extend Guardian with a new permission check.
-    Map the Guardian methods that gate topic creation with file:line: where
-    Guardian is instantiated, which methods are called along the path, and
-    which concern files own each check. Connect Guardian usage to
-    serializer surfaces if relevant. The follow-up agent should need only
-    small, targeted lookups — not a fresh exploration of the codebase.
-    "
-  checks:
-  - type: word
-    value: topic_guardian
-    required: true
-  - type: word
-    value: can_create_topic
-    required: true
   - type: response_richness
     value: '4'
-    required: false
-    description: Referenced 4+ files in Guardian analysis
+    required: true
   - type: contains
-    value: ensure
+    value: post_creator
     required: false
-  - type: word
-    value: can_create_topic_on_category
-    required: false
-    description: Named the intermediate Guardian method in the permission chain
-  - type: word
-    value: CurrentUserSerializer
-    required: true
-    description: Connected Guardian permissions to frontend serialization layer
-- name: Assess impact of adding a permission check
-  prompt: "You're about to add a permission: only users who have been
-    members for >24 hours can create topics. Produce the edit map:
-    which Guardian method changes, where it's invoked in the create
-    flow, which specs need updating, which alternate paths (queue, drafts,
-    plugin overrides) are affected. Use file:line throughout. The
-    follow-up agent should need only small, targeted lookups — not a
-    fresh exploration of the codebase.
+- name: Find the topic-creation permission check
+  prompt: "Task: where and how is it decided whether a user is allowed to create a
+    topic? Find the permission check itself, with file:line.
     "
   checks:
   - type: word
     value: Guardian
     required: true
+  - type: contains
+    value: can_create_topic
+    required: false
+- name: Find every caller of the post-creation service
+  prompt: "Task: you'll add the rate-limit guard at the post-creation service so it
+    can't be bypassed. Find every place in the codebase that creates a post through
+    that service, so the guard covers all of them. Be complete and use file:line;
+    a missed caller is a bypass.
+    "
+  checks:
   - type: response_richness
-    value: '4'
+    value: '8'
+    required: true
+    description: Found callers across the codebase, not just the obvious few
+  - type: contains
+    value: plugins/
     required: false
-    description: Referenced 4+ files in impact assessment
-  - type: word
-    value: spec
-    required: false
-  - type: word
-    value: plugin
-    required: false
+    description: Reached caller sites beyond core app/lib
   - type: mcp_tool_used
     value: sense_blast
     required: false
     layer: adoption
-    description: Used blast radius analysis for permission change impact
+- name: Find the existing rate-limit pattern to follow
+  prompt: "Task: Discourse already rate-limits other user actions. Find an existing
+    rate-limit implementation to follow as the pattern for this feature, with
+    file:line.
+    "
+  checks:
   - type: contains
-    value: spam_rules_spec
+    value: rate_limiter
     required: false
-    description: Warned about specific test breakage from permission change
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+- name: Find what reacts to post creation
+  prompt: "Task: a behavior change at post creation could affect code that runs in
+    response to a new post. Find the jobs, notifications, and other reactors that
+    fire when a post is created, with file:line.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Produce the edit map
+  prompt: "Task: produce the complete edit map for the feature: which files to
+    change and where the guard goes, which existing pattern to follow, what
+    reactors to double-check, and which specs to update. file:line throughout, so a
+    teammate could open the PR from your map.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
   - type: contains
-    value: reply_as_new_topic
+    value: spec
     required: false
-    description: Identified permission gap in topic reply path
-  - type: contains
-    value: queue
-    required: false
-    description: Flagged queue-vs-reject behavioral impact
 scoring:
   weights:
     correctness: 0.70
     efficiency: 0.30
+# Gold spans the areas the session walks. Relational / grep-hard targets (the
+# post-creation callers, the plugin reactors) are the discriminators; file-path
+# matched so both mention and cited are scored. The session headline, though, is
+# CUMULATIVE efficiency (tokens/context/time/tool-calls) at held accuracy.
+gold:
+  - {id: PostsController,  group: creation-flow, match: [app/controllers/posts_controller.rb]}
+  - {id: NewPostManager,   group: creation-flow, match: [lib/new_post_manager.rb]}
+  - {id: TopicCreator,     group: creation-flow, match: [lib/topic_creator.rb]}
+  - {id: PostCreator,      group: creation-flow, match: [lib/post_creator.rb]}
+  - {id: TopicGuardian,    group: guardian,      match: [lib/guardian/topic_guardian.rb]}
+  - {id: caller:post_action_creator, group: post-callers, match: [lib/post_action_creator.rb]}
+  - {id: caller:post_mover,          group: post-callers, match: [app/models/post_mover.rb]}
+  - {id: caller:chat,                group: post-callers, match: [plugins/chat/lib/chat/channel_archive_service.rb]}
+  - {id: caller:ai_playground,       group: post-callers, match: [plugins/discourse-ai/lib/ai_bot/playground.rb]}
+  - {id: RateLimiter,        group: rate-limit-convention, match: [lib/rate_limiter.rb]}
+  - {id: rate_limit:appctrl, group: rate-limit-convention, match: [app/controllers/application_controller.rb]}
+  - {id: reactor:post_alerter, group: reactors, match: [app/services/post_alerter.rb]}
+  - {id: reactor:badge_granter, group: reactors, match: [app/services/badge_granter.rb]}
+  - {id: reactor:web_hook,      group: reactors, match: [app/models/web_hook.rb]}

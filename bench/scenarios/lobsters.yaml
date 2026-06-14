@@ -1,0 +1,210 @@
+name: Lobsters work session - rework how votes affect standing
+repo: lobsters
+# Single-prompt session bench (run via bench/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for. Lobsters is a SMALL repo, so
+# this goes DEEPER rather than wider (per scenario-crafting.md): not "list the
+# models" but the real daily task "I'm changing the vote/score contract, what
+# breaks, what must stay consistent". The center is the relational web around
+# voting: Vote.vote_thusly_on_story_or_comment_for_user_because dispatches
+# polymorphically to a target that must implement update_score_and_recalculate!
+# (BOTH Story and Comment do), updates the author's karma, feeds hotness/ranking
+# (Story#calculated_hotness, the paginator), and is read by the vote hydrator and
+# the feeds. Blast is real even at this size (Story 58, Comment 44, Vote 27
+# callers). The win is transitive impact + the shared votable contract, which
+# grep cannot cleanly assemble. The headline is CUMULATIVE efficiency (tool calls,
+# billed + context tokens, time) at held accuracy.
+description: 'You are a maintainer about to rework how a vote affects what it
+  targets. That covers the target''s score, its author''s karma, and how it ranks,
+  on this link-aggregation community site. Work through the tasks below one at a
+  time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the machinery that records a
+    vote and turns it into a score, author karma, and ranking live, along with the
+    shared pieces it is built on? Hand the next agent a map so they can act with
+    small, targeted lookups, not a fresh exploration of the codebase. No Explore
+    agents.
+    "
+  checks:
+  - type: word
+    value: Vote
+    required: true
+  - type: word
+    value: karma
+    required: false
+    description: Reached the author-reputation effect, not just the vote record
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Trace a vote from the request to the score and karma update
+  prompt: "Task: trace what happens when a user casts a vote, from the request that
+    receives it down through to where the target's score is changed and the
+    author's karma is adjusted. Give file:line for each layer and the order they
+    run.
+    "
+  checks:
+  - type: word
+    value: Vote
+    required: true
+  - type: word
+    value: karma
+    required: true
+    description: Found the karma adjustment, not just the score change
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the shared votable contract
+  prompt: "Task: a vote can target more than one kind of thing, and each kind must
+    satisfy the same contract for being scored. Map that shared contract, what a
+    votable thing must implement so a vote can change its score and trigger any
+    recalculation, and which kinds of thing implement it and how each differs. Be
+    complete with file:line; a missed implementer is a votable type the change will
+    break.
+    "
+  checks:
+  - type: word
+    value: Story
+    required: true
+  - type: word
+    value: Comment
+    required: true
+    description: Named both votable implementers, not just one
+  - type: response_richness
+    value: '5'
+    required: true
+    description: Enumerated the shared contract plus both implementers
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map how score and ranking are consumed
+  prompt: "Task: once a score exists, several places read it to rank and display
+    things. Map where the score and the derived ranking are consumed, how lists
+    are ordered, how a viewer's own votes are loaded for display, with file:line.
+    "
+  checks:
+  - type: word
+    value: hotness
+    required: false
+    description: Reached the derived ranking signal
+  - type: word
+    value: vote
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the flagging variant and what it triggers
+  prompt: "Task: a vote can also be a negative flag with a reason, which behaves
+    differently from a plain vote. Map the set of flag reasons, how flagging
+    differs from an ordinary vote in its effect on score and standing, and what a
+    flag triggers downstream. Be complete with file:line.
+    "
+  checks:
+  - type: word
+    value: flag
+    required: true
+  - type: word
+    value: reason
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Find every site that must change if the vote and score contract changes
+  prompt: "Task: you are about to change the vote-and-score contract. Find every
+    place in the codebase that depends on it, where votes are cast, where score
+    and karma are updated, where ranking is derived, where a viewer's votes are
+    read, and where this is tested. Be complete and use file:line; a missed site
+    means a votable path silently breaks or goes untested.
+    "
+  checks:
+  - type: word
+    value: Vote
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Reached the scattered consumers and the specs, not just the model
+  - type: contains
+    value: spec
+    required: false
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the edit map
+  prompt: "Task: produce the complete edit map for reworking the vote-and-score
+    contract: which files to change across each area you explored (the vote
+    recording, the votable score/recalculation, the karma update, the ranking and
+    display consumers, the flagging variant), and which specs to update or add. Use
+    file:line throughout, so a teammate could open the PR from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+  - type: contains
+    value: vote
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Lobsters is small, so gold is the must-find RELATIONAL set, not a wide
+# enumeration. The discriminator is the `votable` contract (Story AND Comment both
+# implement update_score_and_recalculate!, a polymorphic contract grep cannot tie
+# together) plus the transitive `ranking`/consumer fan-out (paginator, hydrator,
+# feeds) that reads score/hotness with no shared string. All targets are file-path
+# matched so both mention and cited are scored. Headline is CUMULATIVE efficiency
+# at held accuracy.
+gold:
+  # vote recording + author reputation
+  - {id: vote-model,    group: vote-flow, match: [models/vote.rb]}
+  - {id: user-karma,    group: vote-flow, match: [models/user.rb]}
+  - {id: inbox-vote,    group: vote-flow, match: [controllers/inbox_controller.rb]}
+  # HTTP entry points where votes/flags are cast
+  - {id: stories-ctrl,  group: entry,     match: [controllers/stories_controller.rb]}
+  - {id: comments-ctrl, group: entry,     match: [controllers/comments_controller.rb]}
+  # the shared votable contract (both implement update_score_and_recalculate!)
+  - {id: story-votable, group: votable,   match: [models/story.rb]}
+  - {id: comment-votable,group: votable,  match: [models/comment.rb]}
+  # ranking + display consumers of score/hotness/votes
+  - {id: paginator,     group: ranking,   match: [models/stories_paginator.rb]}
+  - {id: vote-hydrator, group: ranking,   match: [models/comment_vote_hydrator.rb]}
+  - {id: home-feeds,    group: ranking,   match: [controllers/home_controller.rb]}
+  # tests of the vote/score behavior
+  - {id: spec:vote,     group: specs,     match: [models/vote_spec.rb]}
+  - {id: spec:story,    group: specs,     match: [models/story_spec.rb]}

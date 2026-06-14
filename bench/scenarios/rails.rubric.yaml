@@ -1,0 +1,227 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on, map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/rails.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to add a new ActiveJob queue
+  adapter (a new background-job backend integration) to Rails with only small,
+  targeted follow-up lookups, not a fresh exploration of the codebase. Score for
+  that audience, not a human reader, not a docs page. A perfect answer leaves the
+  agent ready to create the new XAdapter, make it resolvable by name, and add the
+  test-harness entry; a weak answer forces the agent to re-explore the codebase
+  before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is Rails (a
+          multi-framework monorepo) and that background-job backends live in
+          ActiveJob, the enqueue API (active_job/enqueuing.rb), the per-backend
+          adapters (active_job/queue_adapters/, AbstractAdapter), and the name
+          resolution (queue_adapter.rb, queue_adapters.rb)? Could the agent pick an
+          entry point and start working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (active_job/queue_adapters/abstract_adapter.rb,
+          active_job/queue_adapter.rb) rather than vague ("the job system")? Are
+          abstractions tied to actual files and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY ActiveJob abstracts over many backends behind
+          one adapter contract (so apps switch backends without changing jobs), not
+          just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure how enqueue, adapter, and resolution connect,
+          does it flag that so the agent doesn't act blindly?
+
+  - name: Trace how a job is enqueued onto its backend
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the path with file:line, in order: from
+          ActiveJob::Enqueuing#enqueue (active_job/enqueuing.rb) to
+          queue_adapter.enqueue / enqueue_at on the configured adapter, where the
+          adapter is the one assigned via queue_adapter= (active_job/queue_adapter.rb)?
+          Could the agent follow the same path to see where a new backend plugs in?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the methods named exactly (enqueue, enqueue_at, queue_adapter) with
+          file:line, rather than "the enqueue code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY enqueue delegates to a pluggable adapter
+          (backend independence), not just LIST the call chain?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where the path branches (enqueue vs enqueue_at,
+          callbacks, the adapter set per-class vs globally) so the agent verifies?
+
+  - name: Map the queue-backend family and its contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared base
+          (ActiveJob::QueueAdapters::AbstractAdapter in
+          queue_adapters/abstract_adapter.rb: the enqueue(job) / enqueue_at(job,
+          timestamp) contract raising NotImplementedError, and the duck-typed
+          QUEUE_ADAPTER_METHODS) AND the existing adapters that subclass it (Async,
+          Inline, Resque, Backburner, DelayedJob, QueueClassic, Sneakers, Test,
+          each in queue_adapters/<name>_adapter.rb), with file:line and how each
+          differs? This inheritance fan-out is grep-invisible (the subclass
+          relationship is structural); a strong answer names that breadth so the
+          agent knows exactly which methods to implement.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the adapters named concretely by file (resque_adapter.rb,
+          async_adapter.rb, inline_adapter.rb) and the contract methods (enqueue,
+          enqueue_at) cited, rather than "the adapters"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY a tiny shared contract abstracts very
+          different backends (so any backend implementing two methods works), not
+          just LIST the classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any optional capability it could not confirm
+          (enqueue_all, scheduling support a given backend lacks) so the agent
+          checks before relying on it?
+
+  - name: Map how a backend is registered and resolved by name
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer locate, with file:line, the name resolution
+          (ActiveJob::QueueAdapters.lookup in queue_adapters.rb: camelize the name
+          and append "Adapter", then constantize via autoload) and where a
+          configured name becomes a live adapter (queue_adapter= in
+          queue_adapter.rb)? Could the agent make a new backend resolvable by name
+          from this?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the resolution mechanisms named exactly (QueueAdapters.lookup, the
+          camelize + "Adapter" rule, queue_adapter=, the autoload entry) with
+          file:line, rather than "it gets looked up"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY resolution is by naming convention + autoload
+          (so adding a correctly named file is enough to register a backend), not
+          just NAME the method?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where resolution can fail or differ (a backend not
+          following the naming rule, passing an adapter instance instead of a name)
+          so the agent verifies?
+
+  - name: Trace how a job crosses the boundary and is executed
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the boundary with file:line: how a job is
+          serialized to a plain hash for the backend (ActiveJob::Core#serialize /
+          deserialize in active_job/core.rb) and how it is turned back into a run
+          (ActiveJob::Execution / Base.execute in active_job/execution.rb), noting
+          that an adapter typically wraps the serialized job and calls back into
+          execute? Could the agent see what its new adapter must store and invoke?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the methods named exactly (serialize, deserialize, execute) with
+          file:line, rather than "the serialization code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY serialization decouples the job from the
+          backend (the backend stores data, not a Ruby object), not just NAME the
+          methods?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where the execution wiring is adapter-specific (each
+          adapter's JobWrapper) so the agent verifies how its backend calls back?
+
+  - name: Find every site that must change to add a new queue backend
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the full fan-out: the new adapter under
+          active_job/queue_adapters/, its autoload entry / name resolution in
+          queue_adapters.rb, the shared base depended on (AbstractAdapter blast),
+          the enqueue path, the serialize/execute boundary, and the test matrix
+          (the shared cases/queue_adapter_test.rb plus a per-backend harness entry
+          under test/adapters/)? A new backend touches several disjoint areas; a
+          strong answer names that breadth with file:line. Could the agent open the
+          PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (a new queue_adapters/<name>_adapter.rb,
+          the autoload line, a test/adapters/<name>.rb harness) rather than "add
+          the adapter and tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (integration vs name
+          resolution vs shared base vs test harness), not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (the adapter
+          resolved only by naming convention + autoload, the gem dependency the
+          backend needs, the shared behavior tests) so the agent knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the new files to
+          create (the queue_adapters/<name>_adapter.rb integration, the
+          test/adapters/<name>.rb harness) and the existing files/lines to change
+          (the autoload/name resolution in queue_adapters.rb, anything the shared
+          contract requires) plus the tests, with file:line throughout? Could a
+          teammate open the PR from this map alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and insertion points concrete (the new <name>_adapter.rb
+          implementing enqueue/enqueue_at, the autoload entry, the harness file)
+          rather than "create the adapter and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (integration vs
+          resolution vs tests), not just LIST files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (how the backend
+          calls back into execute, scheduling support, the gem dependency) so the
+          agent confirms before committing?

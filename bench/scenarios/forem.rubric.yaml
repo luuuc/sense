@@ -1,0 +1,242 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on, map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/forem.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to add a new inline content embed
+  (a Liquid tag for an external service) to Forem with only small, targeted
+  follow-up lookups, not a fresh exploration of the codebase. Score for that
+  audience, not a human reader, not a docs page. A perfect answer leaves the agent
+  ready to create the new embed's renderer class, its view partial, register its
+  link pattern, and add specs; a weak answer forces the agent to re-explore the
+  codebase before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is Forem (a
+          community/blogging platform), how the Rails app is organized, and
+          specifically where inline embeds live, the embed renderers
+          (app/liquid_tags/, the LiquidTagBase base) and the dispatch that turns
+          a link into a renderer (app/liquid_tags/unified_embed/)? Could the agent
+          pick an entry point and start working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (app/liquid_tags/liquid_tag_base.rb,
+          app/liquid_tags/unified_embed/registry.rb, app/views/liquids/) rather
+          than vague ("the embed layer")? Are abstractions tied to actual files
+          and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the architecture is shaped this way (embeds
+          are Liquid tags subclassing a shared base, a registry maps a URL to the
+          right embed, each renders a view partial), not just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure about how the layers connect or what a new
+          embed must implement, does it flag that so the agent doesn't act blindly?
+
+  - name: Trace an embed from post markup to its renderer
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the routing path with file:line, in order: from
+          the embed markup an author writes through the unified embed tag
+          (UnifiedEmbed::Tag in app/liquid_tags/unified_embed/tag.rb) into the
+          registry (UnifiedEmbed::Registry#find_liquid_tag_for in
+          unified_embed/registry.rb) that regexp-matches the link to a concrete
+          embed class, and finally that class's #render? Could the agent follow
+          the same path to route a new embed?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the dispatch methods named exactly (UnifiedEmbed::Registry,
+          find_liquid_tag_for / find_handler_for, #render) with file:line, rather
+          than "the routing code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY dispatch is a regexp-keyed registry (so a
+          new embed is selected by registering a URL pattern, not by editing a
+          dispatcher) and why OpenGraphTag is the fallback, not just LIST the call
+          chain?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where the path is dynamic (registry consulted at
+          render time, first-matching-regexp wins, special-cased local URLs) so
+          the agent verifies before relying on it?
+
+  - name: Map the embed family and the shared contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared base (LiquidTagBase in
+          app/liquid_tags/liquid_tag_base.rb: the initialize(tag_name, token,
+          parse_context) contract, the abstract #render, the LiquidTagHelpers
+          concern, the user_authorization_method_name hook) AND the existing
+          embeds that subclass and customize it (YouTube, Vimeo, GitHub, CodePen,
+          Gist, Instagram, Reddit, Spotify, Bluesky, ... each in
+          app/liquid_tags/<service>_tag.rb), with file:line and how each differs
+          (its regexp, its parse, its partial)? This inheritance fan-out is
+          grep-invisible (the subclass relationship is structural, not a shared
+          string); a strong answer names that breadth so the agent knows exactly
+          what to inherit and what to override.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the customizing embeds named concretely by file (youtube_tag.rb,
+          vimeo_tag.rb, codepen_tag.rb, gist_tag.rb) and the override points
+          (initialize, render, REGISTRY_REGEXP, PARTIAL) cited, rather than "some
+          embeds customize it"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the base is shared and subclassed (one
+          contract for all embeds, per-service behavior via a subclass that parses
+          its link and renders its partial), not just LIST the classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any customization it could not confirm (an embed
+          that overrides a helper or renders differently than it opened) so the
+          agent checks before copying a pattern?
+
+  - name: Map how each embed declares which links it handles
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer locate, with file:line, where each embed declares the
+          links it handles (a REGISTRY_REGEXP constant per embed class), where it
+          is registered (UnifiedEmbed.register and Liquid::Template.register_tag
+          calls, typically at the bottom of each embed file), and where the
+          registry is consulted to choose one for an incoming link
+          (UnifiedEmbed::Registry#find_handler_for / find_liquid_tag_for)? Could
+          the agent register a new embed's link pattern from this?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the registration calls named exactly (UnifiedEmbed.register(klass,
+          regexp:), Liquid::Template.register_tag, REGISTRY_REGEXP) with file:line,
+          rather than "it gets registered somewhere"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY registration is distributed (each embed owns
+          its own URL pattern and self-registers) and consumed centrally (one
+          registry scans patterns), not just NAME the calls?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where matching is order-sensitive or pattern-fragile
+          (first matching regexp wins, overlapping patterns) so the agent verifies
+          its new pattern does not collide?
+
+  - name: Trace how an embed validates input and restricts access
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for input validation (LiquidTagHelpers in
+          app/liquid_tags/concerns/liquid_tag_helpers.rb: parse_options,
+          validate_url! raising on a bad scheme) AND per-embed authorization
+          (LiquidTagPolicy in app/policies/liquid_tag_policy.rb, the
+          user_authorization_method_name hook on the base)? Could the agent give
+          the new embed correct validation and access control without re-reading
+          every file?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the methods/classes named exactly (validate_url!, parse_options,
+          LiquidTagPolicy, user_authorization_method_name) with file:line, rather
+          than "the validation code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY validation lives in a shared concern and WHY
+          authorization is a policy keyed on a per-class method, not just NAME the
+          pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where an embed needs custom validation or
+          restricted access (a tag that overrides the auth hook) so the agent
+          verifies before shipping?
+
+  - name: Find every site that must change to add a new embed
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the full fan-out of adding an embed: the new
+          renderer class under app/liquid_tags/ (subclassing LiquidTagBase, whose
+          97-caller blast surface shows what the contract touches), its view
+          partial under app/views/liquids/, the two registrations
+          (Liquid::Template.register_tag + UnifiedEmbed.register with a regexp),
+          and the spec matrix (spec/liquid_tags/, the unified_embed registry/tag
+          specs)? A new embed touches several disjoint areas; a strong answer
+          names that breadth with file:line. Could the agent open the PR from this
+          list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (a new <service>_tag.rb, a
+          liquids/_<service>.html.erb partial, the register lines, a
+          <service>_tag_spec.rb) rather than "create the embed and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (renderer vs template
+          vs registration vs shared-base contract vs test matrix), not just LIST
+          them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (embeds reached
+          only through the registry regexp, fixtures/cassettes for the embed's
+          HTTP calls) so the agent knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the new files
+          to create (the <service>_tag.rb renderer, its liquids/_<service>.html.erb
+          partial) and the existing files/lines to change (the two registrations,
+          the shared base if the contract extends, validation/authorization if the
+          embed needs it) plus the specs and fixtures, with file:line throughout?
+          Could a teammate open the PR from this map alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and insertion points concrete (new <service>_tag.rb with
+          REGISTRY_REGEXP + render, the partial, the register lines, a spec under
+          spec/liquid_tags/) rather than "create the embed and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (which area it
+          belongs to and what the new embed needs there), not just LIST files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (the exact URL
+          regexp, whether the embed needs authorization, fixture generation) so
+          the agent confirms before committing?

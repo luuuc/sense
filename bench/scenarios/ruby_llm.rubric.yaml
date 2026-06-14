@@ -1,0 +1,228 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on — map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/ruby_llm.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to add a new external LLM
+  service integration to RubyLLM with only small, targeted follow-up lookups,
+  not a fresh exploration of the codebase. Score for that audience, not a human
+  reader, not a docs page. A perfect answer leaves the agent ready to create
+  the new integration's files and wire it in; a weak answer forces the agent to
+  re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: what RubyLLM is, the
+          base integration class (lib/ruby_llm/provider.rb) and the concrete
+          integrations (lib/ruby_llm/providers/), the shared protocol layer
+          (lib/ruby_llm/protocol.rb, lib/ruby_llm/protocols/), and where
+          settings and errors live? Could the agent pick an entry point and
+          start working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (provider.rb, providers/openai.rb,
+          protocols/chat_completions.rb) rather than vague ("the provider
+          layer")? Are abstractions tied to actual files and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the architecture is shaped this way (why
+          integrations subclass a base, why wire protocols are a separate
+          shared layer), not just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure about how the layers connect or what a new
+          integration must implement, does it flag that so the agent doesn't act
+          blindly?
+
+  - name: Trace a request to its concrete service integration
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the routing path with file:line: from the public
+          entry point down to where the integration is looked up in the registry
+          (Provider.resolve / Provider.providers in provider.rb) and selected
+          (Models#resolve, Model::Info#provider_class), in order? Could the agent
+          follow the same path to register and route a new integration?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the lookup/selection methods named exactly (Provider.resolve,
+          Models#resolve, provider_class) with file:line, rather than "the
+          routing code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the lookup is a registry (so a new
+          integration is discovered by registering, not by editing the router),
+          not just LIST the call chain?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where the path is dynamic (registry populated at
+          load time, slug-based lookup) so the agent verifies before relying on
+          it?
+
+  - name: Map the shared API-dialect layer and its customizations
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared dialect base
+          (Protocols::ChatCompletions in protocols/chat_completions.rb, built on
+          Protocol in protocol.rb) AND the existing integrations that subclass /
+          customize it (DeepSeek, GPUStack, Mistral, Ollama, OpenRouter, XAI,
+          Azure each define a ChatCompletions subclass), with file:line and how
+          each differs? This inheritance/mixin fan-out is grep-invisible (the
+          subclass relationship is structural, not a shared string); a strong
+          answer names that breadth so the agent knows exactly what to inherit
+          and what to override.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the customizing integrations named concretely by file
+          (providers/deepseek.rb, providers/openrouter.rb, providers/xai.rb,
+          providers/azure/chat_completions.rb) and the override points cited,
+          rather than "some providers customize it"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the dialect is shared and subclassed (one
+          base for OpenAI-compatible APIs, per-service tweaks via subclass +
+          mixin), not just LIST the classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any customization it could not confirm (a service
+          that overrides a method it didn't open) so the agent checks before
+          copying a pattern?
+
+  - name: Find how an integration declares and validates its settings
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer locate where an integration declares its settings
+          (configuration_options / configuration_requirements on the provider
+          class), where they are registered (Configuration.register_provider_options
+          in configuration.rb), and where the library checks they are present
+          (configured?), with file:line? Could the agent add the new
+          integration's settings from this?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the methods/files named exactly (configuration.rb,
+          register_provider_options, configuration_requirements, configured?)
+          rather than "the config system"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY settings are declared per-integration and
+          registered into a shared Configuration, not just NAME the methods?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where defaults or env-based settings could differ
+          per integration so the agent verifies?
+
+  - name: Trace how HTTP failures become typed errors
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer give file:line for the whole error path: the Faraday
+          ErrorMiddleware (error_middleware.rb) that turns an HTTP response into a
+          typed error, the Error subclass family and the status-code mapping
+          (error.rb: Error, BadRequestError, ContextLengthExceededError,
+          ServerError, ...), the base Provider#parse_error (provider.rb), AND that
+          an integration can override parse_error? Could the agent give the new
+          integration correct error handling without re-reading every file?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the classes/methods named exactly (ErrorMiddleware.parse_error,
+          Provider#parse_error, specific Error subclasses) with file:line, rather
+          than "the error handling code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY classification lives in a shared middleware
+          and how status codes map to subclasses, not just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where an integration's error body differs (so its
+          parse_error override matters) so the agent verifies before shipping?
+
+  - name: Find every site that must change to add a new integration
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the full fan-out of adding an integration:
+          the registration table (Provider.register calls in lib/ruby_llm.rb),
+          the registry consumers (Models#resolve, provider_class), the settings
+          registration, the model/alias catalog (models.json, aliases, the model
+          registry), and the test matrix (spec/support/models_to_test.rb)? A new
+          integration touches several disjoint areas; a strong answer names that
+          breadth with file:line. Could the agent open the PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (lib/ruby_llm.rb register block,
+          models.json, models_to_test.rb) rather than "wire it in and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (load-time
+          registration vs catalog lookup vs test matrix), not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (load-order
+          dependencies, rake tasks that regenerate the catalog, VCR fixtures) so
+          the agent knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the new files
+          to create (the integration class, its protocol customization, settings,
+          capabilities) and the existing files to change across every area
+          (registry, shared dialect, settings, errors, catalog) plus the specs
+          and fixtures, with file:line throughout? Could a teammate open the PR
+          from this map alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and insertion points concrete (new
+          providers/<name>.rb, the register line in lib/ruby_llm.rb, models.json,
+          a spec file) rather than "create the provider and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (which area it
+          belongs to and what the new integration needs there), not just LIST
+          files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (which protocol
+          customizations the new service needs, fixture generation) so the agent
+          confirms before committing?

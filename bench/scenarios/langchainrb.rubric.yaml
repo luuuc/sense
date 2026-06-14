@@ -1,0 +1,229 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on, map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/langchainrb.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to add a new LLM provider with
+  Assistant tool-calling support to Langchainrb with only small, targeted
+  follow-up lookups, not a fresh exploration of the codebase. Score for that
+  audience, not a human reader, not a docs page. A perfect answer leaves the agent
+  ready to create the provider's client, its Assistant adapter, its message class,
+  and its response wrapper, and wire the selection; a weak answer forces the agent
+  to re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is Langchainrb (a
+          Ruby LLM toolkit), and where the provider integrations and the Assistant
+          live, the raw clients (lib/langchain/llm/, LLM::Base), the Assistant
+          (lib/langchain/assistant.rb) and its per-provider adapters
+          (assistant/llm/adapters/), message classes (assistant/messages/), and
+          response wrappers (llm/response/)? Could the agent pick an entry point
+          and start working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (lib/langchain/llm/base.rb,
+          lib/langchain/assistant/llm/adapter.rb) rather than vague ("the provider
+          layer")? Are abstractions tied to actual files and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY there is both a raw client and an Assistant
+          adapter per provider (the client does API calls; the adapter formats
+          tool-calling for the Assistant), not just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure how the layers connect or what a new provider
+          must implement, does it flag that so the agent doesn't act blindly?
+
+  - name: Trace how the assistant talks to a provider for a tool-calling turn
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the path with file:line: the Assistant resolving
+          the provider integration via Assistant::LLM::Adapter.build
+          (assistant/llm/adapter.rb), whose is_a? chain maps the configured LLM
+          instance to the right Adapters::X, then the adapter's build_chat_params /
+          extract_tool_call_args being used for the turn? Could the agent follow
+          the same path to wire a new provider's selection?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the dispatch pieces named exactly (Adapter.build, the is_a? mapping,
+          build_chat_params) with file:line, rather than "the adapter selection"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY selection is an is_a? chain on the LLM
+          instance (so the Assistant stays provider-agnostic), and note this is the
+          one spot that must learn about a new provider, not just LIST the chain?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag that the dispatch is a hardcoded is_a? chain (not a
+          registry), so a new provider needs an explicit branch, so the agent
+          verifies?
+
+  - name: Map the provider-integration family and its contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared adapter base
+          (Assistant::LLM::Adapters::Base in assistant/llm/adapters/base.rb: the
+          build_chat_params / extract_tool_call_args / build_message /
+          support_system_message? / tool_role contract raising NotImplementedError)
+          AND the existing adapters that implement it (OpenAI, Anthropic,
+          GoogleGemini, MistralAI, Ollama, AwsBedrockAnthropic in
+          assistant/llm/adapters/), with file:line and how each differs? This
+          inheritance fan-out is grep-invisible; a strong answer names that breadth
+          so the agent knows exactly which methods to implement.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the adapters named concretely by file (adapters/openai.rb,
+          adapters/anthropic.rb) and the contract methods (build_chat_params,
+          extract_tool_call_args, tool_role) cited, rather than "the adapters"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each provider needs its own adapter (tool-call
+          formats and message shapes differ per provider), not just LIST the
+          classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any contract method it could not confirm (a quirk
+          one adapter overrides) so the agent checks before copying a pattern?
+
+  - name: Map the per-provider message and response families
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map BOTH parallel hierarchies with file:line: the message
+          base (assistant/messages/base.rb: llm?/tool?/system?/to_hash) plus the
+          per-provider message classes (openai_message.rb, anthropic_message.rb,
+          google_gemini_message.rb, mistralai_message.rb, ollama_message.rb), AND
+          the response base (llm/response/base_response.rb) plus the per-provider
+          response wrappers (openai_response.rb, ...), tying each provider's message
+          and response to its adapter? A strong answer makes the four-way
+          per-provider correspondence explicit so the agent creates every piece.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the message and response classes named concretely by file
+          (messages/openai_message.rb, llm/response/openai_response.rb) rather than
+          "the message and response classes"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY message form and response wrapper are
+          per-provider (each API returns and expects a different shape), not just
+          LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any provider whose message/response it could not
+          confirm (a provider with no dedicated message class) so the agent checks?
+
+  - name: Map the raw LLM client family and its contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the client base (LLM::Base in llm/base.rb: the
+          chat / complete / embed contract) AND the per-provider clients (llm/openai.rb,
+          anthropic.rb, google_gemini.rb, mistralai.rb, ollama.rb), with file:line,
+          and explain how a client's raw result is turned into the wrapped response
+          from the previous step? Could the agent implement the new client from
+          this?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the clients named concretely by file (llm/openai.rb, llm/anthropic.rb)
+          and the contract methods (chat, complete, embed) cited, rather than "the
+          clients"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY the client is separate from the adapter (raw
+          API access vs Assistant tool-calling), not just LIST the classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any client capability it could not confirm (a
+          provider lacking embeddings) so the agent verifies?
+
+  - name: Find every site that must change to add a new tool-calling provider
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the full four-way fan-out plus dispatch: the new
+          client (llm/<provider>.rb), the Assistant adapter
+          (assistant/llm/adapters/<provider>.rb) AND a new branch in Adapter.build,
+          the message class (assistant/messages/<provider>_message.rb), the response
+          wrapper (llm/response/<provider>_response.rb), and the spec matrix
+          (assistant_spec, adapter_spec, a message spec)? A new provider touches
+          four parallel hierarchies plus the dispatch; a strong answer names that
+          breadth with file:line. Could the agent open the PR from this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (a new adapters/<provider>.rb, the
+          Adapter.build branch, a <provider>_message.rb, a <provider>_response.rb,
+          a spec) rather than "add the provider and tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (client vs adapter vs
+          dispatch vs message vs response vs tests), not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (the is_a?
+          dispatch branch that must be edited by hand, dependency_helper gem
+          requirements, fixtures) so the agent knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the new files to
+          create (llm/<provider>.rb, adapters/<provider>.rb,
+          <provider>_message.rb, <provider>_response.rb) and the existing files to
+          change (the Adapter.build branch, any registration) plus the specs, with
+          file:line throughout? Could a teammate open the PR from this map alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and insertion points concrete (the four new per-provider
+          files, the Adapter.build is_a? branch, a spec) rather than "create the
+          provider and add tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (which hierarchy it
+          belongs to), not just LIST files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (the provider's
+          tool-call format, whether it needs a dedicated message class, fixtures)
+          so the agent confirms before committing?
