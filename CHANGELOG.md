@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.4.0] - 2026-06-15
+
+### Features
+
+- emit enqueue edges from Sidekiq/ActiveJob calls
+- emit super-call edges to inherited methods
+- resolve inherited method dispatch via the class chain
 ## [1.3.0] - 2026-06-15
 
 ### Bug Fixes
