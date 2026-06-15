@@ -100,6 +100,26 @@ end`
 	}
 }
 
+func TestSuperNotAttributedAcrossNestedDef(t *testing.T) {
+	// A `super` inside a nested method definition belongs to that nested method,
+	// not the outer one. The outer method (no super of its own) must emit no
+	// super edge.
+	src := `class Sub < Base
+  def perform
+    define_singleton_method(:inner) do
+    end
+
+    def helper
+      super
+    end
+  end
+end`
+	r := parseRuby(t, src)
+	if superEdge(r, "Sub#perform", "Base#perform") != nil {
+		t.Error("outer #perform has no super of its own; the nested def's super must not be attributed to it")
+	}
+}
+
 func TestSuperAbsentNoEdge(t *testing.T) {
 	src := `class Sub < Base
   def perform

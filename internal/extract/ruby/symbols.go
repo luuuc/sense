@@ -186,7 +186,7 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	if err := w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic, methodParamNames(n, w.source)); err != nil {
 		return err
 	}
-	if err := w.emitSuperEdge(body, parent, qualified, name, singleton); err != nil {
+	if err := w.emitSuperEdge(n, parent, qualified, name, singleton); err != nil {
 		return err
 	}
 	return w.collectConstRefs(body, qualified, false)
@@ -204,8 +204,12 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 // inheritance but module prepends/MRO can intervene, so it is never 1.0. A
 // method whose class has no recorded superclass (top-level, module, or no
 // superclass) emits nothing rather than a guess.
-func (w *walker) emitSuperEdge(body *sitter.Node, parent, qualified, methodName string, singleton bool) error {
-	if body == nil || parent == "" {
+func (w *walker) emitSuperEdge(methodNode *sitter.Node, parent, qualified, methodName string, singleton bool) error {
+	if methodNode == nil || parent == "" {
+		return nil
+	}
+	body := methodNode.ChildByFieldName("body")
+	if body == nil {
 		return nil
 	}
 	superclass := w.classSuperclass[parent]
@@ -213,7 +217,13 @@ func (w *walker) emitSuperEdge(body *sitter.Node, parent, qualified, methodName 
 		return nil
 	}
 	hasSuper := false
-	if err := extract.WalkNamedDescendants(body, "super", func(*sitter.Node) error {
+	if err := extract.WalkNamedDescendants(body, "super", func(s *sitter.Node) error {
+		// Skip a `super` that belongs to a nested method definition inside this
+		// body — its `super` dispatches to the nested method's parent, not this
+		// method's. Attributing it here would be a false edge.
+		if !superBelongsToMethod(s, methodNode) {
+			return nil
+		}
 		hasSuper = true
 		return nil
 	}); err != nil {
@@ -234,6 +244,21 @@ func (w *walker) emitSuperEdge(body *sitter.Node, parent, qualified, methodName 
 		Line:            &line,
 		Confidence:      extract.ConfidenceConvention,
 	})
+}
+
+// superBelongsToMethod reports whether a `super` node is part of methodNode
+// itself, rather than a method nested inside its body. The nearest enclosing
+// `method`/`singleton_method` ancestor of the super is the method it dispatches
+// from; the super belongs here only when that ancestor is methodNode (compared
+// by byte range — go-tree-sitter returns fresh node structs, so pointer
+// identity can't be used).
+func superBelongsToMethod(super, methodNode *sitter.Node) bool {
+	for p := super.Parent(); p != nil; p = p.Parent() {
+		if k := p.Kind(); k == "method" || k == "singleton_method" {
+			return p.StartByte() == methodNode.StartByte() && p.EndByte() == methodNode.EndByte()
+		}
+	}
+	return false
 }
 
 // isTestSuperclass returns true if the superclass name indicates a test base class.
