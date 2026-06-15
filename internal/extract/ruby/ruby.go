@@ -213,6 +213,9 @@ func (w *walker) dispatchClassBodyCall(n *sitter.Node, scope []string, methodNam
 	case "scope":
 		return true, w.emitScopeEdge(n, scope)
 	}
+	if classNameAttributeMacros[methodName] {
+		return true, w.emitClassNameAttribute(n, scope)
+	}
 	if model.RailsCallbackNames[methodName] {
 		return true, w.emitCallbackEdges(n, scope, methodName)
 	}

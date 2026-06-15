@@ -262,6 +262,181 @@ func (w *walker) emitScopeEdge(n *sitter.Node, scope []string) error {
 	})
 }
 
+// classNameAttributeMacros are class-body DSL macros that declare a
+// configurable class accessor whose shipped default names a class via a
+// string literal. solidus/Spree's `class_name_attribute` is the canonical
+// case:
+//
+//	class_name_attribute :order_adjuster_class,
+//	  default: "Spree::Promotion::OrderAdjustmentsRecalculator"
+//
+// The macro defines a reader/writer (so the applier is reconfigurable at
+// runtime) whose default is the named class. Recognising it as a declarative
+// idiom — a table entry plus emitClassNameAttribute, sibling to the scope /
+// callback / association handlers — keeps the rule narrow and extensible: add
+// a sibling macro name here as one surfaces, never a per-framework branch.
+var classNameAttributeMacros = map[string]bool{
+	"class_name_attribute": true,
+}
+
+// emitClassNameAttribute handles a `class_name_attribute :name, default: "A::B"`
+// declaration. It emits the accessor as a KindMethod symbol (so
+// `graph <name>` resolves instead of "No symbol matches") and, when `default:`
+// is a static string literal that parses as a Ruby constant path, a calls edge
+// from the accessor to that constant. The edge target is the constant's
+// surface text; the resolver's existing exact-qualified match binds it to the
+// real class symbol when one is indexed (no new resolver machinery — a static
+// literal needs none; 29-03 generalizes the dynamic string-built case).
+//
+// Precision over recall: no edge is emitted when the default is absent,
+// dynamic (interpolated/computed), a lambda, or not a constant path. A missing
+// edge is cheaper than a wrong high-confidence one (see staticConstantKeywordArg).
+// Only the first accessor symbol is handled — solidus declares one per call.
+func (w *walker) emitClassNameAttribute(n *sitter.Node, scope []string) error {
+	args := n.ChildByFieldName("arguments")
+	if args == nil || args.NamedChildCount() == 0 {
+		return nil
+	}
+	first := args.NamedChild(0)
+	if first == nil || first.Kind() != "simple_symbol" {
+		return nil
+	}
+	name := strings.TrimPrefix(extract.Text(first, w.source), ":")
+	if name == "" {
+		return nil
+	}
+
+	source := strings.Join(scope, "::")
+	accessor := source + "." + name
+	line := extract.Line(n.StartPosition())
+
+	if err := w.emit.Symbol(extract.EmittedSymbol{
+		Name:            name,
+		Qualified:       accessor,
+		Kind:            model.KindMethod,
+		ParentQualified: source,
+		LineStart:       line,
+		LineEnd:         line,
+		Docstring:       docstringFor(n, w.source),
+	}); err != nil {
+		return err
+	}
+
+	target, ok := staticConstantKeywordArg(args, "default", w.source)
+	if !ok {
+		return nil
+	}
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: accessor,
+		TargetQualified: target,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      extract.ConfidenceConvention,
+	})
+}
+
+// staticConstantKeywordArg reads a keyword argument whose value is a static
+// string literal naming a Ruby constant (`default: "A::B::C"`) and returns the
+// constant path. It returns ok=false — emit no edge — when the key is absent,
+// the value is not a plain string literal (a lambda, a bare constant, an
+// interpolated or computed string), or the string does not parse as a constant
+// path. This is the precision gate: only a statically-known class name
+// produces an edge.
+//
+// A wrapped literal — `default: "A::B".freeze`, `default: ("A::B")` — parses as
+// a call/parenthesized node rather than a bare `string`, so it is treated as
+// dynamic and yields no edge. That under-recalls rather than risk a wrong edge;
+// solidus writes the bare literal.
+func staticConstantKeywordArg(args *sitter.Node, key string, source []byte) (string, bool) {
+	count := args.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		arg := args.NamedChild(i)
+		if arg == nil || arg.Kind() != "pair" {
+			continue
+		}
+		k := arg.ChildByFieldName("key")
+		v := arg.ChildByFieldName("value")
+		if k == nil || v == nil || extract.Text(k, source) != key {
+			continue
+		}
+		s, ok := staticStringLiteral(v, source)
+		if !ok {
+			return "", false
+		}
+		path := strings.TrimPrefix(s, "::")
+		if !looksLikeConstantPath(path) {
+			return "", false
+		}
+		return path, true
+	}
+	return "", false
+}
+
+// staticStringLiteral returns the content of a plain string literal node, with
+// ok=true only when the string is fully static: a single `string_content`
+// named child with no interpolation or escape sequence. An interpolated string
+// (`"Spree::#{x}"`) carries an `interpolation` child and returns ok=false — its
+// runtime value is not statically known, so it must not produce an edge.
+func staticStringLiteral(n *sitter.Node, source []byte) (string, bool) {
+	if n == nil || n.Kind() != "string" {
+		return "", false
+	}
+	content := ""
+	seen := false
+	count := n.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		c := n.NamedChild(i)
+		if c == nil {
+			continue
+		}
+		if c.Kind() != "string_content" || seen {
+			// interpolation, escape_sequence, or a second fragment — not a
+			// simple static literal.
+			return "", false
+		}
+		content = extract.Text(c, source)
+		seen = true
+	}
+	return content, seen
+}
+
+// looksLikeConstantPath reports whether s is a Ruby constant path: one or more
+// `::`-separated segments, each starting with an uppercase letter and otherwise
+// containing only identifier characters (`Spree::Promotion::OrderAdjuster`). It
+// rejects method names, file paths, and anything lowercase-leading so a
+// non-class default string never produces a spurious constant edge.
+func looksLikeConstantPath(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, seg := range strings.Split(s, "::") {
+		if !isConstantSegment(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// isConstantSegment reports whether seg is a single Ruby constant name:
+// uppercase first letter, identifier characters thereafter.
+func isConstantSegment(seg string) bool {
+	if seg == "" {
+		return false
+	}
+	for i, r := range seg {
+		switch {
+		case i == 0:
+			if r < 'A' || r > 'Z' {
+				return false
+			}
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // resourceActions is the set of RESTful actions for `resources`.
 var resourceActions = []string{"index", "show", "new", "create", "edit", "update", "destroy"}
 
