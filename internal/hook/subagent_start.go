@@ -22,8 +22,7 @@ func handleSubagentStart(ctx context.Context, _ json.RawMessage, adapter *sqlite
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "This project has a Sense index (%d symbols, %d edges).\n\n", symbolCount, edgeCount)
-	sb.WriteString("Before using grep/find/file-walking, load Sense tools:\n")
-	sb.WriteString(toolSearchCmd + "\n\n")
+	sb.WriteString("The Sense tools are loaded and callable now — prefer them over grep/find/file-walking for structural questions:\n")
 	sb.WriteString("- Who calls X? What does X depend on? → sense_graph\n")
 	sb.WriteString("- Find code related to a concept → sense_search\n")
 	sb.WriteString("- What breaks if I change X? → sense_blast\n")

@@ -157,8 +157,13 @@ func TestSessionStartReturnsStats(t *testing.T) {
 	if !strings.Contains(resp.Message, "Sense index:") {
 		t.Errorf("message = %q, expected 'Sense index:' prefix", resp.Message)
 	}
-	if !strings.Contains(resp.Message, "ToolSearch") {
-		t.Errorf("message = %q, expected ToolSearch directive", resp.Message)
+	// The tools are pre-loaded (alwaysLoad), so the message must NOT revive the
+	// retired ToolSearch gate; it should point at the loaded tools directly.
+	if strings.Contains(resp.Message, "ToolSearch") {
+		t.Errorf("message = %q, should not instruct ToolSearch (tools are pre-loaded)", resp.Message)
+	}
+	if !strings.Contains(resp.Message, "sense_graph") {
+		t.Errorf("message = %q, expected the loaded-tools hint", resp.Message)
 	}
 }
 
@@ -247,8 +252,11 @@ func TestSubagentStartReturnsGuidance(t *testing.T) {
 	if !strings.Contains(ctx, "Sense index") {
 		t.Errorf("context = %q, expected sense guidance", ctx)
 	}
-	if !strings.Contains(ctx, "ToolSearch") {
-		t.Error("expected ToolSearch command in guidance")
+	if strings.Contains(ctx, "ToolSearch") {
+		t.Error("guidance should not revive the ToolSearch gate — tools are pre-loaded")
+	}
+	if !strings.Contains(ctx, "loaded and callable") {
+		t.Error("expected the pre-loaded-tools hint in guidance")
 	}
 	if !strings.Contains(ctx, "sense_graph") {
 		t.Error("expected sense_graph in guidance")

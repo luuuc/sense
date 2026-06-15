@@ -138,9 +138,14 @@ func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.
 		fmt.Fprintf(&sb, " %s", freshness)
 	}
 	sb.WriteByte('\n')
-	fmt.Fprintf(&sb, "REQUIRED: Your FIRST tool call MUST be %s to load Sense tools.\n", toolSearchCmd)
-	sb.WriteString("Do NOT call sense_status — index health was verified at session start.\n")
-	sb.WriteString("Use Sense MCP tools for ALL codebase understanding — do not use grep, glob, Read, Bash, or agents before loading Sense.")
+	// A light, task-layer hint — NOT an imperative gate. The Sense tools are
+	// pre-loaded (alwaysLoad in .mcp.json), so there is no ToolSearch hop to
+	// require and nothing to "load first". We just point at the resolved code
+	// map and let the model reach for it; grep/ls stay available for the cases
+	// where they genuinely fit.
+	sb.WriteString("A resolved code map for this repo is already loaded: sense_search, sense_graph, sense_blast, sense_conventions are callable now (no setup call needed).\n")
+	sb.WriteString("For structural questions — who calls X, what breaks if X changes, how symbols relate, what conventions to follow — these are faster and more complete than grep/glob/file-walking.\n")
+	sb.WriteString("Index health was verified at session start, so there is no need to call sense_status.")
 
 	summaryPath := filepath.Join(dir, ".sense", "summary.md")
 	if summary, err := os.ReadFile(summaryPath); err == nil && len(bytes.TrimSpace(summary)) > 0 {

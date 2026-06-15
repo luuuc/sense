@@ -1,7 +1,5 @@
 package hook
 
-const toolSearchCmd = `ToolSearch("select:mcp__sense__sense_graph,mcp__sense__sense_search,mcp__sense__sense_blast,mcp__sense__sense_conventions")`
-
 type hookResponse struct {
 	AdditionalContext string `json:"additionalContext,omitempty"`
 }

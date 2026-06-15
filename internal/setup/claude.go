@@ -94,6 +94,16 @@ func writeMCPJSON(root string) (bool, error) {
 		"command":            "sense",
 		"args":               []any{"mcp"},
 		"serverInstructions": mcpio.ServerInstructions,
+		// Pre-load Sense's tools into the initial tool set instead of letting
+		// Claude Code defer them behind ToolSearch. Deferred MCP tools are
+		// only callable after the model first invokes ToolSearch to load their
+		// schemas; in practice the model skips that hop whenever an obvious
+		// grep/ls target exists, so the structural tools (sense_graph,
+		// sense_blast) never ran. alwaysLoad makes them callable from turn 1,
+		// so reaching for Sense is the path of least resistance, not an extra
+		// step. Claude Code reads this per-server field (v2.1.121+); other MCP
+		// clients ignore the unknown key.
+		"alwaysLoad": true,
 	}
 
 	existing, err := readJSONFile(path)
