@@ -2,6 +2,7 @@ package resolve_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/model"
@@ -158,6 +159,65 @@ func TestInheritedNoOpWithoutAncestryMap(t *testing.T) {
 		if r.Confidence >= extract.ConfidenceConvention {
 			t.Errorf("without ancestry, resolution must not reach inherited-path confidence; got %v", r.Confidence)
 		}
+	}
+}
+
+func TestInheritedTerminatesOnCycle(t *testing.T) {
+	// A cyclic inherits graph (A < B, B < A) must not hang. The method is
+	// defined nowhere, so resolution fails — the point is that it returns.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "A", FileID: 1, Language: "ruby"},
+		{ID: 2, Qualified: "B", FileID: 2, Language: "ruby"},
+	}
+	ix := resolve.NewIndex(rs).WithInheritance(map[string][]string{
+		"A": {"B"},
+		"B": {"A"},
+	})
+	done := make(chan struct{})
+	go func() {
+		ix.Resolve(resolve.Request{
+			Target:         "A#whatever",
+			Kind:           model.EdgeCalls,
+			SourceFileID:   99,
+			BaseConfidence: 1.0,
+		})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolveInherited did not terminate on a cyclic inherits graph")
+	}
+}
+
+func TestInheritedMultiParentSameDepthIsAmbiguous(t *testing.T) {
+	// A class recorded with two superclasses both defining the method (reopened
+	// class with divergent superclass clauses) is an ambiguous pick: the result
+	// must be flagged Ambiguous and confidence clamped, not silently confident.
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Sub", FileID: 1, Language: "ruby"},
+		{ID: 2, Qualified: "ParentA", FileID: 2, Language: "ruby"},
+		{ID: 3, Qualified: "ParentA#perform", FileID: 2, Language: "ruby", Receiver: extract.ReceiverInstance},
+		{ID: 4, Qualified: "ParentB", FileID: 3, Language: "ruby"},
+		{ID: 5, Qualified: "ParentB#perform", FileID: 3, Language: "ruby", Receiver: extract.ReceiverInstance},
+	}
+	ix := resolve.NewIndex(rs).WithInheritance(map[string][]string{
+		"Sub": {"ParentA", "ParentB"},
+	})
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Sub#perform",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   99,
+		BaseConfidence: extract.ConfidenceConvention,
+	})
+	if !ok {
+		t.Fatal("expected resolution to one of the two parents")
+	}
+	if !r.Ambiguous {
+		t.Errorf("two ancestors at the same depth defining the method must flag Ambiguous; got %+v", r)
+	}
+	if r.Confidence > 0.8 {
+		t.Errorf("ambiguous inherited pick must clamp confidence to <=0.8, got %v", r.Confidence)
 	}
 }
 
