@@ -859,3 +859,99 @@ func TestResolveCrossNamespaceColonColonDemotedBelowFloor(t *testing.T) {
 		t.Error("single match should not be flagged ambiguous")
 	}
 }
+
+// The four tests below are the fixture-first gate for the namespaced-inheritance
+// fix. The extractor emits an inherits edge with the bare ancestor "Base" (see
+// ruby.TestRelativeSuperclassEmitsBareAncestorName); the resolver must resolve it
+// by walking the source's enclosing scopes outward, mirroring Ruby/Rust constant
+// lookup. Collision-free: a single Base, a single Widget per case.
+
+// TestResolveInheritsRelativeAncestorViaLexicalScope — RED until resolveLexical
+// lands. A subclass nested in Shop::Items names its superclass relatively
+// (`< Base`); the real base is Shop::Base one level up. Resolution must try
+// Shop::Items::Base then Shop::Base and bind the first that exists.
+func TestResolveInheritsRelativeAncestorViaLexicalScope(t *testing.T) {
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Shop::Base", FileID: 1},
+		{ID: 2, Qualified: "Shop::Items::Widget", FileID: 1},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:                "Base",
+		Kind:                  model.EdgeInherits,
+		SourceFileID:          1,
+		SourceQualified:       "Shop::Items::Widget",
+		SourceParentQualified: "Shop::Items",
+		BaseConfidence:        1.0,
+	})
+	if !ok || r.SymbolID != 1 {
+		t.Fatalf("relative ancestor should resolve to Shop::Base (id 1) via lexical scope, got ok=%v id=%d", ok, r.SymbolID)
+	}
+	if r.Confidence != 1.0 {
+		t.Errorf("unique nesting hit should keep full confidence, got %v", r.Confidence)
+	}
+}
+
+// TestResolveInheritsRelativeAncestorInnermostWins — RED until the fix. When a
+// matching constant exists at more than one enclosing level, Ruby binds the
+// innermost; resolution must too.
+func TestResolveInheritsRelativeAncestorInnermostWins(t *testing.T) {
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Shop::Base", FileID: 1},
+		{ID: 3, Qualified: "Shop::Items::Base", FileID: 1},
+		{ID: 2, Qualified: "Shop::Items::Widget", FileID: 1},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:                "Base",
+		Kind:                  model.EdgeInherits,
+		SourceFileID:          1,
+		SourceQualified:       "Shop::Items::Widget",
+		SourceParentQualified: "Shop::Items",
+		BaseConfidence:        1.0,
+	})
+	if !ok || r.SymbolID != 3 {
+		t.Fatalf("innermost Shop::Items::Base (id 3) should win, got ok=%v id=%d", ok, r.SymbolID)
+	}
+}
+
+// TestResolveInheritsRelativeAncestorNoCandidateDropped — precision guard (green
+// today and after the fix). A relative ancestor with no matching symbol at ANY
+// enclosing level must NOT resolve: a known gap beats a fabricated base.
+func TestResolveInheritsRelativeAncestorNoCandidateDropped(t *testing.T) {
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Shop::Base", FileID: 1},
+		{ID: 2, Qualified: "Shop::Items::Widget", FileID: 1},
+	}
+	ix := resolve.NewIndex(rs)
+	if _, ok := ix.Resolve(resolve.Request{
+		Target:                "Nonexistent",
+		Kind:                  model.EdgeInherits,
+		SourceFileID:          1,
+		SourceQualified:       "Shop::Items::Widget",
+		SourceParentQualified: "Shop::Items",
+		BaseConfidence:        1.0,
+	}); ok {
+		t.Error("a relative ancestor with no matching symbol must not resolve")
+	}
+}
+
+// TestResolveInheritsQualifiedAncestorExactMatch — no-regression: a fully-
+// qualified ancestor still resolves via the existing exact path at full
+// confidence (this is why `< Spree::Base` already works).
+func TestResolveInheritsQualifiedAncestorExactMatch(t *testing.T) {
+	rs := []model.SymbolRef{
+		{ID: 1, Qualified: "Shop::Base", FileID: 1},
+		{ID: 2, Qualified: "Shop::Items::Widget", FileID: 1},
+	}
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "Shop::Base",
+		Kind:           model.EdgeInherits,
+		SourceFileID:   1,
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.SymbolID != 1 {
+		t.Errorf("qualified ancestor should resolve to id 1, got ok=%v id=%d", ok, r.SymbolID)
+	}
+}
