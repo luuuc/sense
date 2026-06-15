@@ -84,6 +84,13 @@ end`,
     AccountRawDistributionWorker.perform_async(json, account_id)
   end
 end`,
+		// Direct enqueue of the base wrapper — gates the intra-class
+		// perform → distribute! → push_bulk chain on its own.
+		"app/services/pin_service.rb": `class PinService
+  def call
+    RawDistributionWorker.perform_async(json, account_id)
+  end
+end`,
 	}
 
 	repo := t.TempDir()
@@ -146,6 +153,7 @@ end`,
 		"MoveService#call",              // own-#perform wrapper
 		"AddToCollectionService#call",   // super-delegating subclass
 		"RemoveFeaturedTagService#call", // no-own-#perform subclass (inherited resolution)
+		"PinService#call",               // base wrapper, intra-class perform → distribute! → push_bulk
 	}
 	for _, q := range want {
 		if !reached[q] {
