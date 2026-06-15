@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.5.0] - 2026-06-15
+
+### Features
+
+- resolve class_name_attribute config-string edges
 ## [1.4.0] - 2026-06-15
 
 ### Features
