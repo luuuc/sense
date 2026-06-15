@@ -1,11 +1,30 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.3.0] - 2026-06-15
+
+### Bug Fixes
+
+- pre-load Sense tools, retire ToolSearch adoption gate
+- credit all location-pin forms in cited-recall scorer
+
+### Features
+
+- lead report with split mention/cited/billed axes
+
+### Refactoring
+
+- rework scenarios to grep-hostile relational seams
 ## [1.2.0] - 2026-06-14
 
 ### Features
 
 - register Sense MCP with Codex via .codex/config.toml
+- write OpenCode adoption plugin steering models to Sense tools
+- add Codex and OpenCode/Ollama harness runners
+- score gold-target recall alongside fairness
+- add model-sweep, variance, and session runners
+- add Rails-vertical scenarios and pin their commits
 ## [1.1.0] - 2026-06-10
 
 ### Features
