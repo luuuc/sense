@@ -126,6 +126,7 @@ def build_per_scenario_table(results):
             m = r.get("metrics", {})
 
             cg = r.get("citation_grounding") or {}
+            gr = r.get("gold_recall") or {}
             rows.append({
                 "tool": tool,
                 "fairness_score": r.get("fairness_score"),
@@ -135,6 +136,17 @@ def build_per_scenario_table(results):
                 "llm_quality": r.get("llm_quality"),
                 "efficiency": r.get("efficiency"),
                 "tokens": m.get("token_total_billed", m.get("token_total", 0)),
+                # Billed-context axis — first-class headline. token_total_billed
+                # is input+output billed; token_input_uncached is the uncached
+                # prompt tokens (what a code map saves by not re-reading files).
+                "billed": m.get("token_total_billed", m.get("token_total", 0)),
+                "uncached_in": m.get("token_input_uncached"),
+                # Gold recall — the two split precision/completeness axes.
+                "mention_recall": gr.get("mention_recall"),
+                "cited_recall": gr.get("cited_recall"),
+                "gold_mentioned": gr.get("mentioned"),
+                "gold_cited": gr.get("cited"),
+                "gold_total": gr.get("total"),
                 "wall_time": m.get("wall_time_seconds"),
                 "cost_usd": m.get("cost_usd"),
                 "cost_estimated": bool(m.get("cost_estimated")),
@@ -265,6 +277,58 @@ def _fmt_cites(row, width=7):
     return f"{s:>{width}}"
 
 
+def _fmt_recall(recall, hit, total):
+    """`83% (10/12)` for a gold-recall cell, `—` when no gold declared."""
+    if recall is None:
+        return "—"
+    if hit is not None and total:
+        return f"{recall:.0%} ({hit}/{total})"
+    return f"{recall:.0%}"
+
+
+def _fmt_billed_delta(rows):
+    """baseline→sense billed-context delta as a signed percent, or None.
+
+    Negative = Sense loaded less context (the win). Needs exactly the two
+    arms present with positive baseline billed tokens.
+    """
+    by_tool = {r["tool"]: r for r in rows}
+    b, s = by_tool.get("baseline"), by_tool.get("sense")
+    if not (b and s):
+        return None
+    bb, sb = b.get("billed"), s.get("billed")
+    if not bb or sb is None:
+        return None
+    return (sb - bb) / bb
+
+
+def _headline_table_md(rows):
+    """The PRIMARY per-repo table: mention / cited / billed context.
+
+    Rows alphabetical by tool so baseline sits above sense and the comparison
+    reads top-to-bottom; a trailing delta line states the billed-context gap.
+    """
+    out = []
+    out.append("| Tool | Mention recall | Cited recall (fixed) | Billed ctx | Uncached in |")
+    out.append("|------|---------------:|---------------------:|-----------:|------------:|")
+    for row in sorted(rows, key=lambda r: r["tool"]):
+        tool = row["tool"]
+        if row.get("failed"):
+            out.append(f"| {tool} | **FAILED** | — | — | — |")
+            continue
+        men = _fmt_recall(row.get("mention_recall"), row.get("gold_mentioned"), row.get("gold_total"))
+        cit = _fmt_recall(row.get("cited_recall"), row.get("gold_cited"), row.get("gold_total"))
+        billed = f"{row['billed']:,}" if row.get("billed") else "—"
+        unc = f"{row['uncached_in']:,}" if row.get("uncached_in") else "—"
+        out.append(f"| {tool} | {men} | {cit} | {billed} | {unc} |")
+    delta = _fmt_billed_delta(rows)
+    if delta is not None:
+        direction = "Sense loads less" if delta < 0 else "Sense loads more"
+        out.append("")
+        out.append(f"_Billed-context Δ (sense vs baseline): **{delta:+.0%}** — {direction}._")
+    return out
+
+
 def _rank_badge(i):
     if i == 0:
         return " :1st_place_medal:"
@@ -351,9 +415,15 @@ def format_markdown(tables, aggregate, header):
     lines.append("")
     lines.append(f"Results: {len(aggregate)} tools × {len(tables)} scenarios")
     lines.append("")
-    lines.append("Two-layer scoring: **Fairness** = 0.10·keyword_coverage + 0.55·llm_quality + 0.15·citation_grounding + 0.20·efficiency. The judge layer (llm_quality) is the 55% headline — keyword overlap dropped to a 10% smoke test. Fairness cells render `—` if `judge.sh` has not been run on a result. **Adoption** (tool fluency + discoverability) is for code-intel-vs-code-intel comparisons only.")
+    lines.append("**The headline is three separated axes, not the composite.** Each repo leads with a PRIMARY table reporting the axes that actually decompose Sense's value:")
     lines.append("")
-    lines.append("**Citations** are `file.ext:line` or `file.ext:Symbol` references the assistant printed in its answer. The scorer checks each one against the repo at `run_meta.repo_commit`. A `0/0` Cites cell means the answer had no structured citations to verify — neither penalized nor rewarded; prose-only claims are scored by `llm_quality` instead. The full list of ungrounded citations lives in [`citation-hallucinations.md`](citation-hallucinations.md).")
+    lines.append("- **Mention recall** — share of the gold reference set the answer named at all (completeness of the map).")
+    lines.append("- **Cited recall** — share pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous basename+line). Precision: an agent can jump straight there. This is the FIXED metric — the old `_cited` demanded a contiguous `path:N` and under-credited baseline.")
+    lines.append("- **Billed context** — `token_total_billed` (input+output billed) with `token_input_uncached` alongside. Same answer reached with less context loaded is the one scorer-independent Sense win (lobsters −34%). Lower is better.")
+    lines.append("")
+    lines.append("The locked **fairness composite** (`0.10·keyword_coverage + 0.55·llm_quality + 0.15·citation_grounding + 0.20·efficiency`) is reported **as a secondary table per repo** — its 30%-effective efficiency weight masks precision, so it is no longer the headline. The formula is unchanged. **Adoption** (tool fluency + discoverability) is for code-intel-vs-code-intel comparisons only.")
+    lines.append("")
+    lines.append("**Citations** (in the secondary table) are `file.ext:line` or `file.ext:Symbol` references the assistant printed in its answer. The scorer checks each one against the repo at `run_meta.repo_commit`. A `0/0` Cites cell means the answer had no structured citations to verify. The full list of ungrounded citations lives in [`citation-hallucinations.md`](citation-hallucinations.md).")
     lines.append("")
 
     lines.append("### Reading the scores")
@@ -373,6 +443,17 @@ def format_markdown(tables, aggregate, header):
         if desc:
             lines.append(f"> {desc}")
             lines.append("")
+
+        # PRIMARY — the three separated axes. Tools alphabetical (baseline,
+        # sense) so the baseline→sense comparison reads top-to-bottom, with a
+        # billed-context delta when both arms are present.
+        lines.extend(_headline_table_md(table["rows"]))
+        lines.append("")
+
+        # SECONDARY — the locked fairness composite and its components, kept
+        # intact but demoted. Ranked by fairness as before.
+        lines.append("<details><summary>Secondary — locked fairness composite & components</summary>")
+        lines.append("")
         lines.append("| Rank | Tool | Fairness | Adoption | Keyword Cov. | LLM Quality | Efficiency | Tokens | Time | Cost | Cites |")
         lines.append("|-----:|------|--------:|---------:|------------:|------------:|---------:|-------:|-----:|-----:|------:|")
 
@@ -402,6 +483,8 @@ def format_markdown(tables, aggregate, header):
             lines.append(
                 f"| {i+1} | {row['tool']}{badge} | {fa} | {ad} | {kw} | {lq} | {ef} | {tk} | {wt} | {co} | {ci} |"
             )
+        lines.append("")
+        lines.append("</details>")
         lines.append("")
 
     lines.append("### Aggregate")
