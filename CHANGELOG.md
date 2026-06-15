@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.6.0] - 2026-06-15
+
+### Features
+
+- resolve relatively-named superclasses via lexical scope
 ## [1.5.0] - 2026-06-15
 
 ### Features
