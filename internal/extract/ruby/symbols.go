@@ -81,6 +81,10 @@ func (w *walker) emitInheritanceEdges(n *sitter.Node, qualified string) error {
 	if target == "" {
 		return nil
 	}
+	// Record the superclass so a `super` call inside one of this class's
+	// methods can resolve to the parent's same-named method (the worker
+	// run-method hierarchy chains through `super`).
+	w.classSuperclass[qualified] = target
 	line := extract.Line(sup.StartPosition())
 	if err := w.emit.Edge(extract.EmittedEdge{
 		SourceQualified: qualified,
@@ -182,7 +186,54 @@ func (w *walker) handleMethod(n *sitter.Node, scope []string, singleton bool) er
 	if err := w.emitBareIdentifierCalls(body, qualified, extract.ConfidenceDynamic, methodParamNames(n, w.source)); err != nil {
 		return err
 	}
+	if err := w.emitSuperEdge(body, parent, qualified, name, singleton); err != nil {
+		return err
+	}
 	return w.collectConstRefs(body, qualified, false)
+}
+
+// emitSuperEdge emits a calls edge from a method to its superclass's same-named
+// method when the body contains a `super` call. `super` (bare or `super(args)`)
+// dispatches to the parent's method of the same name — the link a worker
+// subclass uses to reach an inherited run method (`CollectionRawDistributionWorker#perform`
+// → `RawDistributionWorker#perform`). The target is built from the enclosing
+// class's recorded superclass and the method's own name; the dispatch separator
+// (`#` instance, `.` singleton) matches the method's receiver. One edge per
+// method regardless of how many `super` calls appear. Emitted at convention
+// confidence (0.9): super-to-direct-superclass is reliable in single
+// inheritance but module prepends/MRO can intervene, so it is never 1.0. A
+// method whose class has no recorded superclass (top-level, module, or no
+// superclass) emits nothing rather than a guess.
+func (w *walker) emitSuperEdge(body *sitter.Node, parent, qualified, methodName string, singleton bool) error {
+	if body == nil || parent == "" {
+		return nil
+	}
+	superclass := w.classSuperclass[parent]
+	if superclass == "" {
+		return nil
+	}
+	hasSuper := false
+	if err := extract.WalkNamedDescendants(body, "super", func(*sitter.Node) error {
+		hasSuper = true
+		return nil
+	}); err != nil {
+		return err
+	}
+	if !hasSuper {
+		return nil
+	}
+	sep := "#"
+	if singleton {
+		sep = "."
+	}
+	line := extract.Line(body.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: qualified,
+		TargetQualified: superclass + sep + methodName,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      extract.ConfidenceConvention,
+	})
 }
 
 // isTestSuperclass returns true if the superclass name indicates a test base class.

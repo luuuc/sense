@@ -1123,6 +1123,21 @@ func (h *harness) removeStaleFiles() error {
 // single commit is reasonable at pitch-target sizes (≤30K symbols,
 // ≤120K edges ⇒ low-MB range, commits in milliseconds). Much larger
 // repos will want a batched commit strategy; not this card's job.
+// buildAncestry derives the class-ancestry map (child qualified name → direct
+// superclass qualified names) from the pending `inherits` edges, so the
+// resolver can bind an inherited-method call (`Sub#m` with no own `Sub#m`) to
+// the nearest `Ancestor#m`. Built from the in-memory edge buffer — no DB round
+// trip — and keyed by the same qualified names the targets carry.
+func (h *harness) buildAncestry() map[string][]string {
+	ancestry := make(map[string][]string)
+	for _, pe := range h.pendingEdges {
+		if pe.Kind == model.EdgeInherits && pe.SourceQualified != "" && pe.TargetName != "" {
+			ancestry[pe.SourceQualified] = append(ancestry[pe.SourceQualified], pe.TargetName)
+		}
+	}
+	return ancestry
+}
+
 func (h *harness) resolveAndWriteEdges() error {
 	if len(h.pendingEdges) == 0 {
 		return nil
@@ -1131,7 +1146,7 @@ func (h *harness) resolveAndWriteEdges() error {
 	if err != nil {
 		return fmt.Errorf("load symbols for edge resolution: %w", err)
 	}
-	resolver := resolve.NewIndex(refs)
+	resolver := resolve.NewIndex(refs).WithInheritance(h.buildAncestry())
 
 	var written, unresolved, ambiguous int
 	err = h.idx.InTx(h.ctx, func() error {
