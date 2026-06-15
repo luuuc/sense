@@ -171,6 +171,19 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 		return r, ok
 	}
 
+	// Step 2b: inherits lexical-scope resolution. A superclass written relative to
+	// the subclass's namespace (`class Sub < Base` where the real base is
+	// `Outer::Base`) is emitted as the bare written text and misses the exact
+	// match; resolve it the way Ruby/Rust constant lookup does, by walking the
+	// subclass's enclosing scopes outward. inherits is not a gated kind, so this
+	// is its only resolution path past the exact match — and it repairs the
+	// `inherits` edges the ancestry map (resolveInherited) is built from.
+	if req.Kind == model.EdgeInherits {
+		if r, ok := ix.resolveLexicalInherits(target, req); ok {
+			return r, true
+		}
+	}
+
 	// Step 2.5: inherited-method resolution (gated kinds only — method dispatch,
 	// same as the leaf fallback below). A `Sub#m` / `Sub.m` dispatch with no own
 	// `Sub#m` symbol resolves to the nearest `Ancestor#m` up the class chain —
@@ -267,6 +280,57 @@ func (ix *Index) resolveInherited(target string, req Request) (Result, bool) {
 		frontier = next
 	}
 	return Result{}, false
+}
+
+// resolveLexicalInherits resolves an `inherits` target that missed the exact
+// match by walking the subclass's enclosing scopes outward, mirroring Ruby/Rust
+// constant lookup. A superclass named relative to the subclass's namespace
+// (`class Sub < Base` two modules deep, where the real base is `Outer::Base`) is
+// emitted by the extractor as the bare written text "Base", so the exact
+// byQualified lookup misses. Trying `<enclosing-scope><sep>Base` from the
+// innermost enclosing scope outward binds the same symbol the language would —
+// the innermost match wins (Ruby's rule), and a name that exists at no enclosing
+// scope resolves to nothing rather than a fabricated base (a wrong base misleads
+// blast worse than a gap).
+//
+// Scoped to inherits on purpose: gated kinds already have resolveByLeaf, and a
+// general scope walk for calls/references would reintroduce exactly the
+// cross-scope guessing isUnverifiedCrossScope exists to demote. The separator is
+// derived from the source's own qualified name so the walk stays language-
+// agnostic; when it cannot be determined (no enclosing scope, e.g. a top-level
+// subclass) the step is a no-op and the edge stays unresolved.
+func (ix *Index) resolveLexicalInherits(target string, req Request) (Result, bool) {
+	sep := separator(req.SourceQualified, req.SourceParentQualified)
+	if sep == "" {
+		return Result{}, false
+	}
+	// An absolute reference (leading separator, e.g. Ruby's `::Foo`) forces
+	// top-level lookup: try the bare form only, never prepend an enclosing scope.
+	if strings.HasPrefix(target, sep) {
+		bare := target[len(sep):]
+		if m := ix.byQualified[bare]; len(m) > 0 {
+			return pickBest(m, req.SourceFileID, req.BaseConfidence), true
+		}
+		return Result{}, false
+	}
+	// Walk the enclosing scopes outward, innermost first. The bare-target case
+	// (the "" scope) was already tried by the exact match, so it is skipped here.
+	for scope := req.SourceParentQualified; scope != ""; scope = trimLastSegment(scope, sep) {
+		if m := ix.byQualified[scope+sep+target]; len(m) > 0 {
+			return pickBest(m, req.SourceFileID, req.BaseConfidence), true
+		}
+	}
+	return Result{}, false
+}
+
+// trimLastSegment drops the trailing `<sep>segment` of a qualified name, or
+// returns "" when no separator remains — one step in walking enclosing scopes
+// outward.
+func trimLastSegment(qualified, sep string) string {
+	if i := strings.LastIndex(qualified, sep); i >= 0 {
+		return qualified[:i]
+	}
+	return ""
 }
 
 // resolveQualified attempts an exact byQualified match. The bool done reports
