@@ -36,6 +36,13 @@ type Index struct {
 	// a coincidental same-named symbol that lives in a test file. Built from the
 	// same SymbolRefs; a file id absent from the map is treated as non-test.
 	fileIsTest map[int64]bool
+	// ancestry maps a class's qualified name to its direct superclass qualified
+	// names (as written on the `inherits` edge). It powers inherited-method
+	// resolution: a call to `Sub#m` with no own `Sub#m` resolves to the nearest
+	// `Ancestor#m` up the class chain. Empty (the default from NewIndex) makes
+	// that step a no-op; WithInheritance populates it from the scan's pending
+	// inherits edges.
+	ancestry map[string][]string
 }
 
 // NewIndex builds an Index from the bulk SymbolRefs output. The input
@@ -61,6 +68,22 @@ func NewIndex(refs []model.SymbolRef) *Index {
 	}
 	return ix
 }
+
+// WithInheritance attaches a class-ancestry map (child qualified name → direct
+// superclass qualified names, as written on `inherits` edges) and returns the
+// Index for chaining. It enables inherited-method resolution; passing nil or
+// omitting the call leaves that step a no-op. Built by the scan harness from
+// the pending inherits edges before the resolve pass.
+func (ix *Index) WithInheritance(ancestry map[string][]string) *Index {
+	ix.ancestry = ancestry
+	return ix
+}
+
+// maxAncestryDepth bounds the superclass walk in inherited-method resolution.
+// Real Ruby class chains are shallow (mastodon's deepest worker chain is
+// StatusUpdate < Distribution < RawDistribution, depth 2); the cap is a
+// cycle/runaway guard, not a real limit.
+const maxAncestryDepth = 16
 
 // Request carries everything the resolver needs to turn one pending
 // edge's target-name string into a symbol_id. SourceQualified and
@@ -109,6 +132,7 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //
 //  1. Apply receiver rewrite (`self.` / `Self::` ⇒ parent-prefixed)
 //     when the source symbol has a parent qualified name.
+//
 //  2. Exact match via byQualified. Single hit ⇒ BaseConfidence.
 //     Multiple ⇒ same-file preferred, else lowest-id; confidence
 //     clamped to ambiguousConfidence. For calls/tests/references the
@@ -118,6 +142,14 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //     emitted at ConfidenceUnresolved (receiver unknown) skips the exact
 //     shortcut entirely: its byQualified hit would be a leaf coincidence, so
 //     it goes straight to the gated fallback.
+//
+//     Inherited-method step (between 2 and 3; calls/tests/references only):
+//     a `Sub#m` / `Sub.m` dispatch with no own `Sub#m` resolves to the
+//     nearest `Ancestor#m` up the class `inherits` chain (resolveInherited).
+//     Verified against the real chain, so it is preferred over the leaf
+//     fallback, which would demote the same hit as a cross-scope guess.
+//     No-op without an ancestry map.
+//
 //  3. For calls, tests, and references edges, fall back to
 //     unqualified-name match via byName. Candidates in a different code
 //     language than the source are dropped (filterByLanguage), test-file
@@ -127,6 +159,7 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //     (the namespace or receiver type was discarded) is demoted below
 //     blast's floor as an unverified cross-scope guess unless the
 //     qualifier can be verified — see isUnverifiedCrossScope.
+//
 //  4. No match ⇒ ok=false.
 func (ix *Index) Resolve(req Request) (Result, bool) {
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)
@@ -138,13 +171,101 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 		return r, ok
 	}
 
-	// Step 3: unqualified leaf fallback, gated kinds only.
+	// Step 2.5: inherited-method resolution (gated kinds only — method dispatch,
+	// same as the leaf fallback below). A `Sub#m` / `Sub.m` dispatch with no own
+	// `Sub#m` symbol resolves to the nearest `Ancestor#m` up the class chain —
+	// the real method the call runs (a worker subclass reaching an inherited run
+	// method, e.g. `AccountRawDistributionWorker#perform` ⇒
+	// `RawDistributionWorker#perform`). Verified against the actual `inherits`
+	// chain, so it is a real edge, not a same-name guess — preferred over the
+	// leaf fallback below, which would demote it as cross-scope.
 	if gatedKind {
+		if r, ok := ix.resolveInherited(target, req); ok {
+			return r, true
+		}
+
+		// Step 3: unqualified leaf fallback.
 		if r, ok := ix.resolveByLeaf(target, req); ok {
 			return r, true
 		}
 	}
 
+	return Result{}, false
+}
+
+// resolveInherited resolves a method-dispatch target (`Sub#m` / `Sub.m`) whose
+// exact qualified form missed, by walking Sub's class-ancestry chain and
+// binding to the nearest ancestor that defines the method. This is real Ruby
+// (and general single-inheritance) method lookup: the call dispatches to the
+// inherited definition. It is intentionally narrow:
+//
+//   - Only `#` (instance) and `.` (singleton) dispatch — never `::` namespace
+//     or a bare leaf, which carry no receiver type to inherit through.
+//   - Only when the receiver type is a known class in the ancestry map; a
+//     receiver with no recorded superclass (or a non-class) yields nothing,
+//     so a call into a gem/stdlib type is never guessed at.
+//   - The first ancestor (nearest in MRO order) that defines `<sep>m` wins;
+//     candidates are language/test-gated exactly like the exact-match path, and
+//     confidence follows pickBest (a unique ancestor keeps BaseConfidence — the
+//     dispatch is as certain as the inherits chain).
+//
+// The walk is breadth-first with a `seen` cycle guard because the ancestry map
+// is slice-valued: a class reopened across files with divergent superclass
+// clauses (rare, but real Ruby) yields multiple parents, and a future ancestry
+// source (module includes) would too. Single inheritance collapses it to a
+// linear walk. maxAncestryDepth bounds a pathological chain; `seen` handles
+// cycles (`class A < B` / `class B < A`).
+//
+// Known limits (a wrong edge here is bounded and accepted, never 1.0):
+//   - Ancestor names are matched as written on the `inherits` edge, so a parent
+//     referenced by a short name from inside a namespace
+//     (`class Foo < Bar` where the real parent is `NS::Bar`) won't match
+//     `byQualified` and the step no-ops — the same limitation the rest of the
+//     resolver carries. Fully-qualified superclasses (mastodon's `< AP::X`)
+//     resolve correctly.
+//   - Module `prepend`/MRO is not modelled: only class `inherits` ancestry is
+//     walked, so a method intercepted by a prepended module still resolves to
+//     the superclass definition.
+//
+// Returns ok=false when no ancestor defines the method, leaving the leaf
+// fallback to try a same-name match.
+func (ix *Index) resolveInherited(target string, req Request) (Result, bool) {
+	if len(ix.ancestry) == 0 {
+		return Result{}, false
+	}
+	leaf, sep := unqualifiedNameSep(target)
+	if sep != "#" && sep != "." {
+		return Result{}, false
+	}
+	recvType := strings.TrimSuffix(target, sep+leaf)
+	if recvType == "" || len(ix.ancestry[recvType]) == 0 {
+		return Result{}, false
+	}
+
+	// Breadth-first walk up the superclass chain, nearest depth first. Matches
+	// are collected across the whole depth-level before deciding, so two parents
+	// at the same hop that both define the method resolve through pickBest as
+	// ambiguous (clamped + flagged) rather than silently taking the first.
+	seen := map[string]bool{recvType: true}
+	frontier := ix.ancestry[recvType]
+	for depth := 0; depth < maxAncestryDepth && len(frontier) > 0; depth++ {
+		var matches []model.SymbolRef
+		var next []string
+		for _, anc := range frontier {
+			if seen[anc] {
+				continue
+			}
+			seen[anc] = true
+			matches = append(matches, ix.byQualified[anc+sep+leaf]...)
+			next = append(next, ix.ancestry[anc]...)
+		}
+		matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
+		matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
+		if len(matches) > 0 {
+			return pickBest(matches, req.SourceFileID, req.BaseConfidence), true
+		}
+		frontier = next
+	}
 	return Result{}, false
 }
 

@@ -67,6 +67,7 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, filePath string, emit
 		emittedSynthetics: make(map[string]bool),
 		pkgBindings:       make(map[string]string),
 		methodVisibility:  make(map[string]string),
+		classSuperclass:   make(map[string]string),
 	}
 	w.collectConstants(tree.RootNode(), nil)
 	if err := w.walk(tree.RootNode(), nil); err != nil {
@@ -115,6 +116,7 @@ type walker struct {
 	emittedSynthetics  map[string]bool              // dedup synthetic base symbols (ruby-core:Struct/Data) per file
 	pkgBindings        map[string]string            // unqualified name → qualified name for file-level constants
 	methodVisibility   map[string]string            // method_qualified → public/private/protected, from the per-class pre-pass
+	classSuperclass    map[string]string            // class_qualified → superclass name as written, for `super` edges
 }
 
 // walk visits node and its children under the given class/module scope.

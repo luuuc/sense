@@ -29,6 +29,10 @@ func (w *walker) emitCall(n *sitter.Node, source string, scope []string, localTy
 		return nil
 	}
 
+	if handled, err := w.tryEmitEnqueueEdge(n, methodName, source, scope, localTypes, ivarTypes); handled {
+		return err
+	}
+
 	switch methodName {
 	case "send", "public_send", "__send__":
 		target, ok := literalSendTarget(n, w.source)
@@ -79,6 +83,10 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 	if methodName == "" {
 		return nil
 	}
+
+	if handled, err := w.tryEmitEnqueueEdge(n, methodName, source, scope, localTypes, ivarTypes); handled {
+		return err
+	}
 	line := extract.Line(n.StartPosition())
 
 	switch methodName {
@@ -124,27 +132,31 @@ func (w *walker) emitCallWithConfidence(n *sitter.Node, source string, scope []s
 		return err
 	}
 
-	// If this call has a block, infer block parameter types from the
-	// receiver's collection type and walk the block body with an
-	// augmented local type map. When inference is not possible (non-
-	// collection method, destructuring params, unknown receiver type),
-	// we still walk the block so calls inside are not lost.
-	if block := n.ChildByFieldName("block"); block != nil {
-		paramTypes := w.inferBlockParamTypes(n, scope, localTypes, ivarTypes)
-		blockTypes := localTypes
-		if paramTypes != nil {
-			blockTypes = mergeMaps(localTypes, paramTypes)
-		}
-		if err := extract.WalkNamedDescendants(block, "call", func(c *sitter.Node) error {
-			if isInsideNestedBlock(c, block) {
-				return nil
-			}
-			return w.emitCall(c, source, scope, blockTypes, ivarTypes)
-		}); err != nil {
-			return err
-		}
+	return w.walkBlockCalls(n, source, scope, localTypes, ivarTypes)
+}
+
+// walkBlockCalls walks a call's block body (`foo(x) do |y| ... end`) for
+// nested call edges. Block parameter types are inferred from the receiver's
+// collection type when possible; when inference is not possible (non-
+// collection method, destructuring params, unknown receiver type) the block
+// is still walked so calls inside are not lost. A call with no block is a
+// no-op.
+func (w *walker) walkBlockCalls(n *sitter.Node, source string, scope []string, localTypes, ivarTypes map[string]string) error {
+	block := n.ChildByFieldName("block")
+	if block == nil {
+		return nil
 	}
-	return nil
+	paramTypes := w.inferBlockParamTypes(n, scope, localTypes, ivarTypes)
+	blockTypes := localTypes
+	if paramTypes != nil {
+		blockTypes = mergeMaps(localTypes, paramTypes)
+	}
+	return extract.WalkNamedDescendants(block, "call", func(c *sitter.Node) error {
+		if isInsideNestedBlock(c, block) {
+			return nil
+		}
+		return w.emitCall(c, source, scope, blockTypes, ivarTypes)
+	})
 }
 
 // coreNoiseMethods are ubiquitous core-Ruby / ActiveSupport methods
