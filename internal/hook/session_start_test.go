@@ -193,10 +193,10 @@ func TestSessionStartNoSenseStatusInstruction(t *testing.T) {
 	}
 	msg := resp["message"]
 	if strings.Contains(msg, "sense_status\"") {
-		t.Error("ToolSearch command should not include sense_status")
+		t.Error("tool hint should not include sense_status")
 	}
-	if !strings.Contains(msg, "Do NOT call sense_status") {
-		t.Error("message should instruct LLM not to call sense_status")
+	if !strings.Contains(msg, "no need to call sense_status") {
+		t.Error("message should steer the LLM away from a wasted sense_status call")
 	}
 }
 

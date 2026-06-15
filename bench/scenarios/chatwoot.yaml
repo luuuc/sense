@@ -1,43 +1,48 @@
-name: Chatwoot work session - add support for a new messaging channel
+name: Chatwoot work session - audit the Inbox contract before a teardown rework
 repo: chatwoot
 # Single-prompt session bench (run via bench/bench-sense-local.sh): all steps are
 # presented in ONE prompt and worked in order, so context accumulates the way a
 # real work session does. Rendered to the agent: the description + each step's
 # name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
 # NEUTRAL, it states the task, never the answer's shape, file paths, class or
-# method names, counts, or which tool to reach for. The recurring real task this
-# mirrors is "add a new messaging channel" (a WhatsApp/Telegram/Line-style
-# provider), Chatwoot's most iconic contribution, which naturally walks the
-# channel model + the Channelable concern, the outbound dispatch table in
-# SendReplyJob + the Base::SendOnChannelService contract and its per-channel
-# subclasses, the inbound webhook jobs + per-channel IncomingMessageService, the
-# send/webhook validation guards, and the spec matrix. The headline is CUMULATIVE
-# efficiency (tool calls, billed + context tokens, time) at held accuracy: across
-# these areas the baseline re-derives the structure each step while the map is
-# queried once and reused.
-description: 'You are a maintainer about to add support for a new messaging channel
-  to this platform, so agents can converse with customers over a new provider,
-  mirroring how the existing channels are built. Work through the tasks below one
-  at a time; each builds on what you learned in the previous one. Keep every answer
-  concrete with file:line so the next step (and a teammate opening the PR) can act
-  without re-exploring the codebase.'
+# method names, counts, or which tool to reach for.
+#
+# This is a CHANGE-IMPACT ticket, not an add-by-copying ticket. The recurring
+# real task it mirrors: a maintainer about to change how an Inbox (and all the
+# data attached to it) is torn down has to first audit EVERY place that depends
+# on the Inbox model before touching it. The must-find answer is the scattered
+# dependent set, callers spread across controllers, jobs, model concerns,
+# provider services, lib integrations and the enterprise overlay, most of them
+# reaching Inbox through an association or a shared concern, not by listing one
+# directory. The headline is whether the agent can assemble that fan-out
+# completely and cheaply: a structural query returns the resolved dependent set
+# in one shot, whereas reconstructing it by hand means grepping a very common
+# token (inbox appears across the whole messaging app) and reading to filter
+# signal from noise.
+description: 'You are a maintainer about to rework how an Inbox and everything
+  attached to it is handled when it (or its account) is torn down. Before touching
+  the model, you need a complete audit of what depends on the Inbox contract today,
+  so the rework does not silently break a dependent. Work through the tasks below
+  one at a time; each builds on what you learned in the previous one. Keep every
+  answer concrete with file:line so the next step (and a teammate opening the PR)
+  can act without re-exploring the codebase.'
 steps:
 - name: Orient in the codebase
   prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
-    project, how is the code organized, and where does the machinery that lets
-    agents send and receive messages over the different external providers live,
-    along with the shared pieces it is built on? Hand the next agent a map so they
-    can act with small, targeted lookups, not a fresh exploration of the codebase.
-    No Explore agents.
+    project, how is the code organized, and where does the model you are about to
+    rework sit, the thing an external messaging channel hangs off and that
+    conversations and contacts are attached to, along with the shared pieces it is
+    built on? Hand the next agent a map so they can act with small, targeted
+    lookups, not a fresh exploration of the codebase. No Explore agents.
     "
   checks:
   - type: word
-    value: Channel
+    value: Inbox
     required: true
   - type: word
-    value: Inbox
+    value: Channel
     required: false
-    description: Reached the inbox the channels hang off, not just the channel
+    description: Reached the channel the inbox hangs off, not just the inbox
   - type: response_richness
     value: '3'
     required: false
@@ -49,21 +54,43 @@ steps:
     value: sense_conventions
     required: false
     layer: adoption
-- name: Trace an outgoing reply to its channel-specific sender
-  prompt: "Task: trace how a single outgoing reply is routed to the concrete object
-    that delivers it over the right external provider. Start from where an outgoing
-    message is picked up and follow it down through to where the provider-specific
-    sender is selected and run. Give file:line for each layer and the order they
-    run.
+- name: Map the Inbox contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concerns it includes, the
+    associations other records hang off it through), and what does a teammate need
+    to know about that contract before changing it? Give file:line for the model and
+    each shared piece.
     "
   checks:
   - type: word
-    value: SendReplyJob
-    required: true
-    description: Found the dispatch that maps a channel to its sender
-  - type: word
-    value: perform_reply
+    value: concern
     required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: inbox.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how an inbox and its attached data are torn down
+  prompt: "Task: trace what happens to an inbox and everything attached to it when
+    it is destroyed. Start from where a destroy is triggered and follow it through
+    the heavy cleanup of its associated records. Give file:line for each layer and
+    the order they run, and note which associated records are cleaned up
+    asynchronously versus inline.
+    "
+  checks:
+  - type: word
+    value: DeleteObject
+    required: false
+    description: Found the async heavy-association cleanup
   - type: response_richness
     value: '4'
     required: true
@@ -71,70 +98,37 @@ steps:
     value: sense_graph
     required: false
     layer: adoption
-- name: Map the channel family and the shared contracts
-  prompt: "Task: a new channel will be built on the same shared pieces the existing
-    channels are built on, then customize a few things. Map the shared behavior a
-    channel inherits, both as a stored channel and as an outgoing sender, and,
-    crucially, which existing channels customize that shared behavior and how each
-    one differs. Be complete with file:line; a missed customization point is
-    behavior the new channel silently won't have.
+- name: Audit every dependent of the Inbox contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase
+    that depends on the Inbox model, so the rework cannot silently break one. Be
+    exhaustive and group them by area (request handling, background work, shared
+    model behavior, provider-specific services, library/integration code, and any
+    paid-tier overlay). Many depend on it indirectly, through an association or a
+    shared concern rather than by naming the class, so a surface text search will
+    miss some and drown the rest in unrelated matches. For each dependent give
+    file:line and one phrase on how it uses the inbox. A missed dependent is a
+    regression shipped.
     "
   checks:
-  - type: word
-    value: Channelable
-    required: true
-  - type: word
-    value: SendOnChannelService
-    required: true
-    description: Anchored on the outbound contract every sender implements
   - type: response_richness
     value: '6'
     required: true
-    description: Enumerated the shared contracts plus the per-channel customizations
-  - type: contains
-    value: channelable.rb
-    required: false
+    description: Enumerated the scattered dependent set across disjoint areas
   - type: no_grep
     value: no_grep
     required: false
     layer: adoption
   - type: mcp_tool_used
-    value: sense_graph
+    value: sense_blast
     required: false
     layer: adoption
-- name: Trace an incoming provider message to a stored message
-  prompt: "Task: trace how a message arriving from an external provider becomes a
-    stored conversation message. Start from where the provider's incoming
-    notification is received and follow it down through to where the conversation
-    and message are created for that specific provider. Give file:line for each
-    layer and the order they run.
+- name: Trace how inbox availability and identity are guarded
+  prompt: "Task: when work runs against an inbox in the background (assignment,
+    fetching, periodic maintenance), how does the code confirm it is operating on a
+    real, current inbox before acting? Trace where those guards live and what they
+    check. Give file:line throughout.
     "
   checks:
-  - type: word
-    value: IncomingMessage
-    required: true
-    description: Found the per-provider service that builds the stored message
-  - type: word
-    value: webhook
-    required: false
-  - type: response_richness
-    value: '4'
-    required: true
-  - type: mcp_tool_used
-    value: sense_graph
-    required: false
-    layer: adoption
-- name: Trace how sends and incoming notifications are validated
-  prompt: "Task: not every message is delivered or accepted. Trace how an outgoing
-    send checks it is targeting the right channel and is allowed to send, and how
-    an incoming notification confirms it really came from the provider before it is
-    processed. Give file:line throughout.
-    "
-  checks:
-  - type: word
-    value: validate
-    required: true
-    description: Found the outbound target-channel guard
   - type: response_richness
     value: '3'
     required: false
@@ -142,36 +136,29 @@ steps:
     value: sense_graph
     required: false
     layer: adoption
-- name: Find every site that must change to add a new channel
-  prompt: "Task: you will add the new channel. Find every place in the codebase
-    that must change for it to be stored, to send outgoing replies, to receive
-    incoming messages, and to be tested, including where the shared contracts are
-    depended on and where outgoing delivery is routed by channel. Be complete and
-    use file:line; a missed site means the new channel silently can't send or
-    receive.
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Inbox contract (how teardown and a
+    couple of its associations behave). Assess the full blast radius: which
+    dependents are at risk, which are most likely to break, and what must be
+    re-verified after the change, across every area you found. Be complete and use
+    file:line; rank by risk. A missed high-risk dependent is the one that pages
+    someone.
     "
   checks:
-  - type: word
-    value: Channelable
-    required: true
   - type: response_richness
     value: '6'
     required: true
-    description: Reached the dispatch table and the spec matrix, not just the channel model
-  - type: contains
-    value: spec
-    required: false
+    description: Ranked the scattered dependents by risk, not just relisted them
   - type: mcp_tool_used
     value: sense_blast
     required: false
     layer: adoption
-- name: Produce the edit map
-  prompt: "Task: produce the complete edit map for adding the new channel: which
-    files to create and which to change across each area you explored (the stored
-    channel and its shared concern, the outgoing sender and the routing that
-    selects it, the incoming-message handling, the validation guards), and which
-    specs and fixtures to add. Use file:line throughout, so a teammate could open
-    the PR from your map alone.
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the specs/fixtures that must be updated or added to cover
+    the teardown behavior. Use file:line throughout, so a teammate could land the
+    change from your map alone.
     "
   checks:
   - type: response_richness
@@ -179,57 +166,40 @@ steps:
     required: true
   - type: contains
     value: spec
-    required: false
-  - type: contains
-    value: service
     required: false
 scoring:
   weights:
     correctness: 0.70
     efficiency: 0.30
-# Gold spans the areas the "add a channel" session walks. The discriminator is the
-# twin fan-out: the `channels` group (12 channel models that all include the
-# Channelable concern, a grep-invisible include relationship, blast 12) and the
-# `outbound` group (per-channel senders subclassing Base::SendOnChannelService,
-# each in its own provider namespace, selected by the CHANNEL_SERVICES dispatch
-# table in send_reply_job.rb). The `dispatch` group is the grep-hard routing seam.
-# All targets are file-path matched so both mention (is it on the map?) and cited
-# (pinned to path:line?) are scored. The session headline is CUMULATIVE efficiency
-# at held accuracy.
+# Gold is the must-find audit: the scattered dependent set of the Inbox model plus
+# the contract pieces a teammate must know before changing it. The discriminator is
+# NOT an enumerable directory, it is the fan-out of resolved dependents spread
+# across controllers, background jobs, model concerns, provider services, lib
+# integrations and the enterprise overlay, most reaching Inbox through an
+# association or a shared concern. A structural impact query returns this set
+# directly; reconstructing it by hand means grepping a token (`inbox`) that appears
+# across the entire messaging app and reading to filter. Pure seeder/test-data
+# inbox builders (all in one lib/seeders dir, an `ls` away) are deliberately
+# EXCLUDED, they are the enumerable half grep does well. All targets are file-path
+# matched so both mention (is it on the map?) and cited (pinned to path:line?) score.
 gold:
-  # dispatch / shared contracts, outgoing routing + the two shared bases + the hub
-  - {id: send-reply-job,       group: dispatch, match: [send_reply_job.rb]}
-  - {id: send-on-channel-base, group: dispatch, match: [base/send_on_channel_service.rb]}
-  - {id: channelable-concern,  group: dispatch, match: [concerns/channelable.rb]}
-  - {id: inbox-hub,            group: dispatch, match: [models/inbox.rb]}
-  # the channel fan-out (12 models, all include Channelable, grep-invisible include)
-  - {id: channel:api,          group: channels, match: [models/channel/api.rb]}
-  - {id: channel:email,        group: channels, match: [models/channel/email.rb]}
-  - {id: channel:facebook,     group: channels, match: [models/channel/facebook_page.rb]}
-  - {id: channel:instagram,    group: channels, match: [models/channel/instagram.rb]}
-  - {id: channel:line,         group: channels, match: [models/channel/line.rb]}
-  - {id: channel:sms,          group: channels, match: [models/channel/sms.rb]}
-  - {id: channel:telegram,     group: channels, match: [models/channel/telegram.rb]}
-  - {id: channel:tiktok,       group: channels, match: [models/channel/tiktok.rb]}
-  - {id: channel:twilio,       group: channels, match: [models/channel/twilio_sms.rb]}
-  - {id: channel:twitter,      group: channels, match: [models/channel/twitter_profile.rb]}
-  - {id: channel:webwidget,    group: channels, match: [models/channel/web_widget.rb]}
-  - {id: channel:whatsapp,     group: channels, match: [models/channel/whatsapp.rb]}
-  # outbound senders, per-channel subclasses of Base::SendOnChannelService
-  - {id: send:whatsapp,        group: outbound, match: [send_on_whatsapp_service.rb]}
-  - {id: send:telegram,        group: outbound, match: [send_on_telegram_service.rb]}
-  - {id: send:line,            group: outbound, match: [send_on_line_service.rb]}
-  - {id: send:sms,             group: outbound, match: [send_on_sms_service.rb]}
-  - {id: send:twilio,          group: outbound, match: [send_on_twilio_service.rb]}
-  - {id: send:instagram,       group: outbound, match: [instagram/send_on_instagram_service.rb]}
-  # inbound, provider webhook jobs + per-channel incoming-message services
-  - {id: in:whatsapp-job,      group: inbound,  match: [jobs/webhooks/whatsapp_events_job.rb]}
-  - {id: in:telegram-job,      group: inbound,  match: [webhooks/telegram_events_job.rb]}
-  - {id: in:line-job,          group: inbound,  match: [webhooks/line_events_job.rb]}
-  - {id: in:instagram-job,     group: inbound,  match: [webhooks/instagram_events_job.rb]}
-  - {id: in:whatsapp-svc,      group: inbound,  match: [whatsapp/incoming_message_service.rb]}
-  - {id: in:telegram-svc,      group: inbound,  match: [telegram/incoming_message_service.rb]}
-  # test matrix, the dispatch job spec + per-channel model/sender specs
-  - {id: spec:send-reply,      group: specs,    match: [send_reply_job_spec.rb]}
-  - {id: spec:channel-whatsapp,group: specs,    match: [channel/whatsapp_spec.rb]}
-  - {id: spec:send-whatsapp,   group: specs,    match: [send_on_whatsapp_service_spec.rb]}
+  # the contract itself + the shared pieces a change must reckon with
+  - {id: inbox-model,          group: contract,   match: [app/models/inbox.rb]}
+  - {id: cache-keys-concern,   group: contract,   match: [models/concerns/cache_keys.rb]}
+  - {id: channelable-concern,  group: contract,   match: [models/concerns/channelable.rb]}
+  - {id: contact-inbox,        group: contract,   match: [models/contact_inbox.rb]}
+  - {id: enterprise-inbox,     group: contract,   match: [enterprise/app/models/enterprise/inbox.rb]}
+  # the teardown path the rework centers on
+  - {id: delete-object-job,    group: teardown,   match: [app/jobs/delete_object_job.rb]}
+  # scattered dependents reached through associations / concerns (the grep-noisy fan-out)
+  - {id: dep:accounts-ctrl,    group: dependents, match: [api/v1/accounts_controller.rb]}
+  - {id: dep:dashboard-ctrl,   group: dependents, match: [super_admin/dashboard_controller.rb]}
+  - {id: dep:widget-tests,     group: dependents, match: [widget_tests_controller.rb]}
+  - {id: dep:assignment-job,   group: dependents, match: [auto_assignment/assignment_job.rb]}
+  - {id: dep:imap-fetch-job,   group: dependents, match: [inboxes/fetch_imap_email_inboxes_job.rb]}
+  - {id: dep:stale-notif-job,  group: dependents, match: [migration/remove_stale_notifications_job.rb]}
+  - {id: dep:assignee-handler, group: dependents, match: [concerns/assignee_activity_message_handler.rb]}
+  - {id: dep:twitter-webhook,  group: dependents, match: [twitter/webhook_subscribe_service.rb]}
+  - {id: dep:whatsapp-create,  group: dependents, match: [whatsapp/channel_creation_service.rb]}
+  - {id: dep:chatwoot-hub,     group: dependents, match: [lib/chatwoot_hub.rb]}
+  - {id: dep:slack-unfurl,     group: dependents, match: [integrations/slack/link_unfurl_formatter.rb]}

@@ -10,13 +10,13 @@
 # Step names MUST match scenarios/chatwoot.yaml exactly (the judge pairs by name).
 
 audience: |
-  An AI coding agent that will use this answer to add a new messaging channel (a
-  new external provider customers can be reached over) to Chatwoot with only
-  small, targeted follow-up lookups, not a fresh exploration of the codebase.
-  Score for that audience, not a human reader, not a docs page. A perfect answer
-  leaves the agent ready to create the channel model, its outgoing sender, its
-  incoming-message handling, register the routing, and add specs; a weak answer
-  forces the agent to re-explore the codebase before it can act.
+  An AI coding agent that will use this answer to safely rework the Inbox model's
+  teardown contract in Chatwoot with only small, targeted follow-up lookups, not a
+  fresh exploration of the codebase. Score for that audience, not a human reader,
+  not a docs page. A perfect answer leaves the agent able to change the Inbox
+  contract knowing every dependent that must be reviewed; a weak answer forces the
+  agent to re-grep a very common token and re-read the codebase before it can act
+  safely.
 
 steps:
   - name: Orient in the codebase
@@ -26,222 +26,207 @@ steps:
         question: |
           Does the answer hand the agent a usable map: that this is Chatwoot (a
           customer-support / messaging platform), how the Rails app is organized
-          (app/models, app/services, app/jobs), and specifically where messaging
-          channels live, the channel models (app/models/channel/, the Channelable
-          concern), the outgoing senders (app/services/<provider>/, the
-          Base::SendOnChannelService base) and the inbound webhook handling
-          (app/jobs/webhooks/)? Could the agent pick an entry point and start
-          working with only small, targeted lookups?
+          (app/models, app/services, app/jobs, lib/, the enterprise/ overlay), and
+          specifically where the Inbox model sits, the thing a channel hangs off
+          and that conversations and contacts attach to? Could the agent pick an
+          entry point and start working with only small, targeted lookups?
       specificity:
         weight: 0.25
         question: |
-          Are the cited paths concrete (app/models/channel/whatsapp.rb,
-          app/models/concerns/channelable.rb, app/jobs/send_reply_job.rb) rather
-          than vague ("the channel layer")? Are abstractions tied to actual files
-          and class names?
+          Are the cited paths concrete (app/models/inbox.rb, app/models/channel/,
+          app/models/concerns/) rather than vague ("the model layer")? Are
+          abstractions tied to actual files and class names?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY the architecture is shaped this way (a
-          channel is a model bound to an Inbox via a shared concern, outgoing
-          sends are routed to a per-provider service, incoming messages arrive via
-          per-provider webhooks), not just NAME the pieces?
+          Does the answer explain WHY the architecture is shaped this way (an Inbox
+          is the hub a channel hangs off, with conversations/contacts attached via
+          associations and behavior pulled in through concerns), not just NAME the
+          pieces?
       uncertainty:
         weight: 0.15
         question: |
-          Where the answer is unsure about how the layers connect or what a new
-          channel must implement, does it flag that so the agent doesn't act
-          blindly?
+          Where the answer is unsure about how the layers connect, does it flag
+          that so the agent doesn't act blindly?
 
-  - name: Trace an outgoing reply to its channel-specific sender
+  - name: Map the Inbox contract and what it is built on
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer trace the routing path with file:line, in order: from
-          where an outgoing message is picked up into SendReplyJob, through the
-          CHANNEL_SERVICES dispatch table that maps the inbox's channel class to a
-          per-provider sender, into that sender (a Base::SendOnChannelService
-          subclass) and its #perform / #perform_reply? Could the agent follow the
-          same path to route a new channel's outgoing replies?
+          Does the answer map the Inbox model's contract with file:line: the
+          concerns it includes (e.g. cache_keys and other shared model behavior),
+          the associations records hang off it through (channel polymorphic
+          association, conversations, contact_inboxes), and the enterprise overlay
+          that reopens it? Could the agent know what a change to the model has to
+          preserve?
       specificity:
         weight: 0.25
         question: |
-          Are the dispatch pieces named exactly (SendReplyJob, CHANNEL_SERVICES,
-          the SendOn<Provider>Service, perform_reply) with file:line, rather than
-          "the send code"?
+          Are the contract pieces named concretely by file
+          (app/models/concerns/cache_keys.rb, app/models/contact_inbox.rb,
+          enterprise/app/models/enterprise/inbox.rb) rather than "the concerns and
+          associations"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY delivery is a per-channel service chosen by
-          a dispatch table (so a new provider is added by registering a sender,
-          not by editing the job body), and note the special-cased channels
-          (FacebookPage), not just LIST the call chain?
+          Does the answer explain WHY the contract is shaped this way (behavior
+          shared through concerns, other records related through associations, the
+          paid tier reopening the class), not just LIST the pieces?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag where the path is asynchronous or special-cased
-          (job queue, FacebookPage handled separately, channels mapped to a shared
-          notification service) so the agent verifies before relying on it?
+          Does the answer flag any part of the contract it could not confirm (a
+          concern method or association it didn't open) so the agent checks before
+          relying on it?
 
-  - name: Map the channel family and the shared contracts
+  - name: Trace how an inbox and its attached data are torn down
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer enumerate BOTH shared contracts, the Channelable
-          concern (app/models/concerns/channelable.rb) that every channel model
-          includes, and the Base::SendOnChannelService
-          (app/services/base/send_on_channel_service.rb) outbound base whose
-          subclasses must implement channel_class and perform_reply, AND the
-          existing channels that customize them (WhatsApp, Telegram, Line, SMS,
-          Twilio, Instagram, TikTok, Email, Twitter, WebWidget, API, FacebookPage,
-          each in app/models/channel/ with a matching sender), with file:line and
-          how each differs? This include / inheritance fan-out is grep-invisible
-          (the shared-contract relationship is structural, not a shared string); a
-          strong answer names that breadth so the agent knows exactly what to
-          include, subclass, and override.
+          Does the answer trace the teardown path with file:line, in order: from
+          where a destroy is triggered through the heavy cleanup of associated
+          records (the async DeleteObjectJob#heavy_associations path), naming which
+          associated records are cleaned up asynchronously versus inline? Could the
+          agent follow the same path to change teardown safely?
       specificity:
         weight: 0.25
         question: |
-          Are the customizing channels named concretely by file
-          (channel/whatsapp.rb, send_on_telegram_service.rb) and the override
-          points (channel_class, perform_reply, the concern's required methods)
-          cited, rather than "some channels customize it"?
+          Are the teardown pieces named exactly (DeleteObjectJob, the
+          heavy-associations cleanup, the destroy callbacks) with file:line, rather
+          than "the delete code"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY there are two shared contracts (one for the
-          stored channel via a concern, one for outbound delivery via a service
-          base), not just LIST the classes?
+          Does the answer explain WHY heavy association cleanup is pushed to a
+          background job (to avoid a slow/locking inline destroy), not just LIST the
+          call chain?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag any customization it could not confirm (a channel
-          that overrides a concern method or sender behavior it didn't open) so
-          the agent checks before copying a pattern?
+          Does the answer flag where the teardown is asynchronous or relies on
+          dependent: destroy semantics it didn't fully open, so the agent verifies?
 
-  - name: Trace an incoming provider message to a stored message
+  - name: Audit every dependent of the Inbox contract
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer trace the inbound path with file:line, in order: from
-          the provider's webhook (the webhooks controller / the per-provider
-          events job in app/jobs/webhooks/<provider>_events_job.rb) into the
-          per-provider IncomingMessageService
-          (app/services/<provider>/incoming_message_service.rb) where the contact,
-          conversation, and message are created? Could the agent follow the same
-          path to handle a new channel's incoming messages?
+          Does the answer enumerate the FULL scattered dependent set of the Inbox
+          model, grouped by area: request handling (the accounts / dashboard /
+          widget-tests controllers), background work (assignment, IMAP fetch, stale
+          notification, delete-object jobs), shared model behavior (the cache_keys
+          concern, the assignee activity-message handler), provider services
+          (Twitter webhook subscribe, WhatsApp channel creation), library /
+          integration code (chatwoot_hub, the Slack link-unfurl formatter) and the
+          enterprise overlay? This fan-out is the heart of the ticket and is
+          grep-hostile, most dependents reach Inbox through an association or a
+          concern, and the bare token appears across the whole messaging app, so a
+          text search both misses some and drowns the rest. A strong answer names
+          that breadth with file:line so the agent can review every dependent.
       specificity:
         weight: 0.25
         question: |
-          Are the inbound pieces named exactly (<Provider>EventsJob,
-          <Provider>::IncomingMessageService) with file:line, rather than "the
-          webhook handler"?
+          Are the dependents named concretely by file and symbol
+          (app/jobs/delete_object_job.rb, app/models/concerns/cache_keys.rb,
+          app/services/whatsapp/channel_creation_service.rb) with file:line and one
+          phrase on how each uses the inbox, rather than "various controllers and
+          jobs"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY inbound is split into a webhook-receiving
-          job and a per-provider builder service (decoupling delivery from
-          message construction), not just LIST the call chain?
+          Does the answer explain WHY each dependent is affected (operates on the
+          inbox, caches off it, cleans it up, creates it, reads it for metrics),
+          grouping by area rather than just LISTING files?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag where inbound shapes differ per provider (payload
-          formats, base/helper services it didn't open) so the agent verifies?
+          Does the answer acknowledge what a static pass can miss (dependents that
+          reach the inbox only through an association or polymorphic relation, the
+          enterprise overlay, indirect callers) so the agent knows to verify?
 
-  - name: Trace how sends and incoming notifications are validated
+  - name: Trace how inbox availability and identity are guarded
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer give file:line for both guards: the outbound checks in
-          Base::SendOnChannelService (validate_target_channel, outgoing_message?,
-          invalid_message?, skipping private notes, loops, wrong channel) AND how
-          inbound webhooks confirm authenticity before processing (the provider's
-          signature/verify-token check in its controller/job)? Could the agent give
-          the new channel correct guards without re-reading every file?
+          Does the answer give file:line for how background work confirms it is
+          operating on a real, current inbox before acting (existence/availability
+          checks in the assignment, IMAP-fetch and maintenance jobs, and any shared
+          guard)? Could the agent give a reworked teardown the right guards without
+          re-reading every file?
       specificity:
         weight: 0.25
         question: |
-          Are the guards named exactly (validate_target_channel, invalid_message?,
-          the inbound verification method) with file:line, rather than "the
+          Are the guards named exactly (the job-level presence/availability checks,
+          the methods that confirm the inbox) with file:line, rather than "the
           validation code"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY outbound validates the target channel (to
-          avoid loops and cross-channel sends) and WHY inbound must verify the
-          sender, not just NAME the pieces?
+          Does the answer explain WHY background work must re-confirm the inbox (it
+          may have been torn down between enqueue and run), not just NAME the
+          pieces?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag where verification is provider-specific (each
-          provider signs/verifies differently) so the agent verifies before
-          shipping?
+          Does the answer flag where a guard is missing or implicit (a job that
+          assumes the inbox still exists) so the agent verifies before relying on
+          it?
 
-  - name: Find every site that must change to add a new channel
+  - name: Assess the blast radius of the contract change
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer enumerate the full fan-out of adding a channel: the new
-          channel model under app/models/channel/ (including Channelable, whose
-          blast surface shows what the concern touches), the outgoing sender
-          subclassing Base::SendOnChannelService plus its registration in
-          SendReplyJob::CHANNEL_SERVICES, the inbound events job under
-          app/jobs/webhooks/ and its IncomingMessageService, and the spec matrix
-          (spec/models/channel/, spec/services/<provider>/, send_reply_job_spec)?
-          A new channel touches several disjoint areas; a strong answer names that
-          breadth with file:line. Could the agent open the PR from this list?
+          Does the answer assess the full blast radius of changing the Inbox
+          teardown contract: which dependents are at risk across every area
+          (request handling, jobs, concerns, provider services, lib integrations,
+          enterprise overlay), which are most likely to break, and what must be
+          re-verified, with file:line and a risk ranking? This is the change-impact
+          question a structural blast answers directly and a hand audit under-covers.
       specificity:
         weight: 0.25
         question: |
-          Are the sites named concretely (a new channel/<provider>.rb, a
-          send_on_<provider>_service.rb plus the CHANNEL_SERVICES line, a
-          webhooks/<provider>_events_job.rb, a spec) rather than "wire it in and
-          add tests"?
+          Are the at-risk dependents named concretely by file with a stated reason
+          for the risk level, rather than "several things might break"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each site is affected (stored model vs
-          outbound routing vs inbound handling vs shared contract vs test matrix),
-          not just LIST them?
+          Does the answer explain WHY a given dependent is high vs low risk (it
+          mutates inbox associations on teardown vs merely reads a cache key), not
+          just LIST them?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer acknowledge what static reading can miss (senders reached
-          only through the dispatch table, routes/config for the webhook endpoint,
-          provider fixtures/cassettes) so the agent knows to verify?
+          Does the answer flag the dependents it is least sure about (indirect or
+          association-reached, only surfaced structurally) so the agent confirms?
 
-  - name: Produce the edit map
+  - name: Produce the change + verification map
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer produce a complete, actionable edit map: the new files
-          to create (the channel/<provider>.rb model, the
-          send_on_<provider>_service.rb sender, the inbound events job + incoming
-          message service) and the existing files/lines to change (the
-          CHANNEL_SERVICES registration, the Channelable concern if the contract
-          extends, the webhook routes, validation guards) plus the specs and
-          fixtures, with file:line throughout? Could a teammate open the PR from
-          this map alone?
+          Does the answer produce a complete, actionable map: the model and shared
+          pieces to edit (inbox.rb, the relevant concerns, the teardown job), every
+          dependent that must be reviewed grouped by area, and the specs/fixtures to
+          update or add for the teardown behavior, with file:line throughout? Could
+          a teammate land the change from this map alone?
       specificity:
         weight: 0.25
         question: |
-          Are the files and insertion points concrete (new channel/<provider>.rb,
-          the CHANNEL_SERVICES line in send_reply_job.rb, a sender, a webhook job,
-          a spec) rather than "create the channel and add tests"?
+          Are the files and insertion points concrete (app/models/inbox.rb,
+          app/jobs/delete_object_job.rb, the affected concerns, the specs under
+          spec/models and spec/jobs) rather than "edit the model and add tests"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each file is in the map (which area it
-          belongs to and what the new channel needs there), not just LIST files?
+          Does the answer explain WHY each file is in the map (which area it belongs
+          to and what the teardown change does to it), not just LIST files?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag the parts it is least sure about (the inbound
-          payload shape, the provider's auth/verification, fixture generation) so
-          the agent confirms before committing?
+          Does the answer flag the parts it is least sure about (association cleanup
+          semantics, the enterprise overlay, fixtures) so the agent confirms before
+          committing?

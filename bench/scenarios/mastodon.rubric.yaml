@@ -1,22 +1,15 @@
-# Per-scenario rubric for the LLM judge layer.
-#
-# Audience block is shared across all steps. Per-step rubrics use the same four
-# criteria (map_quality, specificity, justification, uncertainty) with the
-# canonical 40/25/20/15 weights. The judge scores the answer text first;
-# side-context (wall_time, tokens, completed/failed) is provided for the criteria
-# it bears on, map_quality (did this save downstream exploration?) and
-# uncertainty (was confidence calibrated against effort?).
-#
-# Step names MUST match scenarios/mastodon.yaml exactly (the judge pairs by name).
+# Per-scenario rubric for the LLM judge layer. Audience block shared across steps;
+# per-step criteria use the canonical map_quality 0.40 / specificity 0.25 /
+# justification 0.20 / uncertainty 0.15 weights. Step names MUST match
+# scenarios/mastodon.yaml exactly (the judge pairs by name).
 
 audience: |
-  An AI coding agent that will use this answer to add a new inbound federation
-  (ActivityPub) activity type to Mastodon with only small, targeted follow-up
-  lookups, not a fresh exploration of the codebase. Score for that audience, not
-  a human reader, not a docs page. A perfect answer leaves the agent ready to
-  create the new handler, wire it into dispatch, emit and deliver the outgoing
-  counterpart, and add specs; a weak answer forces the agent to re-explore the
-  codebase before it can act.
+  An AI coding agent that will use this answer to safely change Mastodon's outbound
+  ActivityPub delivery contract with only small, targeted follow-up lookups, not a
+  fresh exploration of the codebase. Score for that audience, not a human reader. A
+  perfect answer leaves the agent able to change delivery knowing every emitter that
+  must keep federating across both enqueue paths; a weak answer forces the agent to
+  re-grep several worker names and re-read the codebase before it can act safely.
 
 steps:
   - name: Orient in the codebase
@@ -25,226 +18,192 @@ steps:
         weight: 0.40
         question: |
           Does the answer hand the agent a usable map: that this is Mastodon (a
-          federated social server), how the Rails app is organized
-          (app/controllers, app/services, app/workers, app/lib, app/serializers),
-          and specifically where inbound federation lives, the inbox controller
-          (app/controllers/activitypub/inboxes_controller.rb), the processing
-          worker, the collection service, and the ActivityPub::Activity base and
-          its handlers (app/lib/activitypub/activity.rb, activity/)? Could the
-          agent pick an entry point and start working with only small, targeted
-          lookups?
+          federated social server), how the Rails app is organized (app/services,
+          app/workers, app/lib/activitypub), and where outbound delivery to remote
+          servers lives, the delivery worker(s) and how a payload is built and
+          signed? Could the agent pick an entry point with only small lookups?
       specificity:
         weight: 0.25
         question: |
-          Are the cited paths concrete (activitypub/inboxes_controller.rb,
-          app/lib/activitypub/activity.rb, app/services/activitypub/) rather than
-          vague ("the federation layer")? Are abstractions tied to actual files
-          and class names?
+          Are the cited paths concrete (app/workers/activitypub/delivery_worker.rb,
+          app/lib/activitypub/, the Payloadable concern) rather than vague ("the
+          federation layer")?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY the architecture is shaped this way (inbox
-          accepts and enqueues, processing happens async in a worker, a factory
-          dispatches each activity to a per-kind handler), not just NAME the
-          pieces?
+          Does the answer explain WHY delivery is shaped this way (async workers,
+          signed payloads, a single-destination delivery vs a fan-out to followers),
+          not just NAME the pieces?
       uncertainty:
         weight: 0.15
         question: |
-          Where the answer is unsure about how the layers connect or what a new
-          activity type must implement, does it flag that so the agent doesn't act
-          blindly?
+          Where unsure how the layers connect, does the answer flag it so the agent
+          doesn't act blindly?
 
-  - name: Trace an incoming activity to its concrete handler
+  - name: Map the delivery contract and what it is built on
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer trace the routing path with file:line, in order: from
-          the public endpoint (ActivityPub::InboxesController#create) through the
-          async worker (ActivityPub::ProcessingWorker) to the collection service
-          (ActivityPub::ProcessCollectionService#process_item) and into the
-          dispatch (ActivityPub::Activity.factory / klass_for) that selects the
-          per-kind handler and runs #perform? Could the agent follow the same path
-          to register and route a new activity type?
+          Does the answer map the delivery contract with file:line: the low-level
+          DeliveryWorker (one destination) versus the DistributionWorker /
+          RawDistributionWorker fan-out (many destinations), and the Payloadable
+          concern that builds and signs the payload? Could the agent know what a
+          change has to preserve across both layers?
       specificity:
         weight: 0.25
         question: |
-          Are the lookup/selection methods named exactly (ProcessCollectionService
-          #process_item, Activity.factory, klass_for, #perform) with file:line,
-          rather than "the routing code"?
+          Are the pieces named concretely by file (delivery_worker.rb,
+          distribution_worker.rb, concerns/payloadable.rb) rather than "the delivery
+          workers"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY dispatch is a factory keyed on the activity
-          type (so a new kind is handled by adding a branch + a handler class, not
-          by editing the inbox), not just LIST the call chain?
+          Does the answer explain WHY there are two delivery layers (a single push
+          vs a fan-out that itself enqueues many single pushes) and what the shared
+          payload concern provides, not just LIST the classes?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag where the path is asynchronous or dynamic (work
-          deferred to Sidekiq, type-string keyed dispatch) so the agent verifies
-          before relying on it?
+          Does the answer flag any part of the contract it could not confirm so the
+          agent checks before relying on it?
 
-  - name: Map the handler family and the shared contract
+  - name: Trace one user action to an outbound delivery
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer enumerate the shared base (ActivityPub::Activity in
-          app/lib/activitypub/activity.rb: the initialize/@object/@account
-          contract, the abstract #perform, the protected helpers and included
-          concerns) AND the existing handlers that subclass and customize it
-          (Create, Announce, Delete, Follow, Like, Block, Update, Undo, Accept,
-          Reject, Flag, Add, Remove, Move, QuoteRequest, FeatureRequest, each in
-          app/lib/activitypub/activity/), with file:line and how each differs?
-          This inheritance + dispatch fan-out is grep-invisible (the subclass
-          relationship is structural, not a shared string); a strong answer names
-          that breadth so the agent knows exactly what to inherit and what to
-          override.
+          Does the answer trace one action (follow / favourite / post) with
+          file:line from its service down to where the delivery is queued, naming
+          whether it delivers directly or via a fan-out worker? Could the agent
+          follow the same path for another action?
       specificity:
         weight: 0.25
         question: |
-          Are the customizing handlers named concretely by file
-          (activity/create.rb, activity/announce.rb, activity/undo.rb,
-          activity/quote_request.rb) and the override/helper points cited, rather
-          than "some handlers customize it"?
+          Are the layers named exactly (the service, the worker, the enqueue call)
+          with file:line, rather than "the follow code"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY the base is shared and subclassed (one
-          contract for all inbound activities, per-kind behavior via a subclass
-          implementing #perform plus shared protected helpers), not just LIST the
-          classes?
+          Does the answer explain WHY the action federates the way it does (direct
+          delivery to a single inbox vs fan-out to all followers), not just LIST the
+          chain?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag any customization it could not confirm (a handler
-          that overrides a helper it didn't open) so the agent checks before
-          copying a pattern?
+          Does the answer flag where the path is async or branches by case so the
+          agent verifies?
 
-  - name: Map the outbound counterpart for the same activities
+  - name: Audit every emitter of an outbound delivery
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer connect each inbound activity to its outbound emission:
-          the ActivityPub serializers that build the outgoing JSON
-          (app/serializers/activitypub/, e.g. create_note_serializer.rb,
-          announce_note_serializer.rb, delete_note_serializer.rb) and the
-          distribution workers that deliver it (ActivityPub::DistributionWorker /
-          RawDistributionWorker in app/workers/activitypub/), with file:line?
-          Tying inbound handler to outbound serializer is a semantic correspondence
-          with no shared string, so a strong answer pays off here.
+          Does the answer enumerate the FULL emitter set across BOTH enqueue paths:
+          the services that queue a delivery directly (follow, unfollow, block,
+          favourite, vote, report, delete/suspend account, authorize/reject follow,
+          remove status), the services that go through a *DistributionWorker fan-out
+          (post status, reblog, move, collection changes), the fan-out workers
+          themselves, and any model/scheduled emitter (relay)? This two-path fan-out
+          is the heart of the ticket and is grep-hostile: a hand audit must chase
+          several distinct worker names and read a large file union. A strong answer
+          names that breadth with file:line so no action silently stops federating.
       specificity:
         weight: 0.25
         question: |
-          Are the serializers and workers named concretely by file
-          (create_note_serializer.rb, distribution_worker.rb) rather than "the
-          serializer layer"?
+          Are the emitters named concretely by file and symbol
+          (app/services/follow_service.rb, app/services/post_status_service.rb,
+          app/workers/activitypub/distribution_worker.rb) with file:line and one
+          phrase on what each federates, rather than "the various services"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY emission is split into serialize (build the
-          payload) and distribute (sign + deliver to followers/inboxes), not just
-          NAME the files?
+          Does the answer explain WHY there are two emit paths (direct vs fan-out)
+          and group the emitters accordingly, not just LIST files?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag where an inbound activity has no symmetric outbound
-          path (or vice versa) so the agent does not assume a counterpart exists?
+          Does the answer acknowledge what a static pass can miss (emitters reached
+          only through a wrapping fan-out worker, scheduled jobs) so the agent
+          verifies?
 
-  - name: Trace how malformed or unauthorized activities are rejected
+  - name: Trace how a delivery target and payload are validated
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer give file:line for the rejection path: the
-          sender-signature verification (SignatureVerification /
-          SignatureAuthentication concerns, the inbox before_actions
-          require_actor_signature! / skip_large_payload / skip_unknown_actor_activity)
-          AND what happens to an unrecognized type (factory/klass_for returns nil
-          so the activity is dropped; SUPPORTED_TYPES / CONVERTED_TYPES)? Could the
-          agent give the new activity correct guard behavior without re-reading
-          every file?
+          Does the answer give file:line for how a destination is judged eligible
+          (not blocked, not local, a real remote inbox) and how the payload is
+          built/signed before sending? Could the agent give a reworked delivery the
+          right guards?
       specificity:
         weight: 0.25
         question: |
-          Are the guards/concerns named exactly (signature_verification.rb,
-          require_actor_signature!, klass_for returning nil) with file:line, rather
-          than "the validation code"?
+          Are the guards named exactly (the inbox/domain eligibility checks, the
+          signing in the payload concern) with file:line rather than "the validation
+          code"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY verification happens at the inbox before
-          async processing and WHY an unknown type is silently dropped rather than
-          erroring, not just NAME the pieces?
+          Does the answer explain WHY delivery must validate the target and sign the
+          payload (avoid sending to blocked/local domains, prove authenticity), not
+          just NAME the pieces?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag where guard behavior is conditional (per-type early
-          returns, payload size limits) so the agent verifies before shipping?
+          Does the answer flag where eligibility/signing is implicit or shared so
+          the agent verifies?
 
-  - name: Find every site that must change to add a new incoming activity type
+  - name: Assess the blast radius of the delivery change
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer enumerate the full fan-out of adding an inbound activity
-          type: the dispatch branch (Activity.klass_for in
-          app/lib/activitypub/activity.rb), the new handler subclass under
-          app/lib/activitypub/activity/, the shared base it depends on (the
-          53-caller blast surface of ActivityPub::Activity), the outbound
-          serializer + distribution if it is emitted, and the spec matrix
-          (spec/lib/activitypub/activity/, process_collection_service_spec.rb)? A
-          new type touches several disjoint areas; a strong answer names that
-          breadth with file:line. Could the agent open the PR from this list?
+          Does the answer assess the full blast radius of changing the delivery
+          contract: which emitters are at risk across both paths, which are most
+          likely to break, and what must be re-verified, with file:line and a risk
+          ranking? This is the change-impact question a structural blast answers
+          directly and a hand audit under-covers.
       specificity:
         weight: 0.25
         question: |
-          Are the sites named concretely (the klass_for case in activity.rb, a new
-          activity/<kind>.rb, activity/<kind>_spec.rb) rather than "wire it in and
-          add tests"?
+          Are the at-risk emitters named concretely by file with a stated reason for
+          the risk level, rather than "several things might break"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each site is affected (dispatch branch vs
-          handler implementation vs shared-base contract vs test matrix), not just
-          LIST them?
+          Does the answer explain WHY a given emitter is high vs low risk (relies on
+          the fan-out path being preserved vs a single direct push), not just LIST
+          them?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer acknowledge what static reading can miss (handlers
-          reached only through the factory, fixtures/JSON-LD test payloads) so the
-          agent knows to verify?
+          Does the answer flag the emitters it is least sure about (reached only via
+          a fan-out worker, only surfaced structurally) so the agent confirms?
 
-  - name: Produce the edit map
+  - name: Produce the change + verification map
     criteria:
       map_quality:
         weight: 0.40
         question: |
-          Does the answer produce a complete, actionable edit map: the new files
-          to create (the handler class under activity/, possibly an outbound
-          serializer) and the existing files to change across every area (the
-          klass_for dispatch in activity.rb, the shared base if the contract
-          extends, the distribution wiring, the signature/validation guards) plus
-          the specs and JSON-LD fixtures, with file:line throughout? Could a
-          teammate open the PR from this map alone?
+          Does the answer produce a complete, actionable map: the delivery worker(s)
+          and payload concern to edit, every emitter to review grouped by path, and
+          the specs/fixtures to update for both the direct and fan-out paths, with
+          file:line throughout? Could a teammate land the change from this map alone?
       specificity:
         weight: 0.25
         question: |
-          Are the files and insertion points concrete (new activity/<kind>.rb, the
-          klass_for branch in activity.rb, a spec under
-          spec/lib/activitypub/activity/) rather than "create the handler and add
-          tests"?
+          Are the files and insertion points concrete (delivery_worker.rb, the
+          distribution workers, the emitting services, the relevant specs) rather
+          than "edit delivery and add tests"?
       justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each file is in the map (which area it
-          belongs to and what the new activity type needs there), not just LIST
-          files?
+          Does the answer explain WHY each file is in the map (which path/area it
+          belongs to and what the change does to it), not just LIST files?
       uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag the parts it is least sure about (whether the new
-          type needs an outbound counterpart, which protected helpers it must
-          override, fixture generation) so the agent confirms before committing?
+          Does the answer flag the parts it is least sure about (the fan-out
+          enqueue, payload signing, fixtures) so the agent confirms before
+          committing?

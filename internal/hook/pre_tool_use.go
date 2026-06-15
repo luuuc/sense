@@ -112,8 +112,7 @@ func handleGrep(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapte
 	if err != nil || len(symbols) == 0 {
 		if isMultiWordPattern(pattern) {
 			ctx := fmt.Sprintf(
-				"Consider sense_search query=%q for semantic code search. "+
-					"Load tools first: %s", pattern, toolSearchCmd)
+				"Consider sense_search query=%q for semantic code search (it's loaded and ready).", pattern)
 			return nudge("Sense can do semantic code search — consider sense_search instead of grep.", ctx), nil
 		}
 		return nil, nil
@@ -144,13 +143,12 @@ func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapt
 	}
 
 	reason := fmt.Sprintf(
-		"This project has a Sense index (%d symbols). Use Sense MCP tools instead of agents for codebase understanding:\n"+
+		"This project has a Sense index (%d symbols). The Sense MCP tools are loaded and callable now — prefer them over agents for codebase understanding:\n"+
 			"- sense_graph for symbol relationships (callers, callees, inheritance)\n"+
 			"- sense_search for semantic code search\n"+
 			"- sense_blast for impact analysis\n"+
-			"- sense_conventions for project patterns\n"+
-			"Load tools first: %s",
-		count, toolSearchCmd,
+			"- sense_conventions for project patterns",
+		count,
 	)
 
 	tip := "Sense has this project indexed — use Sense MCP tools instead of agents for codebase questions."
@@ -163,6 +161,10 @@ func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapt
 func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
 	cmd := req.Input.Command
 
+	// extractBashPattern returns a single whitespace-split token, so the
+	// pattern here is never multi-word (unlike handleGrep, whose pattern comes
+	// straight from the Grep tool input). Only the symbol-shaped single-token
+	// case can fire; the multi-word semantic-search nudge lives in handleGrep.
 	pattern := extractBashPattern(cmd)
 	if pattern != "" && isSymbolShaped(pattern) {
 		symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
@@ -172,17 +174,10 @@ func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapte
 				buildContext(len(symbols), pattern, "bash grep"),
 			), nil
 		}
-		if isMultiWordPattern(pattern) {
-			ctx := fmt.Sprintf(
-				"Consider sense_search query=%q for semantic code search. "+
-					"Load tools first: %s", pattern, toolSearchCmd)
-			return nudge("Sense can do semantic code search — consider sense_search instead of grep.", ctx), nil
-		}
 	}
 
 	if isExplorationCommand(cmd) {
-		ctx := "Sense can answer codebase understanding questions without reading individual files. " +
-			"Load tools first: " + toolSearchCmd
+		ctx := "Sense can answer codebase understanding questions without reading individual files — its tools are loaded and ready."
 		return nudge("Sense has this project indexed — consider Sense tools instead of reading files manually.", ctx), nil
 	}
 
@@ -194,7 +189,7 @@ func buildContext(count int, pattern, source string) string {
 	fmt.Fprintf(&sb, "Sense has %d indexed symbol(s) matching %q. Consider Sense MCP tools instead of %s:\n", count, pattern, source)
 	fmt.Fprintf(&sb, "- sense_graph symbol=%q for callers/callees\n", pattern)
 	fmt.Fprintf(&sb, "- sense_search query=%q for semantic matches\n", pattern)
-	fmt.Fprintf(&sb, "Load tools first: %s", toolSearchCmd)
+	sb.WriteString("(The Sense tools are loaded and callable now.)")
 	return sb.String()
 }
 

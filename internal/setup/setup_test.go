@@ -117,6 +117,30 @@ func TestMCPJSONPreservesExistingServers(t *testing.T) {
 	}
 }
 
+// The Sense server entry must carry alwaysLoad:true so Claude Code pre-loads
+// the tools into the initial set instead of deferring them behind ToolSearch
+// (the adoption gate the model kept skipping).
+func TestMCPJSONSenseAlwaysLoad(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, ".mcp.json"))
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse .mcp.json: %v", err)
+	}
+	servers, _ := m["mcpServers"].(map[string]any)
+	sense, _ := servers["sense"].(map[string]any)
+	if sense == nil {
+		t.Fatal("sense server not added")
+	}
+	if al, ok := sense["alwaysLoad"].(bool); !ok || !al {
+		t.Errorf("sense.alwaysLoad = %v, want true", sense["alwaysLoad"])
+	}
+}
+
 func TestSettingsPreservesExistingHooks(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {

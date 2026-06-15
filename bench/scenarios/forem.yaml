@@ -1,42 +1,61 @@
-name: Forem work session - add support for a new inline content embed
+name: Forem work session - add a new reaction category
 repo: forem
 # Single-prompt session bench (run via bench/bench-sense-local.sh): all steps are
 # presented in ONE prompt and worked in order, so context accumulates the way a
 # real work session does. Rendered to the agent: the description + each step's
 # name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
 # NEUTRAL, it states the task, never the answer's shape, file paths, class or
-# method names, counts, or which tool to reach for. The recurring real task this
-# mirrors is "add a new inline embed" (a YouTube/CodePen/Bluesky-style embed),
-# one of Forem's most common contributions, which naturally walks the embed
-# markup, the UnifiedEmbed dispatch + Registry that maps a URL to a renderer, the
-# shared LiquidTagBase and its ~60+ subclasses, the per-embed URL regexp +
-# registration, the view partial each renders, the input-validation + per-embed
-# authorization guards, and the spec matrix. The headline is CUMULATIVE
-# efficiency (tool calls, billed + context tokens, time) at held accuracy: across
-# these areas the baseline re-derives the structure each step while the map is
-# queried once and reused.
-description: 'You are a maintainer about to add support for embedding content from
-  a new external service inline in posts, mirroring how the existing inline embeds
-  are built. Work through the tasks below one at a time; each builds on what you
-  learned in the previous one. Keep every answer concrete with file:line so the
-  next step (and a teammate opening the PR) can act without re-exploring the
-  codebase.'
+# method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM (and not the earlier "add an inline embed" version, kept as
+# *.embed.*.bak): the embed fan-out is grep's home turf. The ~60 embed renderers
+# all live in ONE directory (app/liquid_tags/*_tag.rb) and inherit via a literal
+# `< LiquidTagBase` string, so `ls app/liquid_tags/` + `grep '< LiquidTagBase'`
+# reconstructs the whole answer. A single Opus-4.6 run tied (fairness 0.828 both
+# arms) and the sense arm never needed graph/blast. That is the enumerable-fact
+# trap the runbook warns about.
+#
+# The REACTION system is the opposite: a Reaction (app/models/reaction.rb) is a
+# polymorphic `reactable` hub whose behavior is a dense callback cascade and
+# whose ~49 dependents are SCATTERED across disjoint namespaces grep cannot
+# cleanly enumerate. Creating/destroying a reaction fans out (via after_commit /
+# before_destroy callbacks, no shared literal string) into scoring
+# (Reactions::UpdateRelevantScoresWorker -> Article#update_score /
+# User#calculate_score), cache busts (Reactions::Bust{Reactable,Homepage}Cache,
+# ReactionCounterSync), anti-abuse (Spam::ReactionRingDetectionWorker), activity
+# (Articles::UpdateArticleActivityWorker), embeddings
+# (UpdateUserInterestEmbeddingWorker), field tests, and notifications
+# (Notifications::NewReactionWorker -> Notifications::Reactions::Send). On the
+# read side, moderation (Spam::Handler, Moderator::BanishUser#delete_vomit_,
+# Users::ConfirmFlagReactions) and analytics/badges depend on the contract.
+# `grep -rl reaction app/` over-collects 119 noisy files; `sense_blast Reaction`
+# resolves 49 direct / 152 total; `sense_graph Reaction` lists the scattered
+# consumers. That is where the map pays for itself. The session headline is
+# CUMULATIVE efficiency at held accuracy plus the cited-recall (precision) of the
+# scattered web.
+description: 'You are a maintainer about to add a new reaction category to Forem
+  (a new way readers can react to a post, alongside the ones that already exist),
+  and before writing it you need to understand how reactions work today so the new
+  one behaves consistently with everything a reaction already does. Work through
+  the tasks below one at a time; each builds on what you learned in the previous
+  one. Keep every answer concrete with file:line so the next step (and a teammate
+  opening the PR) can act without re-exploring the codebase.'
 steps:
 - name: Orient in the codebase
   prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
-    project, how is the code organized, and where does the machinery that turns an
-    inline embed written in a post into rendered HTML live, along with the shared
-    pieces it is built on? Hand the next agent a map so they can act with small,
-    targeted lookups, not a fresh exploration of the codebase. No Explore agents.
+    project, how is the code organized, and where does the machinery that records
+    a reader's reaction to a post live, along with the shared pieces it is built
+    on? Hand the next agent a map so they can act with small, targeted lookups,
+    not a fresh exploration of the codebase. No Explore agents.
     "
   checks:
   - type: word
-    value: embed
+    value: reaction
     required: true
   - type: word
-    value: Liquid
+    value: polymorphic
     required: false
-    description: Named the templating layer the embeds are built on
+    description: Noted the reactable association is polymorphic
   - type: response_richness
     value: '3'
     required: false
@@ -48,22 +67,19 @@ steps:
     value: sense_conventions
     required: false
     layer: adoption
-- name: Trace an embed from post markup to its renderer
-  prompt: "Task: trace how a single inline embed written in a post is routed to the
-    concrete object that renders that specific service. Start from the markup an
-    author writes and follow it down through to where the right renderer is chosen
-    and run. Give file:line for each layer and the order they run.
+- name: Trace a reaction from user action to stored record
+  prompt: "Task: trace how a reader's reaction to a post becomes a stored record.
+    Start from the action the reader takes and follow it down through to where the
+    reaction is created and persisted. Give file:line for each layer and the order
+    they run.
     "
   checks:
   - type: word
-    value: Registry
+    value: ReactionHandler
     required: true
-    description: Found the registry that maps a link to its renderer
+    description: Found the service that creates the reaction
   - type: word
-    value: UnifiedEmbed
-    required: true
-  - type: word
-    value: render
+    value: ReactionsController
     required: false
   - type: response_richness
     value: '4'
@@ -72,28 +88,48 @@ steps:
     value: sense_graph
     required: false
     layer: adoption
-- name: Map the embed family and the shared contract
-  prompt: "Task: a new embed will be built on the same shared base that the existing
-    embeds are built on, then customize a few pieces. Map the shared behavior such
-    an embed inherits and, crucially, which existing embeds customize that shared
-    behavior and how each one differs. Be complete with file:line; a missed
-    customization point is behavior the new embed silently won't have.
+- name: Map what defines a reaction category
+  prompt: "Task: the new reaction is a new category of the same kind the existing
+    reactions are. Map what a reaction category is, where the full set of
+    categories is declared, and what attributes and conventions a new one must
+    follow to be valid and behave like the others. Be complete with file:line.
     "
   checks:
   - type: word
-    value: LiquidTagBase
+    value: ReactionCategory
     required: true
   - type: word
-    value: render
+    value: category
+    required: false
+  - type: response_richness
+    value: '4'
     required: true
-    description: Anchored on the shared contract method every embed implements
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+- name: Map everything that happens when a reaction is created or removed
+  prompt: "Task: when a reaction is saved or removed, other parts of the system run
+    as a result. Map every one of those effects and, crucially, where each one
+    runs. Be complete with file:line; a missed effect is behavior the new category
+    silently will not get.
+    "
+  checks:
+  - type: word
+    value: Worker
+    required: true
+    description: Named the background jobs the cascade enqueues
+  - type: contains
+    value: reaction.rb
+    required: false
   - type: response_richness
     value: '6'
     required: true
-    description: Enumerated the shared base plus the per-embed customizations
-  - type: contains
-    value: liquid_tag_base.rb
-    required: false
+    description: Enumerated the scattered cascade, not just one or two effects
   - type: no_grep
     value: no_grep
     required: false
@@ -102,20 +138,22 @@ steps:
     value: sense_graph
     required: false
     layer: adoption
-- name: Map how each embed declares which links it handles
-  prompt: "Task: a new embed should only render for the links it owns, the way the
-    existing embeds do. Map how an embed declares which links it is responsible
-    for, and how the system selects the right embed to handle a given link. Be
-    complete with file:line.
+- name: Trace how a reaction feeds scoring and moderation
+  prompt: "Task: trace two things a reaction affects beyond itself. First, how a
+    reaction changes the standing of the thing it is attached to (its score or
+    rank). Second, how moderation and anti-abuse paths treat particular reactions:
+    where certain reactions are flagged, removed, or acted on. Give file:line
+    throughout.
     "
   checks:
   - type: word
-    value: register
+    value: score
     required: true
+    description: Found that reactions feed the reactable's score
   - type: word
-    value: regexp
+    value: vomit
     required: false
-    description: Found that the link-to-embed match is pattern-based
+    description: Found the moderation/abuse reaction path
   - type: response_richness
     value: '5'
     required: true
@@ -123,61 +161,34 @@ steps:
     value: sense_graph
     required: false
     layer: adoption
+- name: Find every place that depends on the reaction contract
+  prompt: "Task: you will change what a reaction stores and does. Find every place
+    in the codebase that reads, creates, or reacts to reactions and would need
+    revisiting, including the parts that are not obvious from the reaction file
+    itself. Be complete and use file:line; a missed dependent is a silent break.
+    "
+  checks:
+  - type: word
+    value: reactable
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Reached the scattered dependents across services, workers, and controllers
   - type: mcp_tool_used
     value: sense_blast
     required: false
     layer: adoption
-- name: Trace how an embed validates input and restricts access
-  prompt: "Task: not every embed input is accepted. Trace how an embed validates the
-    input it is given and how access to certain embeds is restricted: where the
-    input and its links are checked, what happens on bad input, and where per-embed
-    authorization is enforced. Give file:line throughout.
-    "
-  checks:
-  - type: word
-    value: Policy
-    required: true
-    description: Found the per-embed authorization layer
-  - type: word
-    value: validate
-    required: false
-  - type: response_richness
-    value: '3'
-    required: false
   - type: mcp_tool_used
     value: sense_graph
     required: false
     layer: adoption
-- name: Find every site that must change to add a new embed
-  prompt: "Task: you will add the new embed. Find every place in the codebase that
-    must change for it to be recognized, routed, rendered, and tested, including
-    where embeds are registered, where the shared base is depended on, the template
-    that turns it into HTML, and where the existing embeds are covered by tests. Be
-    complete and use file:line; a missed site means the new embed is silently
-    ignored or untested.
-    "
-  checks:
-  - type: word
-    value: LiquidTagBase
-    required: true
-  - type: response_richness
-    value: '6'
-    required: true
-    description: Reached the registration and the spec matrix, not just the obvious file
-  - type: contains
-    value: spec
-    required: false
-  - type: mcp_tool_used
-    value: sense_blast
-    required: false
-    layer: adoption
 - name: Produce the edit map
-  prompt: "Task: produce the complete edit map for adding the new embed: which files
-    to create and which to change across each area you explored (the renderer class
-    and its template, the registration that maps links to it, the shared base it
-    depends on, the input validation and access checks), and which specs and
-    fixtures to add. Use file:line throughout, so a teammate could open the PR from
-    your map alone.
+  prompt: "Task: produce the complete edit map for adding the new reaction category:
+    what to configure, which existing behaviors and effects you mapped above the
+    new category must extend or be verified against so it behaves consistently
+    with the existing ones, and which specs and fixtures to add. Use file:line
+    throughout, so a teammate could open the PR from your map alone.
     "
   checks:
   - type: response_richness
@@ -186,59 +197,59 @@ steps:
   - type: contains
     value: spec
     required: false
-  - type: contains
-    value: liquid
+  - type: word
+    value: category
     required: false
 scoring:
   weights:
     correctness: 0.70
     efficiency: 0.30
-# Gold spans the areas the "add an inline embed" session walks. The discriminator
-# is the `embeds` group: a new embed inherits the shared LiquidTagBase
-# (app/liquid_tags/liquid_tag_base.rb) which is SUBCLASSED by ~60+ existing embeds
-# and selected by a regexp-keyed Registry (app/liquid_tags/unified_embed/), an
-# inheritance + regexp-dispatch fan-out grep cannot cleanly resolve (the subclass
-# relationship and the 97-caller blast radius of LiquidTagBase, not a string, is
-# what matters; you cannot grep "which class renders a vimeo URL"). The `dispatch`
-# group is the other grep-hard seam (markup -> UnifiedEmbed::Tag -> Registry
-# regexp match -> renderer). All targets are file-path matched so both mention (is
-# it on the map?) and cited (pinned to path:line?) are scored. The session
-# headline is CUMULATIVE efficiency at held accuracy.
+# Gold spans the areas the "add a reaction category" session walks. The
+# discriminator is the SCATTERED, grep-invisible web: the `cascade` group (the
+# side effects fired by Reaction's create/destroy callbacks, eight background
+# workers in five disjoint namespaces reached through callbacks, not a literal
+# call), plus `moderation` and `notification` (read-side dependents in
+# app/services/spam, app/services/moderator, app/services/notifications). These
+# cannot be produced by `ls` one directory or one grep; they require resolving
+# callback dispatch and polymorphic blast (sense_graph Reaction / sense_blast
+# Reaction = 49 direct / 152 total). The `config` + `contract` groups are the
+# convention a new category must follow (orient/convention steps); `scoring` is
+# symbol-matched (mention only) because the scoring methods live in god-object
+# models cited for many reasons. All path targets are file-path matched so both
+# mention (is it on the map?) and cited (pinned to path:line?) are scored.
 gold:
-  # dispatch / routing, markup down to the chosen renderer (regexp-keyed, grep-invisible)
-  - {id: unified-embed-tag,     group: dispatch,   match: [unified_embed/tag.rb]}
-  - {id: unified-embed-registry,group: dispatch,   match: [unified_embed/registry.rb]}
-  - {id: liquid-tag-base,       group: dispatch,   match: [liquid_tag_base.rb]}
-  - {id: opengraph-fallback,    group: dispatch,   match: [open_graph_tag.rb]}
-  # the embed fan-out (subclasses of the shared base, grep-invisible inheritance + regexp dispatch)
-  - {id: embed:youtube,         group: embeds,     match: [youtube_tag.rb]}
-  - {id: embed:vimeo,           group: embeds,     match: [vimeo_tag.rb]}
-  - {id: embed:github,          group: embeds,     match: [github_tag.rb]}
-  - {id: embed:gist,            group: embeds,     match: [gist_tag.rb]}
-  - {id: embed:codepen,         group: embeds,     match: [codepen_tag.rb]}
-  - {id: embed:codesandbox,     group: embeds,     match: [codesandbox_tag.rb]}
-  - {id: embed:instagram,       group: embeds,     match: [instagram_tag.rb]}
-  - {id: embed:tweet,           group: embeds,     match: [tweet_tag.rb]}
-  - {id: embed:twitter-timeline,group: embeds,     match: [twitter_timeline_tag.rb]}
-  - {id: embed:reddit,          group: embeds,     match: [reddit_tag.rb]}
-  - {id: embed:spotify,         group: embeds,     match: [spotify_tag.rb]}
-  - {id: embed:soundcloud,      group: embeds,     match: [soundcloud_tag.rb]}
-  - {id: embed:slideshare,      group: embeds,     match: [slideshare_tag.rb]}
-  - {id: embed:speakerdeck,     group: embeds,     match: [speakerdeck_tag.rb]}
-  - {id: embed:stackblitz,      group: embeds,     match: [stackblitz_tag.rb]}
-  - {id: embed:replit,          group: embeds,     match: [replit_tag.rb]}
-  - {id: embed:glitch,          group: embeds,     match: [glitch_tag.rb]}
-  - {id: embed:bluesky,         group: embeds,     match: [bluesky_tag.rb]}
-  # the HTML template each embed renders (a new embed needs its own partial)
-  - {id: view:youtube,          group: views,      match: [liquids/_youtube.html.erb]}
-  - {id: view:vimeo,            group: views,      match: [liquids/_vimeo.html.erb]}
-  - {id: view:codepen,          group: views,      match: [liquids/_codepen.html.erb]}
-  # input validation + per-embed authorization (what rejects bad input / restricts access)
-  - {id: liquid-tag-helpers,    group: validation, match: [concerns/liquid_tag_helpers.rb]}
-  - {id: liquid-tag-policy,     group: validation, match: [liquid_tag_policy.rb]}
-  # test matrix, the registry/dispatch specs + the per-embed spec set
-  - {id: registry-spec,         group: specs,      match: [unified_embed/registry_spec.rb]}
-  - {id: unified-tag-spec,      group: specs,      match: [unified_embed/tag_spec.rb]}
-  - {id: spec:youtube,          group: specs,      match: [youtube_tag_spec.rb]}
-  - {id: spec:vimeo,            group: specs,      match: [vimeo_tag_spec.rb]}
-  - {id: spec:codepen,          group: specs,      match: [codepen_tag_spec.rb]}
+  # the shared contract a new category is built on (the model + concern + category type)
+  - {id: reaction-model,        group: contract,     match: [models/reaction.rb]}
+  - {id: reactable-concern,     group: contract,     match: [concerns/reactable.rb]}
+  - {id: reaction-category,     group: contract,     match: [reaction_category.rb]}
+  # where the set of categories is declared (the convention a new one follows)
+  - {id: reactions-yml,         group: config,       match: [config/reactions.yml]}
+  - {id: category-initializer,  group: config,       match: [load_reaction_category_list.rb]}
+  # the write path: how a reaction is created
+  - {id: reaction-handler,      group: write-path,   match: [reaction_handler.rb]}
+  - {id: reactions-controller,  group: write-path,   match: [controllers/reactions_controller.rb]}
+  # THE discriminator: the create/destroy cascade, scattered workers across disjoint namespaces
+  - {id: w:update-scores,       group: cascade,      match: [reactions/update_relevant_scores_worker.rb]}
+  - {id: w:bust-reactable,      group: cascade,      match: [reactions/bust_reactable_cache_worker.rb]}
+  - {id: w:bust-homepage,       group: cascade,      match: [reactions/bust_homepage_cache_worker.rb]}
+  - {id: w:counter-sync,        group: cascade,      match: [reaction_counter_sync_worker.rb]}
+  - {id: w:ring-detection,      group: cascade,      match: [spam/reaction_ring_detection_worker.rb]}
+  - {id: w:article-activity,    group: cascade,      match: [articles/update_article_activity_worker.rb]}
+  - {id: w:interest-embedding,  group: cascade,      match: [update_user_interest_embedding_worker.rb]}
+  - {id: w:new-reaction-notif,  group: cascade,      match: [notifications/new_reaction_worker.rb]}
+  # how a reaction feeds the reactable's score (reached via update_reactable; symbol-matched, mention)
+  - {id: score:article,         group: scoring,      match: [update_score]}
+  - {id: score:user,            group: scoring,      match: [calculate_score]}
+  # moderation / anti-abuse dependents (scattered, grep-invisible read side)
+  - {id: mod:spam-handler,      group: moderation,   match: [spam/handler.rb]}
+  - {id: mod:banish-user,       group: moderation,   match: [moderator/banish_user.rb]}
+  - {id: mod:confirm-flags,     group: moderation,   match: [users/confirm_flag_reactions.rb]}
+  - {id: mod:ring-detector,     group: moderation,   match: [spam/reaction_ring_detector.rb]}
+  # how a reaction notifies
+  - {id: notif:send,            group: notification, match: [notifications/reactions/send.rb]}
+  - {id: notif:data,            group: notification, match: [notifications/reactions/reaction_data.rb]}
+  # the test matrix
+  - {id: spec:reaction,         group: specs,        match: [models/reaction_spec.rb]}
+  - {id: spec:handler,          group: specs,        match: [reaction_handler_spec.rb]}
+  - {id: spec:scores-worker,    group: specs,        match: [update_relevant_scores_worker_spec.rb]}
+  - {id: spec:requests,         group: specs,        match: [requests/reactions_spec.rb]}
