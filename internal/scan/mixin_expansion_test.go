@@ -101,3 +101,45 @@ end
 		}
 	}
 }
+
+// An acts_as_* macro invoked at file/module level (outside any class) yields a
+// pending edge whose SourceID is the int64Ptr nil sentinel (0). Mixin expansion
+// must not feed that zero source to ExecEdgeStmt, which dereferences *SourceID
+// and would segfault. Regression for the RubyLLM/llm.rb scan panic: those gems
+// define and invoke acts_as_chat/acts_as_message at file level.
+func TestMixinExpansionSkipsFileLevelMacroCaller(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "lib/plugins/acts_as_attachable.rb"), `
+module Acts
+  module Attachable
+    def self.included(base)
+      base.extend ClassMethods
+    end
+    module ClassMethods
+      def acts_as_attachable(options = {})
+        Attachment.table_name
+      end
+    end
+  end
+end
+`)
+	writeFile(t, filepath.Join(root, "app/models/attachment.rb"), `
+class Attachment < ApplicationRecord
+end
+`)
+	// The macro invoked inside an RSpec describe block. A describe block is a
+	// file-level edge (SourceID == 0, like routes), so the macro caller's source
+	// is the int64Ptr nil sentinel — exactly how RubyLLM's acts_as_*_spec.rb
+	// files triggered the panic.
+	writeFile(t, filepath.Join(root, "spec/models/attachable_spec.rb"), `
+RSpec.describe "attachable models" do
+  acts_as_attachable
+end
+`)
+
+	ctx := context.Background()
+	if _, err := scan.Run(ctx, quietOpts(root)); err != nil {
+		t.Fatalf("Run (file-level macro caller must not panic): %v", err)
+	}
+}

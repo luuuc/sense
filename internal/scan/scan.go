@@ -1292,8 +1292,16 @@ func (h *harness) writeMixinExpansionEdges(edgeStmt *sql.Stmt, callers, collabor
 		collabs := collaborators[macroID]
 		for _, src := range srcs {
 			for _, tgt := range collabs {
+				// A zero src is the int64Ptr nil-pointer sentinel for a
+				// file-level edge (e.g. an acts_as_* macro invoked inside an
+				// RSpec describe block, which has no enclosing model symbol).
+				// ExecEdgeStmt dereferences *SourceID, so the source must be
+				// non-zero here, just as the main resolve loop only calls it
+				// behind an `edge.SourceID != nil` guard. A file-level caller
+				// also has no model to attribute the collaborator dependency to,
+				// so dropping it loses nothing.
 				key := [2]int64{src, tgt}
-				if src == tgt || seen[key] {
+				if src == 0 || src == tgt || seen[key] {
 					continue
 				}
 				seen[key] = true
