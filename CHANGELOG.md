@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.7.1] - 2026-06-17
+
+### Bug Fixes
+
+- guard against nil source in acts_as mixin expansion
 ## [1.7.0] - 2026-06-17
 
 ### Bug Fixes
