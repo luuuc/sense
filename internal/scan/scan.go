@@ -1138,6 +1138,44 @@ func (h *harness) buildAncestry() map[string][]string {
 // single commit is reasonable at pitch-target sizes (≤30K symbols,
 // ≤120K edges ⇒ low-MB range, commits in milliseconds). Much larger
 // repos will want a batched commit strategy; not this card's job.
+// mixinExpansionConfidence is the confidence of a synthesized model ->
+// collaborator edge inferred through an acts_as_* macro. It is a real but
+// two-hop-inferred relationship, so it sits at convention strength: above the
+// blast/graph default floor (it surfaces) but below a directly-written
+// association (a literal has_many would outrank it).
+const mixinExpansionConfidence = 0.8
+
+// isActsAsMacroQualified reports whether a qualified symbol name is an acts_as_*
+// plugin macro method — i.e. its final method segment (after the last `#` or `.`)
+// begins with "acts_as_". `Redmine::Acts::Watchable::ClassMethods#acts_as_watchable`
+// qualifies; a plain class or a non-macro method does not.
+func isActsAsMacroQualified(qualified string) bool {
+	seg := qualified
+	if i := strings.LastIndexAny(seg, "#."); i >= 0 {
+		seg = seg[i+1:]
+	}
+	return strings.HasPrefix(seg, "acts_as_")
+}
+
+// isCollaboratorTarget reports whether a qualified name is a plain class the
+// mixin wires the model to (Attachment, Watcher), as opposed to the macro's own
+// helper modules. It rejects method references (`#`/`.`) and the InstanceMethods/
+// ClassMethods mixin sub-modules, which carry behavior but are not the
+// dependency a teardown audit cares about.
+func isCollaboratorTarget(qualified string) bool {
+	if qualified == "" || strings.ContainsAny(qualified, "#.") {
+		return false
+	}
+	seg := qualified
+	if i := strings.LastIndex(seg, "::"); i >= 0 {
+		seg = seg[i+2:]
+	}
+	if seg == "" || seg[0] < 'A' || seg[0] > 'Z' {
+		return false
+	}
+	return seg != "InstanceMethods" && seg != "ClassMethods"
+}
+
 func (h *harness) resolveAndWriteEdges() error {
 	if len(h.pendingEdges) == 0 {
 		return nil
@@ -1147,6 +1185,22 @@ func (h *harness) resolveAndWriteEdges() error {
 		return fmt.Errorf("load symbols for edge resolution: %w", err)
 	}
 	resolver := resolve.NewIndex(refs).WithInheritance(h.buildAncestry())
+
+	qualByID := make(map[int64]string, len(refs))
+	fileByID := make(map[int64]int64, len(refs))
+	for _, ref := range refs {
+		qualByID[ref.ID] = ref.Qualified
+		fileByID[ref.ID] = ref.FileID
+	}
+	// Mixin-macro expansion state: a model that invokes an acts_as_* macro
+	// depends on the collaborator classes the macro wires in (acts_as_attachable
+	// -> Attachment), but that link is two hops (model -> macro -> collaborator)
+	// and a grep-invisible one — the model never names the collaborator. Collect
+	// the callers of each macro and the collaborator classes each macro reaches,
+	// then synthesize the direct model -> collaborator edges so blast/graph
+	// surface the model as a first-class dependent.
+	macroCallers := map[int64][]int64{}       // macro symbol ID -> model source IDs
+	macroCollaborators := map[int64][]int64{} // macro symbol ID -> collaborator class IDs
 
 	var written, unresolved, ambiguous int
 	err = h.idx.InTx(h.ctx, func() error {
@@ -1172,6 +1226,9 @@ func (h *harness) resolveAndWriteEdges() error {
 			if r.Ambiguous {
 				ambiguous++
 			}
+			// Bucket the edge for mixin expansion (model -> macro / macro ->
+			// collaborator), both keyed by the macro's symbol ID.
+			recordMixinEdge(pe.SourceID, r.SymbolID, pe.SourceQualified, qualByID, macroCallers, macroCollaborators)
 			edge := &model.Edge{
 				SourceID:   int64Ptr(pe.SourceID),
 				TargetID:   r.SymbolID,
@@ -1191,6 +1248,14 @@ func (h *harness) resolveAndWriteEdges() error {
 			}
 			written++
 		}
+
+		// Synthesize the direct model -> collaborator edges bridged by each
+		// shared acts_as_* macro.
+		n, werr := h.writeMixinExpansionEdges(edgeStmt, macroCallers, macroCollaborators, fileByID)
+		if werr != nil {
+			return werr
+		}
+		written += n
 		return nil
 	})
 	if err != nil {
@@ -1200,4 +1265,51 @@ func (h *harness) resolveAndWriteEdges() error {
 	h.unresolved += unresolved
 	h.ambiguous += ambiguous
 	return nil
+}
+
+// recordMixinEdge buckets a resolved edge for later mixin expansion, keyed by
+// the macro's symbol ID. A model -> macro edge (the target is an acts_as_* macro)
+// records the calling model; a macro -> collaborator edge (the source is the
+// macro, the target a plain class) records the collaborator. Any other edge is
+// ignored.
+func recordMixinEdge(sourceID, targetID int64, sourceQual string, qualByID map[int64]string, callers, collaborators map[int64][]int64) {
+	switch {
+	case isActsAsMacroQualified(qualByID[targetID]):
+		callers[targetID] = append(callers[targetID], sourceID)
+	case isActsAsMacroQualified(sourceQual) && isCollaboratorTarget(qualByID[targetID]):
+		collaborators[sourceID] = append(collaborators[sourceID], targetID)
+	}
+}
+
+// writeMixinExpansionEdges synthesizes a direct model -> collaborator composes
+// edge for every model/collaborator pair bridged by a shared acts_as_* macro,
+// deduped per pair (a model reaching the same collaborator through one macro is
+// written once). Returns the number of edges written.
+func (h *harness) writeMixinExpansionEdges(edgeStmt *sql.Stmt, callers, collaborators map[int64][]int64, fileByID map[int64]int64) (int, error) {
+	written := 0
+	seen := map[[2]int64]bool{}
+	for macroID, srcs := range callers {
+		collabs := collaborators[macroID]
+		for _, src := range srcs {
+			for _, tgt := range collabs {
+				key := [2]int64{src, tgt}
+				if src == tgt || seen[key] {
+					continue
+				}
+				seen[key] = true
+				edge := &model.Edge{
+					SourceID:   int64Ptr(src),
+					TargetID:   tgt,
+					Kind:       model.EdgeComposes,
+					FileID:     fileByID[src],
+					Confidence: mixinExpansionConfidence,
+				}
+				if _, werr := sqlite.ExecEdgeStmt(h.ctx, edgeStmt, edge); werr != nil {
+					return written, fmt.Errorf("write mixin-expansion edge source=%d target=%d: %w", src, tgt, werr)
+				}
+				written++
+			}
+		}
+	}
+	return written, nil
 }
