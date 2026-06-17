@@ -168,15 +168,15 @@ func TestDisambiguationRanksByEdgeCount(t *testing.T) {
 		t.Errorf("expected the 3-edge candidate ranked first, got %q", first)
 	}
 	hint, _ := resp["hint"].(string)
-	if !strings.Contains(hint, "Refine") {
-		t.Errorf("expected a Refine hint when no candidate equals the query, got %q", hint)
+	if !strings.Contains(hint, "retry this tool with the") {
+		t.Errorf("expected a hint steering to the file parameter, got %q", hint)
 	}
 }
 
-// TestDisambiguationHintWhenQualifiedEqualsQuery covers the alternate hint
-// branch: when the top-ranked candidate's qualified name is exactly the query
-// (the disambiguation hint would otherwise be circular), the response steers
-// the LLM to pick from top_matches by file instead.
+// TestDisambiguationHintWhenQualifiedEqualsQuery covers the hint when the
+// top-ranked candidate's qualified name is exactly the query (a bare
+// qualified-name retry would be circular): the response steers the LLM to the
+// `file` parameter with the candidate's path as a concrete example.
 func TestDisambiguationHintWhenQualifiedEqualsQuery(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
@@ -192,8 +192,8 @@ func TestDisambiguationHintWhenQualifiedEqualsQuery(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	hint, _ := resp["hint"].(string)
-	if !strings.Contains(hint, "pick the one in the right file") {
-		t.Errorf("expected the top_matches hint when qualified == query, got %q", hint)
+	if !strings.Contains(hint, "retry this tool with the") || !strings.Contains(hint, "a.go") {
+		t.Errorf("expected a file-parameter hint citing the candidate path, got %q", hint)
 	}
 }
 
@@ -418,5 +418,105 @@ func TestHandleBlastDiffSuccess(t *testing.T) {
 	}
 	if resp.CoverageNote == "" {
 		t.Error("expected the static-edge coverage note on a diff blast")
+	}
+}
+
+// ambiguousWidgetHandler builds a handler over two equally-referenced "Widget"
+// symbols in different files, so the name is ambiguous and dominantMatch cannot
+// auto-resolve it (each has 1 edge, below the 5x rule). Used to exercise the
+// file-hint disambiguation path of resolveSymbol.
+func ambiguousWidgetHandler(t *testing.T) (*handlers, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i, path := range []string{"app/models/widget.rb", "app/components/widget.tsx"} {
+		fid, _ := adapter.WriteFile(ctx, &model.File{Path: path, Language: "ruby", Hash: "h" + strconv.Itoa(i), Symbols: 1, IndexedAt: now})
+		sid, _ := adapter.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "Widget", Qualified: path + ".Widget", Kind: "class", LineStart: 1, LineEnd: 5})
+		caller, _ := adapter.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "Caller", Qualified: path + ".Caller", Kind: "function", LineStart: 10, LineEnd: 10})
+		e := model.Edge{SourceID: &caller, TargetID: sid, Kind: model.EdgeCalls, FileID: fid, Line: intPtr(1), Confidence: 1.0}
+		if _, err := adapter.WriteEdge(ctx, &e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tracker := metrics.NewTracker(adapter.DB())
+	h := &handlers{
+		adapter: adapter, db: adapter.DB(), dir: dir,
+		search:      search.NewEngine(adapter, nil, nil),
+		tracker:     tracker,
+		defaults:    profile.DefaultParams(),
+		seenSymbols: make(map[int64]bool),
+	}
+	return h, func() { tracker.Close(); _ = adapter.Close() }
+}
+
+// TestResolveSymbolFileHintDisambiguates covers the new file-path disambiguation
+// in resolveSymbol: an ambiguous symbol resolves to the single candidate whose
+// path contains the hint, while an empty or non-matching hint leaves the normal
+// ambiguous handling intact.
+func TestResolveSymbolFileHintDisambiguates(t *testing.T) {
+	h, cleanup := ambiguousWidgetHandler(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// A matching file hint resolves to exactly that candidate.
+	got, err := h.resolveSymbol(ctx, "sense_blast", "Widget", "models/widget.rb")
+	if err != nil {
+		t.Fatalf("file hint should resolve the ambiguity, got error: %v", err)
+	}
+	if !strings.Contains(got.File, "app/models/widget.rb") {
+		t.Errorf("resolved to %q, want the app/models/widget.rb candidate", got.File)
+	}
+
+	// The other candidate is reachable by its own hint.
+	got2, err := h.resolveSymbol(ctx, "sense_blast", "Widget", "components/widget.tsx")
+	if err != nil {
+		t.Fatalf("second file hint should resolve, got error: %v", err)
+	}
+	if !strings.Contains(got2.File, "components/widget.tsx") {
+		t.Errorf("resolved to %q, want the components/widget.tsx candidate", got2.File)
+	}
+
+	// No hint: still ambiguous (resolveError).
+	if _, err := h.resolveSymbol(ctx, "sense_blast", "Widget", ""); err == nil {
+		t.Error("expected an ambiguous resolveError with no file hint")
+	} else if _, ok := err.(*resolveError); !ok {
+		t.Errorf("expected *resolveError, got %T", err)
+	}
+
+	// A hint that matches no candidate is ignored, so it stays ambiguous
+	// rather than collapsing to not-found.
+	if _, err := h.resolveSymbol(ctx, "sense_blast", "Widget", "nonexistent/path.rb"); err == nil {
+		t.Error("expected ambiguity to remain when the file hint matches nothing")
+	} else if _, ok := err.(*resolveError); !ok {
+		t.Errorf("expected *resolveError for a non-matching hint, got %T", err)
+	}
+}
+
+// TestHandleBlastFileHintResolves drives the file hint through the public
+// handler end-to-end: an ambiguous symbol plus a file hint returns a real blast
+// response instead of an ambiguity prompt.
+func TestHandleBlastFileHintResolves(t *testing.T) {
+	h, cleanup := ambiguousWidgetHandler(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	result, err := h.handleBlast(ctx, toolReq(map[string]any{
+		"symbol": "Widget",
+		"file":   "app/models/widget.rb",
+	}))
+	if err != nil {
+		t.Fatalf("handleBlast with file hint: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected a resolved blast response, got error result: %+v", result)
 	}
 }

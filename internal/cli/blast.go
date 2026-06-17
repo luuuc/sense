@@ -199,7 +199,7 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
 	}
-	matches = filterMatches(matches, opts.File, opts.Language)
+	matches = FilterMatches(matches, opts.File, opts.Language)
 	switch len(matches) {
 	case 0:
 		PrintNotFound(cio.Stderr, opts.Symbol)

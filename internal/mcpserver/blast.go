@@ -17,6 +17,7 @@ import (
 func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	symbol := req.GetString("symbol", "")
 	diff := req.GetString("diff", "")
+	fileHint := req.GetString("file", "")
 
 	if symbol == "" && diff == "" {
 		return mcp.NewToolResultError("sense_blast: pass either 'symbol' or 'diff'"), nil
@@ -52,7 +53,7 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 		resp = resp2
 	} else {
-		resp2, err := h.blastSymbol(ctx, symbol, opts, snippets)
+		resp2, err := h.blastSymbol(ctx, symbol, fileHint, opts, snippets)
 		if err != nil {
 			if re, ok := err.(*resolveError); ok {
 				return re.result, nil
@@ -134,10 +135,22 @@ const disambiguationCap = 10
 // When the symbol is not found, ambiguous, or only fuzzy-matched, it
 // returns a resolveError whose result field carries a pre-built
 // *mcp.CallToolResult with structured JSON for the LLM.
-func (h *handlers) resolveSymbol(ctx context.Context, tool, symbol string) (cli.Match, error) {
+func (h *handlers) resolveSymbol(ctx context.Context, tool, symbol, fileHint string) (cli.Match, error) {
 	matches, err := cli.Lookup(ctx, h.db, symbol)
 	if err != nil {
 		return cli.Match{}, fmt.Errorf("%s: lookup: %w", tool, err)
+	}
+
+	// Disambiguate by file path substring when the caller supplied one.
+	// Mirrors the CLI's --file flag: an ambiguous symbol (a re-opened Ruby
+	// class, or a name shared with a JS/TS component in a full-stack repo)
+	// resolves to the single candidate whose path contains the hint. A hint
+	// that matches nothing is ignored so the normal not-found/ambiguous
+	// handling still runs.
+	if fileHint != "" {
+		if filtered := cli.FilterMatches(matches, fileHint, ""); len(filtered) > 0 {
+			matches = filtered
+		}
 	}
 
 	if len(matches) == 0 {
@@ -265,11 +278,12 @@ func (h *handlers) disambiguationResult(ctx context.Context, symbol string, matc
 
 	hint := ""
 	if len(topMatches) > 0 {
-		if items[0].match.Qualified == symbol {
-			hint = fmt.Sprintf("Multiple symbols named %q exist — pick the one in the right file from top_matches above", symbol)
-		} else {
-			hint = fmt.Sprintf("Refine with a qualified name, e.g. %q", items[0].match.Qualified)
-		}
+		// Always steer to the `file` parameter: it disambiguates by path
+		// substring and works even when the candidates share a qualified
+		// name (a re-opened class) or span languages (a Ruby model vs a JS
+		// component). A bare qualified-name retry fails in those cases.
+		hint = fmt.Sprintf("Multiple symbols named %q exist — retry this tool with the `file` parameter set to the path of the one you want, e.g. file: %q (see top_matches for the paths)",
+			symbol, items[0].match.File)
 	}
 
 	resp := map[string]any{
@@ -284,8 +298,8 @@ func (h *handlers) disambiguationResult(ctx context.Context, symbol string, matc
 	return mcp.NewToolResultText(string(out))
 }
 
-func (h *handlers) blastSymbol(ctx context.Context, symbol string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
-	match, err := h.resolveSymbol(ctx, "sense_blast", symbol)
+func (h *handlers) blastSymbol(ctx context.Context, symbol, fileHint string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
+	match, err := h.resolveSymbol(ctx, "sense_blast", symbol, fileHint)
 	if err != nil {
 		return mcpio.BlastResponse{}, err
 	}

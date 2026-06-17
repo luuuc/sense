@@ -180,42 +180,42 @@ func TestPrintDisambiguation(t *testing.T) {
 	}
 }
 
-func Test_filterMatches(t *testing.T) {
+func Test_FilterMatches(t *testing.T) {
 	matches := []Match{
 		{ID: 1, Qualified: "Project", Kind: "class", Language: "ruby", File: "app/models/project.rb"},
 		{ID: 2, Qualified: "Project", Kind: "function", Language: "javascript", File: "src/Project.js"},
 	}
 
 	t.Run("no filter returns all", func(t *testing.T) {
-		got := filterMatches(matches, "", "")
+		got := FilterMatches(matches, "", "")
 		if len(got) != 2 {
 			t.Fatalf("want 2 matches, got %d", len(got))
 		}
 	})
 
 	t.Run("filter by language", func(t *testing.T) {
-		got := filterMatches(matches, "", "ruby")
+		got := FilterMatches(matches, "", "ruby")
 		if len(got) != 1 || got[0].ID != 1 {
 			t.Fatalf("want ruby match (id=1), got %+v", got)
 		}
 	})
 
 	t.Run("filter by language case-insensitive", func(t *testing.T) {
-		got := filterMatches(matches, "", "Ruby")
+		got := FilterMatches(matches, "", "Ruby")
 		if len(got) != 1 || got[0].ID != 1 {
 			t.Fatalf("want ruby match (id=1), got %+v", got)
 		}
 	})
 
 	t.Run("filter by file substring", func(t *testing.T) {
-		got := filterMatches(matches, "Project.js", "")
+		got := FilterMatches(matches, "Project.js", "")
 		if len(got) != 1 || got[0].ID != 2 {
 			t.Fatalf("want JS match (id=2), got %+v", got)
 		}
 	})
 
 	t.Run("both filters narrow to zero", func(t *testing.T) {
-		got := filterMatches(matches, "Project.js", "ruby")
+		got := FilterMatches(matches, "Project.js", "ruby")
 		if len(got) != 0 {
 			t.Fatalf("want 0 matches, got %d", len(got))
 		}
