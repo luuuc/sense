@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.7.0] - 2026-06-17
+
+### Bug Fixes
+
+- deterministic caller cap on high-fan-out symbols
+
+### Features
+
+- add file param to disambiguate multi-match symbols
+- resolve acts_as_* mixin dependents to collaborator classes
 ## [1.6.0] - 2026-06-15
 
 ### Features
