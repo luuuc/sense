@@ -30,6 +30,7 @@ const (
 // graphParams is the validated, defaulted input to a sense_graph query.
 type graphParams struct {
 	symbol        string
+	fileHint      string
 	direction     model.Direction
 	depth         int
 	minConfidence float64
@@ -50,7 +51,7 @@ func (h *handlers) handleGraph(ctx context.Context, req mcp.CallToolRequest) (*m
 	// just-edited symbol is visible even before the debounced watcher fires.
 	snap := h.repairAndSnapshot(ctx)
 
-	match, err := h.resolveSymbol(ctx, "sense_graph", params.symbol)
+	match, err := h.resolveSymbol(ctx, "sense_graph", params.symbol, params.fileHint)
 	if err != nil {
 		if re, ok := err.(*resolveError); ok {
 			return re.result, nil
@@ -116,6 +117,7 @@ func parseGraphParams(req mcp.CallToolRequest) (graphParams, *mcp.CallToolResult
 
 	return graphParams{
 		symbol:        symbol,
+		fileHint:      req.GetString("file", ""),
 		direction:     direction,
 		depth:         depth,
 		minConfidence: minConfidence,

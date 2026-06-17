@@ -515,17 +515,36 @@ func (s *bfsState) capResults(directIDs, indirectIDs []int64, maxResults int) ([
 		return directIDs, indirectIDs
 	}
 	type ranked struct {
-		id   int64
-		conf float64
+		id     int64
+		conf   float64
+		direct bool
 	}
 	all := make([]ranked, 0, callerCount)
 	for _, id := range directIDs {
-		all = append(all, ranked{id, s.pathConf[id]})
+		all = append(all, ranked{id, s.pathConf[id], true})
 	}
 	for _, id := range indirectIDs {
-		all = append(all, ranked{id, s.pathConf[id]})
+		all = append(all, ranked{id, s.pathConf[id], false})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].conf > all[j].conf })
+	// Rank by confidence, then prefer direct callers, then break ties on
+	// symbol ID. The two tie-breakers matter on high-fan-out hubs where
+	// almost every path is a 1.0 call edge, so callers cluster at one
+	// confidence and the cap cutoff lands among the ties:
+	//   - direct-over-indirect keeps the "what breaks?" signal — a direct
+	//     caller must not be evicted to make room for a weaker indirect one;
+	//   - the ID tie-break makes the kept set deterministic, so repeated
+	//     blasts of the same symbol return the same callers (without it an
+	//     unstable sort keeps an arbitrary subset that varies run to run and
+	//     "audit every dependent" is unreproducible).
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].conf != all[j].conf {
+			return all[i].conf > all[j].conf
+		}
+		if all[i].direct != all[j].direct {
+			return all[i].direct
+		}
+		return all[i].id < all[j].id
+	})
 	all = all[:maxResults]
 
 	kept := make(map[int64]struct{}, maxResults)

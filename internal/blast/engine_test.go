@@ -1382,6 +1382,58 @@ func TestBlastCapsFrontierWidth(t *testing.T) {
 	}
 }
 
+// TestBlastCapResultsDeterministic verifies that when a high-fan-out symbol's
+// callers exceed MaxResults and share a confidence (the common case — call
+// edges are 1.0), the kept caller set is identical across repeated computations.
+// A confidence-only unstable sort lands the cap cutoff among ties and keeps an
+// arbitrary subset that varies run to run, so repeated blasts of the same symbol
+// return different callers and "audit every dependent" becomes unreproducible.
+func TestBlastCapResultsDeterministic(t *testing.T) {
+	fix := newFixtureDB(t)
+	hub := fix.addSymbol(t, "Hub")
+
+	const maxResults = 50
+	callerCount := maxResults + 40 // exceed the cap with equal-confidence ties
+	for i := 0; i < callerCount; i++ {
+		caller := fix.addSymbol(t, fmt.Sprintf("Caller%d", i))
+		fix.addEdge(t, caller, hub, model.EdgeCalls, 1.0)
+	}
+
+	keptSet := func(run int) map[int64]struct{} {
+		res, err := blast.Compute(context.Background(), fix.db, []int64{hub}, blast.Options{
+			MaxHops:    2,
+			MaxResults: maxResults,
+		})
+		if err != nil {
+			t.Fatalf("Compute run %d: %v", run, err)
+		}
+		set := make(map[int64]struct{}, len(res.DirectCallers))
+		for _, c := range res.DirectCallers {
+			set[c.ID] = struct{}{}
+		}
+		return set
+	}
+
+	first := keptSet(0)
+	if len(first) == 0 {
+		t.Fatal("expected some direct callers kept under the cap")
+	}
+	if len(first) >= callerCount {
+		t.Fatalf("cap did not engage: kept %d of %d callers", len(first), callerCount)
+	}
+	for run := 1; run < 5; run++ {
+		got := keptSet(run)
+		if len(got) != len(first) {
+			t.Fatalf("run %d kept %d callers, run 0 kept %d (nondeterministic cap)", run, len(got), len(first))
+		}
+		for id := range first {
+			if _, ok := got[id]; !ok {
+				t.Errorf("run %d dropped caller %d that run 0 kept (nondeterministic cap)", run, id)
+			}
+		}
+	}
+}
+
 // TestBlastPrunesCompositionThreeHops verifies that three consecutive
 // composition hops get pruned: cumulative confidence 0.5^3 = 0.125 < StructuralMinConf (0.2).
 func TestBlastPrunesCompositionThreeHops(t *testing.T) {

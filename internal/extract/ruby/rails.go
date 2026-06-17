@@ -176,6 +176,67 @@ func (w *walker) emitAssociationEdge(n *sitter.Node, scope []string, methodName 
 	})
 }
 
+// isActsAsMacro reports whether a class-body method call is an acts_as_*
+// plugin mixin macro (acts_as_attachable, acts_as_watchable, acts_as_list, …).
+func isActsAsMacro(methodName string) bool {
+	return strings.HasPrefix(methodName, "acts_as_")
+}
+
+// handleBareActsAsMacro emits the model → macro edge for a no-argument acts_as_*
+// macro, which tree-sitter parses as a bare identifier rather than a call
+// (`acts_as_watchable` with no options). It fires only for an acts_as_* identifier
+// that is a direct statement of a class/module body — never one nested in a method
+// body or block, where a same-named local reference could otherwise match.
+func (w *walker) handleBareActsAsMacro(n *sitter.Node, scope []string) error {
+	if len(scope) == 0 {
+		return nil
+	}
+	name := extract.Text(n, w.source)
+	if !isActsAsMacro(name) {
+		return nil
+	}
+	// Require the identifier to be a direct child of a class/module body, so a
+	// `def`-local reference with an acts_as_* name does not spuriously match.
+	parent := n.Parent()
+	if parent == nil || parent.Kind() != "body_statement" {
+		return nil
+	}
+	if gp := parent.Parent(); gp == nil || (gp.Kind() != "class" && gp.Kind() != "module") {
+		return nil
+	}
+	return w.emitActsAsEdge(n, scope, name)
+}
+
+// emitActsAsEdge connects a model to an acts_as_* mixin macro it invokes.
+//
+// Rails plugins expose behavior through class-body macros named acts_as_<thing>.
+// The macro's own body establishes the associations and includes that wire the
+// calling model to its collaborator classes — acts_as_attachable declares
+// `has_many :attachments, as: :container`, so the macro method already carries an
+// edge to Attachment; acts_as_watchable reaches Watcher the same way. But the
+// model that *calls* the macro had no edge to it, so the collaborator was
+// unreachable from the model: a grep-invisible dependency (the model never names
+// Attachment) the index could not follow either. Emitting the model → macro call
+// edge completes the path model → acts_as_attachable → Attachment, so blast and
+// graph surface the model as a (two-hop) dependent of the collaborator.
+//
+// The target is the macro method's surface name; the resolver binds it to the
+// macro definition when one is indexed. No collaborator class is named here, so
+// the rule is fully general across plugins — any acts_as_* macro, no per-framework
+// table. When the macro is defined in an unindexed gem the edge drops (unresolved
+// target), which is the correct no-op.
+func (w *walker) emitActsAsEdge(n *sitter.Node, scope []string, methodName string) error {
+	source := strings.Join(scope, "::")
+	line := extract.Line(n.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: methodName,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      extract.ConfidenceConvention,
+	})
+}
+
 // emitCallbackEdges emits calls edges for Rails lifecycle callbacks and
 // a symbol for the callback declaration so convention detection can find it.
 // Duplicate symbols for the same callback name on the same class are suppressed.

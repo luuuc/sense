@@ -161,6 +161,14 @@ func (w *walker) walk(n *sitter.Node, scope []string) error {
 			return nil
 		}
 		return w.walkChildren(n, scope)
+	case "identifier":
+		// A bare class-body macro with no arguments (`acts_as_watchable`)
+		// parses as an identifier, not a call. Handle the acts_as_* form here;
+		// every other identifier falls through unchanged.
+		if err := w.handleBareActsAsMacro(n, scope); err != nil {
+			return err
+		}
+		return w.walkChildren(n, scope)
 	default:
 		return w.walkChildren(n, scope)
 	}
@@ -218,6 +226,9 @@ func (w *walker) dispatchClassBodyCall(n *sitter.Node, scope []string, methodNam
 	}
 	if model.RailsCallbackNames[methodName] {
 		return true, w.emitCallbackEdges(n, scope, methodName)
+	}
+	if isActsAsMacro(methodName) {
+		return true, w.emitActsAsEdge(n, scope, methodName)
 	}
 	return false, nil
 }

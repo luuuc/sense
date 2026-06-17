@@ -104,7 +104,7 @@ func RunGraph(args []string, cio IO) int {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense graph:", err)
 		return ExitGeneralError
 	}
-	matches = filterMatches(matches, opts.File, opts.Language)
+	matches = FilterMatches(matches, opts.File, opts.Language)
 	switch len(matches) {
 	case 0:
 		PrintNotFound(cio.Stderr, opts.Symbol)

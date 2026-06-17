@@ -360,7 +360,7 @@ func scanMatches(ctx context.Context, db *sql.DB, q string, args ...any) ([]Matc
 // FilterMatches narrows a match list by file path substring and/or
 // language. Returns the original slice unmodified when both filters
 // are empty.
-func filterMatches(matches []Match, file, language string) []Match {
+func FilterMatches(matches []Match, file, language string) []Match {
 	if file == "" && language == "" {
 		return matches
 	}
