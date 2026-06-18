@@ -7,7 +7,7 @@
 # ruby-rails); empty/unset means the global bench.
 #
 # A vertical bench is also MODEL-SCOPED: set BENCH_MODEL=<id> and each model gets
-# its own bench root, so sweeping several models (opus-4-8, gpt-5.4, an
+# its own bench root, so sweeping several models (opus-4-8, gpt-5.5, an
 # ollama-cloud model, ...) never overwrites another's results. The id is
 # sanitized (/ and : -> _) to a safe dir name. The
 # global bench is deliberately single-model: BENCH_MODEL is ignored there.

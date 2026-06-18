@@ -3,7 +3,7 @@
 
 A vertical bench is model-scoped: results/vertical/<name>/<model>/<arm>/<repo>/.
 The per-model report (reporter.py) compares baseline vs sense within one model;
-this aggregates ACROSS models so opus-4-8, gpt-5.4, the ollama-cloud models, ...
+this aggregates ACROSS models so opus-4-8, gpt-5.5, the ollama-cloud models, ...
 sit side by side. For each (model, repo) it reads the mean cited-recall per arm
 (averaging run-*/ when present) and reports the sense-over-baseline delta, plus
 the discriminator `dependents` group delta when the scenario carries one.

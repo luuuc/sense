@@ -10,7 +10,7 @@
 # score/judge/report/snapshot pipeline runs unchanged.
 #
 #   bash bench/codex-run.sh --tool baseline,sense --repo ruby_llm
-#   bash bench/codex-run.sh --repo discourse --model gpt-5.4
+#   bash bench/codex-run.sh --repo discourse --model gpt-5.5
 #
 # Sense reaches Codex through TWO channels and we report which it used:
 #   - MCP: registered on the sense arm via `-c mcp_servers.sense=...`
