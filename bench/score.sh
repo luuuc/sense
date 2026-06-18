@@ -3,8 +3,8 @@ set -euo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
-RESULTS_DIR="$BENCH_DIR/results"
-SCENARIOS_DIR="$BENCH_DIR/scenarios"
+# Resolves RESULTS_DIR + SCENARIOS_DIR for the global or VERTICAL bench.
+source "$BENCH_DIR/lib/bench-paths.sh"
 LIB_DIR="$BENCH_DIR/lib"
 
 # Mirror run.sh: tool/repo checkouts live under SENSE_BENCH_ROOT.
@@ -88,6 +88,9 @@ stale_count=0
 for tool_dir in "$RESULTS_DIR"/*/; do
   [[ -d "$tool_dir" ]] || continue
   tool=$(basename "$tool_dir")
+  # "vertical" is the reserved per-vertical subtree, not an arm; it is scored on
+  # its own root (RESULTS_DIR=results/vertical/<name>), never as a global arm.
+  [[ "$tool" == "vertical" ]] && continue
 
   for repo_dir in "$tool_dir"*/; do
     [[ -d "$repo_dir" ]] || continue

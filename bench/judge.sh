@@ -10,8 +10,8 @@ set -euo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 BENCH_PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
-RESULTS_DIR="$BENCH_DIR/results"
-SCENARIOS_DIR="$BENCH_DIR/scenarios"
+# Resolves RESULTS_DIR + SCENARIOS_DIR for the global or VERTICAL bench.
+source "$BENCH_DIR/lib/bench-paths.sh"
 LIB_DIR="$BENCH_DIR/lib"
 # shellcheck disable=SC1091
 source "$LIB_DIR/load-env.sh"
@@ -105,6 +105,8 @@ no_rubric_count=0
 for tool_dir in "$RESULTS_DIR"/*/; do
   [[ -d "$tool_dir" ]] || continue
   tool=$(basename "$tool_dir")
+  # "vertical" is the reserved per-vertical subtree, not an arm.
+  [[ "$tool" == "vertical" ]] && continue
   matches_filter "$tool" "$FILTER_TOOLS" || continue
 
   for repo_dir in "$tool_dir"*/; do

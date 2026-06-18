@@ -1,0 +1,317 @@
+{
+  "scenario": "Rails work session - audit the query Relation contract before a rework",
+  "repo": "rails",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "rails.rubric.yaml"
+  },
+  "scenario_quality": 0.8893,
+  "relationship_audit": {
+    "total": 14,
+    "covered": 14,
+    "related": 14,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "items": [
+      {
+        "id": "relation-model",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "query-methods",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "finder-methods",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "spawn-methods",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "delegation",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:join-dependency",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:connection-handling",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:sanitization",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:integration",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:encryption-queries",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:signed-id",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:scoping-named",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:enumerable-coreext",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "dep:query-command",
+        "covered": true,
+        "related": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Hands the agent a complete map: identifies Rails monorepo, names ActiveRecord::Relation at relation.rb:5 as the lazy query value, lists the relation/ subdir contents, and points to the entry points (Scoping::Named#all named.rb:22, default_scoped :45, Core#relation core.rb:442). Agent can pick an entry with only targeted lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Paths are concrete with file:line throughout: 'activerecord/lib/active_record/relation.rb:5', the relation/ subdir enumerated by file (query_methods.rb, finder_methods.rb, spawn_methods.rb, merger.rb, etc.), and entry-point methods named with line numbers, not vague descriptions."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Explains why this is the lazy value ('the lazy query value every finder, scope, and association returns') and points to the @values bag contract that spawn/merge depend on (relation.rb:54-66). Could spell out the lazy-until-enumerated rationale more, but the chaining/spawn reason is stated."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Closing note flags that 'sense_blast static graph explicitly can't see runtime prepend/plugin extensions' and recommends manual re-check, which is honest scoping; but Step 1 itself doesn't flag uncertainty about how the layers connect during orientation."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "States the connecting relations: 'finder/scope/association returns a Relation', '#all -> default_scoped -> relation', and that the query interface is composed via include of FinderMethods/QueryMethods/SpawnMethods/etc. (relation.rb:68-70), not just a list of directories."
+        }
+      },
+      "step_quality": 0.8825,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 670,
+        "cache_creation_input_tokens": 28323,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Map the Relation contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The answer maps the full contract with file:line \u2014 include list at relation.rb:68-70, every mixin (FinderMethods, Calculations, SpawnMethods, QueryMethods, Batches, Explain, Delegation, SignedId/TokenFor RelationMethods, Enumerable) tied to its file, plus the @values constants at relation.rb:54-66 that spawn/merge depend on. An agent could change the contract knowing what to preserve."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Pieces are named concretely with file:line: 'SpawnMethods @ relation/spawn_methods.rb:8', 'QueryMethods @ relation/query_methods.rb:9', 'Delegation @ relation/delegation.rb', plus value-constants at :54-66 and init at :78 \u2014 no vague 'the query modules' phrasing."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Explains WHY succinctly: constants 'define the @values-bag contract every spawn/merge depends on', and the build/execute order shows chaining mutates @values then spawn clones. The composition rationale is implicit rather than spelled out as 'focused modules', but the role of each piece is clear."
+        },
+        "uncertainty": {
+          "score": 0.7,
+          "rationale": "The closing note flags that sense_blast 'explicitly can't see runtime prepend/plugin extensions' so encryption prepend and third-party gems 'should be re-checked manually' \u2014 calibrated uncertainty for a contract piece. Doesn't explicitly flag any module method it didn't open."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "States the binding relation per piece: 'Relation includes (relation.rb:69-70)' the list, SpawnMethods supplies spawn/merge that 'clones the relation' and 'combine conditions', Delegation produces 'generated methods', and the build->execute order is written as a connected chain (chained setters -> spawn clones -> merge -> arel memoizes -> to_sql -> exec). Per-mixin role is named, not just file location."
+        }
+      },
+      "step_quality": 0.8925,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 752,
+        "cache_creation_input_tokens": 28294,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Trace how a query is built up and executed",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "step3_build_execute_order lays out the full path with file:line in order \u2014 all/scope (named.rb:22) \u2192 QueryMethods setters \u2192 spawn (spawn_methods.rb:9-11) \u2192 merge (Merger) \u2192 arel/build_arel (query_methods.rb:1673,1828) \u2192 to_sql (relation.rb:1243) \u2192 exec_queries/exec_main_query (:1436,:1460) \u2192 _query_by_sql (querying.rb:67) \u2192 adapter select_all. An agent could follow that path with only small lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Pieces are named exactly with file:line: `SpawnMethods#spawn @ spawn_methods.rb:9-11`, `relation_with :72`, `Merger/HashMerger merger.rb:6,17,46`, `build_arel query_methods.rb:1828`, `exec_main_query relation.rb:1460`. No vague \"the query code\"."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Mentions that spawn clones and arel memoizes (\"QueryMethods#arel memoizes build_arel\"), implying immutability/lazy execution, but doesn't explicitly call out WHY chaining spawns a fresh relation (immutability) or WHY execution is deferred \u2014 those are implied by the ordering rather than stated."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "The closing note flags that `sense_blast` can't see runtime `prepend` and third-party extensions, but doesn't flag uncertainty specifically about the build/execute path's spawn/merge semantics or the lazy memoization boundary."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "step3 is written as an explicit numbered chain with arrows \u2014 \"chaining spawns a new relation \u2192 merge combines conditions \u2192 arel memoizes build_arel \u2192 to_sql/exec_queries \u2192 _query_by_sql \u2192 adapter select_all\" \u2014 clearly a connected route, not a file list."
+        }
+      },
+      "step_quality": 0.885,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 726,
+        "cache_creation_input_tokens": 28279,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Audit every dependent of the Relation contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Enumerates the full scattered set grouped by area: query-interface modules, the hard-to-grep call sites (connection_handling.rb:419, sanitization.rb:214, integration.rb:164, encryption ExtendedDeterministicQueries:28, signed_id.rb:33, join_dependency.rb:189, scoping/named.rb:192), plus cross-gem dependents (ActiveSupport Enumerable#pluck/pick, railties QueryCommand). Agent could review every affected dependent with only targeted lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Nearly every dependent has a concrete file:line and a one-phrase use-description (e.g. \"`Relation === value` @ sanitization.rb:214\", \"prepend RelationQueries @ extended_deterministic_queries.rb:28\", \"Enumerable#pick @ :161\"). Almost no vague \"various helpers\" prose."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Each dependent is paired with WHY it's affected (executes under a role, inlines SQL via type test, computes cache key, rewrites where-values, renders relation), grouped by area rather than dumped as a flat list. Could go slightly deeper on a couple of the predicate_builder entries."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Closing note explicitly flags what static analysis misses: \"sense_blast static graph explicitly can't see runtime prepend/plugin extensions, so the encryption prepend and any third-party gems\u2026 should be re-checked manually before merge.\" Good calibration for the agent."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Connecting relation is stated per dependent: `is_a? Relation` (connection_handling), `Relation === value` (sanitization), `prepend RelationQueries` (encryption), case-test in relation.rb:1290, AS Enumerable mirror, CLI renderer. The separate `case_or_shortname_type_tests` group makes the unqualified reach paths explicit \u2014 exactly the chain a name-search misses."
+        }
+      },
+      "step_quality": 0.915,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 766,
+        "cache_creation_input_tokens": 28520,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Trace how relation behavior is reused for associations",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Step 5 names CollectionProxy < Relation (collection_proxy.rb:31), Association#target_scope (association.rb:314-315), AssociationScope#scope (association_scope.rb:21), CollectionAssociation#scope (collection_association.rb:302), and the disable-joins variant \u2014 a complete map an agent can act on with small lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every association piece is cited with file:line: collection_proxy.rb:31, association.rb:314-315, association_scope.rb:21, collection_association.rb:302, and disable_joins_association_relation.rb:4, with no vague references."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "The summary states the collection 'behaves as relation' and that target_scope merges scope_for_association, but only briefly explains WHY (so association queries inherit the chainable interface) rather than developing the rationale."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "Step 5 itself flags no unknowns about the association reuse, though the closing note about prepend/plugin extensions provides some general caveat; nothing specific about the disable-joins or scope_for_association path being unverified."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Connections are stated explicitly: CollectionProxy SUBCLASSES Relation, target_scope BUILDS AssociationRelation.create.merge!(scope_for_association), AssociationScope#scope CONSTRUCTS constraints \u2014 the chain from association collection \u2192 relation \u2192 scope build is traced rather than just listed."
+        }
+      },
+      "step_quality": 0.8475,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 590,
+        "cache_creation_input_tokens": 28258,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The answer assesses the full blast radius across every area \u2014 subclasses, query-build/exec core, type-test guards, prepend-based interception, feature mixins, cross-gem mirrors, and named-scope wiring \u2014 with file:line throughout and a ranked risk hierarchy ('HIGHEST: 3 subclasses... HIGH: type-test guards... MEDIUM cross-gem'). The agent could act safely from this map."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every at-risk dependent is named concretely with file:line and a stated reason: 'connection_handling.rb:419, sanitization.rb:214, database_statements.rb:803, scoping/default.rb:132' for silent type guards; 'enumerable.rb:145,161' for the cross-gem mirror; 'extended_deterministic_queries.rb:28' for the prepend."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Risk levels are tied to WHY: subclasses 'inherit spawn/merge/exec contract', type-test guards are 'silent' via ===/is_a?, encryption is risky because 'prepend... depends on method shape'. Distinguishes high-risk spawn/merge sites from lower-risk renderers."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Explicit caveat: 'the sense_blast static graph explicitly can't see runtime prepend/plugin extensions, so the encryption prepend and any third-party gems reaching Relation should be re-checked manually before merge' \u2014 flags exactly the dependents structural analysis misses."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Each at-risk dependent is tied to its connecting relation \u2014 'reached by ===/is_a? (silent)', 'prepend-based interception', 'subclasses inherit spawn/merge/exec contract', 'AS Enumerable mirror parity' \u2014 rather than a flat ranked file list with bare risk labels."
+        }
+      },
+      "step_quality": 0.9225,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 719,
+        "cache_creation_input_tokens": 28316,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Delivers a complete map: 4 core files to edit (relation.rb, spawn_methods.rb, merger.rb, query_methods.rb), dependents grouped by area with file:line via step4 reference, and a concrete test list spanning AR + AS + railties. A teammate could land the change from this alone."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every file is concrete with file:line (e.g., 'spawn_methods.rb (spawn/merge)', 'relations_test.rb', 'enumerable_test.rb (pluck/pick mirror)', 'railties/test query command coverage'); insertion points named by method (build_arel/arel, spawn/merge)."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Each edited file is tagged with its role ('init/values/exec', 'spawn/merge', 'arel/build_arel') and dependents are bucketed by area; could spell out more explicitly WHY each test file exists in the map, but the area grouping carries most of the why."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Closing note flags that sense_blast 'can't see runtime prepend/plugin extensions' and that encryption prepend + third-party gems should be re-checked \u2014 direct uncertainty call-out tied to the riskiest dependents."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Map connects each file via its relation: spawn/merge for spawn_methods, arel/build_arel for query_methods, ===/is_a? guards for scattered sites, prepend interception for encryption, AS Enumerable mirror \u2014 the chain from the Relation change to each verified file is explicit, though a few test files are listed without their connecting path."
+        }
+      },
+      "step_quality": 0.88,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 628,
+        "cache_creation_input_tokens": 28300,
+        "cache_read_input_tokens": 22522
+      }
+    }
+  ]
+}

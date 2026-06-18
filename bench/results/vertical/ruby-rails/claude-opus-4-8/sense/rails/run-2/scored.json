@@ -1,0 +1,537 @@
+{
+  "scenario": "Rails work session - audit the query Relation contract before a rework",
+  "repo": "rails",
+  "adoption_score": 0.8154,
+  "keyword_coverage": 1.0,
+  "step_avg_score": 1.0,
+  "efficiency": 0.4074,
+  "completeness": 0.9643,
+  "tool_fluency": 0.6923,
+  "discoverability": 1.0,
+  "citation_grounding": {
+    "total": 80,
+    "grounded": 0,
+    "unresolved": 0,
+    "hallucinated": 0,
+    "rate": 0.0,
+    "skipped": "repo_path missing or not a directory",
+    "examples": {
+      "grounded": [],
+      "unresolved": [],
+      "hallucinated": []
+    },
+    "details": []
+  },
+  "gold_recall": {
+    "total": 18,
+    "mentioned": 18,
+    "cited": 16,
+    "mention_recall": 1.0,
+    "cited_recall": 0.8889,
+    "groups": {
+      "contract": {
+        "total": 5,
+        "mentioned": 5,
+        "cited": 5,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "context": {
+        "total": 7,
+        "mentioned": 7,
+        "cited": 7,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "dependents": {
+        "total": 6,
+        "mentioned": 6,
+        "cited": 4,
+        "mention_recall": 1.0,
+        "cited_recall": 0.6667
+      }
+    },
+    "missed_mention": [],
+    "missed_cite": [
+      "dep:predicate-builder",
+      "dep:from-clause"
+    ],
+    "details": [
+      {
+        "id": "relation-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "query-methods",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "finder-methods",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "spawn-methods",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "delegation",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:sanitization",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:integration",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:encryption-queries",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:signed-id",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:scoping-named",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:enumerable-coreext",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:query-command",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "dep:join-dependency",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "dep:connection-handling",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "dep:where-clause",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "dep:predicate-builder",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "dep:from-clause",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "dep:preloader-assoc",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      }
+    ]
+  },
+  "gold_f1": {
+    "claimed": 0,
+    "gold_files": 18,
+    "true_positives": 0,
+    "false_positives": 0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "missed": [
+      "relation-model",
+      "query-methods",
+      "finder-methods",
+      "spawn-methods",
+      "delegation",
+      "ctx:sanitization",
+      "ctx:integration",
+      "ctx:encryption-queries",
+      "ctx:signed-id",
+      "ctx:scoping-named",
+      "ctx:enumerable-coreext",
+      "ctx:query-command",
+      "dep:join-dependency",
+      "dep:connection-handling",
+      "dep:where-clause",
+      "dep:predicate-builder",
+      "dep:from-clause",
+      "dep:preloader-assoc"
+    ],
+    "fp_examples": []
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "ActiveRecord",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Relation",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 49,
+          "unique_refs": 80,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 4,
+      "total_bonus": 4,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the Relation contract and what it is built on",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "query",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 49,
+          "unique_refs": 80,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "relation.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 4,
+      "total_bonus": 4,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how a query is built up and executed",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "spawn",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 49,
+          "unique_refs": 80,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 2,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Audit every dependent of the Relation contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 49,
+          "unique_refs": 80,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how relation behavior is reused for associations",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "association",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 49,
+          "unique_refs": 80,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 3,
+      "total_bonus": 3,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 49,
+          "unique_refs": 80,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 49,
+          "unique_refs": 80,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "test",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [
+      "Read(relation.rb)",
+      "Read(relation.rb)",
+      "Read(relation.rb)",
+      "Read(spawn_methods.rb)",
+      "Read(core.rb)",
+      "Read(query_methods.rb)",
+      "Read(query_methods.rb)",
+      "Read(association_relation.rb)",
+      "Read(named.rb)",
+      "Read(delegation.rb)",
+      "Read(relation.rb)",
+      "Read(relation.rb)",
+      "Read(query_methods.rb)",
+      "Read(collection_proxy.rb)",
+      "Read(disable_joins_association_relation.rb)",
+      "Read(database_statements.rb)",
+      "Read(enumerable.rb)",
+      "Read(query_command.rb)",
+      "Read(association.rb)",
+      "Read(delegation.rb)",
+      "Read(association.rb)"
+    ],
+    "post_mcp_misses": [
+      "Bash(grep -rn \"Relation.new\\|AssociationRelation.new\\|def all\\b\\|)",
+      "Bash(cd activerecord/lib/active_record; grep -rn \"is_a?(Relation))",
+      "Bash(cd activerecord/lib/active_record; grep -rn \"def arel\\b\\|def)",
+      "Bash(cd /Users/luc/Developer/luuuc/oss/sense-benchmark/sense/rail)"
+    ],
+    "has_mcp_tools": true,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 21, post-MCP misses: 4 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 34,
+    "grep_count": 4,
+    "read_count": 21,
+    "mcp_count": 9,
+    "token_input_uncached": 3435,
+    "token_output": 18685,
+    "token_cache_read": 550040,
+    "token_cache_write": 48112,
+    "token_total_billed": 22120,
+    "token_total_all": 620272,
+    "wall_time_seconds": 215.0,
+    "cost_usd": 1.2404,
+    "effective_token_total_billed": 22120,
+    "effective_wall_time_seconds": 215.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.2627,
+    "time_efficiency": 0.5521,
+    "answer_chars": 20760,
+    "audit_chars": 114410,
+    "overhead": null
+  }
+}

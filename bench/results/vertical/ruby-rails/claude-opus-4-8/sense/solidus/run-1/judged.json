@@ -1,0 +1,352 @@
+{
+  "scenario": "Solidus work session - audit the Order contract before a teardown rework",
+  "repo": "solidus",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "solidus.rubric.yaml"
+  },
+  "scenario_quality": 0.8362,
+  "relationship_audit": {
+    "total": 21,
+    "covered": 21,
+    "related": 21,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "items": [
+      {
+        "id": "order-model",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "c:payments",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "c:display-money",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "a:orders-api",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "a:order-updater",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:payment",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:shipment",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:inventory-unit",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:exchange",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:adjustment-src",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:stock-coord",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:legacy-promo",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:legacy-rule",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:solidus-benefit",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:solidus-promo",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:checkouts-api",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:returns-api",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:shipments-api",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:cancellations",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:admin-payments",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:admin-lineitems",
+        "covered": true,
+        "related": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Hands the agent a complete map: identifies Solidus as multi-gem (core/api/backend/admin/promotions/legacy_promotions), pins Spree::Order at core/app/models/spree/order.rb:21 as the hub, and lists the attached associations (line_items, payments, shipments, adjustments, inventory_units) plus the shared Spree::Base superclass and OrderUpdater. The agent could act with small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Concrete file:line throughout \u2014 `core/app/models/spree/order.rb:21`, `core/app/models/spree/base.rb:3`, `core/app/models/spree/order_updater.rb:4`, the state machine path, and an explicit map of order-attached service files. Not vague."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Explains WHY Order is central (\"heart of the Solidus system,\" cart-then-permanent-record) and why recalculation is delegated (configurable via `order_recalculator_class`), and frames the gem split by responsibility. Could go a bit deeper on why behavior is split across gems/concerns."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "Does not flag anything as uncertain \u2014 no hedging on whether the promotions/legacy_promotions split, admin/backend coexistence, or all listed concerns are confirmed. Reads as fully confident throughout."
+        },
+        "relationship": {
+          "score": 0.75,
+          "rationale": "States real connecting relations: line_items/payments/shipments/adjustments \"hang off\" Order, inventory_units reach it `through shipments`, Order `is a Spree::Base subclass`, recalculation `delegated to OrderUpdater` via a config swap point. Stops short of naming the association macros (has_many/belongs_to) or which concern pulls payments behavior in."
+        }
+      },
+      "step_quality": 0.8225,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 683,
+        "cache_creation_input_tokens": 21192,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Map the Order contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Maps the contract comprehensively with file:line: superclass, state machine, Payments/Metadata/DisplayMoney concerns, the full association teardown surface with dependent: :destroy, swappable collaborators, public mutation API, events, and predicates. An agent could change the contract with only small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.97,
+          "rationale": "Every piece is named concretely with file:line (e.g., 'core/app/models/spree/order/payments.rb:5', 'order.rb:107', 'core/app/models/concerns/spree/metadata.rb:4') rather than vague references."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Explains WHY several pieces matter (dependent: :destroy as teardown surface, recalculation delegated, swappable collaborators via config, events published on Bus) but doesn't fully motivate why the contract is shaped as a state-machine + concern + recalculator triad."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Confidently asserts every piece without flagging anything unconfirmed (e.g., the `:order_recalculated` event is hedged as 'from updater' but no other limits noted). Given 298s effort the confidence is plausibly calibrated, but no explicit flags."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Explicitly states binding relations: `include` for concerns, `extend` for DisplayMoney, `delegate :recalculate, to: :recalculator`, `has_many ... dependent: :destroy` with polymorphic notes, `accepts_nested_attributes_for`. The chain from Order to each contract piece is named, not just enumerated."
+        }
+      },
+      "step_quality": 0.859,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 624,
+        "cache_creation_input_tokens": 21797,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Trace how an order is built and recalculated",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Provides a complete trace from cart creation (current_order/Importer/OrdersController) through SimpleOrderContents to OrderUpdater#recalculate with file:line at every layer, and orders the fan-out into totals, adjustments, shipments and stock. An agent could act on this with only small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Files and exact line numbers are given throughout: `order_updater.rb:19,134,141,150,156,163,169,191,218,222,230`, `simple_order_contents.rb:22,27,32,37,68,75-77`, `order.rb:504-513` \u2014 concrete enough to jump straight to each step."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "Names each layer's role (re-price, totals fan-out, completed-only state recalc, persist + publish) so the agent understands what each does, though it doesn't explicitly justify WHY recalculation is centralized in OrderUpdater vs distributed across observers."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "Notes the InMemoryOrderUpdater variant has 'identical structure' but doesn't flag any unopened recalculation step (e.g., what `shipment.update_amounts` or `SimpleCoordinator#shipments` actually do internally) as unverified."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Explicitly assembles the chain: contents.add \u2192 after_add_or_remove \u2192 reload_totals \u2192 order.recalculate \u2192 OrderUpdater#recalculate \u2192 line_item_prices \u2192 item_count \u2192 shipment.update_amounts \u2192 update_totals(payment\u2192item\u2192shipment\u2192adjustment) \u2192 update_adjustments(promotions\u2192tax\u2192item_totals) \u2192 completed-only state branch \u2192 persist_totals \u2192 :order_recalculated. The chain is laid out as a path, not a file list."
+        }
+      },
+      "step_quality": 0.8675,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 679,
+        "cache_creation_input_tokens": 21539,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Audit every dependent of the Order contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.92,
+          "rationale": "The answer enumerates the full scattered dependent set with file:line across every required area: core domain models (OrderUpdater, OrderInventory, FulfilmentChanger, Exchange), stock (SimpleCoordinator#build_packages, Package, InventoryUnitBuilder), promotions across both legacy_promotions and the new promotions gem (Promotion#discounted_orders, Rules::*, Benefit#raise_for_adjustments_for_completed_orders), and the api/backend/admin surfaces. Coverage of the non-obvious dependents the ticket calls out (adjustment-source incomplete-orders, exchange, stock coordinator, promotion eligibility) is present."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Nearly every dependent has a concrete file:line and a short phrase on how it touches Order (e.g., 'core/app/models/spree/exchange.rb:23 \u2014 builds new shipments on @order and save!s', 'core/app/models/spree/stock/simple_coordinator.rb:84 \u2014 builds shipments/packages for the order'); no 'various controllers' summaries."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Each entry carries a one-phrase reason for inclusion (e.g., 'guards on order.completed?', 'belongs_to :order', 'recalculates under mutex'), and dependents are grouped by area/gem. WHY is at entry level rather than per-group prose, which is appropriate for an agent audience."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "The answer notes verification 'via sense_graph/sense_blast \u2026 spot-checked with grep' but does not flag any dependents it is least sure about or areas a static pass can miss (cross-gem indirect reach, engine extensions). Confidence is uniformly implicit."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Each dependent states HOW it reaches Order: 'belongs_to :order' for LineItem/Payment/Shipment/OrderMutex/ReturnAuthorization, polymorphic 'adjustable/order' for Adjustment, 'through shipment' for InventoryUnit, AdjustmentSource concern uses 'Spree::Order.incomplete' scope, Exchange via '@order' build, SimpleCoordinator via 'shipments/packages for the order'. The non-obvious chains (concern, polymorphic, derive-from-order) are explicitly named, not just file-listed."
+        }
+      },
+      "step_quality": 0.8445,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 892,
+        "cache_creation_input_tokens": 26033,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Trace how order state and completeness are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Comprehensive map with file:line for guards across payments (`payment.rb:201`), shipments (`shipment.rb:366`, `fulfilment_changer.rb:149`), stock (`order_inventory.rb:21,85,120`), promotions (`benefit.rb:341`, `promotion.rb:175`), plus the central `Order#completed?` pivot and state-machine transitions. Agent gets a complete inventory of guard sites."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every guard is named with file:line and the exact check (`return if order.completed?`, `unless order.completed?`, `if shipped? || canceled?`). No vague references."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Explains WHY for several guards (don't reprice completed orders, raises CannotRebuildShipments, advisory lock for cancellations), but the higher-level rationale (why mutating a completed order is dangerous, why recalculation is gated) is implicit rather than stated."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "No explicit flagging of guards that are implicit, missing, or unconfirmed; the answer presents the inventory as definitive without noting any gaps."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Each guard is connected to its mechanism: `order.completed?` checks, `before_destroy` hooks, scope merges (`.merge(Spree::Order.incomplete)`), state-machine `allow_cancel?`/transition gates, advisory lock wrapping. The chain from dependent to guard mechanism is explicit, though some entries (e.g., the API controller branch) name the path more thinly."
+        }
+      },
+      "step_quality": 0.835,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 626,
+        "cache_creation_input_tokens": 21602,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Comprehensive tiered blast assessment grounded in `sense_blast` numbers (135 direct callers, 272 affected) and covers recalculation path, teardown cascade, payments/shipments/tax/promotions across both gems, returns/exchanges, controllers, and admin surface \u2014 agent can act with only small lookups."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Most entries cite concrete file:line (e.g. `order_updater.rb:4`, `simple_coordinator.rb:84`, `benefit.rb:341`, `adjustment_source.rb:5`, `OrdersController#update (:50)`); a few Tier-2/3 items name files without line numbers but symbols are exact."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Each tier explains WHY risk is high/medium/low (recalculation contract, cascade-destroy ordering, derive-from-order vs read-only/display) rather than just listing files."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Does not explicitly flag which dependents it is least sure about (e.g. cross-gem indirect reaches); the ranking is asserted with confidence throughout."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Ties most at-risk dependents to the connecting route (`dependent: :destroy` + before_destroy guards, `after_transition \u2026 recalculate`, `update_order` on payment completion, `Order.complete`/`incomplete` scope guards on promo benefit/adjustment_source); a few Tier-2/3 entries name files without the explicit relation."
+        }
+      },
+      "step_quality": 0.84,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 593,
+        "cache_creation_input_tokens": 22115,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Hands the agent a comprehensive map: edit list with file:line (order.rb associations :93-128, empty! :461, finalize :758, recalc delegation :165,281, app_configuration swap points :392-452), dependents grouped by gem, and an extensive spec list including factories and OrderWalkthrough. Small targeted lookups would suffice to land the change."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Files are named concretely with line numbers throughout \u2014 `core/app/models/spree/order.rb:93-128`, `app_configuration.rb:392`, plus exhaustive enumeration of spec files under `core/spec/models/spree/order/` and `api/spec/requests/spree/api/{...}_spec.rb`. Far from vague."
+        },
+        "justification": {
+          "score": 0.6,
+          "rationale": "Some why is conveyed (e.g. factories and OrderWalkthrough \"build orders through checkout and will need to reflect any storage/teardown contract change\"; mixins flagged \"if contract widens\"), but most edit/spec entries are listed without a stated reason for inclusion."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Hedges \"if contract widens\" for mixins, but otherwise doesn't flag which parts of the map are least certain (e.g. promotions gem specs, admin components). The dependents section defers to Step 4 rather than re-flagging gaps."
+        },
+        "relationship": {
+          "score": 0.75,
+          "rationale": "The accompanying JSON ties edits to relations (recalc_delegation, destroy_cascading_associations, state_guards sites, bus_events) and dependents by area/gem with the contract pieces they touch. However, the prose spec list itself mostly enumerates files without restating the relation by which each verifies a specific contract piece."
+        }
+      },
+      "step_quality": 0.785,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 659,
+        "cache_creation_input_tokens": 24842,
+        "cache_read_input_tokens": 22522
+      }
+    }
+  ]
+}

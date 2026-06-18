@@ -11,11 +11,14 @@ Usage: variance-row.py <repo> <model-label>
 
 import glob
 import json
+import os
 import statistics as st
 import sys
 
 repo, model = sys.argv[1], sys.argv[2]
-RES = "bench/results"
+# RESULTS_DIR (exported by bench-paths.sh) points at the active bench's root;
+# for a vertical that is bench/results/vertical/<name>. Falls back to the global root.
+RES = os.environ.get("RESULTS_DIR") or "bench/results"
 
 
 def run_dirs(arm):

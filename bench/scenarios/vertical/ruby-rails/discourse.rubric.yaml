@@ -1,0 +1,272 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. This rubric OPTS INTO the fifth
+# `relationship` criterion (judge_prompt.v2.md); weights per step sum to 1.0:
+# map_quality 0.35 / specificity 0.20 / justification 0.15 / uncertainty 0.10 /
+# relationship 0.20. Mirrors the chatwoot/forem win shape: recall separates the
+# arms on the scattered Upload dependents; `relationship` measures whether the
+# answer states HOW each dependent reaches Upload (the concern/association, the
+# derive-a-URL-from-an-upload path, the storage/job route).
+#
+# Step names MUST match scenarios/discourse.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to safely rework Discourse's Upload
+  model contract with only small, targeted follow-up lookups, not a fresh
+  exploration of the codebase. Score for that audience, not a human reader, not a
+  docs page. A perfect answer leaves the agent able to change the Upload contract
+  knowing every dependent that must be reviewed AND how each one is connected; a
+  weak answer forces the agent to re-grep a token that appears across the whole app
+  and re-read the codebase before it can act safely.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer hand the agent a usable map: that this is Discourse (a
+          forum platform), how the Rails app is organized (app/models, app/services,
+          app/jobs, lib/), and specifically where the Upload model sits, the record
+          that posts, avatars, themes, emails and backups all reference? Could the
+          agent pick an entry point and start with only small, targeted lookups?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the cited paths concrete (app/models/upload.rb, lib/file_store/,
+          lib/upload_creator.rb) rather than vague ("the model layer")?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY the architecture is shaped this way (an Upload
+          is the shared media record many features reference, with storage abstracted
+          behind a file store), not just NAME the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Where the answer is unsure how the layers connect, does it flag that so the
+          agent doesn't act blindly?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the orientation state the CONNECTING RELATIONSHIPS, that posts/avatars/
+          themes reference uploads through associations and URL resolution, that
+          storage is abstracted behind a file store, rather than only listing where
+          things live? Naming directories without the relations scores low.
+
+  - name: Map the Upload contract and what it is built on
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer map the Upload model's contract with file:line: the concern
+          it includes (URL resolution), the associations records hang off it through,
+          and the variant/derived record it spawns (optimized images)? Could the
+          agent know what a change to the model has to preserve?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the contract pieces named concretely by file (the HasUrl concern,
+          app/models/optimized_image.rb) rather than "the concerns and associations"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY the contract is shaped this way (URL resolution
+          shared through a concern, variants derived as separate records), not just
+          LIST the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag any part of the contract it could not confirm (a
+          concern method or association it didn't open) so the agent checks first?
+      relationship:
+        weight: 0.20
+        question: |
+          For each contract piece, does the answer state the RELATION by which it
+          binds to Upload (which concern supplies URL behavior, how optimized images
+          are derived from an upload), not merely name the file? Naming without
+          saying how it connects scores low.
+
+  - name: Trace how an upload is created and processed
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer trace, with file:line and in order, how a file becomes a
+          stored Upload (the creator), through storage (the file store), and the
+          processing that fans out (variants, post processing, remote storage),
+          naming which run inline versus asynchronously? Could the agent follow the
+          same path to change it safely?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the pieces named exactly (the upload creator, the file store, the
+          optimized-image creation, the cooked-post processing) with file:line,
+          rather than "the upload code"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY heavy processing is pushed async (to keep the
+          request fast), not just LIST the chain?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where processing is asynchronous or store-dependent
+          and not fully opened, so the agent verifies?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer assemble creation as an explicit CHAIN, file -> creator ->
+          store -> variants/post-processing, written as a connected path rather than
+          a set of files? A list that does not state the route/order scores low.
+
+  - name: Audit every dependent of the Upload contract
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer enumerate the FULL scattered dependent set of the Upload
+          model, grouped by area: post rendering/cooking (the cooked-post processor,
+          pretty-text secure-upload rewriting, topic links), storage and CDN (the S3
+          store, the S3 inventory reconciliation), background jobs (hotlinked-image
+          download, video conversion), email (the secure-image styler), backup and
+          restore (the backup creator bundling remote uploads), theming and site
+          assets (the site-icon manager, the splash-screen helper, the manifest
+          controller), user profiles and merge (profile uploads, the user merger),
+          and the plugin/site-setting surface (the plugin register-upload API, the
+          upload-typed site-setting hydration)? This fan-out is the heart of the
+          ticket and is grep-hostile, the dependents are scattered across many
+          directories, several reach Upload in non-obvious ways (deriving a URL/path,
+          a concern, an association), and the bare token recurs across the whole app,
+          so a text search both misses some and drowns the rest. A strong answer names
+          that breadth with file:line so the agent can review every dependent.
+      specificity:
+        weight: 0.20
+        question: |
+          Are the dependents named concretely by file and symbol (lib/email/styles.rb,
+          lib/backup_restore/creator.rb, lib/s3_inventory.rb,
+          lib/site_setting_extension.rb) with file:line and one phrase on how each
+          uses the upload, rather than "various lib helpers"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY each dependent is affected (rewrites upload URLs,
+          reconciles storage, strips secure uploads from email, bundles them in a
+          backup), grouping by area rather than just LISTING files?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer acknowledge what a static pass can miss (dependents reached
+          only through a concern/association or that derive a URL/path) so the agent
+          verifies?
+      relationship:
+        weight: 0.20
+        question: |
+          For each dependent, does the answer state HOW it reaches Upload, the
+          concern/association, the derive-a-URL/path route, or the storage/job route,
+          ESPECIALLY for the non-obvious email/backup/inventory/site-setting
+          dependents a text search can name but not connect? A correct file list with
+          no connecting relationship per dependent scores low, however complete.
+
+  - name: Trace how upload identity and storage location are guarded
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer give file:line for how service/background work confirms it
+          is operating on a real, current upload and resolves its storage
+          location/URL before acting (the URL resolver/concern, presence checks in the
+          post-processing, email, backup and S3-reconciliation paths)? Could the agent
+          give a reworked contract the right guards without re-reading every file?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the guards/resolvers named exactly (the URL resolution concern, the
+          missing-upload checks, the store lookups) with file:line, rather than "the
+          validation code"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY work must re-confirm/resolve the upload (it may
+          be secure, missing, or on remote storage), not just NAME the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where a guard is missing or implicit (a path that
+          assumes the upload/URL resolves) so the agent verifies?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer state the path by which each guard/resolver protects a
+          dependent (which lookup/URL resolution gates which downstream effect) rather
+          than naming methods in isolation? A guard named without the relation it
+          protects scores low.
+
+  - name: Assess the blast radius of the contract change
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer assess the full blast radius of changing the Upload
+          contract: which dependents are at risk across every area (post rendering,
+          storage/CDN, jobs, email, backup, theming, profiles, plugin/site-setting),
+          which are most likely to break, and what must be re-verified, with file:line
+          and a risk ranking? This is the change-impact question a structural blast
+          answers directly and a hand audit under-covers.
+      specificity:
+        weight: 0.20
+        question: |
+          Are the at-risk dependents named concretely by file with a stated reason for
+          the risk level, rather than "several things might break"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY a given dependent is high vs low risk (it
+          rewrites stored upload URLs vs merely reads a manifest icon), not just LIST
+          them?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the dependents it is least sure about (indirect,
+          concern- or URL-derive-reached, only surfaced structurally) so the agent
+          confirms?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the risk assessment tie each at-risk dependent to the RELATIONSHIP that
+          makes it risky (rewrites stored URLs vs reconciles storage vs reads an icon)
+          rather than a ranked file list with risk labels but no connecting route?
+
+  - name: Produce the change + verification map
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer produce a complete, actionable map: the model and shared
+          pieces to edit (upload.rb, the URL concern, optimized image), every
+          dependent that must be reviewed grouped by area, and the specs/fixtures to
+          update or add, with file:line throughout? Could a teammate land the change
+          from this map alone?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the files and insertion points concrete (app/models/upload.rb, the
+          file store, the specs under spec/models and spec/lib) rather than "edit the
+          model and add tests"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY each file is in the map (which area it belongs
+          to and what the change does to it), not just LIST files?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the parts it is least sure about (storage semantics,
+          fixtures, indirect dependents) so the agent confirms before committing?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the map connect each file to the change via its relationship (which
+          concern/association/storage route makes it part of this edit, which spec
+          exercises which path) so the chain from the Upload contract change to each
+          edited or verified file is explicit, not just a grouped file list?

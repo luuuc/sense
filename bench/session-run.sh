@@ -17,8 +17,11 @@ set -uo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
-SCENARIOS_DIR="$BENCH_DIR/scenarios"
-RESULTS_DIR="$BENCH_DIR/results"
+# Vertical wrapper: defaults to the ruby-rails vertical (baseline vs sense only),
+# overridable with VERTICAL= (empty = global). bench-paths.sh resolves the roots
+# and exports them so the workers it calls (score/judge/report) inherit them.
+VERTICAL="${VERTICAL-ruby-rails}"
+source "$BENCH_DIR/lib/bench-paths.sh"
 LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 BASELINE_MCP="$LIB_DIR/baseline-mcp.json"
@@ -32,6 +35,10 @@ while [[ $# -gt 0 ]]; do case "$1" in
   *) echo "unknown arg: $1" >&2; exit 1;;
 esac; done
 [[ -n "$REPO" ]] || { echo "need --repo" >&2; exit 1; }
+
+# Now that --model is known, re-resolve RESULTS_DIR to this model's own root
+# (vertical benches are model-scoped so models never overwrite each other).
+unset RESULTS_DIR; export BENCH_MODEL="$MODEL"; source "$BENCH_DIR/lib/bench-paths.sh"
 
 unset ANTHROPIC_API_KEY BENCHMARK_ANTHROPIC_API_KEY
 command -v claude >/dev/null || { echo "claude CLI not found" >&2; exit 1; }
@@ -119,5 +126,9 @@ done
 SJ=(--tool "$TOOLS_CSV" --repo "$REPO")
 bash "$BENCH_DIR/score.sh"  "${SJ[@]}"
 bash "$BENCH_DIR/judge.sh"  "${SJ[@]}" --via-cli
+# Per-model report (md + json) for this model root, then refresh the vertical's
+# cross-model matrix so every entry point keeps the tracked reports current.
 bash "$BENCH_DIR/report.sh" --md
+bash "$BENCH_DIR/report.sh" --json
+[ -n "${VERTICAL:-}" ] && { bash "$BENCH_DIR/report-matrix.sh" >/dev/null 2>&1 || echo "[warn] matrix refresh failed" >&2; }
 echo "[session] done — see bench/results/{${TOOLS_CSV}}/$REPO/" >&2

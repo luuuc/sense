@@ -1,0 +1,154 @@
+{
+  "scenario": "Lobsters work session - the shared vote/score recalculation (tight)",
+  "repo": "lobsters",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "lobsters.rubric.yaml"
+  },
+  "scenario_quality": 0.899,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 7,
+    "related": 7,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "items": [
+      {
+        "id": "vote-cast",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "vote-target",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "comment-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-confidence",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "confidence-order",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "story-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-hotness",
+        "covered": true,
+        "related": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Locate the recalculation and how its target is resolved",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Pins the call site `t.update_score_and_recalculate!(score_delta, flag_delta)` at vote.rb:181 and the target resolution at vote.rb:185-191 with the Comment.find/Story.find branching (vote.rb:187/189). An agent has the exact lines to follow with no further exploration."
+        },
+        "specificity": {
+          "score": 1.0,
+          "rationale": "Every claim is anchored with file:line \u2014 vote.rb:181 for the call, vote.rb:177 for `t = v.target`, vote.rb:185-191 for the method, plus 187/189 for each branch."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "States explicitly 'the method is polymorphic on the target type \u2014 it lands on either a Story or a Comment', which is the reason the call site cannot statically pick a definition. Could be slightly more pointed about why this matters for the downstream task."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No hops are flagged as unopened; the answer reads as fully confident. That is plausible here, but no calibration is offered."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Surfaces the polymorphic dispatch clearly: target is resolved to one of two record kinds (Comment or Story) via the `comment_id ? Comment.find : Story.find` path, which is exactly the relationship deciding which definition runs."
+        }
+      },
+      "step_quality": 0.89,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 526,
+        "cache_creation_input_tokens": 19025,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Document what the recalculation recomputes and persists",
+      "scores": {
+        "map_quality": {
+          "score": 0.98,
+          "rationale": "Pins both definitions and both computed-value methods at exact file:line \u2014 Story#update_score_and_recalculate! at story.rb:693 with calculated_hotness at story.rb:550, and Comment#update_score_and_recalculate! at comment.rb:339 with calculated_confidence at comment.rb:232 \u2014 and names the columns (score/flags/hotness vs score/flags/confidence/confidence_order)."
+        },
+        "specificity": {
+          "score": 0.97,
+          "rationale": "Every method, helper, and column is pinned with file:line (story.rb:693-718, :715, :550; comment.rb:339-363, :342, :356-361, :232), not just named."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Explains the persistence mechanism (raw UPDATE recomputing from votes) and the flag-exclusion subtlety, but doesn't quite spell out WHY the two paths diverge conceptually (per-thread confidence vs front-page hotness ranking)."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "No hedges or flags for under-opened hops; given the answer is well-grounded the omission is minor but still absent."
+        },
+        "relationship": {
+          "score": 1.0,
+          "rationale": "Cleanly attributes each branch to its own definition and cascade with no conflation \u2014 Story \u2192 calculated_hotness \u2192 hotness; Comment \u2192 calculated_confidence \u2192 confidence + confidence_order \u2014 exactly the distinction the discriminator rewards."
+        }
+      },
+      "step_quality": 0.907,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 554,
+        "cache_creation_input_tokens": 19175,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Map the change and the specs that cover it",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Names the two edit targets (story.rb:693, comment.rb:339), the call site (vote.rb:181), and the full spec set (vote_spec, story_spec, comment_spec, plus bitpacking_spec and notification_spec) with file:line throughout. Even includes other internal callers (comment.rb:484/543, story.rb:867)."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every entry is file:line pinned (e.g. 'spec/models/story_spec.rb:404-422', 'vote_spec.rb:144-174', 'bitpacking_spec.rb:145-160') rather than vague 'add tests'."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Each spec carries a why-tag (score/flags transitions, commenter exclusion, confidence_order SQL math, flag-driven side effects). Could be a touch more explicit about why bitpacking_spec is in the map, but the parenthetical 'confidence/confidence_order SQL math' carries it."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Hedges on touching the value methods 'only if the computed value changes', but does not flag any spec coverage it is unsure about or whether notification_spec lines are exhaustive."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Map keeps each branch tied to its own definition, columns, value method, and spec: story\u2192hotness/calculated_hotness covered by story_spec, comment\u2192confidence/confidence_order covered by bitpacking_spec + comment_spec. No conflation."
+        }
+      },
+      "step_quality": 0.9,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 587,
+        "cache_creation_input_tokens": 20274,
+        "cache_read_input_tokens": 22522
+      }
+    }
+  ]
+}
