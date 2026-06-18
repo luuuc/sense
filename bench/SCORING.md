@@ -367,6 +367,82 @@ lives in `results/bench-readiness.md`.
 
 ---
 
+## Gold-target scoring: recall (floor) + F1 (precision, pre-registered 2026-06-15)
+
+A scenario may declare a `gold` list — the references a correct answer must
+surface. Two scores are computed over it, against the SAME per-scenario
+denominator for every arm (`lib/gold.py`):
+
+- **`gold_recall`** — `mention_recall` (target name/path appears) and
+  `cited_recall` (target pinned to `path:line`). The OBJECTIVE FLOOR. Substring
+  recall, grep-can't-fake only when the gold is grep-hard (see the
+  scenario-sourcing runbook's anti-litmus).
+- **`gold_f1`** (NEW) — precision/recall/F1 of the agent's **claimed dependent
+  set** (the grounded `file` of every citation, from `citation_grounding`) vs
+  the file-like gold targets. `precision = |claimed ∩ gold| / |claimed|` charges
+  the agent for citing off-target files; `recall` mirrors `cited_recall` over
+  file targets; `f1` is their harmonic mean. Applied identically to both arms.
+
+**Pre-registration honesty terms** (fixed before scoring; never reverse-engineer
+to a result):
+1. Both scores use the same gold list and same arms. Metric design was frozen
+   and unit-tested (`test_gold.py`) before any re-score.
+2. **CAVEAT — gold incompleteness.** Gold is the curated MUST-FIND subset, not
+   the complete set of every legitimately-citable file. So an off-gold citation
+   is counted a false positive even when fair. `gold_f1` is therefore a
+   COMPARATIVE signal between identically-scored arms, NOT an absolute precision.
+   `gold_recall` stays the objective floor/headline.
+
+**Validation (chatwoot flagship, existing ×3 transcripts re-scored, no new bench):**
+
+| arm | cited_recall | gold_f1 precision | gold_f1 F1 |
+|---|---|---|---|
+| baseline | 0.35 | 0.20 | 0.25 |
+| sense | 0.94 | 0.34 | 0.50 |
+
+Sense wins BOTH precision and recall (cleaner *and* more complete) — the metric
+is sound and asymmetric in Sense's favour. **But F1 yields only +25pt where
+recall alone gives +59pt:** precision sits low for both arms (0.20–0.34) because
+the 17-target gold is far smaller than the 46–91 files a thorough answer cites,
+so most "false positives" are legitimate-but-not-must-find, not grep noise.
+Conclusion: objective path-precision favours Sense but DILUTES the headline; it
+belongs as a reported secondary axis, with `cited_recall` kept as the ≥50pt
+headline.
+
+### `relationship_audit` — reference-aware relationship recall (pre-registered 2026-06-15)
+
+The per-step LLM judge scores each answer in isolation, with no reference for
+what a COMPLETE answer must contain — so it rated chatwoot's 35%-recall baseline
+audit "exhaustive, map_quality 0.9" and never separated the arms (baseline ≈
+sense ≈ 0.85, both the original 4-criterion judge and the 5-criterion
+`relationship` variant). That blindness to omission was the defect.
+
+The fix (`lib/relationship_audit.py`, wired into `judge.py`, written to
+`judged.json.relationship_audit`): each gold target carries a `relation` (its
+TRUE connection to the contract under change, authored from source, NEVER shown
+to the agent). One judge call grades the whole answer against that fixed
+reference set, per item:
+- `covered` — the answer explicitly names the file/class/symbol (penalises omission)
+- `related` — covered AND the stated relation matches the reference (chain
+  correctness: grep names endpoints, it cannot assert the relation)
+
+**Honesty terms:** same reference, same prompt, both arms; `related ⇒ covered`;
+the grader is told not to infer coverage from the reference set. Reference
+authored before scoring.
+
+**Validation (chatwoot ×3, CLI subscription judge):**
+
+| arm | covered_recall (×3 mean) | related_recall (×3 mean) |
+|---|---|---|
+| baseline | 0.471 (.59/.41/.41) | 0.451 |
+| sense | **0.961** (.88/1.0/1.0) | **0.922** |
+
+Sense wins by **+0.49 covered / +0.47 related**, no run overlap — the
+reference-aware judge now agrees with objective recall (0.35 vs 0.94) instead of
+contradicting it. This is the judge-side headline the reference-blind judge could
+not produce: it measures completeness AND relationship-correctness, and grep can
+fake neither.
+
 ## Where to look in the code
 
 | Question | File |
@@ -396,5 +472,7 @@ lives in `results/bench-readiness.md`.
 | 2026-05-13 | LLM judge (Opus 4.7) + per-scenario rubrics + AI-agent voice prompts. **Fairness reweighted to 10/55/15/20.** Citation grounding folded in. |
 | 2026-05-13 | Score auditor + scenario auditor + watchdog wired as Phase 4 of the improvement loop. `meta-report.md` per iter. |
 | 2026-05-13 | Convergence criteria, held-out lock, `locked.yaml`, cost ceiling, `readiness.md`, credit-fallback policy. |
+| 2026-06-15 | `gold_f1` (precision/recall/F1 of the claimed dependent set vs gold) added to `scored.json` alongside `gold_recall`. Pre-registered above; validated on chatwoot (Sense wins both axes, F1 +25pt vs recall +59pt). Recall stays the floor. |
+| 2026-06-15 | Optional 5th judge criterion `relationship` (opt-in, v2 prompt; 4-criterion rubrics unchanged) — built but reference-BLIND, did not separate. Replaced/augmented by `relationship_audit` (`lib/relationship_audit.py`): reference-aware grading against per-target `relation`, written to `judged.json`. Validated on chatwoot ×3 — Sense +0.49 covered / +0.47 related, no overlap. The judge-side headline. |
 
 Per-commit detail: [`CHANGELOG.md`](./CHANGELOG.md).

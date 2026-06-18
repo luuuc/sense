@@ -1,45 +1,45 @@
-name: Redmine work session - add support for a new source-control system
+name: Redmine work session - audit the shared attached-record contracts before a teardown rework
 repo: redmine
 # Single-prompt session bench (run via bench/bench-sense-local.sh): all steps are
-# presented in ONE prompt and worked in order, so context accumulates the way a
-# real work session does. Rendered to the agent: the description + each step's
-# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
-# NEUTRAL, it states the task, never the answer's shape, file paths, class or
-# method names, counts, or which tool to reach for. The recurring real task this
-# mirrors is "add support for a new version-control system": each SCM is a PAIR of
-# classes tied only by naming convention, a Repository::X model (capabilities,
-# changeset fetching) and an X_adapter that shells out to the VCS (subclassing
-# Redmine::Scm::Adapters::AbstractAdapter, contract: info/entries/revisions/diff/
-# cat/branches/tags), registered via Redmine::Scm::Base and resolved by
-# Repository#scm_adapter_class. This walks the dispatch, the adapter fan-out (6
-# adapters, AbstractAdapter blast 59), the repository-model fan-out (6 subclasses,
-# Repository blast 39), the registry, and the test matrix. The headline is
-# CUMULATIVE efficiency (tool calls, billed + context tokens, time) at held
-# accuracy: the baseline re-derives the structure each step while the map is
-# queried once and reused.
-description: 'You are a maintainer about to add support for a new source-control
-  system so projects can browse repositories hosted with it, mirroring how the
-  existing version-control integrations are built. Work through the tasks below one
-  at a time; each builds on what you learned in the previous one. Keep every answer
-  concrete with file:line so the next step (and a teammate opening the PR) can act
-  without re-exploring the codebase.'
+# presented in ONE prompt and worked in order. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL, it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM (re-authored 2026-06-17; prior Issue-contract version kept as
+# redmine.issue-adapters.*.bak). Redmine wires three shared behaviors into many
+# different record types through plugin mixins: file attachments, watchers (the
+# subscribers notified on change), and custom-field values. A participating model
+# declares the behavior with a one-line macro and reaches the collaborator record
+# THROUGH that mixin's polymorphic association — it never names the collaborator
+# class. So a maintainer auditing "which records own attachments / watchers /
+# custom values" greps the collaborator class name and finds only the few models
+# that reference it literally; the rest are invisible to that search. A structural
+# query resolves the full participant set per contract in one call. The headline is
+# whether the agent assembles every participating model across the three shared
+# contracts, including the ones that reach the collaborator only through the mixin.
+description: 'You are a maintainer about to rework how the records ATTACHED to other
+  records are stored and torn down across Redmine: their file attachments, the
+  watchers who get notified when they change, and their custom-field values. These
+  are shared behaviors that many different record types opt into. Before changing
+  the storage and teardown, you need a complete audit of every model that
+  participates in each shared contract, so the rework does not silently break one.
+  Work through the tasks below one at a time; each builds on what you learned in the
+  previous one. Keep every answer concrete with file:line so the next step (and a
+  teammate opening the patch) can act without re-exploring the codebase.'
 steps:
 - name: Orient in the codebase
   prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
-    project, how is the code organized, and where does the machinery that lets a
-    project browse the history and files of a repository under different
-    version-control systems live, along with the shared pieces it is built on?
-    Hand the next agent a map so they can act with small, targeted lookups, not a
-    fresh exploration of the codebase. No Explore agents.
+    project, how is the code organized, and where do the shared attached-record
+    behaviors live, the file attachments, the watchers who are notified on change,
+    and the custom-field values that hang off many different record types? Hand the
+    next agent a map so they can act with small, targeted lookups, not a fresh
+    exploration of the codebase. No Explore agents.
     "
   checks:
   - type: word
-    value: Repository
-    required: true
-  - type: word
-    value: scm
+    value: Attachment
     required: false
-    description: Reached the version-control abstraction, not just the repository record
   - type: response_richness
     value: '3'
     required: false
@@ -51,20 +51,18 @@ steps:
     value: sense_conventions
     required: false
     layer: adoption
-- name: Trace how a repository's data is read from the version-control tool
-  prompt: "Task: trace how a request for a repository's files or history reaches the
-    component that actually runs the underlying version-control tool. Start from the
-    stored repository and follow it down to where the right tool-specific component
-    is selected and invoked. Give file:line for each layer and the order they run.
+- name: Map the three shared contracts and their storage records
+  prompt: "Task: map the three shared contracts you are about to change. For each of
+    the attached-record behaviors (file attachments, watchers, custom-field values),
+    where is the stored record defined and how does a record type opt in to the
+    behavior, the shared mechanism a model uses to gain it? Give file:line for each
+    stored record and the shared mechanism, and say what a teammate must know about
+    each contract before changing it.
     "
   checks:
   - type: word
-    value: adapter
-    required: true
-    description: Found the tool-specific component that runs the VCS
-  - type: word
-    value: Repository
-    required: true
+    value: polymorphic
+    required: false
   - type: response_richness
     value: '4'
     required: true
@@ -72,117 +70,84 @@ steps:
     value: sense_graph
     required: false
     layer: adoption
-- name: Map the version-control command family and its contract
-  prompt: "Task: a new integration will be built on the same shared base that the
-    existing tool-specific components are built on, then customize a few pieces. Map
-    the shared contract such a component must implement to read history, files, and
-    diffs, and which existing integrations customize that behavior and how each one
-    differs. Be complete with file:line; a missed method is functionality the new
-    integration silently won't support.
+- name: Trace how a record gains and loses its attached records
+  prompt: "Task: trace what happens to a record's attached records (its
+    attachments, its watchers, its custom-field values) when the record is created
+    and when it is destroyed. Start from where the behavior is wired in and follow
+    it through to where the attached rows are cleaned up. Give file:line for each
+    layer and note which cleanup runs inline versus through a dependent association.
     "
   checks:
   - type: word
-    value: AbstractAdapter
+    value: destroy
+    required: false
+  - type: response_richness
+    value: '4'
     required: true
-  - type: word
-    value: revisions
-    required: true
-    description: Anchored on the history/diff contract every adapter implements
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every model that participates in each shared contract
+  prompt: "Task: this is the core of the ticket. For EACH of the three shared
+    contracts (attachments, watchers, custom-field values), find EVERY model that
+    participates in it, so the rework cannot silently break one. Most participating
+    models reach the stored record only through the shared mechanism and never name
+    the stored record's class, so a surface text search for that class both misses
+    them and drowns the rest in unrelated matches. List EVERY participating model
+    individually with its own file:line and which contract(s) it takes part in, do
+    not collapse a set into a summary like \"various models\" - an unlisted
+    participant counts as missed. A missed participant is a regression shipped.
+    "
+  checks:
   - type: response_richness
     value: '6'
     required: true
-    description: Enumerated the shared base plus the per-tool customizations
-  - type: contains
-    value: abstract_adapter.rb
-    required: false
+    description: Enumerated the participant set across all three contracts
   - type: no_grep
     value: no_grep
     required: false
     layer: adoption
   - type: mcp_tool_used
-    value: sense_graph
-    required: false
-    layer: adoption
-- name: Map the stored-repository family and its contract
-  prompt: "Task: each version-control system also has its own stored-repository
-    type, paired with its command component. Map the shared base these stored types
-    are built on, the capabilities and identity each must declare, and the
-    existing per-system types and how each one pairs with its command component. Be
-    complete with file:line.
-    "
-  checks:
-  - type: word
-    value: Repository
-    required: true
-  - type: word
-    value: scm_name
-    required: false
-    description: Found the per-system identity each repository type declares
-  - type: response_richness
-    value: '5'
-    required: true
-    description: Enumerated the repository base plus the per-system subtypes
-  - type: mcp_tool_used
-    value: sense_graph
-    required: false
-    layer: adoption
-- name: Map where the available version-control systems are registered
-  prompt: "Task: the set of version-control systems the application offers is
-    declared in one place so the system and the admin UI know the full set. Map
-    where that declaration lives, what it lists, and where the UI offers the choice
-    when a repository is configured. Be complete with file:line.
-    "
-  checks:
-  - type: word
-    value: scm
-    required: true
-  - type: word
-    value: available_scm
-    required: false
-    description: Found the registry of available systems
-  - type: response_richness
-    value: '4'
-    required: true
-  - type: mcp_tool_used
-    value: sense_graph
-    required: false
-    layer: adoption
-  - type: mcp_tool_used
     value: sense_blast
     required: false
     layer: adoption
-- name: Find every site that must change to add a new source-control system
-  prompt: "Task: you will add the new system. Find every place in the codebase that
-    must change for its stored-repository type and its command component to exist,
-    be registered, be selectable, browse history and files, and be tested,
-    including where the shared bases are depended on. Be complete and use file:line;
-    a missed site means the new system can't be configured or is untested.
+- name: Trace how visibility and permissions apply to attached records
+  prompt: "Task: when a user views or edits a record's attached data (an attachment,
+    a watcher list, a custom-field value), how does the code confirm the user is
+    allowed to see or change it before proceeding? Trace where those permission and
+    visibility checks live and what they key off. Give file:line throughout.
     "
   checks:
-  - type: word
-    value: Repository
-    required: true
-  - type: word
-    value: adapter
-    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change how these attached records are stored and
+    torn down. Assess the full blast radius: which participating models are at risk,
+    which are most likely to break, and what must be re-verified after the change,
+    across all three contracts. Be complete and use file:line; rank by risk. A
+    missed high-risk participant is the one that pages someone.
+    "
+  checks:
   - type: response_richness
     value: '6'
     required: true
-    description: Reached the registry and the test matrix, not just one new file
-  - type: contains
-    value: test
-    required: false
+    description: Ranked the participating models by risk, not just relisted them
   - type: mcp_tool_used
     value: sense_blast
     required: false
     layer: adoption
-- name: Produce the edit map
-  prompt: "Task: produce the complete edit map for adding the new source-control
-    system: which files to create and which to change across each area you explored
-    (the stored-repository type, the command component, the registration, the
-    selection UI, the dispatch that resolves them), and which tests and fixtures to
-    add. Use file:line throughout, so a teammate could open the PR from your map
-    alone.
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the stored
+    records and shared mechanisms you will edit, every participating model that must
+    be reviewed or touched grouped by contract, and the tests that must be updated or
+    added to cover the behavior. Use file:line throughout, so a teammate could land
+    the change from your map alone.
     "
   checks:
   - type: response_richness
@@ -190,45 +155,38 @@ steps:
     required: true
   - type: contains
     value: test
-    required: false
-  - type: contains
-    value: adapter
     required: false
 scoring:
   weights:
     correctness: 0.70
     efficiency: 0.30
-# Gold spans the areas the "add an SCM" session walks. The discriminator is the
-# twin fan-out tied only by naming convention: the `adapters` group (per-tool
-# command components subclassing Redmine::Scm::Adapters::AbstractAdapter, blast 59)
-# and the `repositories` group (per-system Repository subclasses, blast 39). The
-# adapter<->model pairing and the dispatch (Repository#scm_adapter_class resolving
-# a class by name) are grep-invisible relationships. The `dispatch` group (the
-# base + registry + controller) is the grep-hard routing seam. All targets are
-# file-path matched so both mention and cited are scored. Headline is CUMULATIVE
-# efficiency at held accuracy.
+# Gold = the PARTICIPANT models of the three shared contracts plus the collaborator
+# records themselves. Discriminator = the `dependents` group: models that gain a
+# shared behavior through a mixin macro and reach the collaborator record
+# (Attachment / Watcher / CustomValue) ONLY through that mixin's polymorphic
+# association, so they never name the collaborator class. A baseline greps
+# `Attachment` / `Watcher` / `CustomValue` and finds the few models that reference
+# the class literally, but misses these mixin-reached participants; a structural
+# query resolves each contract's participant set in one call. The three collaborator
+# models are the grep-VISIBLE `contract` anchors a hand audit reads first. Redmine
+# uses test/ (Test::Unit), not spec/.
 gold:
-  # dispatch / registry, resolve a stored repository to its tool component + the registry + UI
-  - {id: repository-base,   group: dispatch,     match: [models/repository.rb]}
-  - {id: scm-registry,      group: dispatch,     match: [scm/base.rb]}
-  - {id: repos-controller,  group: dispatch,     match: [repositories_controller.rb]}
-  # the command-component fan-out (subclasses of AbstractAdapter, grep-invisible inheritance)
-  - {id: adapter-base,      group: adapters,     match: [scm/adapters/abstract_adapter.rb]}
-  - {id: adapter:subversion,group: adapters,     match: [scm/adapters/subversion_adapter.rb]}
-  - {id: adapter:git,       group: adapters,     match: [scm/adapters/git_adapter.rb]}
-  - {id: adapter:mercurial, group: adapters,     match: [scm/adapters/mercurial_adapter.rb]}
-  - {id: adapter:bazaar,    group: adapters,     match: [scm/adapters/bazaar_adapter.rb]}
-  - {id: adapter:cvs,       group: adapters,     match: [scm/adapters/cvs_adapter.rb]}
-  - {id: adapter:filesystem,group: adapters,     match: [scm/adapters/filesystem_adapter.rb]}
-  # the stored-repository fan-out (subclasses of Repository, paired with adapters by convention)
-  - {id: repo:subversion,   group: repositories, match: [models/repository/subversion.rb]}
-  - {id: repo:git,          group: repositories, match: [models/repository/git.rb]}
-  - {id: repo:mercurial,    group: repositories, match: [models/repository/mercurial.rb]}
-  - {id: repo:bazaar,       group: repositories, match: [models/repository/bazaar.rb]}
-  - {id: repo:cvs,          group: repositories, match: [models/repository/cvs.rb]}
-  - {id: repo:filesystem,   group: repositories, match: [models/repository/filesystem.rb]}
-  # test matrix, per-system adapter tests + repository tests
-  - {id: test:adapter-git,  group: tests,        match: [scm/adapters/git_adapter_test.rb]}
-  - {id: test:adapter-svn,  group: tests,        match: [scm/adapters/subversion_adapter_test.rb]}
-  - {id: test:repo-git,     group: tests,        match: [repository_git_test.rb]}
-  - {id: test:repo-svn,     group: tests,        match: [repository_subversion_test.rb]}
+  # contract anchors: the collaborator records themselves (grep-visible)
+  - {id: attachment-model, group: contract, match: [app/models/attachment.rb], relation: "the Attachment record - the attachments contract under change"}
+  - {id: watcher-model,    group: contract, match: [app/models/watcher.rb], relation: "the Watcher record - the watchers/notification-subscriber contract under change"}
+  - {id: custom-value,     group: contract, match: [app/models/custom_value.rb], relation: "the CustomValue record - the custom-field-values contract under change"}
+  # THE discriminator: participant models reached through a mixin, never naming the collaborator
+  # -- attachments contract (participants that carry file attachments via the mixin)
+  - {id: d:msg-attach,     group: dependents, match: [app/models/message.rb], relation: "a forum Message carries file attachments through the attachable mixin; never names the Attachment class"}
+  - {id: d:news-attach,    group: dependents, match: [app/models/news.rb], relation: "a News entry carries file attachments through the attachable mixin; never names Attachment"}
+  - {id: d:proj-attach,    group: dependents, match: [app/models/project.rb], relation: "a Project carries file attachments through the attachable mixin; never names Attachment"}
+  - {id: d:ver-attach,     group: dependents, match: [app/models/version.rb], relation: "a Version carries file attachments through the attachable mixin; never names Attachment"}
+  - {id: d:wiki-pg-attach, group: dependents, match: [app/models/wiki_page.rb], relation: "a WikiPage carries file attachments through the attachable mixin; never names Attachment"}
+  # -- watchers contract (participants that can be watched via the mixin)
+  - {id: d:board-watch,    group: dependents, match: [app/models/board.rb], relation: "a Board is watchable through the watchable mixin; never names the Watcher class"}
+  - {id: d:enmod-watch,    group: dependents, match: [app/models/enabled_module.rb], relation: "an EnabledModule is watchable through the watchable mixin; never names Watcher"}
+  - {id: d:issue-watch,    group: dependents, match: [app/models/issue.rb], relation: "an Issue is watchable through the watchable mixin; reaches Watcher only through it"}
+  - {id: d:wiki-watch,     group: dependents, match: [app/models/wiki.rb], relation: "a Wiki is watchable through the watchable mixin; never names Watcher"}
+  # tests (Redmine uses Test::Unit under test/)
+  - {id: t:attachment,     group: specs, match: [test/unit/attachment_test.rb]}
+  - {id: t:watcher,        group: specs, match: [test/unit/watcher_test.rb]}

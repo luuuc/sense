@@ -1,268 +1,288 @@
 # Per-scenario rubric for the LLM judge layer.
 #
-# Audience block is shared across all steps. Per-step rubrics use the same four
-# criteria (map_quality, specificity, justification, uncertainty) with the
-# canonical 40/25/20/15 weights. The judge scores the answer text first;
-# side-context (wall_time, tokens, completed/failed) is provided for the criteria
-# it bears on, map_quality (did this save downstream exploration?) and
-# uncertainty (was confidence calibrated against effort?).
+# Audience block is shared across all steps. This rubric OPTS INTO the fifth
+# `relationship` (chain-correctness) criterion, so the judge runs on
+# judge_prompt.v2.md and every step declares all five criteria. Weights per step
+# sum to 1.0: map_quality 0.35 / specificity 0.20 / justification 0.15 /
+# uncertainty 0.10 / relationship 0.20.
+#
+# WHY relationship here: mirrors the chatwoot win shape. Recall separates the arms
+# on the scattered, heterogeneous Article dependents; `relationship` measures the
+# orthogonal axis, does the answer state HOW each dependent reaches Article (the
+# association/concern relation, the derive-from-an-article path, the worker/cache
+# route), which grep can name endpoints for but cannot assemble.
 #
 # Step names MUST match scenarios/forem.yaml exactly (the judge pairs by name).
 
 audience: |
-  An AI coding agent that will use this answer to add a new reaction category (a
-  new way readers react to a post) to Forem with only small, targeted follow-up
-  lookups, not a fresh exploration of the codebase. Score for that audience, not
-  a human reader, not a docs page. A perfect answer leaves the agent ready to
-  declare the new category, give it the right scoring/caching/moderation/
-  notification behavior the existing categories have, and add specs; a weak
-  answer forces the agent to re-explore the codebase before it can act. Reactions
-  are a polymorphic, callback-driven hub: the high-value parts of the map are the
-  effects a reaction triggers and the dependents that read it, which are
-  scattered across services and workers in different namespaces and cannot be
-  found by listing one directory.
+  An AI coding agent that will use this answer to safely rework Forem's Article
+  model contract with only small, targeted follow-up lookups, not a fresh
+  exploration of the codebase. Score for that audience, not a human reader, not a
+  docs page. A perfect answer leaves the agent able to change the Article contract
+  knowing every dependent that must be reviewed AND how each one is connected; a
+  weak answer forces the agent to re-grep a token that appears across the whole app
+  and re-read the codebase before it can act safely.
 
 steps:
   - name: Orient in the codebase
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer hand the agent a usable map: that this is Forem (a
-          community/blogging platform), how the Rails app is organized, and
-          specifically where reactions live, the Reaction model
-          (app/models/reaction.rb), the polymorphic reactable association
-          (app/models/concerns/reactable.rb), the category type
-          (app/models/reaction_category.rb), and the write path
-          (app/services/reaction_handler.rb, the reactions controller)? Could the
-          agent pick an entry point and start working with only small, targeted
-          lookups?
+          community/blogging platform), how the Rails app is organized (app/models,
+          app/services, app/workers, app/controllers, app/queries, lib/), and
+          specifically where the Article model sits, the central content record that
+          comments, reactions, tags and feeds attach to? Could the agent pick an
+          entry point and start with only small, targeted lookups?
       specificity:
-        weight: 0.25
-        question: |
-          Are the cited paths concrete (app/models/reaction.rb,
-          app/models/concerns/reactable.rb, app/services/reaction_handler.rb)
-          rather than vague ("the reactions layer")? Are abstractions tied to
-          actual files and class names?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY the architecture is shaped this way
-          (reactions are a polymorphic join recorded by a service, categories are
-          declared centrally, behavior is driven by model callbacks), not just
-          NAME the pieces?
-      uncertainty:
+          Are the cited paths concrete (app/models/article.rb,
+          app/models/concerns/, app/services/articles/) rather than vague ("the
+          model layer")?
+      justification:
         weight: 0.15
         question: |
-          Where the answer is unsure about how the layers connect or what a new
-          category must implement, does it flag that so the agent doesn't act
-          blindly?
+          Does the answer explain WHY the architecture is shaped this way (Article
+          is the hub other records attach to, with behavior pulled in through
+          concerns), not just NAME the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Where the answer is unsure how the layers connect, does it flag that so the
+          agent doesn't act blindly?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the orientation state the CONNECTING RELATIONSHIPS, that comments /
+          reactions / tags attach to an article through associations, that shared
+          behavior is pulled in through concerns, that effects fan out through workers
+          and caches, rather than only listing where things live? Naming directories
+          without the relations that link them scores low.
 
-  - name: Trace a reaction from user action to stored record
+  - name: Map the Article contract and what it is built on
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer trace the write path with file:line, in order: from the
-          reader's action through the controller (ReactionsController in
-          app/controllers/reactions_controller.rb) into the service that creates
-          or toggles the reaction (ReactionHandler in
-          app/services/reaction_handler.rb) and finally the Reaction record and
-          its validations? Could the agent follow the same path to create a
-          reaction of the new category?
+          Does the answer map the Article model's contract with file:line: the
+          concerns it includes (reactable, taggable, the liquid-embeddable behavior,
+          the subscription-source behavior, search indexing), the associations other
+          records hang off it through, and what a change must preserve? Could the
+          agent know what a change to the model has to keep working?
       specificity:
-        weight: 0.25
-        question: |
-          Are the layers named exactly (ReactionsController, ReactionHandler,
-          Reaction) with file:line, rather than "the controller and the model"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY a service object mediates the write (toggle
-          semantics, validation, contradictory-reaction handling), not just LIST
-          the call chain?
-      uncertainty:
+          Are the contract pieces named concretely by file
+          (app/models/concerns/reactable.rb, taggable.rb, liquid_embeddable.rb)
+          rather than "the concerns and associations"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer flag where the path branches (create vs destroy/toggle,
-          admin vs public vs API controllers) so the agent verifies before
+          Does the answer explain WHY the contract is shaped this way (behavior
+          shared through concerns so many models reuse it, other records related
+          through associations), not just LIST the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag any part of the contract it could not confirm (a
+          concern method or association it didn't open) so the agent checks before
           relying on it?
-
-  - name: Map what defines a reaction category
-    criteria:
-      map_quality:
-        weight: 0.40
-        question: |
-          Does the answer locate, with file:line, the category type
-          (ReactionCategory in app/models/reaction_category.rb), where the full
-          set of categories is declared (config/reactions.yml loaded by
-          config/initializers/load_reaction_category_list.rb into
-          REACTION_CATEGORY_LIST), and the attributes/conventions a category
-          carries (slug, score, position, privileged, published, icon) plus where
-          Reaction validates category inclusion? Could the agent declare a new
-          valid category from this?
-      specificity:
-        weight: 0.25
-        question: |
-          Are the pieces named exactly (ReactionCategory, REACTION_CATEGORY_LIST,
-          config/reactions.yml, the slug/score/privileged attributes) with
-          file:line, rather than "the category config"?
-      justification:
+      relationship:
         weight: 0.20
         question: |
-          Does the answer explain WHY categories are data-declared centrally (so a
-          new one is added by configuration plus behavior, not by editing every
-          consumer) and what each attribute controls, not just NAME the file?
-      uncertainty:
-        weight: 0.15
-        question: |
-          Does the answer flag attributes whose effect it could not confirm
-          (privileged, score, published) so the agent checks before setting them?
+          For each contract piece, does the answer state the RELATION by which it
+          binds to Article, which concern supplies which behavior, the associations
+          comments/reactions/tags hang off, not merely name the file? Naming a concern
+          or association without saying how it connects scores low.
 
-  - name: Map everything that happens when a reaction is created or removed
+  - name: Trace how an article and its attached data are handled on change
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer enumerate the create/destroy cascade with file:line, the
-          callbacks in app/models/reaction.rb (assign_points, update_reactable,
-          bust_reactable_cache, async_bust, check_for_reaction_ring,
-          enqueue_article_activity_update, enqueue_update_user_interest_embedding,
-          record_field_test_event, the vomit slack notify) AND the concrete jobs
-          each enqueues, which live in DIFFERENT namespaces:
-          Reactions::UpdateRelevantScoresWorker,
-          Reactions::BustReactableCacheWorker,
-          Reactions::BustHomepageCacheWorker, ReactionCounterSyncWorker,
-          Spam::ReactionRingDetectionWorker,
-          Articles::UpdateArticleActivityWorker,
-          UpdateUserInterestEmbeddingWorker, and the notification worker? This
-          cascade is grep-invisible (effects are dispatched through callbacks to
-          workers in five different directories, not a shared string); a strong
-          answer names that breadth so the agent knows every effect the new
-          category must participate in. A thin answer that names only one or two
-          effects should score low here.
+          Does the answer trace, with file:line and in order, what fans out when an
+          article is created/updated/destroyed, the cache busts, feed counter
+          updates, notifications/mentions, search indexing, naming which run inline
+          versus asynchronously? Could the agent follow the same path to change it
+          safely?
       specificity:
-        weight: 0.25
-        question: |
-          Are the effects and their jobs named concretely
-          (Reactions::UpdateRelevantScoresWorker in
-          app/workers/reactions/update_relevant_scores_worker.rb,
-          Spam::ReactionRingDetectionWorker in
-          app/workers/spam/reaction_ring_detection_worker.rb) with file:line,
-          rather than "it busts some caches and updates scores"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY the work is deferred to background jobs and
-          WHY each effect exists (scoring, caching, anti-abuse, activity feed,
-          recommendations), not just LIST the callbacks?
-      uncertainty:
+          Are the effects named exactly (the cache buster, the feed-counter update,
+          the mention/notification path, the search indexer) with file:line, rather
+          than "the article code"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer flag effects gated by a condition (vomit-only,
-          article-only, public-only) or any it could not fully trace, so the agent
-          verifies before assuming the new category triggers them?
+          Does the answer explain WHY heavy effects are pushed async (to keep the
+          request fast / decouple side effects), not just LIST the chain?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where an effect is asynchronous or callback-driven and
+          not fully opened, so the agent verifies?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer assemble the change handling as an explicit CHAIN, article
+          change -> which callbacks/services -> which caches/feeds/notifications,
+          written as a connected path rather than a set of files? A list that does not
+          state the route/order scores low.
 
-  - name: Trace how a reaction feeds scoring and moderation
+  - name: Audit every dependent of the Article contract
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer give file:line for BOTH directions: how a reaction
-          changes the reactable's standing (update_reactable ->
-          Reactions::UpdateRelevantScoresWorker -> Article#update_score in
-          app/models/article.rb and User#calculate_score in app/models/user.rb),
-          AND how moderation/anti-abuse treats particular reactions (the vomit
-          category, Spam::Handler in app/services/spam/handler.rb,
-          Spam::ReactionRingDetector, Moderator::BanishUser#delete_vomit_reactions
-          in app/services/moderator/banish_user.rb, Users::ConfirmFlagReactions)?
-          Could the agent decide what scoring and moderation behavior the new
-          category needs?
+          Does the answer enumerate the FULL scattered dependent set of the Article
+          model, grouped by area: request handling, background work, feeds and
+          ranking (the per-article feed counters, the feed liquid tag, the prominent-
+          org query), notifications and mentions (the mention fan-out, the new-mention
+          send, the notification subscription), caching and serialization (the
+          edge-cache buster, the async serializer, the social-image generator, the
+          liquid embed extractor), analytics/metrics, moderation (discussion lock,
+          moderation loader, readinglist), and onboarding/lifecycle (the welcome
+          generator that infers activity from a user's articles, the campaign scope,
+          the org bulk-update)? This fan-out is the heart of the ticket and is
+          grep-hostile, the dependents are scattered across many directories, several
+          reach Article in non-obvious ways (a service that DERIVES something from an
+          article, a concern, an association), and the bare token appears across the
+          whole app, so a text search both misses some and drowns the rest. A strong
+          answer names that breadth with file:line so the agent can review every
+          dependent.
       specificity:
-        weight: 0.25
-        question: |
-          Are the scoring and moderation entry points named exactly
-          (Article#update_score, User#calculate_score, Spam::Handler,
-          Moderator::BanishUser, the vomit category) with file:line, rather than
-          "it affects scoring and moderation"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY scoring is recomputed off reactions and WHY
-          some reactions are privileged/negative and moderation-relevant, not just
-          NAME the methods?
-      uncertainty:
+          Are the dependents named concretely by file and symbol
+          (app/services/broadcasts/welcome_notification/generator.rb,
+          app/services/liquid_embed_extractor.rb,
+          app/services/edge_cache/bust_comment.rb) with file:line and one phrase on
+          how each uses the article, rather than "various controllers and services"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer flag where the scoring or moderation behavior is
-          category-dependent (privileged, negative, vomit) so the agent verifies
-          how the new category should participate?
+          Does the answer explain WHY each dependent is affected (derives a reference
+          from the article, busts its cache, counts it in a feed, infers onboarding
+          state from it), grouping by area rather than just LISTING files?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer acknowledge what a static pass can miss (dependents reached
+          only through a concern/association or that merely derive something from an
+          article) so the agent verifies?
+      relationship:
+        weight: 0.20
+        question: |
+          For each dependent, does the answer state HOW it reaches Article, the
+          association/concern, the derive-from-an-article path, or a worker/cache
+          route, ESPECIALLY for the non-obvious onboarding/feed/cache/notification
+          dependents a text search can name but not connect? A correct file list with
+          no connecting relationship per dependent scores low, however complete.
 
-  - name: Find every place that depends on the reaction contract
+  - name: Trace how article identity and visibility are guarded
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer enumerate the blast radius of the reaction contract, the
-          scattered dependents that read, create, or react to reactions across
-          DISJOINT areas: the cascade workers, the scoring models, the moderation
-          and spam services (Spam::Handler, Moderator::BanishUser,
-          Users::ConfirmFlagReactions), the notification path
-          (Notifications::Reactions::Send), and the reactable models (Article,
-          Comment, User via app/models/concerns/reactable.rb)? This dependent set
-          is grep-invisible (reached through the polymorphic association and
-          callbacks, not a shared literal; a plain grep for "reaction"
-          over-collects unrelated files); a strong answer assembles that breadth
-          with file:line so the agent knows what a contract change touches. Could
-          the agent revisit every dependent from this list?
+          Does the answer give file:line for how background/service work confirms it
+          is operating on a real, current, published article before acting (existence
+          / published / visibility checks in the feed, mention, cache and
+          social-image paths, and any shared guard)? Could the agent give a reworked
+          contract the right guards without re-reading every file?
       specificity:
-        weight: 0.25
-        question: |
-          Are the dependents named concretely (Spam::Handler in
-          app/services/spam/handler.rb, the Reactions::* workers, the reactable
-          concern) rather than "lots of things use reactions"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each dependent is coupled to the contract
-          (it reads category/points, it is enqueued by a callback, it is
-          polymorphic on reactable), not just LIST them?
-      uncertainty:
+          Are the guards named exactly (the published/visibility checks, the methods
+          that confirm the article) with file:line, rather than "the validation
+          code"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer acknowledge what static reading can miss (dependents
-          reached only through the polymorphic association or a background job) so
-          the agent knows to verify?
+          Does the answer explain WHY service/background work must re-confirm the
+          article (it may have been unpublished or destroyed between enqueue and run),
+          not just NAME the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where a guard is missing or implicit (a service that
+          assumes the article still exists/is published) so the agent verifies?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer state the path by which each guard protects a dependent,
+          which lookup/visibility check gates which downstream effect, rather than
+          naming guard methods in isolation? A guard named without the relation it
+          protects scores low.
 
-  - name: Produce the edit map
+  - name: Assess the blast radius of the contract change
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer produce a complete, actionable edit map: the
-          configuration to add (the new category in config/reactions.yml with its
-          attributes), the existing behaviors to extend or verify so the new
-          category is scored, cached, moderated, and notified like the others (the
-          cascade callbacks/workers, the scoring path, the moderation/notification
-          services as relevant), and the specs and fixtures to add, all with
-          file:line? Could a teammate open the PR from this map alone?
+          Does the answer assess the full blast radius of changing the Article
+          contract: which dependents are at risk across every area (request handling,
+          workers, feeds, notifications, caching, analytics, moderation, onboarding),
+          which are most likely to break, and what must be re-verified, with file:line
+          and a risk ranking? This is the change-impact question a structural blast
+          answers directly and a hand audit under-covers.
       specificity:
-        weight: 0.25
-        question: |
-          Are the files and insertion points concrete (the reactions.yml entry,
-          the specific workers/services to touch, a spec under
-          spec/models/reaction_spec.rb or spec/services/) rather than "configure
-          the category and add tests"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each file is in the map (which behavior the
-          new category needs there: scoring, caching, moderation, notification,
-          validation, tests), not just LIST files?
-      uncertainty:
+          Are the at-risk dependents named concretely by file with a stated reason for
+          the risk level, rather than "several things might break"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer flag the parts it is least sure about (the right score
-          or privileged setting, whether the category should be notifiable or
-          moderation-relevant, fixture generation) so the agent confirms before
-          committing?
+          Does the answer explain WHY a given dependent is high vs low risk (it
+          mutates article-attached data vs merely reads a counter), not just LIST
+          them?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the dependents it is least sure about (indirect,
+          concern- or derive-reached, only surfaced structurally) so the agent
+          confirms?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the risk assessment tie each at-risk dependent to the RELATIONSHIP that
+          makes it risky, expressing impact as a path from the contract change to the
+          dependent (mutates attached data on teardown vs reads a feed counter vs
+          derives a reference), rather than a ranked file list with risk labels but no
+          connecting route?
+
+  - name: Produce the change + verification map
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer produce a complete, actionable map: the model and shared
+          pieces to edit (article.rb, the relevant concerns), every dependent that
+          must be reviewed grouped by area, and the specs/fixtures to update or add,
+          with file:line throughout? Could a teammate land the change from this map
+          alone?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the files and insertion points concrete (app/models/article.rb, the
+          affected concerns, the specs under spec/models, spec/services/articles,
+          spec/requests/articles) rather than "edit the model and add tests"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY each file is in the map (which area it belongs
+          to and what the change does to it), not just LIST files?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the parts it is least sure about (concern semantics,
+          fixtures, indirect dependents) so the agent confirms before committing?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the map connect each file to the change via its relationship, which
+          association/concern/derive route makes it part of this edit, and which spec
+          exercises which path, so the chain from the Article contract change to each
+          edited or verified file is explicit, not just a grouped file list?

@@ -183,23 +183,29 @@ scoring:
 # EXCLUDED, they are the enumerable half grep does well. All targets are file-path
 # matched so both mention (is it on the map?) and cited (pinned to path:line?) score.
 gold:
+  # Each target carries `relation`: the TRUE way it reaches the Inbox contract,
+  # verified from chatwoot source. `relation` is the reference the reference-aware
+  # relationship audit (lib/relationship_audit.py) scores an answer against — it
+  # is NEVER rendered to the agent (only name/prompt are; see header). It lets the
+  # judge mark, per dependent, both covered (named?) and related (correct relation
+  # stated?), so a confident-but-incomplete answer can no longer read as complete.
   # the contract itself + the shared pieces a change must reckon with
-  - {id: inbox-model,          group: contract,   match: [app/models/inbox.rb]}
-  - {id: cache-keys-concern,   group: contract,   match: [models/concerns/cache_keys.rb]}
-  - {id: channelable-concern,  group: contract,   match: [models/concerns/channelable.rb]}
-  - {id: contact-inbox,        group: contract,   match: [models/contact_inbox.rb]}
-  - {id: enterprise-inbox,     group: contract,   match: [enterprise/app/models/enterprise/inbox.rb]}
+  - {id: inbox-model,          group: contract,   match: [app/models/inbox.rb], relation: "the Inbox model itself — the contract under change"}
+  - {id: cache-keys-concern,   group: contract,   match: [models/concerns/cache_keys.rb], relation: "concern included into Inbox that supplies its cache keys"}
+  - {id: channelable-concern,  group: contract,   match: [models/concerns/channelable.rb], relation: "each channel class includes Channelable, which declares `has_one :inbox, as: :channel, dependent: :destroy_async` (the polymorphic inverse)"}
+  - {id: contact-inbox,        group: contract,   match: [models/contact_inbox.rb], relation: "join record with `belongs_to :inbox`"}
+  - {id: enterprise-inbox,     group: contract,   match: [enterprise/app/models/enterprise/inbox.rb], relation: "EE overlay that reopens the Inbox class"}
   # the teardown path the rework centers on
-  - {id: delete-object-job,    group: teardown,   match: [app/jobs/delete_object_job.rb]}
+  - {id: delete-object-job,    group: teardown,   match: [app/jobs/delete_object_job.rb], relation: "names Inbox in its heavy_associations map and drives the async teardown of associated records"}
   # scattered dependents reached through associations / concerns (the grep-noisy fan-out)
-  - {id: dep:accounts-ctrl,    group: dependents, match: [api/v1/accounts_controller.rb]}
-  - {id: dep:dashboard-ctrl,   group: dependents, match: [super_admin/dashboard_controller.rb]}
-  - {id: dep:widget-tests,     group: dependents, match: [widget_tests_controller.rb]}
-  - {id: dep:assignment-job,   group: dependents, match: [auto_assignment/assignment_job.rb]}
-  - {id: dep:imap-fetch-job,   group: dependents, match: [inboxes/fetch_imap_email_inboxes_job.rb]}
-  - {id: dep:stale-notif-job,  group: dependents, match: [migration/remove_stale_notifications_job.rb]}
-  - {id: dep:assignee-handler, group: dependents, match: [concerns/assignee_activity_message_handler.rb]}
-  - {id: dep:twitter-webhook,  group: dependents, match: [twitter/webhook_subscribe_service.rb]}
-  - {id: dep:whatsapp-create,  group: dependents, match: [whatsapp/channel_creation_service.rb]}
-  - {id: dep:chatwoot-hub,     group: dependents, match: [lib/chatwoot_hub.rb]}
-  - {id: dep:slack-unfurl,     group: dependents, match: [integrations/slack/link_unfurl_formatter.rb]}
+  - {id: dep:accounts-ctrl,    group: dependents, match: [api/v1/accounts_controller.rb], relation: "reads inbox cache keys / lists inboxes per account"}
+  - {id: dep:dashboard-ctrl,   group: dependents, match: [super_admin/dashboard_controller.rb], relation: "metrics read `Inbox.count`"}
+  - {id: dep:widget-tests,     group: dependents, match: [widget_tests_controller.rb], relation: "reads the inbox to drive widget tests"}
+  - {id: dep:assignment-job,   group: dependents, match: [auto_assignment/assignment_job.rb], relation: "coalesced and run per inbox (`enqueue_for_inbox(inbox_id)`)"}
+  - {id: dep:imap-fetch-job,   group: dependents, match: [inboxes/fetch_imap_email_inboxes_job.rb], relation: "polls IMAP per inbox/channel"}
+  - {id: dep:stale-notif-job,  group: dependents, match: [migration/remove_stale_notifications_job.rb], relation: "removes stale notifications tied to the inbox"}
+  - {id: dep:assignee-handler, group: dependents, match: [concerns/assignee_activity_message_handler.rb], relation: "case-dispatches on `when Inbox` to build activity messages"}
+  - {id: dep:twitter-webhook,  group: dependents, match: [twitter/webhook_subscribe_service.rb], relation: "`Inbox.find(inbox_id)` then `delegate :channel, to: :inbox`"}
+  - {id: dep:whatsapp-create,  group: dependents, match: [whatsapp/channel_creation_service.rb], relation: "creates the Inbox for a new channel (`create_inbox(channel)`)"}
+  - {id: dep:chatwoot-hub,     group: dependents, match: [lib/chatwoot_hub.rb], relation: "telemetry `fetch_count(Inbox)`"}
+  - {id: dep:slack-unfurl,     group: dependents, match: [integrations/slack/link_unfurl_formatter.rb], relation: "reads the inbox to format a Slack link unfurl"}

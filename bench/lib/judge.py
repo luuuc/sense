@@ -30,6 +30,13 @@ import yaml
 LIB_DIR = os.path.dirname(os.path.abspath(__file__))
 JUDGE_PROMPT_PATH = os.path.join(LIB_DIR, "judge_prompt.v1.md")
 JUDGE_PROMPT_VERSION = "v1"
+# v2 adds the optional `relationship` (chain-correctness) criterion. A rubric
+# opts in by declaring a `relationship` criterion on its steps; the four-criterion
+# path stays byte-identical (v1 prompt, canonical weights), so the judge-variance
+# baseline for every non-opted-in scenario is untouched.
+JUDGE_PROMPT_V2_PATH = os.path.join(LIB_DIR, "judge_prompt.v2.md")
+JUDGE_PROMPT_VERSION_EXTENDED = "v2-rel"
+RELATIONSHIP_KEY = "relationship"
 JUDGE_MODEL = "claude-opus-4-7"
 ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -93,6 +100,32 @@ DEFAULT_WEIGHTS = {
     "justification": 0.20,
     "uncertainty": 0.15,
 }
+
+# Canonical render/score order. `relationship` is appended only for rubrics that
+# opt into it (see rubric_is_extended); the four-criterion order is unchanged.
+CORE_CRITERIA = ("map_quality", "specificity", "justification", "uncertainty")
+
+
+def rubric_is_extended(rubric):
+    """True iff this rubric opts into the `relationship` (chain-correctness)
+    criterion on ANY step. Extended rubrics are then required (in load_rubric)
+    to declare it on EVERY step, so scoring is uniform within a scenario."""
+    return any(
+        RELATIONSHIP_KEY in (s.get("criteria") or {})
+        for s in (rubric.get("steps") or [])
+    )
+
+
+def step_weights(rubric_step, extended):
+    """Ordered {criterion: weight} for one rubric step.
+
+    Non-extended → exactly the canonical four (DEFAULT_WEIGHTS), so the
+    four-criterion path is identical to before. Extended → the five declared
+    weights (validated to sum to 1.0 in load_rubric).
+    """
+    criteria = rubric_step.get("criteria") or {}
+    keys = CORE_CRITERIA + ((RELATIONSHIP_KEY,) if extended else ())
+    return {k: criteria.get(k, {}).get("weight", DEFAULT_WEIGHTS.get(k, 0.0)) for k in keys}
 
 
 # ── Answer extraction ────────────────────────────────────────────────
@@ -179,6 +212,8 @@ def load_rubric(rubric_path, scenario_steps):
             f"{len(scenario_steps)}. Update the rubric."
         )
 
+    extended = rubric_is_extended(rubric)
+    required = list(CORE_CRITERIA) + ([RELATIONSHIP_KEY] if extended else [])
     for i, (r_step, s_step) in enumerate(zip(rubric_steps, scenario_steps)):
         if r_step.get("name") != s_step.get("name"):
             raise SystemExit(
@@ -186,10 +221,21 @@ def load_rubric(rubric_path, scenario_steps):
                 f"not match scenario step {s_step.get('name')!r}"
             )
         criteria = r_step.get("criteria", {})
-        for key in DEFAULT_WEIGHTS:
+        for key in required:
             if key not in criteria:
+                extra = (
+                    " (this rubric opts into the relationship criterion, so EVERY "
+                    "step must declare it)" if key == RELATIONSHIP_KEY else ""
+                )
                 raise SystemExit(
-                    f"judge: rubric step {i} missing criterion {key!r}"
+                    f"judge: rubric step {i} missing criterion {key!r}{extra}"
+                )
+        if extended:
+            w = step_weights(r_step, True)
+            if abs(sum(w.values()) - 1.0) > 1e-6:
+                raise SystemExit(
+                    f"judge: rubric step {i} criterion weights sum to "
+                    f"{round(sum(w.values()), 4)}, must be 1.0"
                 )
 
     return rubric
@@ -197,14 +243,16 @@ def load_rubric(rubric_path, scenario_steps):
 
 def format_rubric_for_prompt(rubric):
     """Render the rubric as a block suitable for the system prompt."""
+    extended = rubric_is_extended(rubric)
+    keys = CORE_CRITERIA + ((RELATIONSHIP_KEY,) if extended else ())
     lines = ["# Audience", "", rubric["audience"].strip(), ""]
     lines.append("# Rubric")
     lines.append("")
     for i, step in enumerate(rubric["steps"], 1):
         lines.append(f"## Step {i}: {step['name']}")
-        for key in ("map_quality", "specificity", "justification", "uncertainty"):
+        for key in keys:
             crit = step["criteria"][key]
-            weight = crit.get("weight", DEFAULT_WEIGHTS[key])
+            weight = crit.get("weight", DEFAULT_WEIGHTS.get(key))
             question = crit["question"].strip()
             lines.append(f"- **{key}** (weight {weight}): {question}")
         lines.append("")
@@ -398,10 +446,12 @@ def extract_judge_json(api_response):
 # ── Per-step scoring ─────────────────────────────────────────────────
 
 
-def compute_step_quality(scores):
-    """Weighted sum of criterion scores using DEFAULT_WEIGHTS."""
+def compute_step_quality(scores, weights=None):
+    """Weighted sum of criterion scores. `weights` defaults to the canonical
+    four (DEFAULT_WEIGHTS); extended rubrics pass their five-criterion weights."""
+    weights = weights or DEFAULT_WEIGHTS
     total = 0.0
-    for key, weight in DEFAULT_WEIGHTS.items():
+    for key, weight in weights.items():
         crit = scores.get(key, {})
         score = float(crit.get("score", 0.0))
         score = max(0.0, min(1.0, score))
@@ -410,8 +460,14 @@ def compute_step_quality(scores):
 
 
 def judge_step(*, step_idx, step, answer_slice, system_text, side_context,
-               api_key):
-    """Run the judge on one step. Returns the step's quality record."""
+               api_key, weights=None):
+    """Run the judge on one step. Returns the step's quality record.
+
+    `weights` is the step's criterion→weight map (the canonical four by
+    default; five for relationship-extended rubrics). It drives both which
+    criteria are normalised out of the judge response and the step_quality sum.
+    """
+    weights = weights or DEFAULT_WEIGHTS
     user_blocks = [
         f"Score step: {step['name']!r}",
         "",
@@ -449,7 +505,7 @@ def judge_step(*, step_idx, step, answer_slice, system_text, side_context,
         return {
             "step": step["name"],
             "scores": {k: {"score": 0.0, "rationale": "judge response unparseable"}
-                       for k in DEFAULT_WEIGHTS},
+                       for k in weights},
             "step_quality": 0.0,
             "error": "judge_response_unparseable",
             "usage": {
@@ -460,14 +516,14 @@ def judge_step(*, step_idx, step, answer_slice, system_text, side_context,
 
     raw_scores = parsed.get("scores", {})
     normalised = {}
-    for key in DEFAULT_WEIGHTS:
+    for key in weights:
         crit = raw_scores.get(key, {})
         normalised[key] = {
             "score": max(0.0, min(1.0, float(crit.get("score", 0.0)))),
             "rationale": str(crit.get("rationale", "")).strip(),
         }
 
-    step_quality = compute_step_quality(normalised)
+    step_quality = compute_step_quality(normalised, weights)
 
     usage = response.get("usage", {})
 
@@ -550,7 +606,13 @@ def main(argv):
     scenario = parse_scenario(scenario_path)
     rubric = load_rubric(rubric_path, scenario["steps"])
 
-    with open(JUDGE_PROMPT_PATH) as f:
+    # Opt-in: a rubric that declares the `relationship` criterion is scored with
+    # the v2 prompt (five criteria). Everything else uses v1 unchanged.
+    extended = rubric_is_extended(rubric)
+    prompt_path = JUDGE_PROMPT_V2_PATH if extended else JUDGE_PROMPT_PATH
+    prompt_version = JUDGE_PROMPT_VERSION_EXTENDED if extended else JUDGE_PROMPT_VERSION
+
+    with open(prompt_path) as f:
         judge_prompt = f.read()
 
     system_text = judge_prompt + "\n\n" + format_rubric_for_prompt(rubric)
@@ -567,6 +629,7 @@ def main(argv):
     step_results = []
     for i, step in enumerate(scenario["steps"]):
         answer_slice = slice_answer_for_step(full_answer, i, step["name"])
+        weights = step_weights(rubric["steps"][i], extended)
         result = judge_step(
             step_idx=i,
             step=step,
@@ -574,6 +637,7 @@ def main(argv):
             system_text=system_text,
             side_context=base_side_context,
             api_key=api_key,
+            weights=weights,
         )
         step_results.append(result)
         print(
@@ -587,15 +651,39 @@ def main(argv):
         if step_results else 0.0
     )
 
+    # Reference-aware relationship audit. Runs only when the scenario's gold
+    # carries `relation` fields (the authored reference). It grades the whole
+    # answer against the fixed must-find set so the judge can no longer rate an
+    # incomplete answer as complete — the omission-blindness that made the
+    # per-step judge miss the chatwoot win. One extra judge call per run.
+    relationship_audit = None
+    try:
+        from relationship_audit import grade as _rel_grade
+        subject = scenario.get("name", "the contract under change")
+        relationship_audit = _rel_grade(
+            full_answer, scenario.get("gold"),
+            call_judge=call_judge, extract_json=extract_judge_json,
+            subject=subject, api_key=api_key,
+        )
+        if relationship_audit is not None:
+            print(
+                f"  relationship audit: covered={relationship_audit['covered_recall']} "
+                f"related={relationship_audit['related_recall']}",
+                file=sys.stderr,
+            )
+    except (SystemExit, KeyError, ValueError) as e:
+        print(f"  relationship audit skipped: {e}", file=sys.stderr)
+
     judged = {
         "scenario": scenario["name"],
         "repo": scenario["repo"],
         "judge": {
             "model": JUDGE_MODEL,
-            "prompt_version": JUDGE_PROMPT_VERSION,
+            "prompt_version": prompt_version,
             "rubric_path": os.path.basename(rubric_path),
         },
         "scenario_quality": scenario_quality,
+        "relationship_audit": relationship_audit,
         "steps": step_results,
     }
 

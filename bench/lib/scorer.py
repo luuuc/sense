@@ -672,8 +672,17 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     # Gold-target recall (reported alongside fairness, never folded into it).
     # Measures coverage against a fixed per-scenario denominator, unlike
     # citation_grounding's grounded/emitted rate. None when no gold declared.
-    from gold import score_gold_recall
+    from gold import score_gold_recall, score_gold_f1
     gold_recall = score_gold_recall(answer_text, scenario.get("gold"))
+    # Precision/recall/F1 of the CLAIMED dependent set (the files the agent
+    # actually cited and that grounded) vs the file-like gold targets. Charges
+    # citing off-target files — grep noise costs the baseline here, recall does
+    # not. Recall stays the floor; F1 leads (see bench/SCORING.md).
+    _claimed_files = [
+        d["file"] for d in citation_grounding.get("details", [])
+        if d.get("status") == "grounded"
+    ]
+    gold_f1 = score_gold_f1(_claimed_files, scenario.get("gold"))
 
     scored = {
         "scenario": scenario["name"],
@@ -687,6 +696,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
         "discoverability": round(discoverability, 4),
         "citation_grounding": citation_grounding,
         "gold_recall": gold_recall,
+        "gold_f1": gold_f1,
         "steps": step_results,
         "misses": misses,
         "metrics": {

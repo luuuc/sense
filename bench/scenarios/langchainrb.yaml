@@ -203,38 +203,45 @@ scoring:
 # provider, not just llm/<provider>.rb. All targets are file-path matched so both
 # mention and cited are scored. Headline is CUMULATIVE efficiency at held accuracy.
 gold:
+  # Each target carries `relation` (the TRUE connection, from source; never shown to
+  # the agent) so the reference-aware relationship_audit can run. The fan-out is a
+  # 4-WAY per-provider correspondence (adapter + message + client + response), tied
+  # only by provider NAME and dispatched by Adapter.build's is_a? chain. sense_blast
+  # resolves each hierarchy (Adapters::Base -> 6 subclasses); the discriminator is
+  # whether the agent assembles all 4 families for every provider vs sampling. See 29-05.
+  #
   # dispatch, the assistant selects a provider integration at runtime
-  - {id: adapter-build,    group: dispatch,  match: [assistant/llm/adapter.rb]}
-  - {id: assistant,        group: dispatch,  match: [langchain/assistant.rb]}
-  # provider-integration (adapter) family, tool-call formatting contract
-  - {id: adapter-base,     group: adapters,  match: [assistant/llm/adapters/base.rb]}
-  - {id: adapter:openai,   group: adapters,  match: [assistant/llm/adapters/openai.rb]}
-  - {id: adapter:anthropic,group: adapters,  match: [assistant/llm/adapters/anthropic.rb]}
-  - {id: adapter:gemini,   group: adapters,  match: [assistant/llm/adapters/google_gemini.rb]}
-  - {id: adapter:mistral,  group: adapters,  match: [assistant/llm/adapters/mistralai.rb]}
-  - {id: adapter:ollama,   group: adapters,  match: [assistant/llm/adapters/ollama.rb]}
-  # per-provider message form
-  - {id: msg-base,         group: messages,  match: [assistant/messages/base.rb]}
-  - {id: msg:openai,       group: messages,  match: [assistant/messages/openai_message.rb]}
-  - {id: msg:anthropic,    group: messages,  match: [assistant/messages/anthropic_message.rb]}
-  - {id: msg:gemini,       group: messages,  match: [assistant/messages/google_gemini_message.rb]}
-  - {id: msg:mistral,      group: messages,  match: [assistant/messages/mistralai_message.rb]}
-  - {id: msg:ollama,       group: messages,  match: [assistant/messages/ollama_message.rb]}
-  # raw LLM client family
-  - {id: llm-base,         group: clients,   match: [llm/base.rb]}
-  - {id: llm:openai,       group: clients,   match: [llm/openai.rb]}
-  - {id: llm:anthropic,    group: clients,   match: [llm/anthropic.rb]}
-  - {id: llm:gemini,       group: clients,   match: [llm/google_gemini.rb]}
-  - {id: llm:mistral,      group: clients,   match: [llm/mistralai.rb]}
-  - {id: llm:ollama,       group: clients,   match: [llm/ollama.rb]}
-  # per-provider response wrapper
-  - {id: resp-base,        group: responses, match: [llm/response/base_response.rb]}
-  - {id: resp:openai,      group: responses, match: [llm/response/openai_response.rb]}
-  - {id: resp:anthropic,   group: responses, match: [llm/response/anthropic_response.rb]}
-  - {id: resp:gemini,      group: responses, match: [llm/response/google_gemini_response.rb]}
-  - {id: resp:mistral,     group: responses, match: [llm/response/mistralai_response.rb]}
-  - {id: resp:ollama,      group: responses, match: [llm/response/ollama_response.rb]}
+  - {id: adapter-build,    group: dispatch,  match: [assistant/llm/adapter.rb], relation: "Adapter.build resolves the LLM instance to its adapter via an is_a? chain"}
+  - {id: assistant,        group: dispatch,  match: [langchain/assistant.rb], relation: "Assistant drives the tool-calling loop and selects the adapter"}
+  # provider-integration (adapter) family, tool-call formatting contract (Adapters::Base subclasses)
+  - {id: adapter-base,     group: adapters,  match: [assistant/llm/adapters/base.rb], relation: "abstract adapter base; the tool-call/message formatting contract under change"}
+  - {id: adapter:openai,   group: adapters,  match: [assistant/llm/adapters/openai.rb], relation: "Adapters::Base subclass formatting tool calls/messages for OpenAI"}
+  - {id: adapter:anthropic,group: adapters,  match: [assistant/llm/adapters/anthropic.rb], relation: "Adapters::Base subclass for Anthropic"}
+  - {id: adapter:gemini,   group: adapters,  match: [assistant/llm/adapters/google_gemini.rb], relation: "Adapters::Base subclass for Google Gemini"}
+  - {id: adapter:mistral,  group: adapters,  match: [assistant/llm/adapters/mistralai.rb], relation: "Adapters::Base subclass for MistralAI"}
+  - {id: adapter:ollama,   group: adapters,  match: [assistant/llm/adapters/ollama.rb], relation: "Adapters::Base subclass for Ollama"}
+  # per-provider message form (Messages::Base subclasses, paired by name)
+  - {id: msg-base,         group: messages,  match: [assistant/messages/base.rb], relation: "abstract message base; per-provider message serialization contract"}
+  - {id: msg:openai,       group: messages,  match: [assistant/messages/openai_message.rb], relation: "Messages::Base subclass serializing messages for OpenAI (paired with the OpenAI adapter by name)"}
+  - {id: msg:anthropic,    group: messages,  match: [assistant/messages/anthropic_message.rb], relation: "Messages::Base subclass for Anthropic"}
+  - {id: msg:gemini,       group: messages,  match: [assistant/messages/google_gemini_message.rb], relation: "Messages::Base subclass for Google Gemini"}
+  - {id: msg:mistral,      group: messages,  match: [assistant/messages/mistralai_message.rb], relation: "Messages::Base subclass for MistralAI"}
+  - {id: msg:ollama,       group: messages,  match: [assistant/messages/ollama_message.rb], relation: "Messages::Base subclass for Ollama"}
+  # raw LLM client family (LLM::Base subclasses, paired by name)
+  - {id: llm-base,         group: clients,   match: [llm/base.rb], relation: "abstract LLM client base; the raw provider API contract"}
+  - {id: llm:openai,       group: clients,   match: [llm/openai.rb], relation: "LLM::Base subclass: the raw OpenAI API client (paired with the OpenAI adapter/message/response by name)"}
+  - {id: llm:anthropic,    group: clients,   match: [llm/anthropic.rb], relation: "LLM::Base subclass: raw Anthropic client"}
+  - {id: llm:gemini,       group: clients,   match: [llm/google_gemini.rb], relation: "LLM::Base subclass: raw Google Gemini client"}
+  - {id: llm:mistral,      group: clients,   match: [llm/mistralai.rb], relation: "LLM::Base subclass: raw MistralAI client"}
+  - {id: llm:ollama,       group: clients,   match: [llm/ollama.rb], relation: "LLM::Base subclass: raw Ollama client"}
+  # per-provider response wrapper (BaseResponse subclasses, paired by name)
+  - {id: resp-base,        group: responses, match: [llm/response/base_response.rb], relation: "abstract response base; per-provider response-parsing contract"}
+  - {id: resp:openai,      group: responses, match: [llm/response/openai_response.rb], relation: "BaseResponse subclass parsing OpenAI responses (paired by name)"}
+  - {id: resp:anthropic,   group: responses, match: [llm/response/anthropic_response.rb], relation: "BaseResponse subclass for Anthropic"}
+  - {id: resp:gemini,      group: responses, match: [llm/response/google_gemini_response.rb], relation: "BaseResponse subclass for Google Gemini"}
+  - {id: resp:mistral,     group: responses, match: [llm/response/mistralai_response.rb], relation: "BaseResponse subclass for MistralAI"}
+  - {id: resp:ollama,      group: responses, match: [llm/response/ollama_response.rb], relation: "BaseResponse subclass for Ollama"}
   # test matrix, assistant + dispatch + a per-provider message spec
-  - {id: spec:assistant,   group: specs,     match: [assistant/assistant_spec.rb]}
-  - {id: spec:adapter,     group: specs,     match: [assistant/llm/adapter_spec.rb]}
+  - {id: spec:assistant,   group: specs,     match: [assistant/assistant_spec.rb], relation: "spec covering the Assistant tool-calling loop"}
+  - {id: spec:adapter,     group: specs,     match: [assistant/llm/adapter_spec.rb], relation: "spec covering Adapter.build dispatch"}
   - {id: spec:msg-openai,  group: specs,     match: [messages/openai_message_spec.rb]}

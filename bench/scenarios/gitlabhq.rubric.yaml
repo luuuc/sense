@@ -1,0 +1,231 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block shared across steps. OPTS INTO the fifth `relationship` criterion
+# (judge_prompt.v2.md); weights per step sum to 1.0: map_quality 0.35 /
+# specificity 0.20 / justification 0.15 / uncertainty 0.10 / relationship 0.20.
+# Mirrors the chatwoot/forem/discourse win shape.
+#
+# Step names MUST match scenarios/gitlabhq.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to safely rework GitLab's MergeRequest
+  model contract with only small, targeted follow-up lookups, not a fresh exploration
+  of a 36k-file monolith. Score for that audience, not a human reader. A perfect
+  answer leaves the agent able to change the MergeRequest contract knowing every
+  dependent that must be reviewed AND how each one is connected; a weak answer forces
+  the agent to re-grep one of the noisiest tokens in the repo.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer hand the agent a usable map: that this is GitLab (a large
+          DevOps monolith), how the code is organized (app/models, app/services,
+          app/workers, app/graphql, lib/, the ee/ overlay), and specifically where the
+          MergeRequest model sits, the proposed-change record much of the system
+          attaches to? Could the agent start with small, targeted lookups?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the cited paths concrete (app/models/merge_request.rb, app/services/merge_requests/)
+          rather than vague ("the model layer")?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY the architecture is shaped this way (MergeRequest
+          is a hub shared with Issue via concerns), not just NAME pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Where unsure how the layers connect, does it flag that?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the orientation state the CONNECTING RELATIONSHIPS, that notes/events/
+          pipelines attach to or reference an MR, that behavior is shared through
+          concerns, rather than only listing where things live?
+
+  - name: Map the MergeRequest contract and what it is built on
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer map the MergeRequest model's contract with file:line: the
+          concerns it includes (Issuable, Noteable, Mentionable, time tracking, etc.),
+          the associations records hang off it through, and what a change must preserve?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the contract pieces named concretely by file (app/models/concerns/issuable.rb,
+          noteable.rb, mentionable.rb) rather than "the concerns and associations"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY the contract is shaped this way (shared issue/MR
+          behavior factored into concerns), not just LIST the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag any part of the contract it could not confirm?
+      relationship:
+        weight: 0.20
+        question: |
+          For each contract piece, does the answer state the RELATION by which it binds
+          to MergeRequest (which concern supplies notes, mentions, shared issuable
+          behavior), not merely name the file?
+
+  - name: Trace how a merge request is created and updated
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer trace, with file:line and in order, how an MR is created and
+          updated (the create/update services) and the effects that fan out (notes,
+          events, notifications, related records), naming which run inline vs async?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the pieces named exactly (the create service, the workers) with file:line?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY heavy effects are pushed async at GitLab's scale?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where an effect is async and not fully opened?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer assemble creation as an explicit CHAIN, request -> service ->
+          persist -> notes/events/workers, rather than a set of files?
+
+  - name: Audit every dependent of the MergeRequest contract
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer enumerate the FULL scattered dependent set of the MergeRequest
+          model, grouped by area: services (note resolution, milestone promotion,
+          issuable destroy / CI-record teardown, ghost-user migration, timelogs),
+          workers (auto-merge), models and integrations (the event feed, CI pipeline
+          relations, the Jira integration), GraphQL (the issuable type resolver),
+          serializers (discussion entities), the API layer (discussions), and the lib/
+          layer (the URL builder, cycle-analytics query builders, import/export
+          streaming, the GitHub importer's cross-references)? This fan-out is the heart
+          of the ticket and is grep-hostile in a monolith this size: the dependents are
+          scattered across 50 directories and buried in files that do not announce the
+          dependency, so a text search both misses some and drowns the rest. A strong
+          answer names that breadth with file:line.
+      specificity:
+        weight: 0.20
+        question: |
+          Are the dependents named concretely by file and symbol (app/services/notes/resolve_service.rb,
+          lib/gitlab/url_builder.rb, app/workers/auto_merge_process_worker.rb) with
+          file:line and one phrase on how each uses the MR, rather than "various
+          services"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY each dependent is affected, grouping by area
+          rather than just LISTING files?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer acknowledge what a static pass can miss (dependents buried in
+          a large file, reached through a concern, or in the ee/ overlay)?
+      relationship:
+        weight: 0.20
+        question: |
+          For each dependent, does the answer state HOW it reaches MergeRequest, the
+          association/concern or the buried call, ESPECIALLY for the non-obvious
+          analytics/import/url-builder/ghost-user dependents a text search can name but
+          not connect? A correct file list with no connecting relationship per dependent
+          scores low.
+
+  - name: Trace how merge request visibility and permissions are guarded
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer give file:line for how work confirms an MR is visible to the
+          acting user and safe to act on before proceeding (the policy/ability checks,
+          visibility scopes, guards in the services and API paths)?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the guards named exactly with file:line?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY visibility must be re-checked per actor in a
+          multi-tenant system?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where a guard is missing or implicit?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer state the path by which each guard protects a dependent,
+          rather than naming methods in isolation?
+
+  - name: Assess the blast radius of the contract change
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer assess the full blast radius of changing the MergeRequest
+          contract: which dependents are at risk across every area (services, workers,
+          models/integrations, GraphQL, serializers, API, lib), which are most likely to
+          break, and what must be re-verified, with file:line and a risk ranking?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the at-risk dependents named concretely by file with a stated reason for
+          the risk level?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY a given dependent is high vs low risk?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the dependents it is least sure about (buried, indirect,
+          ee/ overlay)?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the risk assessment tie each at-risk dependent to the RELATIONSHIP that
+          makes it risky, rather than a ranked file list with no connecting route?
+
+  - name: Produce the change + verification map
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer produce a complete, actionable map: the model and shared
+          pieces to edit (merge_request.rb, the relevant concerns), every dependent that
+          must be reviewed grouped by area, and the specs to update or add, with
+          file:line?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the files and insertion points concrete (app/models/merge_request.rb, the
+          specs under spec/models) rather than "edit the model and add tests"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY each file is in the map?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the parts it is least sure about?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the map connect each file to the change via its relationship, so the
+          chain from the MergeRequest contract change to each edited/verified file is
+          explicit?

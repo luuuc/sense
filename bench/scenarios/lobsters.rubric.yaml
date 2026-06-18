@@ -1,228 +1,234 @@
 # Per-scenario rubric for the LLM judge layer.
 #
-# Audience block is shared across all steps. Per-step rubrics use the same four
-# criteria (map_quality, specificity, justification, uncertainty) with the
-# canonical 40/25/20/15 weights. The judge scores the answer text first;
-# side-context (wall_time, tokens, completed/failed) is provided for the criteria
-# it bears on, map_quality (did this save downstream exploration?) and
-# uncertainty (was confidence calibrated against effort?).
+# Audience block is shared across all steps. This rubric OPTS INTO the fifth
+# `relationship` criterion (judge_prompt.v2.md); weights per step sum to 1.0:
+# map_quality 0.35 / specificity 0.20 / justification 0.15 / uncertainty 0.10 /
+# relationship 0.20. Mirrors the chatwoot/forem/discourse win shape.
 #
 # Step names MUST match scenarios/lobsters.yaml exactly (the judge pairs by name).
 
 audience: |
-  An AI coding agent that will use this answer to rework Lobsters' vote/score
-  contract (how a vote changes a target's score, the author's karma, and ranking)
-  with only small, targeted follow-up lookups, not a fresh exploration of the
-  codebase. Score for that audience, not a human reader, not a docs page. A
-  perfect answer leaves the agent ready to change the vote-recording, the votable
-  score/recalculation contract, and every consumer safely; a weak answer forces
-  the agent to re-explore the codebase before it can act.
+  An AI coding agent that will use this answer to safely rework Lobsters' Story
+  model contract with only small, targeted follow-up lookups, not a fresh
+  exploration of the codebase. Score for that audience, not a human reader. A
+  perfect answer leaves the agent able to change the Story contract knowing every
+  dependent that must be reviewed AND how each one is connected; a weak answer
+  forces the agent to re-grep a recurring token and re-read the codebase first.
 
 steps:
   - name: Orient in the codebase
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer hand the agent a usable map: that this is Lobsters (a
-          link-aggregation community site), how the Rails app is organized, and
-          specifically where voting and scoring live, the Vote model
-          (app/models/vote.rb), the votable models (story.rb, comment.rb), the
-          author karma on user.rb, and where ranking/hotness is derived? Could the
-          agent pick an entry point and start working with only small, targeted
-          lookups?
+          link-aggregator/forum), how the Rails app is organized (app/models,
+          app/controllers, app/helpers, app/mailboxes, lib/extras), and specifically
+          where the Story model sits, the submission users comment/vote/tag/flag on?
+          Could the agent start with only small, targeted lookups?
       specificity:
-        weight: 0.25
-        question: |
-          Are the cited paths concrete (app/models/vote.rb, app/models/story.rb,
-          app/models/user.rb) rather than vague ("the voting code")? Are
-          abstractions tied to actual files and class names?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY the design is shaped this way (a single Vote
-          model targets either a story or a comment, score and karma are derived
-          from votes, ranking is derived from score), not just NAME the pieces?
-      uncertainty:
+          Are the cited paths concrete (app/models/story.rb, app/models/vote.rb)
+          rather than vague ("the model layer")?
+      justification:
         weight: 0.15
         question: |
-          Where the answer is unsure how voting connects to ranking or karma, does
-          it flag that so the agent doesn't act blindly?
+          Does the answer explain WHY the architecture is shaped this way (Story is
+          the central submission other records hang off), not just NAME the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Where unsure how the layers connect, does it flag that so the agent doesn't
+          act blindly?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the orientation state the CONNECTING RELATIONSHIPS, that comments/
+          votes/tags hang off a story through associations, that shared behavior is
+          pulled in through a concern, rather than only listing where things live?
 
-  - name: Trace a vote from the request to the score and karma update
+  - name: Map the Story contract and what it is built on
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer trace the path with file:line, in order: from the
-          upvote/unvote/flag action (in stories_controller.rb / comments_controller.rb,
-          or inbox_controller#apply_current_vote) into
-          Vote.vote_thusly_on_story_or_comment_for_user_because (vote.rb), which
-          adjusts the author's karma (User.update_counters / refresh_counts!) and
-          calls the target's update_score_and_recalculate!? Could the agent follow
-          the same path to change how a vote takes effect?
+          Does the answer map the Story model's contract with file:line: the concern
+          it includes, the associations records hang off it through (comments, votes,
+          taggings), and what a change must preserve?
       specificity:
-        weight: 0.25
-        question: |
-          Are the methods named exactly (vote_thusly_on_story_or_comment_for_user_because,
-          update_score_and_recalculate!, the karma update) with file:line, rather
-          than "the vote handler"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY one central method records the vote and then
-          delegates scoring to the target and karma to the user, not just LIST the
-          call chain?
-      uncertainty:
+          Are the contract pieces named concretely by file (the Token concern,
+          app/models/story.rb) rather than "the concerns and associations"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer flag where the effect is conditional (flag vs upvote,
-          self-votes, flagger-has-replied guards) so the agent verifies?
+          Does the answer explain WHY the contract is shaped this way, not just LIST
+          the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag any part of the contract it could not confirm?
+      relationship:
+        weight: 0.20
+        question: |
+          For each contract piece, does the answer state the RELATION by which it
+          binds to Story (which concern supplies what, which associations hang off),
+          not merely name the file?
 
-  - name: Map the shared votable contract
+  - name: Trace how a story is created and ranked
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer identify the shared contract a votable target must
-          satisfy, update_score_and_recalculate!(score_delta, flag_delta) (plus
-          score and any hotness recalculation), and that BOTH Story
-          (app/models/story.rb) and Comment (app/models/comment.rb) implement it,
-          with file:line and how each differs (story has hotness/ranking, comment
-          has confidence/score)? This polymorphic contract is grep-invisible (the
-          vote dispatches to the target without a shared symbol string); a strong
-          answer names both implementers so the agent changes the contract on both.
+          Does the answer trace, with file:line and in order, how a submission becomes
+          a stored Story (the controller create path), through URL handling, markdown
+          rendering, and the ranking/score machinery? Could the agent follow the same
+          path to change it safely?
       specificity:
-        weight: 0.25
-        question: |
-          Are both implementers named concretely by file (story.rb, comment.rb)
-          and the shared method (update_score_and_recalculate!) cited, rather than
-          "the votable models"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY both types share the contract (so a single
-          Vote can target either), not just LIST them?
-      uncertainty:
-        weight: 0.15
-        question: |
-          Does the answer flag any per-type difference it could not confirm (a
-          recalculation step one type has and the other doesn't) so the agent
-          checks before changing the shared contract?
-
-  - name: Map how score and ranking are consumed
-    criteria:
-      map_quality:
-        weight: 0.40
-        question: |
-          Does the answer locate the consumers of score/hotness/votes with
-          file:line: the ranking/ordering (StoriesPaginator in
-          stories_paginator.rb, Story#calculated_hotness), the per-viewer vote
-          loading (CommentVoteHydrator in comment_vote_hydrator.rb), and the feeds
-          (home_controller.rb)? Could the agent see everything that would shift if
-          the score formula changed?
-      specificity:
-        weight: 0.25
-        question: |
-          Are the consumers named concretely (StoriesPaginator, CommentVoteHydrator,
-          calculated_hotness) with file:line, rather than "the ranking code"?
+          Are the pieces named exactly (the stories controller create, the URL/link
+          handling, the markdowner, the score/hotness calc) with file:line?
       justification:
-        weight: 0.20
-        question: |
-          Does the answer explain WHY ranking and display read derived score/hotness
-          rather than recomputing from votes (caching, performance), not just LIST
-          the readers?
-      uncertainty:
         weight: 0.15
         question: |
-          Does the answer flag where a consumer reads a cached column vs a live
-          computation (so a contract change needs a backfill) so the agent
+          Does the answer explain WHY the score/ranking is computed the way it is, not
+          just LIST the chain?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where a step is not fully opened, so the agent
           verifies?
-
-  - name: Map the flagging variant and what it triggers
-    criteria:
-      map_quality:
-        weight: 0.40
-        question: |
-          Does the answer map the flag reasons (Vote::COMMENT_REASONS /
-          STORY_REASONS in vote.rb), how a flag differs from an upvote in its
-          effect on score/standing (flag_delta, negative score, thresholds), and
-          what flagging triggers downstream (moderation, hiding), with file:line?
-          Could the agent extend or change flagging without missing its side
-          effects?
-      specificity:
-        weight: 0.25
-        question: |
-          Are the flag structures named exactly (COMMENT_REASONS, STORY_REASONS,
-          flag_delta) with file:line, rather than "the flag logic"?
-      justification:
+      relationship:
         weight: 0.20
         question: |
-          Does the answer explain WHY flags are modeled as votes with a reason
-          (one mechanism, different effect), not just NAME the reasons?
-      uncertainty:
-        weight: 0.15
-        question: |
-          Does the answer flag where flag side effects are conditional (moderation
-          thresholds, reason-specific behavior) so the agent verifies?
+          Does the answer assemble creation as an explicit CHAIN, submission ->
+          controller -> URL/markdown -> score, rather than a set of files?
 
-  - name: Find every site that must change if the vote and score contract changes
+  - name: Audit every dependent of the Story contract
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer enumerate the full blast of the vote/score contract: the
-          vote recording (vote.rb), the votable implementers (story.rb, comment.rb),
-          the karma update (user.rb), the cast points (stories_controller.rb,
-          comments_controller.rb, inbox_controller.rb), the ranking/display
-          consumers (stories_paginator.rb, comment_vote_hydrator.rb,
-          home_controller.rb), and the specs (vote_spec.rb, story_spec.rb)? The
-          callers are scattered across models, controllers, and jobs; a strong
-          answer names that breadth with file:line. Could the agent change the
-          contract safely from this list?
+          Does the answer enumerate the FULL scattered dependent set of the Story
+          model, grouped by area: content and rendering (comments, the link URL
+          handler, the markdown re-renderer), search (the search indexer), statistics
+          (the stats/graph cache), voting and flagging (the polymorphic vote target,
+          the flag-permission check), inbound email (the mailbox that resolves a
+          reply's parent story), and moderation (the flagged-stories and mod-mail
+          controllers)? This fan-out is the heart of the ticket, the dependents are
+          scattered across models/helpers/mailboxes/lib and several reach Story in
+          non-obvious ways (a concern, an association, deriving something from a
+          story), and the bare token recurs across the app, so a text search both
+          misses some and drowns the rest. A strong answer names that breadth with
+          file:line.
       specificity:
-        weight: 0.25
-        question: |
-          Are the sites named concretely (the controller vote actions, the
-          paginator, the hydrator, the specs) rather than "update the vote code and
-          tests"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each site is affected (records vs scores vs
-          ranks vs displays vs tests), not just LIST them?
-      uncertainty:
+          Are the dependents named concretely by file and symbol (app/models/search.rb,
+          app/mailboxes/inbox_mailbox.rb, extras/markdowner.rb) with file:line and one
+          phrase on how each uses the story, rather than "various models"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer acknowledge what static reading can miss (cached columns
-          needing a backfill, callers reached through polymorphic vote dispatch,
-          fixtures) so the agent knows to verify?
+          Does the answer explain WHY each dependent is affected, grouping by area
+          rather than just LISTING files?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer acknowledge what a static pass can miss (dependents reached
+          only through a concern/association or that derive something from a story)?
+      relationship:
+        weight: 0.20
+        question: |
+          For each dependent, does the answer state HOW it reaches Story, the
+          association/concern, or the derive route, ESPECIALLY for the non-obvious
+          search/stats/mailbox/markdowner dependents a text search can name but not
+          connect? A correct file list with no connecting relationship per dependent
+          scores low.
 
-  - name: Produce the edit map
+  - name: Trace how story identity and visibility are guarded
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
-          Does the answer produce a complete, actionable edit map: the files to
-          change across every area (vote.rb recording, story.rb/comment.rb
-          scoring+recalculation, user.rb karma, the controller cast actions, the
-          ranking/display consumers, the flagging variant) plus the specs to update
-          or add, with file:line throughout? Could a teammate open the PR from this
-          map alone?
+          Does the answer give file:line for how work confirms it is operating on a
+          real, current, visible story before acting (presence/visibility checks in
+          the search, stats, inbound-email and moderation paths)?
       specificity:
-        weight: 0.25
-        question: |
-          Are the files and change points concrete (update_score_and_recalculate!
-          in story.rb and comment.rb, the karma update in user.rb, vote_spec.rb)
-          rather than "change the vote code and tests"?
-      justification:
         weight: 0.20
         question: |
-          Does the answer explain WHY each file is in the map (which part of the
-          contract it owns), not just LIST files?
-      uncertainty:
+          Are the guards named exactly with file:line, rather than "the validation
+          code"?
+      justification:
         weight: 0.15
         question: |
-          Does the answer flag the parts it is least sure about (the hotness
-          formula, cached-column backfills, flag thresholds) so the agent confirms
-          before committing?
+          Does the answer explain WHY work must re-confirm the story (it may be
+          deleted/hidden), not just NAME the pieces?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag where a guard is missing or implicit?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer state the path by which each guard protects a dependent,
+          rather than naming methods in isolation?
+
+  - name: Assess the blast radius of the contract change
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer assess the full blast radius of changing the Story contract:
+          which dependents are at risk across every area (rendering, search, stats,
+          voting/flagging, email, moderation), which are most likely to break, and
+          what must be re-verified, with file:line and a risk ranking?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the at-risk dependents named concretely by file with a stated reason for
+          the risk level?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY a given dependent is high vs low risk?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the dependents it is least sure about (indirect,
+          concern- or derive-reached)?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the risk assessment tie each at-risk dependent to the RELATIONSHIP that
+          makes it risky, rather than a ranked file list with no connecting route?
+
+  - name: Produce the change + verification map
+    criteria:
+      map_quality:
+        weight: 0.35
+        question: |
+          Does the answer produce a complete, actionable map: the model and shared
+          pieces to edit (story.rb, the concern), every dependent that must be reviewed
+          grouped by area, and the specs/fixtures to update or add, with file:line?
+      specificity:
+        weight: 0.20
+        question: |
+          Are the files and insertion points concrete (app/models/story.rb, the specs
+          under spec/models) rather than "edit the model and add tests"?
+      justification:
+        weight: 0.15
+        question: |
+          Does the answer explain WHY each file is in the map?
+      uncertainty:
+        weight: 0.10
+        question: |
+          Does the answer flag the parts it is least sure about?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the map connect each file to the change via its relationship, so the
+          chain from the Story contract change to each edited/verified file is explicit?

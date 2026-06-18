@@ -111,6 +111,114 @@ def _gold_basenames(gold):
     return {sp: bn for sp, bn in paths if counts.get(bn, 0) == 1}
 
 
+def _gold_file_targets(gold):
+    """[(id, group, [lower-cased file-like patterns])] for every gold item that
+    has at least one file-like `match`. Symbol-only targets (e.g. update_score)
+    are excluded — precision is measured over files the agent CITED, and a bare
+    method name is not a citable file endpoint.
+    """
+    out = []
+    for item in gold:
+        if isinstance(item, str):
+            item = {"id": item, "match": [item]}
+        pats = [str(p).lower() for p in (item.get("match") or []) if _is_file_like(str(p))]
+        if pats:
+            out.append((item.get("id") or pats[0], item.get("group", "_"), pats))
+    return out
+
+
+def _claim_matches(claimed_path, pats, unique_basenames):
+    """Does a cited file path match one of a gold target's file patterns?
+
+    `claimed_path` and `pats` are lower-cased. A match is either:
+      - the gold pattern is a substring of the cited path (the common case —
+        agents cite full repo-relative paths, so `reactions/x_worker.rb` ⊂
+        `app/workers/reactions/x_worker.rb`), or
+      - the cited path's basename equals the pattern's basename AND that
+        basename is unique among the gold file targets (credits an abbreviated
+        citation like `x_worker.rb` without letting a non-unique basename
+        double-count two distinct targets — same guard `_cited` uses).
+    """
+    bc = os.path.basename(claimed_path)
+    for p in pats:
+        if p in claimed_path:
+            return True
+        bp = os.path.basename(p)
+        if bp == bc and bp in unique_basenames:
+            return True
+    return False
+
+
+def score_gold_f1(claimed_files, gold):
+    """Precision / recall / F1 of the agent's claimed dependent set vs gold.
+
+    `claimed_files` is the set of repo file paths the agent actually CITED (the
+    grounded `file` of every location pin). Where `score_gold_recall` asks only
+    "did the must-find targets get surfaced?", this also charges the agent for
+    citing files that are NOT on the curated impact set:
+
+      precision = |claimed ∩ gold_files| / |claimed|
+      recall    = |gold_files hit by a claim| / |gold_files|   (mirrors cited_recall, file targets only)
+      f1        = harmonic mean
+
+    The point (per the sourcing runbook's "lead with precision"): a grep-driven
+    baseline emits a noisy path list — its false positives cost precision here,
+    which recall alone never penalises — while a structural `blast`/`graph` set
+    is clean and complete. F1 is therefore grep-can't-fake in a way file-path
+    recall is not.
+
+    CAVEAT (documented, pre-registered in bench/SCORING.md): gold is the curated
+    MUST-FIND set, not the complete set of every legitimately relevant file, so a
+    cited file outside gold is treated as a false positive even when it is a fair
+    mention. This makes precision a comparative signal between arms scored
+    identically, NOT an absolute correctness measure — recall remains the
+    objective floor. Returns None when the scenario declares no file-like gold.
+    """
+    if not gold:
+        return None
+    targets = _gold_file_targets(gold)
+    if not targets:
+        return None
+    unique_basenames = set(_gold_basenames(gold).values())
+
+    claimed, seen = [], set()
+    for c in claimed_files or []:
+        cl = str(c).lower()
+        if cl not in seen:
+            seen.add(cl)
+            claimed.append(cl)
+
+    tp, false_positives = 0, []
+    for c in claimed:
+        if any(_claim_matches(c, pats, unique_basenames) for _, _, pats in targets):
+            tp += 1
+        else:
+            false_positives.append(c)
+    claimed_total = len(claimed)
+
+    hits, missed = 0, []
+    for tid, _grp, pats in targets:
+        if any(_claim_matches(c, pats, unique_basenames) for c in claimed):
+            hits += 1
+        else:
+            missed.append(tid)
+
+    precision = tp / claimed_total if claimed_total else 0.0
+    recall = hits / len(targets) if targets else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    return {
+        "claimed": claimed_total,
+        "gold_files": len(targets),
+        "true_positives": tp,
+        "false_positives": len(false_positives),
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "missed": missed,
+        "fp_examples": false_positives[:10],
+    }
+
+
 def score_gold_recall(answer_text, gold):
     if not gold:
         return None

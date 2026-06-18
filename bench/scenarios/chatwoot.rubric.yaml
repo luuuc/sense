@@ -1,11 +1,22 @@
 # Per-scenario rubric for the LLM judge layer.
 #
-# Audience block is shared across all steps. Per-step rubrics use the same four
-# criteria (map_quality, specificity, justification, uncertainty) with the
-# canonical 40/25/20/15 weights. The judge scores the answer text first;
-# side-context (wall_time, tokens, completed/failed) is provided for the criteria
-# it bears on, map_quality (did this save downstream exploration?) and
-# uncertainty (was confidence calibrated against effort?).
+# Audience block is shared across all steps. This rubric OPTS INTO the fifth
+# `relationship` (chain-correctness) criterion — so the judge runs on
+# judge_prompt.v2.md and every step declares all five criteria. Weights per step
+# sum to 1.0: map_quality 0.35 / specificity 0.20 / justification 0.15 /
+# uncertainty 0.10 / relationship 0.20. (Four-criterion rubrics are unaffected;
+# they stay on v1 with the canonical 40/25/20/15.)
+#
+# WHY relationship here: chatwoot's Inbox fan-out is the one decisive Sense win
+# (redesign-findings-2026-06-14). Recall already separates the arms on the
+# scattered dependents; `relationship` measures the orthogonal axis the runbook
+# asked for — does the answer state HOW each dependent reaches Inbox (the
+# association / concern / polymorphic relation or A->B->X path), which grep can
+# name endpoints for but cannot assemble. Transcript evidence (2026-06-15): the
+# sense arm states multi-hop paths (EventDataPresenter -> WebhookListener,
+# AgentCapacityPolicy *through* inbox_capacity_limits) and the channelable
+# polymorphic relation for the indirect deps; the baseline lists endpoints and
+# omits the route for the scattered ones it cannot reach.
 #
 # Step names MUST match scenarios/chatwoot.yaml exactly (the judge pairs by name).
 
@@ -14,15 +25,15 @@ audience: |
   teardown contract in Chatwoot with only small, targeted follow-up lookups, not a
   fresh exploration of the codebase. Score for that audience, not a human reader,
   not a docs page. A perfect answer leaves the agent able to change the Inbox
-  contract knowing every dependent that must be reviewed; a weak answer forces the
-  agent to re-grep a very common token and re-read the codebase before it can act
-  safely.
+  contract knowing every dependent that must be reviewed AND how each one is
+  connected; a weak answer forces the agent to re-grep a very common token and
+  re-read the codebase before it can act safely.
 
 steps:
   - name: Orient in the codebase
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer hand the agent a usable map: that this is Chatwoot (a
           customer-support / messaging platform), how the Rails app is organized
@@ -31,28 +42,37 @@ steps:
           and that conversations and contacts attach to? Could the agent pick an
           entry point and start working with only small, targeted lookups?
       specificity:
-        weight: 0.25
+        weight: 0.20
         question: |
           Are the cited paths concrete (app/models/inbox.rb, app/models/channel/,
           app/models/concerns/) rather than vague ("the model layer")? Are
           abstractions tied to actual files and class names?
       justification:
-        weight: 0.20
+        weight: 0.15
         question: |
           Does the answer explain WHY the architecture is shaped this way (an Inbox
           is the hub a channel hangs off, with conversations/contacts attached via
           associations and behavior pulled in through concerns), not just NAME the
           pieces?
       uncertainty:
-        weight: 0.15
+        weight: 0.10
         question: |
           Where the answer is unsure about how the layers connect, does it flag
           that so the agent doesn't act blindly?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the orientation state the CONNECTING RELATIONSHIPS between the
+          layers it maps — that a channel hangs off an Inbox through a polymorphic
+          association, that conversations and contacts attach through associations,
+          that shared behavior is pulled in through concerns — rather than only
+          listing where things live? An orientation that names directories and
+          files without the relations that link them scores low on this criterion.
 
   - name: Map the Inbox contract and what it is built on
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer map the Inbox model's contract with file:line: the
           concerns it includes (e.g. cache_keys and other shared model behavior),
@@ -61,29 +81,38 @@ steps:
           that reopens it? Could the agent know what a change to the model has to
           preserve?
       specificity:
-        weight: 0.25
+        weight: 0.20
         question: |
           Are the contract pieces named concretely by file
           (app/models/concerns/cache_keys.rb, app/models/contact_inbox.rb,
           enterprise/app/models/enterprise/inbox.rb) rather than "the concerns and
           associations"?
       justification:
-        weight: 0.20
+        weight: 0.15
         question: |
           Does the answer explain WHY the contract is shaped this way (behavior
           shared through concerns, other records related through associations, the
           paid tier reopening the class), not just LIST the pieces?
       uncertainty:
-        weight: 0.15
+        weight: 0.10
         question: |
           Does the answer flag any part of the contract it could not confirm (a
           concern method or association it didn't open) so the agent checks before
           relying on it?
+      relationship:
+        weight: 0.20
+        question: |
+          For each contract piece, does the answer state the RELATION by which it
+          binds to Inbox — which concern includes which behavior, the polymorphic
+          channel relation (channel `has_one :inbox, as: :channel`), the
+          `belongs_to`/`has_many` that conversations and contact_inboxes hang off,
+          the enterprise reopen of the class — not merely name the file? Naming a
+          concern or association file without saying how it connects scores low.
 
   - name: Trace how an inbox and its attached data are torn down
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer trace the teardown path with file:line, in order: from
           where a destroy is triggered through the heavy cleanup of associated
@@ -91,27 +120,35 @@ steps:
           associated records are cleaned up asynchronously versus inline? Could the
           agent follow the same path to change teardown safely?
       specificity:
-        weight: 0.25
+        weight: 0.20
         question: |
           Are the teardown pieces named exactly (DeleteObjectJob, the
           heavy-associations cleanup, the destroy callbacks) with file:line, rather
           than "the delete code"?
       justification:
-        weight: 0.20
+        weight: 0.15
         question: |
           Does the answer explain WHY heavy association cleanup is pushed to a
           background job (to avoid a slow/locking inline destroy), not just LIST the
           call chain?
       uncertainty:
-        weight: 0.15
+        weight: 0.10
         question: |
           Does the answer flag where the teardown is asynchronous or relies on
           dependent: destroy semantics it didn't fully open, so the agent verifies?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer assemble teardown as an explicit CHAIN — destroy trigger
+          -> DeleteObjectJob#heavy_associations -> which associated records, with
+          async vs inline marked — written as a connected path rather than a set of
+          files? A list of teardown-related files that does not state the route /
+          order they connect in scores low.
 
   - name: Audit every dependent of the Inbox contract
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer enumerate the FULL scattered dependent set of the Inbox
           model, grouped by area: request handling (the accounts / dashboard /
@@ -126,7 +163,7 @@ steps:
           text search both misses some and drowns the rest. A strong answer names
           that breadth with file:line so the agent can review every dependent.
       specificity:
-        weight: 0.25
+        weight: 0.20
         question: |
           Are the dependents named concretely by file and symbol
           (app/jobs/delete_object_job.rb, app/models/concerns/cache_keys.rb,
@@ -134,22 +171,33 @@ steps:
           phrase on how each uses the inbox, rather than "various controllers and
           jobs"?
       justification:
-        weight: 0.20
+        weight: 0.15
         question: |
           Does the answer explain WHY each dependent is affected (operates on the
           inbox, caches off it, cleans it up, creates it, reads it for metrics),
           grouping by area rather than just LISTING files?
       uncertainty:
-        weight: 0.15
+        weight: 0.10
         question: |
           Does the answer acknowledge what a static pass can miss (dependents that
           reach the inbox only through an association or polymorphic relation, the
           enterprise overlay, indirect callers) so the agent knows to verify?
+      relationship:
+        weight: 0.20
+        question: |
+          For each dependent, does the answer state HOW it reaches Inbox — the
+          specific association (`belongs_to :inbox`), concern (channelable's
+          `has_one :inbox, as: :channel`), polymorphic relation, or multi-hop path
+          (e.g. EventDataPresenter -> WebhookListener, AgentCapacityPolicy *through*
+          inbox_capacity_limits) — ESPECIALLY for the indirect,
+          association/concern-reached and provider-service dependents that a text
+          search can name but not connect? A correct file list with no connecting
+          relationship stated per dependent scores low, however complete the list.
 
   - name: Trace how inbox availability and identity are guarded
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer give file:line for how background work confirms it is
           operating on a real, current inbox before acting (existence/availability
@@ -157,28 +205,36 @@ steps:
           guard)? Could the agent give a reworked teardown the right guards without
           re-reading every file?
       specificity:
-        weight: 0.25
+        weight: 0.20
         question: |
           Are the guards named exactly (the job-level presence/availability checks,
           the methods that confirm the inbox) with file:line, rather than "the
           validation code"?
       justification:
-        weight: 0.20
+        weight: 0.15
         question: |
           Does the answer explain WHY background work must re-confirm the inbox (it
           may have been torn down between enqueue and run), not just NAME the
           pieces?
       uncertainty:
-        weight: 0.15
+        weight: 0.10
         question: |
           Does the answer flag where a guard is missing or implicit (a job that
           assumes the inbox still exists) so the agent verifies before relying on
           it?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the answer state the path by which each job re-confirms the inbox —
+          which association or lookup it re-reads to revalidate, and the
+          enqueue-then-run gap that makes the inbox possibly gone by the time the
+          job runs — rather than naming guard methods in isolation? A guard named
+          without the relation it protects scores low.
 
   - name: Assess the blast radius of the contract change
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer assess the full blast radius of changing the Inbox
           teardown contract: which dependents are at risk across every area
@@ -187,26 +243,34 @@ steps:
           re-verified, with file:line and a risk ranking? This is the change-impact
           question a structural blast answers directly and a hand audit under-covers.
       specificity:
-        weight: 0.25
+        weight: 0.20
         question: |
           Are the at-risk dependents named concretely by file with a stated reason
           for the risk level, rather than "several things might break"?
       justification:
-        weight: 0.20
+        weight: 0.15
         question: |
           Does the answer explain WHY a given dependent is high vs low risk (it
           mutates inbox associations on teardown vs merely reads a cache key), not
           just LIST them?
       uncertainty:
-        weight: 0.15
+        weight: 0.10
         question: |
           Does the answer flag the dependents it is least sure about (indirect or
           association-reached, only surfaced structurally) so the agent confirms?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the risk assessment tie each at-risk dependent to the RELATIONSHIP
+          that makes it risky — expressing impact as a path from the teardown
+          change to the dependent (mutates inbox associations on destroy vs merely
+          reads a cache key off it vs reached only through a polymorphic channel) —
+          rather than a ranked file list with risk labels but no connecting route?
 
   - name: Produce the change + verification map
     criteria:
       map_quality:
-        weight: 0.40
+        weight: 0.35
         question: |
           Does the answer produce a complete, actionable map: the model and shared
           pieces to edit (inbox.rb, the relevant concerns, the teardown job), every
@@ -214,19 +278,26 @@ steps:
           update or add for the teardown behavior, with file:line throughout? Could
           a teammate land the change from this map alone?
       specificity:
-        weight: 0.25
+        weight: 0.20
         question: |
           Are the files and insertion points concrete (app/models/inbox.rb,
           app/jobs/delete_object_job.rb, the affected concerns, the specs under
           spec/models and spec/jobs) rather than "edit the model and add tests"?
       justification:
-        weight: 0.20
+        weight: 0.15
         question: |
           Does the answer explain WHY each file is in the map (which area it belongs
           to and what the teardown change does to it), not just LIST files?
       uncertainty:
-        weight: 0.15
+        weight: 0.10
         question: |
           Does the answer flag the parts it is least sure about (association cleanup
           semantics, the enterprise overlay, fixtures) so the agent confirms before
           committing?
+      relationship:
+        weight: 0.20
+        question: |
+          Does the map connect each file to the change via its relationship — which
+          association / concern / job route makes it part of this edit, and which
+          spec exercises which path — so the chain from the Inbox teardown change to
+          each edited or verified file is explicit, not just a grouped file list?

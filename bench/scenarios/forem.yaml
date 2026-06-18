@@ -1,4 +1,4 @@
-name: Forem work session - add a new reaction category
+name: Forem work session - audit the Article contract before a teardown rework
 repo: forem
 # Single-prompt session bench (run via bench/bench-sense-local.sh): all steps are
 # presented in ONE prompt and worked in order, so context accumulates the way a
@@ -7,55 +7,51 @@ repo: forem
 # NEUTRAL, it states the task, never the answer's shape, file paths, class or
 # method names, counts, or which tool to reach for.
 #
-# WHY THIS SEAM (and not the earlier "add an inline embed" version, kept as
-# *.embed.*.bak): the embed fan-out is grep's home turf. The ~60 embed renderers
-# all live in ONE directory (app/liquid_tags/*_tag.rb) and inherit via a literal
-# `< LiquidTagBase` string, so `ls app/liquid_tags/` + `grep '< LiquidTagBase'`
-# reconstructs the whole answer. A single Opus-4.6 run tied (fairness 0.828 both
-# arms) and the sense arm never needed graph/blast. That is the enumerable-fact
-# trap the runbook warns about.
+# WHY THIS SEAM (re-authored 2026-06-16; prior Reaction version kept as
+# forem.reaction.*.bak, the add-category version as forem.addcategory.*.bak).
+# Reaction is grep's home turf: all ~37 of its dependents NAME the literal class
+# `Reaction`, so a frontier baseline greps the set in one pass (the same shape
+# that lost on Opus 4.8 for lobsters/discourse).
 #
-# The REACTION system is the opposite: a Reaction (app/models/reaction.rb) is a
-# polymorphic `reactable` hub whose behavior is a dense callback cascade and
-# whose ~49 dependents are SCATTERED across disjoint namespaces grep cannot
-# cleanly enumerate. Creating/destroying a reaction fans out (via after_commit /
-# before_destroy callbacks, no shared literal string) into scoring
-# (Reactions::UpdateRelevantScoresWorker -> Article#update_score /
-# User#calculate_score), cache busts (Reactions::Bust{Reactable,Homepage}Cache,
-# ReactionCounterSync), anti-abuse (Spam::ReactionRingDetectionWorker), activity
-# (Articles::UpdateArticleActivityWorker), embeddings
-# (UpdateUserInterestEmbeddingWorker), field tests, and notifications
-# (Notifications::NewReactionWorker -> Notifications::Reactions::Send). On the
-# read side, moderation (Spam::Handler, Moderator::BanishUser#delete_vomit_,
-# Users::ConfirmFlagReactions) and analytics/badges depend on the contract.
-# `grep -rl reaction app/` over-collects 119 noisy files; `sense_blast Reaction`
-# resolves 49 direct / 152 total; `sense_graph Reaction` lists the scattered
-# consumers. That is where the map pays for itself. The session headline is
-# CUMULATIVE efficiency at held accuracy plus the cited-recall (precision) of the
-# scattered web.
-description: 'You are a maintainer about to add a new reaction category to Forem
-  (a new way readers can react to a post, alongside the ones that already exist),
-  and before writing it you need to understand how reactions work today so the new
-  one behaves consistently with everything a reaction already does. Work through
-  the tasks below one at a time; each builds on what you learned in the previous
-  one. Keep every answer concrete with file:line so the next step (and a teammate
-  opening the PR) can act without re-exploring the codebase.'
+# Article is Forem's CENTRAL model, the chatwoot-`Inbox` analogue, and the one
+# baseline-hell contract in the repo. `sense_blast Article` resolves 66 app
+# dependents across 26 DISJOINT directories, and they are HETEROGENEOUS and
+# NON-OBVIOUS: each touches Article a different way (an onboarding welcome
+# generator that infers whether a user "started a discussion" from their
+# articles, a liquid embed extractor that derives a reference from an article
+# URL, an edge-cache buster, an async serializer, a campaign scope, per-article
+# feed counters, mention notifications, an org bulk-update, a social-image
+# generator, a prominent-org query). No single grep pattern or `ls` covers them;
+# `grep -rl Article app/` over-collects hundreds of noisy hits, and the
+# non-obvious dependents (welcome_notification, liquid_embed_extractor,
+# edge_cache, async_info, suggest_prominent) are ones a hand audit never thinks
+# to search for. A structural blast returns the resolved heterogeneous set in one
+# call; reconstructing it by hand means many disjoint greps and reads, and a
+# session-loaded agent does it incompletely. The headline is whether the agent
+# assembles that fan-out completely and cheaply.
+description: 'You are a maintainer about to rework how an Article and everything
+  attached to it behaves when it is changed or torn down. Before touching the model,
+  you need a complete audit of what depends on the Article contract today, so the
+  rework does not silently break a dependent. Work through the tasks below one at a
+  time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
 steps:
 - name: Orient in the codebase
   prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
-    project, how is the code organized, and where does the machinery that records
-    a reader's reaction to a post live, along with the shared pieces it is built
-    on? Hand the next agent a map so they can act with small, targeted lookups,
-    not a fresh exploration of the codebase. No Explore agents.
+    project, how is the code organized, and where does the central content model you
+    are about to rework sit, the thing readers publish and that comments, reactions,
+    tags and feeds attach to, along with the shared pieces it is built on? Hand the
+    next agent a map so they can act with small, targeted lookups, not a fresh
+    exploration of the codebase. No Explore agents.
     "
   checks:
   - type: word
-    value: reaction
+    value: Article
     required: true
   - type: word
-    value: polymorphic
+    value: concern
     required: false
-    description: Noted the reactable association is polymorphic
   - type: response_richness
     value: '3'
     required: false
@@ -67,128 +63,112 @@ steps:
     value: sense_conventions
     required: false
     layer: adoption
-- name: Trace a reaction from user action to stored record
-  prompt: "Task: trace how a reader's reaction to a post becomes a stored record.
-    Start from the action the reader takes and follow it down through to where the
-    reaction is created and persisted. Give file:line for each layer and the order
-    they run.
+- name: Map the Article contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concerns it includes, the
+    associations other records hang off it through), and what does a teammate need to
+    know about that contract before changing it? Give file:line for the model and
+    each shared piece.
     "
   checks:
   - type: word
-    value: ReactionHandler
-    required: true
-    description: Found the service that creates the reaction
-  - type: word
-    value: ReactionsController
+    value: concern
     required: false
   - type: response_richness
     value: '4'
     required: true
-  - type: mcp_tool_used
-    value: sense_graph
+  - type: contains
+    value: article.rb
     required: false
-    layer: adoption
-- name: Map what defines a reaction category
-  prompt: "Task: the new reaction is a new category of the same kind the existing
-    reactions are. Map what a reaction category is, where the full set of
-    categories is declared, and what attributes and conventions a new one must
-    follow to be valid and behave like the others. Be complete with file:line.
-    "
-  checks:
-  - type: word
-    value: ReactionCategory
-    required: true
-  - type: word
-    value: category
-    required: false
-  - type: response_richness
-    value: '4'
-    required: true
   - type: mcp_tool_used
     value: sense_conventions
     required: false
     layer: adoption
   - type: mcp_tool_used
-    value: sense_search
+    value: sense_graph
     required: false
     layer: adoption
-- name: Map everything that happens when a reaction is created or removed
-  prompt: "Task: when a reaction is saved or removed, other parts of the system run
-    as a result. Map every one of those effects and, crucially, where each one
-    runs. Be complete with file:line; a missed effect is behavior the new category
-    silently will not get.
+- name: Trace how an article and its attached data are handled on change
+  prompt: "Task: trace what happens around an article when it is created, updated, or
+    destroyed, and everything attached to it. Start from where the change is
+    triggered and follow it through the effects that fan out (caches, feeds,
+    notifications, counters, search). Give file:line for each layer and note which
+    run inline versus asynchronously.
     "
   checks:
   - type: word
     value: Worker
-    required: true
-    description: Named the background jobs the cascade enqueues
-  - type: contains
-    value: reaction.rb
     required: false
+    description: Found the async effects
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Article contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase
+    that depends on the Article model, so the rework cannot silently break one. Be
+    exhaustive and group them by area (request handling, background work, feeds and
+    ranking, notifications and mentions, caching, analytics and metrics, moderation,
+    and onboarding/lifecycle). Many depend on it indirectly or in non-obvious ways, a
+    shared concern, an association, a service that derives something from an article
+    rather than naming the class plainly, so a surface text search both misses some
+    and drowns the rest in unrelated matches. List EVERY dependent individually with
+    its own file:line and one phrase on how it uses the article, do not collapse a
+    set into a summary like \"various services and workers\" - an unlisted dependent
+    counts as missed. A missed dependent is a regression shipped.
+    "
+  checks:
   - type: response_richness
     value: '6'
     required: true
-    description: Enumerated the scattered cascade, not just one or two effects
+    description: Enumerated the scattered dependent set across disjoint areas
   - type: no_grep
     value: no_grep
     required: false
     layer: adoption
   - type: mcp_tool_used
-    value: sense_graph
+    value: sense_blast
     required: false
     layer: adoption
-- name: Trace how a reaction feeds scoring and moderation
-  prompt: "Task: trace two things a reaction affects beyond itself. First, how a
-    reaction changes the standing of the thing it is attached to (its score or
-    rank). Second, how moderation and anti-abuse paths treat particular reactions:
-    where certain reactions are flagged, removed, or acted on. Give file:line
-    throughout.
+- name: Trace how article identity and visibility are guarded
+  prompt: "Task: when work runs against an article in the background or across
+    services (feeds, mentions, caching, social images), how does the code confirm it
+    is operating on a real, current, published article before acting? Trace where
+    those guards live and what they check. Give file:line throughout.
     "
   checks:
-  - type: word
-    value: score
-    required: true
-    description: Found that reactions feed the reactable's score
-  - type: word
-    value: vomit
-    required: false
-    description: Found the moderation/abuse reaction path
   - type: response_richness
-    value: '5'
-    required: true
+    value: '3'
+    required: false
   - type: mcp_tool_used
     value: sense_graph
     required: false
     layer: adoption
-- name: Find every place that depends on the reaction contract
-  prompt: "Task: you will change what a reaction stores and does. Find every place
-    in the codebase that reads, creates, or reacts to reactions and would need
-    revisiting, including the parts that are not obvious from the reaction file
-    itself. Be complete and use file:line; a missed dependent is a silent break.
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Article contract (how it stores and tears
+    down some of its attached data). Assess the full blast radius: which dependents
+    are at risk, which are most likely to break, and what must be re-verified after
+    the change, across every area you found. Be complete and use file:line; rank by
+    risk. A missed high-risk dependent is the one that pages someone.
     "
   checks:
-  - type: word
-    value: reactable
-    required: true
   - type: response_richness
     value: '6'
     required: true
-    description: Reached the scattered dependents across services, workers, and controllers
+    description: Ranked the scattered dependents by risk, not just relisted them
   - type: mcp_tool_used
     value: sense_blast
     required: false
     layer: adoption
-  - type: mcp_tool_used
-    value: sense_graph
-    required: false
-    layer: adoption
-- name: Produce the edit map
-  prompt: "Task: produce the complete edit map for adding the new reaction category:
-    what to configure, which existing behaviors and effects you mapped above the
-    new category must extend or be verified against so it behaves consistently
-    with the existing ones, and which specs and fixtures to add. Use file:line
-    throughout, so a teammate could open the PR from your map alone.
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the specs/fixtures that must be updated or added to cover the
+    behavior. Use file:line throughout, so a teammate could land the change from your
+    map alone.
     "
   checks:
   - type: response_richness
@@ -197,59 +177,66 @@ steps:
   - type: contains
     value: spec
     required: false
-  - type: word
-    value: category
-    required: false
 scoring:
   weights:
     correctness: 0.70
     efficiency: 0.30
-# Gold spans the areas the "add a reaction category" session walks. The
-# discriminator is the SCATTERED, grep-invisible web: the `cascade` group (the
-# side effects fired by Reaction's create/destroy callbacks, eight background
-# workers in five disjoint namespaces reached through callbacks, not a literal
-# call), plus `moderation` and `notification` (read-side dependents in
-# app/services/spam, app/services/moderator, app/services/notifications). These
-# cannot be produced by `ls` one directory or one grep; they require resolving
-# callback dispatch and polymorphic blast (sense_graph Reaction / sense_blast
-# Reaction = 49 direct / 152 total). The `config` + `contract` groups are the
-# convention a new category must follow (orient/convention steps); `scoring` is
-# symbol-matched (mention only) because the scoring methods live in god-object
-# models cited for many reasons. All path targets are file-path matched so both
-# mention (is it on the map?) and cited (pinned to path:line?) are scored.
+# Gold is the must-find audit: the SCATTERED, HETEROGENEOUS dependent set of the
+# Article model plus the contract pieces a teammate must know before changing it.
+# The discriminator is the `dependents` group, non-obvious dependents in disjoint
+# dirs (onboarding welcome generator, liquid embed extractor, edge-cache buster,
+# async serializer, campaign scope, feed counters, mention notifications, org
+# bulk-update, social-image generator, prominent-org query, notification
+# subscription, discussion lock, moderation loader, readinglist, feed liquid tag),
+# each touching Article a different way. `sense_blast Article` returns this set
+# (66 app deps / 26 dirs) directly; reconstructing it by hand means grepping a
+# token that recurs across the whole app and reading every hit to filter. The
+# obvious article-named controllers/workers (an `ls app/.../articles` away) are
+# the grep-easy half and are kept only as light `write-path` anchors, not the
+# discriminator. All path targets are file-path matched so both mention and cited
+# score.
 gold:
-  # the shared contract a new category is built on (the model + concern + category type)
-  - {id: reaction-model,        group: contract,     match: [models/reaction.rb]}
-  - {id: reactable-concern,     group: contract,     match: [concerns/reactable.rb]}
-  - {id: reaction-category,     group: contract,     match: [reaction_category.rb]}
-  # where the set of categories is declared (the convention a new one follows)
-  - {id: reactions-yml,         group: config,       match: [config/reactions.yml]}
-  - {id: category-initializer,  group: config,       match: [load_reaction_category_list.rb]}
-  # the write path: how a reaction is created
-  - {id: reaction-handler,      group: write-path,   match: [reaction_handler.rb]}
-  - {id: reactions-controller,  group: write-path,   match: [controllers/reactions_controller.rb]}
-  # THE discriminator: the create/destroy cascade, scattered workers across disjoint namespaces
-  - {id: w:update-scores,       group: cascade,      match: [reactions/update_relevant_scores_worker.rb]}
-  - {id: w:bust-reactable,      group: cascade,      match: [reactions/bust_reactable_cache_worker.rb]}
-  - {id: w:bust-homepage,       group: cascade,      match: [reactions/bust_homepage_cache_worker.rb]}
-  - {id: w:counter-sync,        group: cascade,      match: [reaction_counter_sync_worker.rb]}
-  - {id: w:ring-detection,      group: cascade,      match: [spam/reaction_ring_detection_worker.rb]}
-  - {id: w:article-activity,    group: cascade,      match: [articles/update_article_activity_worker.rb]}
-  - {id: w:interest-embedding,  group: cascade,      match: [update_user_interest_embedding_worker.rb]}
-  - {id: w:new-reaction-notif,  group: cascade,      match: [notifications/new_reaction_worker.rb]}
-  # how a reaction feeds the reactable's score (reached via update_reactable; symbol-matched, mention)
-  - {id: score:article,         group: scoring,      match: [update_score]}
-  - {id: score:user,            group: scoring,      match: [calculate_score]}
-  # moderation / anti-abuse dependents (scattered, grep-invisible read side)
-  - {id: mod:spam-handler,      group: moderation,   match: [spam/handler.rb]}
-  - {id: mod:banish-user,       group: moderation,   match: [moderator/banish_user.rb]}
-  - {id: mod:confirm-flags,     group: moderation,   match: [users/confirm_flag_reactions.rb]}
-  - {id: mod:ring-detector,     group: moderation,   match: [spam/reaction_ring_detector.rb]}
-  # how a reaction notifies
-  - {id: notif:send,            group: notification, match: [notifications/reactions/send.rb]}
-  - {id: notif:data,            group: notification, match: [notifications/reactions/reaction_data.rb]}
+  # Each target carries `relation`: the TRUE way it reaches the Article contract,
+  # verified from forem source via `sense_blast Article` / `sense_graph`. `relation`
+  # is the reference the reference-aware relationship audit scores an answer against,
+  # NEVER rendered to the agent (only name/prompt are).
+  # the contract itself + the shared concerns a change must reckon with
+  - {id: article-model,        group: contract,   match: [app/models/article.rb], relation: "the Article model itself - the contract under change"}
+  - {id: c:reactable,          group: contract,   match: [concerns/reactable.rb], relation: "concern Article includes; `has_many :reactions, as: :reactable`"}
+  - {id: c:taggable,           group: contract,   match: [concerns/taggable.rb], relation: "concern Article includes for its tag list"}
+  - {id: c:liquid-embeddable,  group: contract,   match: [concerns/liquid_embeddable.rb], relation: "concern Article includes; how an article is embedded via liquid"}
+  - {id: c:subscription-src,   group: contract,   match: [concerns/user_subscription_sourceable.rb], relation: "concern Article includes; makes an article a subscription source"}
+  # obvious write-path anchors (grep-easy, NOT the discriminator)
+  - {id: a:articles-ctrl,      group: write-path, match: [app/controllers/articles_controller.rb], relation: "creates/updates/destroys articles"}
+  - {id: a:creator,            group: write-path, match: [articles/creator.rb], relation: "service that builds and persists an article"}
+  # THE discriminator: scattered, heterogeneous, NON-OBVIOUS dependents. Every
+  # one is a DIRECT caller of Article that `sense_blast Article` surfaces at the
+  # agent's DEFAULT settings (so a diligent sense agent can cite each), and the
+  # baseline scored ~0/16 on this set on every run (verified 2026-06-16) — it is
+  # what the structural index returns in one call and a hand grep/read audit
+  # cannot assemble.
+  # -- request handling (non-obvious controllers)
+  - {id: d:admin-tools,        group: dependents, match: [admin/tools_controller.rb], relation: "Admin::ToolsController#handle_article_cache manages an article's cache from the admin tools"}
+  - {id: d:moderations,        group: dependents, match: [moderations_controller.rb], relation: "ModerationsController#load_article loads an article for moderation"}
+  - {id: d:tag-adjustments,    group: dependents, match: [tag_adjustments_controller.rb], relation: "creates/destroys tag adjustments on an article"}
+  - {id: d:video-states,       group: dependents, match: [video_states_controller.rb], relation: "records video playback state against an article"}
+  # -- feeds / ranking / discovery
+  - {id: d:feed-tag,           group: dependents, match: [liquid_tags/feed_tag.rb], relation: "FeedTag#build_query builds an article feed query for a liquid tag"}
+  - {id: d:feed-event,         group: dependents, match: [app/models/feed_event.rb], relation: "FeedEvent.update_single_article_counters maintains per-article feed counters"}
+  - {id: d:tag-hotness,        group: dependents, match: [app/models/tag.rb], relation: "Tag#calculate_hotness_score ranks a tag from its articles"}
+  - {id: d:suggest-prominent,  group: dependents, match: [organizations/suggest_prominent.rb], relation: "query plucks org ids from their articles to suggest prominent orgs"}
+  - {id: d:trend-detector,     group: dependents, match: [ai/trend_detector.rb], relation: "Ai::TrendDetector#detect_trends_for derives trends from articles"}
+  # -- badges / lifecycle / onboarding
+  - {id: d:award-streak,       group: dependents, match: [badges/award_streak.rb], relation: "Badges::AwardStreak#article_user_ids awards a streak badge from article authorship"}
+  - {id: d:welcome-gen,        group: dependents, match: [welcome_notification/generator.rb], relation: "infers whether a user engaged (commented_on_welcome_thread?) from their articles to drive onboarding broadcasts"}
+  # -- caching / media / embeds
+  - {id: d:edge-cache,         group: dependents, match: [edge_cache/bust_comment.rb], relation: "EdgeCache::BustComment.bust_article_comment busts the article's comment cache"}
+  - {id: d:liquid-embed-extr,  group: dependents, match: [liquid_embed_extractor.rb], relation: "LiquidEmbedExtractor.derive_reference derives a reference from an article URL"}
+  # -- notifications / analytics / embeddings
+  - {id: d:notifiable-action,  group: dependents, match: [notifiable_action/send.rb], relation: "Notifications::NotifiableAction::Send notifies on an article action"}
+  - {id: d:audit-unpublish,    group: dependents, match: [audit_log/unpublish_alls_query.rb], relation: "AuditLog::UnpublishAllsQuery bulk-unpublishes a user's articles"}
+  - {id: d:interest-embed,     group: dependents, match: [update_user_interest_embedding_worker.rb], relation: "builds a user's interest embedding from the articles they engaged with"}
   # the test matrix
-  - {id: spec:reaction,         group: specs,        match: [models/reaction_spec.rb]}
-  - {id: spec:handler,          group: specs,        match: [reaction_handler_spec.rb]}
-  - {id: spec:scores-worker,    group: specs,        match: [update_relevant_scores_worker_spec.rb]}
-  - {id: spec:requests,         group: specs,        match: [requests/reactions_spec.rb]}
+  - {id: spec:article,         group: specs,      match: [models/article_spec.rb]}
+  - {id: spec:articles-req,    group: specs,      match: [requests/articles/articles_destroy_spec.rb]}
+  - {id: spec:creator,         group: specs,      match: [articles/creator_spec.rb]}

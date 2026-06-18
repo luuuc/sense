@@ -20,8 +20,12 @@ RUNS="${RUNS:-3}"
 OUT=".doc/launch/02-rails-vertical/results/$REPO/variance.md"
 mkdir -p "$(dirname "$OUT")"
 
+RUN_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+REPO_CLONE="${SENSE_CLONES:-/Users/luc/Developer/luuuc/oss/sense-benchmark/sense}/$REPO"
+REPO_SHA="$(git -C "$REPO_CLONE" rev-parse --short HEAD 2>/dev/null || echo '?')"
 echo "# $REPO — variance ($RUNS runs per model)" > "$OUT"
 echo "" >> "$OUT"
+echo "**run date (UTC):** $RUN_DATE  ·  **models:** $MODELS  ·  **repo:** $REPO @ $REPO_SHA" >> "$OUT"
 echo "sense: $(sense --version 2>/dev/null | head -1)  ·  judge: claude-opus-4-7" >> "$OUT"
 
 echo "[variance] $REPO : $RUNS runs x {$MODELS}"

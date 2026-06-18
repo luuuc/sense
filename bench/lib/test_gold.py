@@ -200,6 +200,84 @@ class ScoreGoldRecallTest(unittest.TestCase):
         self.assertEqual(r["missed_cite"], ["b"])
 
 
+class ScoreGoldF1Test(unittest.TestCase):
+    """Precision/recall/F1 of the claimed (cited) file set vs gold."""
+
+    GOLD = [
+        {"id": "model", "group": "contract", "match": ["models/reaction.rb"]},
+        {"id": "handler", "group": "write", "match": ["reaction_handler.rb"]},
+        {"id": "worker", "group": "cascade",
+         "match": ["reactions/update_relevant_scores_worker.rb"]},
+        {"id": "score", "group": "scoring", "match": ["update_score"]},  # symbol-only
+    ]
+
+    def test_none_gold_returns_none(self):
+        self.assertIsNone(gold.score_gold_f1(["a.rb"], None))
+        self.assertIsNone(gold.score_gold_f1(["a.rb"], []))
+
+    def test_symbol_only_gold_returns_none(self):
+        # No file-like targets → nothing to score precision over.
+        self.assertIsNone(gold.score_gold_f1(["a.rb"], ["TopicCreator", "update_score"]))
+
+    def test_clean_set_is_full_precision(self):
+        # Every cited file is on the impact set → precision 1.0; all 3 file
+        # targets hit → recall 1.0.
+        claimed = [
+            "app/models/reaction.rb",
+            "app/services/reaction_handler.rb",
+            "app/workers/reactions/update_relevant_scores_worker.rb",
+        ]
+        r = gold.score_gold_f1(claimed, self.GOLD)
+        self.assertEqual(r["gold_files"], 3)  # symbol-only "score" excluded
+        self.assertEqual(r["precision"], 1.0)
+        self.assertEqual(r["recall"], 1.0)
+        self.assertEqual(r["f1"], 1.0)
+
+    def test_noise_costs_precision_not_recall(self):
+        # The grep-noise mechanism: same 3 real targets, plus 3 off-target
+        # files. Recall stays 1.0; precision drops to 3/6.
+        claimed = [
+            "app/models/reaction.rb",
+            "app/services/reaction_handler.rb",
+            "app/workers/reactions/update_relevant_scores_worker.rb",
+            "config/routes.rb",
+            "app/policies/reaction_policy.rb",
+            "app/javascript/packs/articleReactions.js",
+        ]
+        r = gold.score_gold_f1(claimed, self.GOLD)
+        self.assertEqual(r["recall"], 1.0)
+        self.assertEqual(r["precision"], 0.5)
+        self.assertEqual(r["false_positives"], 3)
+        self.assertAlmostEqual(r["f1"], 2 * 0.5 * 1.0 / 1.5, places=4)
+
+    def test_missed_target_costs_recall(self):
+        claimed = ["app/models/reaction.rb"]
+        r = gold.score_gold_f1(claimed, self.GOLD)
+        self.assertEqual(r["precision"], 1.0)
+        self.assertAlmostEqual(r["recall"], 1 / 3, places=4)
+        self.assertIn("worker", r["missed"])
+        self.assertIn("handler", r["missed"])
+
+    def test_abbreviated_citation_credited_via_unique_basename(self):
+        # Agent cited just the basename; the gold pattern is path-qualified.
+        # Unique basename → still a true positive, not a false positive.
+        r = gold.score_gold_f1(["update_relevant_scores_worker.rb"], self.GOLD)
+        self.assertEqual(r["true_positives"], 1)
+        self.assertEqual(r["false_positives"], 0)
+        self.assertEqual(r["precision"], 1.0)
+
+    def test_dedup_distinct_files(self):
+        r = gold.score_gold_f1(
+            ["app/models/reaction.rb", "app/models/reaction.rb"], self.GOLD)
+        self.assertEqual(r["claimed"], 1)
+
+    def test_empty_claim_is_zero(self):
+        r = gold.score_gold_f1([], self.GOLD)
+        self.assertEqual(r["precision"], 0.0)
+        self.assertEqual(r["recall"], 0.0)
+        self.assertEqual(r["f1"], 0.0)
+
+
 class RealBaselineSnippetTest(unittest.TestCase):
     """End-to-end on the actual baseline answers the fix was diagnosed from.
 
