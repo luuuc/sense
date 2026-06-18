@@ -45,15 +45,19 @@ done
 # Source of every first-party package the scan engine transitively depends on,
 # minus test files (tests don't affect scan output), hashed; plus schema + model.
 scan_fingerprint() {
-  local mod pkgs dirs srchash ver
+  local mod pkgs dirs srchash vline gate
   mod="$(go list -m 2>/dev/null)" || { echo "ERR_GOLIST"; return; }
   pkgs="$(go list -deps ./internal/scan ./internal/extract ./internal/resolve ./internal/index 2>/dev/null | grep "^${mod}/")"
   [ -z "$pkgs" ] && { echo "ERR_NOPKGS"; return; }
   dirs="$(go list -f '{{.Dir}}' $pkgs 2>/dev/null)"
   srchash="$(find $dirs -maxdepth 1 -name '*.go' ! -name '*_test.go' 2>/dev/null | sort | xargs cat 2>/dev/null | shasum -a 256 | cut -c1-16)"
-  # schema version + embedding model from the installed binary (these gate the index too)
-  ver="$("$SENSE_BIN" --version 2>/dev/null | tr -d '\n')"
-  echo "${srchash}|${ver}"
+  # Schema version + embedding model gate the index too, but the marketing version does NOT.
+  # Take only the "(schema vN, embeddings: MODEL)" parenthetical from --version, dropping the
+  # version number, so a release that doesn't touch the scan engine (same srchash + same
+  # schema + same model) reuses every existing index instead of forcing a full re-embed.
+  vline="$("$SENSE_BIN" --version 2>/dev/null | tr -d '\n')"
+  gate="${vline#*(}"; gate="${gate%)}"   # falls back to the full string if there is no parenthetical
+  echo "${srchash}|${gate}"
 }
 
 json_get() { # repo field  -> value or empty

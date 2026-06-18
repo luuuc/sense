@@ -31,7 +31,7 @@ cd "$BENCH_DIR/.."
 VERTICAL="${VERTICAL-ruby-rails}"
 source "$BENCH_DIR/lib/bench-paths.sh"
 
-MODELS="${MODELS:-claude-opus-4-6 claude-opus-4-8}"
+MODELS="${MODELS:-claude-opus-4-8}"
 REPOS="${REPOS:-ruby_llm discourse}"
 # For variance (--runs N) use runs-variance.sh, not this single-run sweeper.
 

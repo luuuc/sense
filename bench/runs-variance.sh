@@ -21,7 +21,7 @@ VERTICAL="${VERTICAL-ruby-rails}"
 source "$BENCH_DIR/lib/bench-paths.sh"
 
 REPO="${1:?usage: runs-variance.sh <repo>}"
-MODELS="${MODELS:-claude-opus-4-6 claude-opus-4-8}"
+MODELS="${MODELS:-claude-opus-4-8}"
 RUNS="${RUNS:-3}"
 # Per-repo run-spread report, across models. Lives in the tracked bench tree (the
 # vertical base, not a model root) alongside the per-model reports + matrix.
@@ -35,6 +35,16 @@ echo "# $REPO — variance ($RUNS runs per model)" > "$OUT"
 echo "" >> "$OUT"
 echo "**run date (UTC):** $RUN_DATE  ·  **models:** $MODELS  ·  **repo:** $REPO @ $REPO_SHA" >> "$OUT"
 echo "sense: $(sense --version 2>/dev/null | head -1)  ·  judge: claude-opus-4-7" >> "$OUT"
+
+# Ensure the repo's Sense index matches the CURRENT scan engine before benching any
+# model — the index is shared across all models, so this runs once per repo. Rebuilds
+# only when the scan-engine fingerprint changed (a no-op release reuses the existing
+# index); skips instantly when fresh. This replaces the old "blindly rebuild every repo"
+# prereq. Set SKIP_ENSURE_INDEX=1 to bypass (e.g. a host without the Go toolchain).
+if [ "${SKIP_ENSURE_INDEX:-0}" != 1 ]; then
+  bash "$BENCH_DIR/lib/ensure-index.sh" "$REPO" \
+    || echo "[warn] ensure-index could not verify $REPO; benching the existing index as-is" >&2
+fi
 
 echo "[variance] $REPO : $RUNS runs x {$MODELS}"
 for m in $MODELS; do
