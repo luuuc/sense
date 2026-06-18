@@ -34,6 +34,38 @@ func extractSuffix(name string) string {
 	return ""
 }
 
+// ambiguousTargetNames returns the bare names shared by more than one distinct
+// target id. Such names need qualifying so the rendered conventions do not read
+// as duplicate lines (e.g. several "Base" classes in different namespaces each
+// inherited by a different family). nameByID holds one entry per distinct target.
+func ambiguousTargetNames(nameByID map[int64]string) map[string]bool {
+	counts := map[string]int{}
+	for _, name := range nameByID {
+		counts[name]++
+	}
+	out := map[string]bool{}
+	for name, n := range counts {
+		if n > 1 {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// baseLabel renders a base/mixin target name, qualifying it only when the bare
+// name is ambiguous (shared by several distinct targets) and a distinct qualified
+// name is available. This keeps the common case terse while disambiguating
+// collisions, so "extend Base" lines do not read as duplicates. In the rare case
+// where the qualified names also collide (two "Foo::Base" in different files), it
+// falls back to the bare name rather than render a misleading partial path; that
+// residual duplicate is accepted as not worth a path-suffix escalation here.
+func baseLabel(name, qualified string, ambiguous map[string]bool) string {
+	if ambiguous[name] && qualified != "" && qualified != name {
+		return qualified
+	}
+	return name
+}
+
 func categoryOrder(c Category) int {
 	switch c {
 	case CategoryInheritance:
