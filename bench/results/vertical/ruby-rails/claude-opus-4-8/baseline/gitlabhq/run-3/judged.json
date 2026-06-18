@@ -1,0 +1,380 @@
+{
+  "scenario": "GitLab work session - audit the MergeRequest contract before a teardown rework",
+  "repo": "gitlabhq",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "gitlabhq.rubric.yaml"
+  },
+  "scenario_quality": 0.8349,
+  "relationship_audit": {
+    "total": 22,
+    "covered": 13,
+    "related": 10,
+    "covered_recall": 0.5909,
+    "related_recall": 0.4545,
+    "missed_covered": [
+      "c:mentionable",
+      "a:mr-ctrl",
+      "d:event",
+      "d:jira",
+      "d:gql-issuable",
+      "d:url-builder",
+      "d:cycle-analytics",
+      "d:streaming-ser",
+      "d:github-xref"
+    ],
+    "missed_related": [
+      "c:mentionable",
+      "a:mr-ctrl",
+      "d:timelog",
+      "d:event",
+      "d:jira",
+      "d:gql-issuable",
+      "d:discussion-ent",
+      "d:url-builder",
+      "d:cycle-analytics",
+      "d:streaming-ser",
+      "d:github-xref",
+      "d:api-discussions"
+    ],
+    "items": [
+      {
+        "id": "mr-model",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "c:issuable",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "c:noteable",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "c:mentionable",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "a:mr-ctrl",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "a:mr-create-svc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:notes-resolve",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:milestone-prom",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:issuable-destroy",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:ghost-user",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:timelog",
+        "covered": true,
+        "related": false
+      },
+      {
+        "id": "d:auto-merge",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:event",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "d:ci-pipeline",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "d:jira",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "d:gql-issuable",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "d:discussion-ent",
+        "covered": true,
+        "related": false
+      },
+      {
+        "id": "d:url-builder",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "d:cycle-analytics",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "d:streaming-ser",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "d:github-xref",
+        "covered": false,
+        "related": false
+      },
+      {
+        "id": "d:api-discussions",
+        "covered": true,
+        "related": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Hands the agent a complete, usable map: identifies GitLab as a Rails monolith, lays out app/models, services, workers, graphql, serializers, policies, finders, and lib/, and pinpoints merge_request.rb:1 plus the concern set. The next agent can act with small, targeted lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Paths are concrete with file:line throughout \u2014 `app/models/merge_request.rb:1`, `app/services/merge_requests/{create,after_create,update}_service.rb`, `app/policies/merge_request_policy.rb`, `config/gitlab_loose_foreign_keys.yml` \u2014 not vague layer names."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Explains WHY via 'shared with Issue' on Issuable and 'controllers/API stay thin' for the service layer, but the hub-shape rationale is light \u2014 it states the concerns rather than fully arguing why MR is shaped as a hub of shared issuable behavior."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "No explicit flags on what was not confirmed (e.g., the ee/ overlay isn't mentioned at all, and concern membership is asserted without hedging)."
+        },
+        "relationship": {
+          "score": 0.8,
+          "rationale": "States real connecting relations: Issuable is 'shared with Issue', concerns supply Noteable/Referable/Approvable behavior, and 'sibling/child records live in `app/models/merge_request/`'. Could be stronger by naming the attach-by (notes/events/pipelines reference MR) explicitly, but the concern routes are there."
+        }
+      },
+      "step_quality": 0.825,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 605,
+        "cache_creation_input_tokens": 21207,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Map the MergeRequest contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Hands the agent a thorough map with file:line for the includes block, all 36 associations, lifecycle callbacks, state machines, and the three-way destroy contract \u2014 leaves only small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Concrete paths and line numbers throughout (`app/models/concerns/issuable.rb:46`, `merge_request.rb:43-149`, `config/gitlab_loose_foreign_keys.yml`), with each association/callback pinned to a line."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains WHY Issuable is the biggest shared surface ('changing it affects Issue too') and why the destroy contract is split three ways; could go further on why other concerns exist but core rationale is there."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "Flags the batch-methods-bypass-callbacks warning and the async loose-FK gotcha, but doesn't explicitly mark any part of the contract as unconfirmed or potentially incomplete."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "For each concern states the RELATION it supplies (Issuable \u2192 notes/labels/markdown/assignees, Noteable \u2192 discussions/resolvable, Referable \u2192 `!123` refs, Approvable, Todoable, Spammable), and ties associations to their lifecycle behavior (`dependent: :delete_all`/`:destroy`) rather than just listing files."
+        }
+      },
+      "step_quality": 0.88,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 557,
+        "cache_creation_input_tokens": 22046,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Trace how a merge request is created and updated",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Traces both create and update paths with file:line in order, names the inline pieces (`CreateService#execute` :5, `after_create` :23) and the async fan-out (`NewMergeRequestWorker` \u2192 `AfterCreateService` covering diffs, pipelines, notifications, todos, webhooks, cross-refs), plus the push/refresh and attribute-update branches. Agent could pick up the threads with small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every layer is named with concrete file and line: `app/services/merge_requests/after_create_service.rb:5`, `update_service.rb:14`, `new_merge_request_worker.rb:19`, `update_merge_requests_worker.rb:16`, plus inline line refs `:40 :42 :43 :44` for individual effects."
+        },
+        "justification": {
+          "score": 0.55,
+          "rationale": "Implicitly justifies by labeling the heavy create fan-out as async (\"heavy create fan-out \u2026 runs async via NewMergeRequestWorker\") but never explicitly states WHY heavy effects are pushed off the request path at GitLab's scale."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "Hedges on the pipeline branch (\"async or inline\" at `:20-29`) which is a real flag, but does not call out anything else as unconfirmed; given thoroughness ~335s, calibration is partial."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Assembles an explicit chain: trigger \u2192 CreateService \u2192 after_create (inline) \u2192 NewMergeRequestWorker.perform_async \u2192 AfterCreateService \u2192 events/notifications/todos/webhooks; update path is its own chain (push \u2192 UpdateMergeRequestsWorker \u2192 RefreshService, attribute edits \u2192 UpdateService#handle_changes \u2192 diff/labels/todos/system notes). Not just a file list."
+        }
+      },
+      "step_quality": 0.8075,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 697,
+        "cache_creation_input_tokens": 21387,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Audit every dependent of the MergeRequest contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Comprehensive enumeration grouped by every requested area (models, services, workers, GraphQL, serializers, API, lib/), naming the non-obvious dependents the rubric called out (url builder via banzai/reference_parser+filter, cycle analytics query builders, loose_foreign_keys async teardown, github importer cross-references, ghost-user migration, milestone promotion, issuable destroy, timelogs). Agent could review the contract change with only targeted lookups."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Most dependents have concrete file paths and many have :line numbers (e.g. `app/models/approval.rb:9`, `lib/api/helpers.rb:373`, `loose_foreign_keys.yml:553`). However, the `app/services/merge_requests/` and worker dirs are dumped as flat filename lists without per-file phrases, weakening the 'one phrase on how each uses the MR' requirement."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "Areas are explicitly grouped (Models, Services elsewhere, Workers elsewhere, GraphQL, lib/) and teardown/async semantics are flagged (**teardown**, **async FK teardown**, **MR-specific teardown**). But the per-file 'why affected' phrase is mostly missing in the dense lists."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "No explicit flagging of what a static pass can miss, ee/ overlay coverage, or buried/concern-reached dependents the audit may have underapproximated."
+        },
+        "relationship": {
+          "score": 0.65,
+          "rationale": "Models section consistently states the relation (`belongs_to :merge_request`, join, `touch: true`, owns diff_files/diff_commits). GraphQL section names `authorize :read_merge_request` + `present_using MergeRequestPresenter`. But the bulk of the services/workers/lib lists are filename-only with no connecting relation; teardown markers help but most non-obvious analytics/import/url-builder dependents are named without the path by which they reach MergeRequest."
+        }
+      },
+      "step_quality": 0.7675,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 761,
+        "cache_creation_input_tokens": 27281,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Trace how merge request visibility and permissions are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Maps the full guard surface \u2014 policy chain, finder-level query guard, and entry-point guards (GraphQL/REST) \u2014 with file:line throughout, e.g. `merge_request_policy.rb:14`, `issuable_finder.rb:119`, `lib/api/helpers.rb:383`. Agent has small, targeted lookups left."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Concrete file:line citations across the trace (`merge_request_policy.rb:33-37`, `issuable_policy.rb:48-52`, `project_policy.rb:520`, `merge_requests_finder.rb:112`, `lib/api/merge_requests.rb:91/228/237`), each tied to the specific rule it expresses."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Explains WHY each guard exists \u2014 visibility/feature access bottoms in `read_merge_request`, finder enforces collection-level accessible_projects, single-record paths go through `find_merge_request_with_access` \u2014 and the closing 'Pattern' synthesizes the architectural reason."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "Does not flag any implicit/missing guard or ee/ overlay differences; presents the trace as exhaustive without caveats."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "States the connecting path explicitly: policy chain `MergeRequestPolicy < IssuablePolicy < BasePolicy`, finder \u2192 IssuableFinder \u2192 accessible_projects, entry-points \u2192 finder or `authorize :read_merge_request`, all bottoming in `read_merge_request` in ProjectPolicy. Each guard is connected, not isolated."
+        }
+      },
+      "step_quality": 0.835,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 639,
+        "cache_creation_input_tokens": 21391,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Comprehensive blast map ranked by risk tier across teardown, shared-concern, read/serialize, and lower-risk areas with file:line throughout (loose_foreign_keys.yml:533/543/553, issuable/destroy_service.rb:31, merge_request.rb:108,113,135). Covers the full surface: cascades, diffs, refs, state machine, serializers, GraphQL, importers, analytics."
+        },
+        "specificity": {
+          "score": 0.92,
+          "rationale": "Very concrete: exact line numbers on loose-FK config, delete_all associations at merge_request.rb:108,113,135, state machine 243-316, schedule_cleanup_refs:2099, ref_path:2083, plus specific worker/service files. Each named with a reason."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Each tier is explicitly justified: 'async FK cleanup is invisible to model code... silently double-delete or orphan', 'delete_all skips callbacks', 'batch methods bypass callbacks'. The why-ranked-here is stated, not just the rank."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "Implicit acknowledgment via 'least likely to be noticed' framing on loose-FK, but no explicit flagging of dependents the static pass might have missed (ee/ overlay, concern-reached buried calls)."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Strong relationship statements per dependent: 'delete_all skips callbacks \u2192 orphans events/merge_request_issues/user_mentions', Issuable concern as the shared-blast path to Issue, batch_mark_as_unchecked bypass route, importers 'write the same associations'. The route making each risky is named, not just the file."
+        }
+      },
+      "step_quality": 0.854,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 649,
+        "cache_creation_input_tokens": 21844,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.92,
+          "rationale": "Delivers a complete, area-grouped map: model edits with line ranges (`merge_request.rb:56-149,162-173,243-316,2083-2118`), the loose-FK YAML with exact lines, dependents grouped by teardown/create-update/read/auth/importers, and specs including the loose-FK shared examples. An agent could land the change from this alone with only small lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Files and insertion points are concrete throughout: `app/models/merge_request.rb:56-149`, `config/gitlab_loose_foreign_keys.yml:533,543,553,688,1085,1146`, `spec/services/issuable/destroy_service_spec.rb`, factory paths, and shared-example names are all named exactly."
+        },
+        "justification": {
+          "score": 0.82,
+          "rationale": "Explains WHY each piece is in the map (loose-FK is async/invisible to model code, `delete_all` skips callbacks, Issuable only mirrored \"if shared attr\", batch state-machine bypass). Could go deeper on read-surface and importer reasoning but the high-risk picks are well-justified."
+        },
+        "uncertainty": {
+          "score": 0.7,
+          "rationale": "Conditional guards flag uncertainty (\"only if the changed attribute/association is shared with Issue\", \"if diff/ref storage changes\", \"If `Issuable` touched: mirror in...\"), but doesn't explicitly call out ee/ overlay or buried-call risk in the map itself."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Each map entry ties to its relationship: teardown grouped by destroy chain, FK YAML connected to async cleanup, Issuable mirror gated on the shared-concern path, batch state-machine bypass linked to the callback skip. The chain from the contract change to each edited/verified file is mostly explicit, though a few read-surface entries are listed without their connecting route."
+        }
+      },
+      "step_quality": 0.875,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 704,
+        "cache_creation_input_tokens": 26517,
+        "cache_read_input_tokens": 22522
+      }
+    }
+  ]
+}

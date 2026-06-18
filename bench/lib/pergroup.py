@@ -18,7 +18,37 @@ import json, os, sys, glob
 
 REPO = sys.argv[1] if len(sys.argv) > 1 else sys.exit("usage: pergroup.py <repo> [threshold]")
 THRESH = float(sys.argv[2]) if len(sys.argv) > 2 else 0.50
-ROOT = os.path.join(os.path.dirname(__file__), "..", "results")
+
+# RESULTS_DIR (exported by bench-paths.sh) pins the active bench's root. When it
+# is unset (manual runs), default to the global root, but fall back to whichever
+# vertical subtree actually holds this repo so `pergroup.py <vertical-repo>` just
+# works without the caller having to know which bench owns it.
+_DEFAULT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "results"))
+
+
+def _resolve_root():
+    if os.environ.get("RESULTS_DIR"):
+        return os.environ["RESULTS_DIR"]
+    # Auto-discover which bench root holds this repo. Candidates: the global root,
+    # and every vertical model root (results/vertical/<name>/<model>/). A repo may
+    # live in several (e.g. discourse is in global + the vertical, and a vertical
+    # repo may be benched on multiple models), so when more than one matches, make
+    # the caller disambiguate with RESULTS_DIR rather than silently pick one.
+    cands = []
+    if os.path.isdir(os.path.join(_DEFAULT, "baseline", REPO)):
+        cands.append(_DEFAULT)
+    for cand in sorted(glob.glob(os.path.join(_DEFAULT, "vertical", "*", "*"))):
+        if os.path.isdir(os.path.join(cand, "baseline", REPO)):
+            cands.append(cand)
+    if len(cands) == 1:
+        return cands[0]
+    if len(cands) > 1:
+        rel = "\n  ".join(os.path.relpath(c) for c in cands)
+        sys.exit(f"{REPO} is in several bench roots — set RESULTS_DIR to one of:\n  {rel}")
+    return _DEFAULT
+
+
+ROOT = _resolve_root()
 
 
 def runs(arm):

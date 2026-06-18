@@ -1,0 +1,154 @@
+{
+  "scenario": "Lobsters work session - the shared vote/score recalculation (tight)",
+  "repo": "lobsters",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "lobsters.rubric.yaml"
+  },
+  "scenario_quality": 0.8983,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 7,
+    "related": 7,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "items": [
+      {
+        "id": "vote-cast",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "vote-target",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "comment-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-confidence",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "confidence-order",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "story-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-hotness",
+        "covered": true,
+        "related": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Locate the recalculation and how its target is resolved",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Pins the call site exactly at vote.rb:181 with the guarding context and resolves the target at vote.rb:185-191 with the Comment.find/Story.find branch \u2014 exactly what the rubric asks for."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Both the call site (`t.update_score_and_recalculate!` at vote.rb:181) and the target-resolution lines (vote.rb:177 `t = v.target`; vote.rb:185-191) are pinned with concrete file:line."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Explicitly notes 'TWO implementations ... dispatched polymorphically via v.target' and that the recalc 'runs on either a Comment or a Story depending on what was voted on', explaining why the call site cannot statically pick a definition."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Does not flag any hop it left unopened or partially verified; presents everything with uniform confidence even though step 1's scope is narrower than what was answered."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Clearly states the target is resolved to one of two record kinds via `comment_id ? Comment.find(comment_id) : Story.find(story_id)`, making the polymorphic dispatch path explicit."
+        }
+      },
+      "step_quality": 0.8875,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 495,
+        "cache_creation_input_tokens": 20580,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Document what the recalculation recomputes and persists",
+      "scores": {
+        "map_quality": {
+          "score": 1.0,
+          "rationale": "Pins both divergent definitions exactly: Comment at comment.rb:339-363 with calculated_confidence at comment.rb:232, writing score/flags/confidence/confidence_order; Story at story.rb:693-718 with calculated_hotness at story.rb:550, writing score/flags/hotness. No conflation."
+        },
+        "specificity": {
+          "score": 1.0,
+          "rationale": "Per-kind methods and columns are named with exact file:line \u2014 `calculated_confidence` at comment.rb:232-251 plus `confidence_order` packing, `calculated_hotness` at story.rb:550-580, and the SQL UPDATE line ranges (comment.rb:355-362, story.rb:697-716)."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains the two value methods substantively (Wilson 80% lower bound vs tag hotness_mod + age decay) and notes SQL re-derives score/flags from votes rather than the in-memory delta, which is why the per-kind columns diverge. Could state the per-thread-confidence vs front-page-hotness purpose contrast more directly."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "Does not explicitly flag any unopened hop or uncertain column attribution; given the answer is comprehensive this is partial credit, but no calibration statement is offered."
+        },
+        "relationship": {
+          "score": 1.0,
+          "rationale": "Cleanly attributes each branch to its own definition and cascade \u2014 Comment\u2192calculated_confidence\u2192{score,flags,confidence,confidence_order}; Story\u2192calculated_hotness\u2192{score,flags,hotness} \u2014 with the polymorphic `v.target` dispatch named explicitly. No cross-contamination."
+        }
+      },
+      "step_quality": 0.9275,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 637,
+        "cache_creation_input_tokens": 20770,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Map the change and the specs that cover it",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Names both files to edit (comment.rb:339-363, story.rb:693-718), the single call site (vote.rb:181) with target resolution (vote.rb:185), and concrete spec ranges across vote_spec.rb, story_spec.rb (including #calculated_hotness at 373-401 and update_score_and_recalculate at 404-429), and comment_spec.rb (confidence at 226-243). The agent has a tight edit-and-test map."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every file is pinned to exact line ranges (e.g., 'spec/models/vote_spec.rb:15-82', 'spec/models/story_spec.rb:404-429', 'spec/models/comment_spec.rb:226-243'); no vague 'add tests'."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Each spec entry is annotated with what it asserts (transitions, flag-deducts-from-score, calculated_hotness exact values, confidence ordering), and the closing 'regression_risk' note explains why the vote_spec transitions + value-method specs together form the guard."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No explicit flags of low-confidence hops or unopened paths; the answer presents the map as complete without naming any residual uncertainty (e.g., whether other indirect specs touch the recalc)."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Each definition is kept tied to its own value method, columns, and specs: comment.rb edits \u2194 calculated_confidence \u2194 comment_spec.rb confidence tests; story.rb edits \u2194 calculated_hotness \u2194 story_spec.rb hotness tests; no conflation between the two branches."
+        }
+      },
+      "step_quality": 0.88,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 641,
+        "cache_creation_input_tokens": 20771,
+        "cache_read_input_tokens": 22522
+      }
+    }
+  ]
+}

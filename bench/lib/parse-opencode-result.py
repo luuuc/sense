@@ -10,7 +10,7 @@ opencode emits one JSON object per line, each wrapping a session "part":
 The scorer only needs tool calls (by name), assistant text, and token usage, so
 this converter maps opencode parts onto the Claude shapes
 scorer.parse_transcript() / read_transcript_texts() read. score.sh / judge.sh /
-report.sh / snapshot-result.sh then run on an opencode arm unchanged.
+report.sh then runs on an opencode arm unchanged.
 
 Mapping (opencode part -> Claude stream-json events):
   part.type "text"  -> assistant text block

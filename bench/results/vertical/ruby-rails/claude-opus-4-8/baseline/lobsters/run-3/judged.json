@@ -1,0 +1,154 @@
+{
+  "scenario": "Lobsters work session - the shared vote/score recalculation (tight)",
+  "repo": "lobsters",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "lobsters.rubric.yaml"
+  },
+  "scenario_quality": 0.9085,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 7,
+    "related": 7,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "items": [
+      {
+        "id": "vote-cast",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "vote-target",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "comment-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-confidence",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "confidence-order",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "story-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-hotness",
+        "covered": true,
+        "related": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Locate the recalculation and how its target is resolved",
+      "scores": {
+        "map_quality": {
+          "score": 1.0,
+          "rationale": "Pins the call site exactly ('app/models/vote.rb:181 \u2014 t.update_score_and_recalculate!') and the target resolution ('Vote#target at app/models/vote.rb:185-191 \u2014 returns Comment.find(comment_id) when comment_id is present, else Story.find(story_id)'), plus the enclosing method \u2014 agent needs no extra exploration."
+        },
+        "specificity": {
+          "score": 1.0,
+          "rationale": "All anchors are concrete file:line (vote.rb:181 call site, vote.rb:177 't = v.target', vote.rb:185-191 definition) rather than file-only or prose."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "States the dispatch is polymorphic ('two implementations dispatched by the target's class') and shows the comment_id-vs-story_id branch that decides which definition runs, making clear why the call site can't statically resolve it."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No hop is explicitly flagged as unopened; the answer reads as fully confident, with only a 'documented race' caveat that isn't about its own coverage."
+        },
+        "relationship": {
+          "score": 1.0,
+          "rationale": "Explicitly surfaces the polymorphic resolution: target is one of two record kinds (Comment.find(comment_id) else Story.find(story_id)), and that choice decides which update_score_and_recalculate! runs \u2014 the chain is stated, not just the endpoints."
+        }
+      },
+      "step_quality": 0.925,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 544,
+        "cache_creation_input_tokens": 20529,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Document what the recalculation recomputes and persists",
+      "scores": {
+        "map_quality": {
+          "score": 0.98,
+          "rationale": "Pins both divergent definitions exactly: Story#update_score_and_recalculate! at story.rb:693-718 writing score/flags/hotness via calculated_hotness (story.rb:550), and Comment#update_score_and_recalculate! at comment.rb:339-363 writing score/flags/confidence/confidence_order via calculated_confidence (comment.rb:232). No conflation."
+        },
+        "specificity": {
+          "score": 0.97,
+          "rationale": "Every method, column, and value-method is pinned with exact file:line (comment.rb:232, comment.rb:339-363, story.rb:550, story.rb:693-718) including the interpolation sites (story.rb:715, comment.rb:359-360)."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains the per-kind divergence by listing what each SQL writes (flagger-commented exemption for story, confidence_order packed key for comment), making clear why per-thread confidence and front-page hotness are different computations, though it doesn't frame it explicitly as 'thread-local vs front-page ranking'."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Flags the documented race-condition caveat shared by both methods, but doesn't explicitly mark any hop as unverified or list things it couldn't confirm."
+        },
+        "relationship": {
+          "score": 0.98,
+          "rationale": "Keeps the two branches cleanly distinct under a 'polymorphic' header, attributing hotness/calculated_hotness exclusively to Story and confidence/confidence_order/calculated_confidence exclusively to Comment, with no cross-contamination."
+        }
+      },
+      "step_quality": 0.9205,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 604,
+        "cache_creation_input_tokens": 20522,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Map the change and the specs that cover it",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Names exactly what to edit (story.rb:693-718, comment.rb:339-363), the preserved call site (vote.rb:181), and lists the spec coverage with file:line ranges across vote_spec, story_spec, comment_spec, and bitpacking_spec. Also flags other callers (comment.rb:484/543, hidden_story.rb:15/21) the agent must not break."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Nearly every item has concrete file:line (e.g., 'spec/models/story_spec.rb:404-422 \u2014 update_score_and_recalculate group', 'spec/extras/bitpacking_spec.rb:145-160'). No vague 'add tests'."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Each spec entry is annotated with what it guards (score/flag deltas, calculated_hotness values, confidence_order byte packing, flagger-commented exemption), and the regression_risk paragraph ties the edits to the specific specs that would catch breakage."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Does not explicitly flag what it is least sure about; the 'shared_caveat' on the race is observational, not a calibration of confidence. No 'unsure whether X is covered' note despite mixing line ranges with single-line citations."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Keeps each branch tied to its own definition, value method, columns, and spec: Story\u2192calculated_hotness/hotness\u2192story_spec; Comment\u2192calculated_confidence/confidence_order\u2192comment_spec + bitpacking_spec. No conflation between the two definitions."
+        }
+      },
+      "step_quality": 0.88,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 614,
+        "cache_creation_input_tokens": 20523,
+        "cache_read_input_tokens": 22522
+      }
+    }
+  ]
+}

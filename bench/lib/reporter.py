@@ -70,6 +70,11 @@ def load_results(results_dir):
         tool_dir = os.path.join(results_dir, tool)
         if not os.path.isdir(tool_dir) or tool.startswith("."):
             continue
+        # "vertical" is the reserved subtree holding per-vertical benches
+        # (results/vertical/<name>/), not an arm. The global report skips it;
+        # a vertical report is produced by pointing this at results/vertical/<name>.
+        if tool == "vertical":
+            continue
         for repo in sorted(os.listdir(tool_dir)):
             repo_dir = os.path.join(tool_dir, repo)
             if not os.path.isdir(repo_dir):
@@ -141,6 +146,7 @@ def build_per_scenario_table(results):
                 # prompt tokens (what a code map saves by not re-reading files).
                 "billed": m.get("token_total_billed", m.get("token_total", 0)),
                 "uncached_in": m.get("token_input_uncached"),
+                "cached_read": m.get("token_cache_read"),
                 # Gold recall — the two split precision/completeness axes.
                 "mention_recall": gr.get("mention_recall"),
                 "cited_recall": gr.get("cited_recall"),
@@ -309,18 +315,20 @@ def _headline_table_md(rows):
     reads top-to-bottom; a trailing delta line states the billed-context gap.
     """
     out = []
-    out.append("| Tool | Mention recall | Cited recall (fixed) | Billed ctx | Uncached in |")
-    out.append("|------|---------------:|---------------------:|-----------:|------------:|")
+    out.append("| Tool | Mention recall | Cited recall (fixed) | Billed ctx | Uncached in | Cached read | Time |")
+    out.append("|------|---------------:|---------------------:|-----------:|------------:|------------:|-----:|")
     for row in sorted(rows, key=lambda r: r["tool"]):
         tool = row["tool"]
         if row.get("failed"):
-            out.append(f"| {tool} | **FAILED** | — | — | — |")
+            out.append(f"| {tool} | **FAILED** | — | — | — | — | — |")
             continue
         men = _fmt_recall(row.get("mention_recall"), row.get("gold_mentioned"), row.get("gold_total"))
         cit = _fmt_recall(row.get("cited_recall"), row.get("gold_cited"), row.get("gold_total"))
         billed = f"{row['billed']:,}" if row.get("billed") else "—"
         unc = f"{row['uncached_in']:,}" if row.get("uncached_in") else "—"
-        out.append(f"| {tool} | {men} | {cit} | {billed} | {unc} |")
+        cached = f"{row['cached_read']:,}" if row.get("cached_read") else "—"
+        wt = f"{row['wall_time']:.0f}s" if row.get("wall_time") else "—"
+        out.append(f"| {tool} | {men} | {cit} | {billed} | {unc} | {cached} | {wt} |")
     delta = _fmt_billed_delta(rows)
     if delta is not None:
         direction = "Sense loads less" if delta < 0 else "Sense loads more"

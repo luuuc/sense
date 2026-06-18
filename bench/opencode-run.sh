@@ -37,8 +37,8 @@ set -uo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
-SCENARIOS_DIR="$BENCH_DIR/scenarios"
-RESULTS_DIR="$BENCH_DIR/results"
+# Resolves SCENARIOS_DIR + RESULTS_DIR for the global or VERTICAL bench.
+source "$BENCH_DIR/lib/bench-paths.sh"
 LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 

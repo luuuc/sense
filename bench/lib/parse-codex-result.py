@@ -6,7 +6,7 @@ Codex and Claude Code emit different event streams, but the scorer only needs
 three things from a transcript: tool calls (by name), assistant text, and token
 usage. This converter maps Codex's typed items onto the Claude shapes
 scorer.parse_transcript() / read_transcript_texts() read, so score.sh /
-judge.sh / report.sh / snapshot-result.sh run on a Codex arm unchanged.
+judge.sh / report.sh run on a Codex arm unchanged.
 
 Mapping (Codex `item.completed` -> Claude stream-json events):
   mcp_tool_call{server,tool,arguments,result}

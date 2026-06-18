@@ -1,0 +1,154 @@
+{
+  "scenario": "Lobsters work session - the shared vote/score recalculation (tight)",
+  "repo": "lobsters",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "lobsters.rubric.yaml"
+  },
+  "scenario_quality": 0.8918,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 7,
+    "related": 7,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "items": [
+      {
+        "id": "vote-cast",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "vote-target",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "comment-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-confidence",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "confidence-order",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "story-recalc",
+        "covered": true,
+        "related": true
+      },
+      {
+        "id": "calc-hotness",
+        "covered": true,
+        "related": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Locate the recalculation and how its target is resolved",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Pins the call site at vote.rb:181 (update_score_and_recalculate!) and target resolution at vote.rb:185-191 (Comment.find vs Story.find), exactly the two anchors the rubric requires."
+        },
+        "specificity": {
+          "score": 1.0,
+          "rationale": "Both anchors are given as file:line ('app/models/vote.rb:181' and 'app/models/vote.rb:185-191'), with the resolving line 't = v.target' also pinned at vote.rb:177."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Explains the dispatch via 'whichever of Comment/Story the vote points at' and names it as the shared entry point, but doesn't explicitly frame WHY the call site can't statically know which definition runs (polymorphic local)."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No hedging or flagged hop; the answer is entirely declarative with no acknowledgement of unopened paths (e.g., the downstream calculated_* methods)."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Surfaces that target resolves to one of Comment or Story based on comment_id, making the polymorphic discriminator that decides which definition runs explicit."
+        }
+      },
+      "step_quality": 0.875,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 479,
+        "cache_creation_input_tokens": 19073,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Document what the recalculation recomputes and persists",
+      "scores": {
+        "map_quality": {
+          "score": 0.98,
+          "rationale": "Pins both divergent definitions exactly: Comment at comment.rb:339-363 \u2192 calculated_confidence at comment.rb:232 writing score/flags/confidence/confidence_order, and Story at story.rb:693-718 \u2192 calculated_hotness at story.rb:550 writing score/flags/hotness. No conflation."
+        },
+        "specificity": {
+          "score": 0.97,
+          "rationale": "Every method and column is pinned with file:line (comment.rb:339, :232, :340-341; story.rb:693, :550, :694-695) and the persisted columns are enumerated explicitly per kind."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Notes that confidence_order is packed from new_confidence + low byte of id and that Story re-sums flags excluding flags by users who commented, explaining the divergent semantics, though it doesn't spell out 'per-thread confidence vs front-page hotness' as the motivation."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Distinguishes in-memory bumps from the authoritative SQL re-aggregation, which is a calibrated hedge, but it doesn't explicitly flag any unopened hops or unverified column writes."
+        },
+        "relationship": {
+          "score": 0.98,
+          "rationale": "Each branch is correctly attributed to its own definition and cascade \u2014 Comment\u2192calculated_confidence\u2192confidence/confidence_order kept distinct from Story\u2192calculated_hotness\u2192hotness \u2014 with no conflation of the two same-named methods."
+        }
+      },
+      "step_quality": 0.9205,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 564,
+        "cache_creation_input_tokens": 19156,
+        "cache_read_input_tokens": 22522
+      }
+    },
+    {
+      "step": "Map the change and the specs that cover it",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Pins both files to edit (comment.rb:339-363, story.rb:693-718), the call site (vote.rb:181), value helpers (calculated_confidence:232, calculated_hotness:550), and concrete spec ranges across vote_spec, comment_spec, story_spec, and bitpacking_spec \u2014 exactly the regression net needed."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Files and specs are pinned with file:line ranges throughout (e.g., `spec/models/vote_spec.rb:15-81`, `spec/extras/bitpacking_spec.rb:156`, `app/models/comment.rb:339-363`) rather than vague 'add tests'."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Each spec is annotated with what it covers (score/flags transitions, karma, flag-has-no-score-effect, confidence_order packing, flag aggregation), and the bitpacking spec is explicitly called out as 'the trickiest persisted column' \u2014 clear why each is in the map."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No explicit flag of what is least certain (e.g., whether other callers exhaustively cover all sites, or whether confidence_order packing has additional coverage); the answer reads as fully confident throughout."
+        },
+        "relationship": {
+          "score": 0.95,
+          "rationale": "Cleanly keeps each definition tied to its own computed value, columns, and spec \u2014 Comment \u2192 calculated_confidence \u2192 score/flags/confidence/confidence_order with bitpacking_spec; Story \u2192 calculated_hotness \u2192 score/flags/hotness with story_spec \u2014 no conflation."
+        }
+      },
+      "step_quality": 0.88,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 607,
+        "cache_creation_input_tokens": 20407,
+        "cache_read_input_tokens": 22522
+      }
+    }
+  ]
+}

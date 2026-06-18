@@ -2,7 +2,8 @@
 set -euo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
-RESULTS_DIR="$BENCH_DIR/results"
+# Resolves RESULTS_DIR (and SCENARIOS_DIR) for the global or VERTICAL bench.
+source "$BENCH_DIR/lib/bench-paths.sh"
 LIB_DIR="$BENCH_DIR/lib"
 
 FORMAT="terminal"
