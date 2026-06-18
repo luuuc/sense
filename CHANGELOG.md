@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.7.2] - 2026-06-18
+
+### Benchmark
+
+- Add gold_f1 scoring and relationship audit
 ## [1.7.1] - 2026-06-17
 
 ### Bug Fixes
