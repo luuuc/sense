@@ -9,13 +9,44 @@ import (
 	"github.com/luuuc/sense/internal/mcpio"
 )
 
+// isTestFile reports whether the file with the given id is a test file. The
+// domain-structure detectors skip test files so test scaffolding (TestCase
+// subclasses, *_test.rb naming, test/ grouping) does not drown the real domain
+// patterns; test-file naming is reported separately by detectTesting.
+//
+// This intentionally uses the path predicate mcpio.IsTestPath directly, the same
+// signal detectKeyTypes trusts, rather than collectTestFileIDs' "tests"-edge set
+// (which detectTesting uses). The path predicate is the simpler, more complete
+// signal for exclusion: it catches every test file, not only those with a
+// resolved tests edge. The two notions can diverge in principle; for exclusion
+// the more inclusive one is the right default.
+func isTestFile(filePathByID map[int64]string, fileID int64) bool {
+	return mcpio.IsTestPath(filePathByID[fileID])
+}
+
+// domainKindCounts counts symbols per kind, excluding those in test files. It is
+// the denominator for the domain-structure detectors so test scaffolding does
+// not dilute the prevalence of domain conventions.
+func domainKindCounts(symbols []symbolRow, filePathByID map[int64]string) map[string]int {
+	counts := map[string]int{}
+	for _, s := range symbols {
+		if isTestFile(filePathByID, s.fileID) {
+			continue
+		}
+		counts[s.kind]++
+	}
+	return counts
+}
+
 func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 
 	type inheritGroup struct {
-		targetName string
-		sourceKind string
-		count      int
-		examples   []Example
+		targetID        int64
+		targetName      string
+		targetQualified string
+		sourceKind      string
+		count           int
+		examples        []Example
 	}
 
 	type groupKey struct {
@@ -32,6 +63,9 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		if !ok {
 			continue
 		}
+		if isTestFile(filePathByID, src.fileID) {
+			continue
+		}
 		tgt, ok := symbolByID[e.targetID]
 		if !ok {
 			continue
@@ -42,42 +76,62 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 			g.examples = append(g.examples, Example{Name: src.name, Path: filePathByID[src.fileID]})
 		} else {
 			groups[key] = &inheritGroup{
-				targetName: tgt.name,
-				sourceKind: src.kind,
-				count:      1,
-				examples:   []Example{{Name: src.name, Path: filePathByID[src.fileID]}},
+				targetID:        e.targetID,
+				targetName:      tgt.name,
+				targetQualified: tgt.qualified,
+				sourceKind:      src.kind,
+				count:           1,
+				examples:        []Example{{Name: src.name, Path: filePathByID[src.fileID]}},
 			}
 		}
 	}
 
-	kindCounts := map[string]int{}
-	for _, s := range symbols {
-		kindCounts[s.kind]++
+	kindCounts := domainKindCounts(symbols, filePathByID)
+
+	nameByID := map[int64]string{}
+	for _, g := range groups {
+		if g.count >= minInstances {
+			nameByID[g.targetID] = g.targetName
+		}
 	}
+	ambiguous := ambiguousTargetNames(nameByID)
 
 	var out []Convention
 	for _, g := range groups {
 		if g.count < minInstances {
 			continue
 		}
+		// total is always >= g.count here: every group source is a non-test
+		// symbol of g.sourceKind, so domainKindCounts has counted it. safeStrength
+		// keeps the ratio well-defined without an unreachable zero guard.
 		total := kindCounts[g.sourceKind]
-		if total == 0 {
-			continue
-		}
 		sortExamples(g.examples)
+		label := baseLabel(g.targetName, g.targetQualified, ambiguous)
 		out = append(out, Convention{
 			Category:    CategoryInheritance,
-			Description: fmt.Sprintf("%d %s extend %s as a base class (%s)", g.count, pluralize(g.sourceKind), g.targetName, topNames(g.examples)),
+			Description: fmt.Sprintf("%d %s extend %s as a base class (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples)),
 			Instances:   g.count,
 			Total:       total,
-			Strength:    float64(g.count) / float64(total),
+			Strength:    safeStrength(g.count, total),
 			Examples:    g.examples,
 		})
 	}
 	return out
 }
 
+// detectNaming reports symbol-name and file-name suffix conventions. It is split
+// into the two passes so each stays within the complexity budget; both exclude
+// test files so test scaffolding does not dilute the domain naming patterns.
 func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Convention {
+	var out []Convention
+	out = append(out, detectSymbolSuffixNaming(symbols, filePathByID)...)
+	out = append(out, detectFileSuffixNaming(symbols, filePathByID)...)
+	return out
+}
+
+// detectSymbolSuffixNaming finds top-level symbols whose names share a CamelCase
+// or snake_case suffix (e.g. *Service), excluding test files.
+func detectSymbolSuffixNaming(symbols []symbolRow, filePathByID map[int64]string) []Convention {
 	type kindSuffix struct {
 		kind   string
 		suffix string
@@ -88,6 +142,9 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 
 	for _, s := range symbols {
 		if s.parentID != nil {
+			continue
+		}
+		if isTestFile(filePathByID, s.fileID) {
 			continue
 		}
 		kindCounts[s.kind]++
@@ -101,35 +158,7 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 		suffixExamples[ks] = append(suffixExamples[ks], Example{Name: s.name, Path: filePathByID[s.fileID]})
 	}
 
-	type kindFileSuffix struct {
-		kind   string
-		suffix string
-	}
-	fileSuffixCounts := map[kindFileSuffix]int{}
-	fileSuffixExamples := map[kindFileSuffix][]Example{}
-	kindFileCounts := map[string]int{}
-
-	for _, s := range symbols {
-		if s.parentID != nil {
-			continue
-		}
-		fp, ok := filePathByID[s.fileID]
-		if !ok {
-			continue
-		}
-		base := path.Base(fp)
-		kindFileCounts[s.kind]++
-		fileSuffix := extractFileSuffix(base)
-		if fileSuffix == "" {
-			continue
-		}
-		kfs := kindFileSuffix{kind: s.kind, suffix: fileSuffix}
-		fileSuffixCounts[kfs]++
-		fileSuffixExamples[kfs] = append(fileSuffixExamples[kfs], Example{Name: base, Path: fp})
-	}
-
 	var out []Convention
-
 	for ks, count := range suffixCounts {
 		if count < minInstances {
 			continue
@@ -149,7 +178,43 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 			Examples:    ex,
 		})
 	}
+	return out
+}
 
+// detectFileSuffixNaming finds top-level symbols whose file basenames share a
+// suffix (e.g. *_controller.rb), excluding test files.
+func detectFileSuffixNaming(symbols []symbolRow, filePathByID map[int64]string) []Convention {
+	type kindFileSuffix struct {
+		kind   string
+		suffix string
+	}
+	fileSuffixCounts := map[kindFileSuffix]int{}
+	fileSuffixExamples := map[kindFileSuffix][]Example{}
+	kindFileCounts := map[string]int{}
+
+	for _, s := range symbols {
+		if s.parentID != nil {
+			continue
+		}
+		fp, ok := filePathByID[s.fileID]
+		if !ok {
+			continue
+		}
+		if isTestFile(filePathByID, s.fileID) {
+			continue
+		}
+		base := path.Base(fp)
+		kindFileCounts[s.kind]++
+		fileSuffix := extractFileSuffix(base)
+		if fileSuffix == "" {
+			continue
+		}
+		kfs := kindFileSuffix{kind: s.kind, suffix: fileSuffix}
+		fileSuffixCounts[kfs]++
+		fileSuffixExamples[kfs] = append(fileSuffixExamples[kfs], Example{Name: base, Path: fp})
+	}
+
+	var out []Convention
 	for kfs, count := range fileSuffixCounts {
 		if count < minInstances {
 			continue
@@ -169,7 +234,6 @@ func detectNaming(symbols []symbolRow, filePathByID map[int64]string) []Conventi
 			Examples:    ex,
 		})
 	}
-
 	return out
 }
 
@@ -188,6 +252,9 @@ func detectStructure(symbols []symbolRow, filePathByID map[int64]string) []Conve
 		}
 		fp, ok := filePathByID[s.fileID]
 		if !ok {
+			continue
+		}
+		if isTestFile(filePathByID, s.fileID) {
 			continue
 		}
 		dir := path.Dir(fp)
@@ -227,10 +294,12 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		sourceKind string
 	}
 	type compGroup struct {
-		targetName string
-		sourceKind string
-		count      int
-		examples   []Example
+		targetID        int64
+		targetName      string
+		targetQualified string
+		sourceKind      string
+		count           int
+		examples        []Example
 	}
 	groups := map[groupKey]*compGroup{}
 
@@ -240,6 +309,9 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		}
 		src, ok := symbolByID[e.sourceID]
 		if !ok {
+			continue
+		}
+		if isTestFile(filePathByID, src.fileID) {
 			continue
 		}
 		tgt, ok := symbolByID[e.targetID]
@@ -252,18 +324,25 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 			g.examples = append(g.examples, Example{Name: src.name, Path: filePathByID[src.fileID]})
 		} else {
 			groups[key] = &compGroup{
-				targetName: tgt.name,
-				sourceKind: src.kind,
-				count:      1,
-				examples:   []Example{{Name: src.name, Path: filePathByID[src.fileID]}},
+				targetID:        e.targetID,
+				targetName:      tgt.name,
+				targetQualified: tgt.qualified,
+				sourceKind:      src.kind,
+				count:           1,
+				examples:        []Example{{Name: src.name, Path: filePathByID[src.fileID]}},
 			}
 		}
 	}
 
-	kindCounts := map[string]int{}
-	for _, s := range symbols {
-		kindCounts[s.kind]++
+	kindCounts := domainKindCounts(symbols, filePathByID)
+
+	nameByID := map[int64]string{}
+	for _, g := range groups {
+		if g.count >= minInstances {
+			nameByID[g.targetID] = g.targetName
+		}
 	}
+	ambiguous := ambiguousTargetNames(nameByID)
 
 	var out []Convention
 	var serializerExamples []Example
@@ -271,21 +350,21 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		if g.count < minInstances {
 			continue
 		}
+		// total is always >= g.count here (see detectInheritance): the group
+		// source is a counted non-test symbol, so safeStrength needs no zero guard.
 		total := kindCounts[g.sourceKind]
-		if total == 0 {
-			continue
-		}
 		sortExamples(g.examples)
 		if strings.HasSuffix(g.targetName, "Serializer") {
 			serializerExamples = append(serializerExamples, g.examples...)
 			continue
 		}
+		label := baseLabel(g.targetName, g.targetQualified, ambiguous)
 		out = append(out, Convention{
 			Category:    CategoryComposition,
-			Description: fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), g.targetName, topNames(g.examples)),
+			Description: fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples)),
 			Instances:   g.count,
 			Total:       total,
-			Strength:    float64(g.count) / float64(total),
+			Strength:    safeStrength(g.count, total),
 			Examples:    g.examples,
 		})
 	}

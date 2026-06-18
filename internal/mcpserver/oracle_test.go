@@ -158,7 +158,12 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // not computed at runtime: a behavior-preserving split must leave it unchanged.
 // When a response changes on purpose, run the test with -v, copy the logged
 // digest here, and update it in the same commit.
-const oracleGolden = "7700c81cb8b9eaf18bfc7e056000d66a8557b58667a68e1c72460a48e67b7559"
+//
+// Last bumped: conventions now exclude test-file symbols from the domain-structure
+// detectors, so the `conventions` response's structure line moved from counting
+// the fixture's test function to domain-only (internal/auth/ "3 of 6"). No other
+// response changed.
+const oracleGolden = "131642008d18c908ba84202b29570a7822c92b80dbbaa4e2c2231e9519b4a181"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))
