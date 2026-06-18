@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.8.0] - 2026-06-18
+
+### Features
+
+- qualify colliding bases, exclude test scaffolding
 ## [1.7.2] - 2026-06-18
 
 ### Benchmark
