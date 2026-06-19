@@ -95,6 +95,18 @@ for tool in "${TOOLS[@]}"; do
         -c 'approval_policy="never"'
         -c 'shell_environment_policy.inherit=all')
   if [[ "$tool" == sense ]]; then
+    # Set up the clone the way a real user does: full `sense setup` (no --tools)
+    # configures every detected tool. Codex needs AGENTS.md (the routing prose
+    # `codex exec` loads before any work); without it the only steering is the
+    # MCP serverInstructions blob, which GPT-5.x ignores in `codex exec`, so the
+    # arm reaches Sense 0 times even though the MCP server is registered. We
+    # deliberately do NOT scope to --tools codex-cli: the scoped form is what
+    # silently left this arm un-set-up, and each tool reads only its own file
+    # (codex→AGENTS.md, Claude→CLAUDE.md, Cursor→.cursorrules) with identical
+    # guidance text, so a full setup never cross-contaminates. Baseline stays
+    # isolated by its own clone + scrubbed PATH, untouched by this.
+    ( cd "$repo_dir" && sense setup >/dev/null 2>&1 ) \
+      || echo "[codex]   WARN: sense setup failed" >&2
     args+=(-c 'mcp_servers.sense.command="sense"' -c 'mcp_servers.sense.args=["mcp"]')
     run_path="$PATH"
   else
