@@ -234,7 +234,7 @@ gold:
   - {id: d:liquid-embed-extr,  group: dependents, match: [liquid_embed_extractor.rb], relation: "LiquidEmbedExtractor.derive_reference derives a reference from an article URL"}
   # -- notifications / analytics / embeddings
   - {id: d:notifiable-action,  group: dependents, match: [notifiable_action/send.rb], relation: "Notifications::NotifiableAction::Send notifies on an article action"}
-  - {id: d:audit-unpublish,    group: dependents, match: [audit_log/unpublish_alls_query.rb], relation: "AuditLog::UnpublishAllsQuery bulk-unpublishes a user's articles"}
+  - {id: d:audit-unpublish,    group: dependents, match: [audit_log/unpublish_alls_query.rb], relation: "AuditLog::UnpublishAllsQuery queries the audit log for an unpublish-all event and returns the user's affected articles/comments", disambiguator: "a READ query, NOT the bulk-unpublisher — verified vs source @cdb805c: it only reads AuditLog + Article/Comment.where; the actual bulk unpublish is Moderator::UnpublishAllArticles"}
   - {id: d:interest-embed,     group: dependents, match: [update_user_interest_embedding_worker.rb], relation: "builds a user's interest embedding from the articles they engaged with"}
   # the test matrix
   - {id: spec:article,         group: specs,      match: [models/article_spec.rb]}

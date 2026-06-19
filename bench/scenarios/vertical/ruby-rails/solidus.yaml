@@ -193,7 +193,7 @@ gold:
   # the api/backend/admin controllers, which the baseline does not grep (separate
   # gem dirs it never thinks to search — it missed all four promotion-gem deps 3/3).
   # -- core domain (the baseline-hard core deps only)
-  - {id: d:adjustment-src, group: dependents, match: [concerns/spree/adjustment_source.rb], relation: "Spree::AdjustmentSource#remove_adjustments_from_incomplete_orders edits incomplete orders"}
+  - {id: d:adjustment-src, group: dependents, match: [concerns/spree/adjustment_source.rb], relation: "Spree::AdjustmentSource#remove_adjustments_from_incomplete_orders removes a source's adjustments from incomplete orders", disambiguator: "verified @8d781ac742: the concern's one method does adjustments.joins(:order).merge(Spree::Order.incomplete).destroy_all — it DELETES a source's adjustments on incomplete orders. NOT a generic 'adjustments adjustable by order' association"}
   - {id: d:stock-coord,    group: dependents, match: [stock/simple_coordinator.rb], relation: "Spree::Stock::SimpleCoordinator#build_packages builds shipment packages for an order"}
   # -- promotions / adjustments (across two gems — the baseline misses these 3/3)
   - {id: d:legacy-promo,   group: dependents, match: [legacy_promotions/app/models/spree/promotion.rb], relation: "Spree::Promotion#discounted_orders / #eligibility_excluded_orders query orders"}

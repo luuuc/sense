@@ -197,36 +197,36 @@ scoring:
 # cited are scored. Headline is CUMULATIVE efficiency at held accuracy.
 gold:
   # dispatch, the factory that hands back a provider + the shared base
-  - {id: factory,         group: dispatch,   match: [lib/llm.rb]}
-  - {id: provider-base,   group: dispatch,   match: [lib/llm/provider.rb]}
+  - {id: factory,         group: dispatch,   match: [lib/llm.rb], relation: "the LLM factory module — `LLM.openai/anthropic/google/ollama/...` require and instantiate each provider; `registry_for` dispatches a call to the right provider"}
+  - {id: provider-base,   group: dispatch,   match: [lib/llm/provider.rb], relation: "abstract `LLM::Provider`; defines the complete/chat/embed/respond/responses contract every provider subclass implements"}
   # the provider fan-out (subclasses of LLM::Provider)
-  - {id: prov:openai,     group: providers,  match: [providers/openai.rb]}
-  - {id: prov:anthropic,  group: providers,  match: [providers/anthropic.rb]}
-  - {id: prov:google,     group: providers,  match: [providers/google.rb]}
-  - {id: prov:ollama,     group: providers,  match: [providers/ollama.rb]}
-  - {id: prov:bedrock,    group: providers,  match: [providers/bedrock.rb]}
-  - {id: prov:deepseek,   group: providers,  match: [providers/deepseek.rb]}
+  - {id: prov:openai,     group: providers,  match: [providers/openai.rb], relation: "`LLM::OpenAI` provider subclass; wires OpenAI's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:anthropic,  group: providers,  match: [providers/anthropic.rb], relation: "`LLM::Anthropic` provider subclass; wires Anthropic's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:google,     group: providers,  match: [providers/google.rb], relation: "`LLM::Google` provider subclass; wires Google's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:ollama,     group: providers,  match: [providers/ollama.rb], relation: "`LLM::Ollama` provider subclass; wires Ollama's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:bedrock,    group: providers,  match: [providers/bedrock.rb], relation: "`LLM::Bedrock` provider subclass (AWS Bedrock) implementing the Provider contract"}
+  - {id: prov:deepseek,   group: providers,  match: [providers/deepseek.rb], relation: "`LLM::DeepSeek` provider subclass implementing the Provider contract"}
   # request-builder component family
-  - {id: req:openai,      group: request,    match: [providers/openai/request_adapter.rb]}
-  - {id: req:anthropic,   group: request,    match: [providers/anthropic/request_adapter.rb]}
-  - {id: req:google,      group: request,    match: [providers/google/request_adapter.rb]}
-  - {id: req:ollama,      group: request,    match: [providers/ollama/request_adapter.rb]}
+  - {id: req:openai,      group: request,    match: [providers/openai/request_adapter.rb], relation: "`LLM::OpenAI::RequestAdapter#adapt` builds OpenAI's API request body from LLM messages"}
+  - {id: req:anthropic,   group: request,    match: [providers/anthropic/request_adapter.rb], relation: "`LLM::Anthropic::RequestAdapter#adapt` builds Anthropic's API request body from LLM messages"}
+  - {id: req:google,      group: request,    match: [providers/google/request_adapter.rb], relation: "`LLM::Google::RequestAdapter#adapt` builds Google's API request body from LLM messages"}
+  - {id: req:ollama,      group: request,    match: [providers/ollama/request_adapter.rb], relation: "`LLM::Ollama::RequestAdapter#adapt` builds Ollama's API request body from LLM messages"}
   # response-parser component family
-  - {id: resp:openai,     group: response,   match: [providers/openai/response_adapter.rb]}
-  - {id: resp:anthropic,  group: response,   match: [providers/anthropic/response_adapter.rb]}
-  - {id: resp:google,     group: response,   match: [providers/google/response_adapter.rb]}
-  - {id: resp:ollama,     group: response,   match: [providers/ollama/response_adapter.rb]}
+  - {id: resp:openai,     group: response,   match: [providers/openai/response_adapter.rb], relation: "`LLM::OpenAI::ResponseAdapter#adapt` parses OpenAI's API response into an LLM result"}
+  - {id: resp:anthropic,  group: response,   match: [providers/anthropic/response_adapter.rb], relation: "`LLM::Anthropic::ResponseAdapter#adapt` parses Anthropic's API response into an LLM result"}
+  - {id: resp:google,     group: response,   match: [providers/google/response_adapter.rb], relation: "`LLM::Google::ResponseAdapter#adapt` parses Google's API response into an LLM result"}
+  - {id: resp:ollama,     group: response,   match: [providers/ollama/response_adapter.rb], relation: "`LLM::Ollama::ResponseAdapter#adapt` parses Ollama's API response into an LLM result"}
   # streaming component family
-  - {id: stream:openai,   group: streaming,  match: [providers/openai/stream_parser.rb]}
-  - {id: stream:anthropic,group: streaming,  match: [providers/anthropic/stream_parser.rb]}
-  - {id: stream:google,   group: streaming,  match: [providers/google/stream_parser.rb]}
-  - {id: stream:ollama,   group: streaming,  match: [providers/ollama/stream_parser.rb]}
+  - {id: stream:openai,   group: streaming,  match: [providers/openai/stream_parser.rb], relation: "`LLM::OpenAI::StreamParser#parse!` merges OpenAI's streaming chunks into a message"}
+  - {id: stream:anthropic,group: streaming,  match: [providers/anthropic/stream_parser.rb], relation: "`LLM::Anthropic::StreamParser#parse!` merges Anthropic's streaming chunks into a message"}
+  - {id: stream:google,   group: streaming,  match: [providers/google/stream_parser.rb], relation: "`LLM::Google::StreamParser#parse!` merges Google's streaming chunks into a message"}
+  - {id: stream:ollama,   group: streaming,  match: [providers/ollama/stream_parser.rb], relation: "`LLM::Ollama::StreamParser#parse!` merges Ollama's streaming chunks into a message"}
   # error-handling component family
-  - {id: err:openai,      group: errors,     match: [providers/openai/error_handler.rb]}
-  - {id: err:anthropic,   group: errors,     match: [providers/anthropic/error_handler.rb]}
-  - {id: err:google,      group: errors,     match: [providers/google/error_handler.rb]}
-  - {id: err:ollama,      group: errors,     match: [providers/ollama/error_handler.rb]}
+  - {id: err:openai,      group: errors,     match: [providers/openai/error_handler.rb], relation: "`LLM::OpenAI::ErrorHandler#raise_error!` maps OpenAI's HTTP error to an LLM::Error subclass"}
+  - {id: err:anthropic,   group: errors,     match: [providers/anthropic/error_handler.rb], relation: "`LLM::Anthropic::ErrorHandler#raise_error!` maps Anthropic's HTTP error to an LLM::Error subclass"}
+  - {id: err:google,      group: errors,     match: [providers/google/error_handler.rb], relation: "`LLM::Google::ErrorHandler#raise_error!` maps Google's HTTP error to an LLM::Error subclass"}
+  - {id: err:ollama,      group: errors,     match: [providers/ollama/error_handler.rb], relation: "`LLM::Ollama::ErrorHandler#raise_error!` maps Ollama's HTTP error to an LLM::Error subclass"}
   # test matrix, the provider contract spec + per-provider behavior specs
-  - {id: spec:provider,   group: specs,      match: [spec/provider_spec.rb]}
-  - {id: spec:openai-chat,group: specs,      match: [openai/chat_spec.rb]}
-  - {id: spec:openai-stream,group: specs,    match: [openai/stream_parser_spec.rb]}
+  - {id: spec:provider,   group: specs,      match: [spec/provider_spec.rb], relation: "shared provider-contract spec all providers must satisfy"}
+  - {id: spec:openai-chat,group: specs,      match: [openai/chat_spec.rb], relation: "OpenAI chat/completion spec"}
+  - {id: spec:openai-stream,group: specs,    match: [openai/stream_parser_spec.rb], relation: "OpenAI stream-parser spec"}
