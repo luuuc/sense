@@ -130,3 +130,35 @@ class FormatMarkdownSmokeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RankByRecallHeadline(unittest.TestCase):
+    """Judging Contract rule 1: the aggregate ranks by objective cited-recall +
+    relationship_audit, NEVER by the omission-blind fairness/llm_quality. This
+    guards against the regression where the blind composite (which rated the
+    chatwoot +0.44 win as a tie) drives the headline ranking."""
+
+    def test_ranks_by_recall_not_blind_fairness(self):
+        # baseline: high blind fairness, low recall. sense: low fairness, high recall.
+        # The blind composite would rank baseline first; recall must rank sense first.
+        results = [
+            {"tool": "baseline", "fairness_score": 0.90, "llm_quality": 0.90,
+             "gold_recall": {"cited_recall": 0.40}, "relationship_audit": 0.40, "metrics": {}},
+            {"tool": "sense", "fairness_score": 0.50, "llm_quality": 0.50,
+             "gold_recall": {"cited_recall": 0.90}, "relationship_audit": 0.95, "metrics": {}},
+        ]
+        agg = reporter.build_aggregate(results)
+        self.assertEqual(agg[0]["tool"], "sense",
+                         "ranking must follow cited_recall, not the blind fairness composite")
+        self.assertAlmostEqual(agg[0]["avg_cited_recall"], 0.90)
+        self.assertAlmostEqual(agg[0]["avg_relationship_audit"], 0.95)
+
+    def test_headline_columns_present_in_markdown(self):
+        results = [
+            {"tool": "sense", "fairness_score": 0.5, "llm_quality": 0.5,
+             "gold_recall": {"cited_recall": 0.9}, "relationship_audit": 0.9, "metrics": {}},
+        ]
+        agg = reporter.build_aggregate(results)
+        md = reporter.format_markdown([], agg, {"total": 1})
+        self.assertIn("Cited Recall", md)
+        self.assertIn("Rel Audit", md)

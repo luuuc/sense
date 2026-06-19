@@ -26,10 +26,12 @@ SCENARIO_DESCRIPTIONS = {
 
 
 METRIC_DIRECTIONS = {
-    "fairness": ("higher", "Combined fairness score — 0.10·keyword_coverage + 0.55·llm_quality + 0.15·citation_grounding + 0.20·efficiency. Shown as `—` if judge.sh has not run yet."),
+    "cited_recall": ("higher", "HEADLINE (Judging Contract rule 1): objective cited-recall vs the authored must-find set. Ranks the report."),
+    "relationship_audit": ("higher", "HEADLINE: reference-aware audit — fraction of the must-find set the answer covered, graded vs the authored relations. The omission-proof judge signal."),
+    "fairness": ("higher", "DIAGNOSTIC ONLY (not the headline): 0.10·keyword_coverage + 0.55·llm_quality + 0.15·citation_grounding + 0.20·efficiency. Omission-blind — see Judging Contract."),
     "adoption": ("higher", "Adoption score — tool fluency + discoverability, for code-intel comparisons only"),
     "keyword_coverage": ("higher", "Hit rate across keyword smoke-test checks (sum of hits / sum of totals; bonus weighted 0.5). Now a 10% smoke test, not the headline."),
-    "llm_quality": ("higher", "Judge-rated answer quality, per-scenario mean of step_quality. 0.55 weight in fairness — the headline."),
+    "llm_quality": ("higher", "DIAGNOSTIC ONLY: reference-blind judge prose-quality, mean of step_quality. Blind to omission (rates a 60%-recall answer ~0.84); NEVER the headline — use cited_recall/relationship_audit."),
     "efficiency": ("higher", "Half token efficiency + half time efficiency, each calibrated per repo"),
     "tokens": ("lower", "Billed tokens (uncached) — lower is better (cheaper)"),
     "wall_time": ("lower", "Wall-clock time — lower is better, folded into efficiency"),
@@ -62,6 +64,11 @@ def _attach_fairness(result, result_dir):
     )
     if judged is not None:
         result["_judge_steps"] = judged.get("steps", [])
+        # Reference-aware audit (graded vs the authored must-find set) is the
+        # HEADLINE-grade judge signal — extract its covered-recall so the
+        # aggregate can rank on it instead of the omission-blind llm_quality.
+        ra = judged.get("relationship_audit") or {}
+        result["relationship_audit"] = ra.get("covered_recall") if isinstance(ra, dict) else None
 
 
 def load_results(results_dir):
@@ -199,11 +206,20 @@ def build_aggregate(results):
         def avg(lst):
             return sum(lst) / len(lst) if lst else 0.0
 
+        # Headline axes (Judging Contract rule 1): objective cited-recall and the
+        # reference-aware relationship audit. These rank the report; the blind
+        # composite (avg_fairness/avg_llm_quality) is a trailing diagnostic only.
+        recalls = [r2.get("gold_recall", {}).get("cited_recall") for r2 in runs
+                   if r2.get("gold_recall", {}).get("cited_recall") is not None]
+        rel_audits = [r2.get("relationship_audit") for r2 in runs if r2.get("relationship_audit") is not None]
+
         failures = sum(1 for r2 in runs if r2.get("failed"))
         agg.append({
             "tool": tool_name,
             "scenarios": n,
             "failures": failures,
+            "avg_cited_recall": round(avg(recalls), 4) if recalls else None,
+            "avg_relationship_audit": round(avg(rel_audits), 4) if rel_audits else None,
             "avg_fairness": round(avg(fairness_scores), 4) if fairness_scores else None,
             "avg_adoption": round(avg(adoption), 4) if adoption else None,
             "avg_keyword_coverage": round(avg(keyword), 4) if keyword else None,
@@ -217,7 +233,10 @@ def build_aggregate(results):
             "cites_hallucinated": hallucinated_cites,
             "avg_grounding": round(grounded_cites / total_cites, 4) if total_cites > 0 else None,
         })
-    agg.sort(key=lambda r2: (r2["avg_fairness"] or 0), reverse=True)
+    # Judging Contract rule 1: rank by the objective headline (cited-recall, then
+    # the reference-aware audit), NEVER by the omission-blind fairness composite.
+    # Guarded by test_reporter_ranks_by_recall.
+    agg.sort(key=lambda r2: (r2["avg_cited_recall"] or 0, r2["avg_relationship_audit"] or 0), reverse=True)
     return agg
 
 
@@ -499,8 +518,8 @@ def format_markdown(tables, aggregate, header):
     lines.append("")
     lines.append("Failed runs count as fairness 0 in the average. The `Failures` column shows how many scenarios the tool could not complete. Costs marked with `*` are estimated from per-message token usage in the partial transcript, because the session never emitted a final cost event.")
     lines.append("")
-    lines.append("| Rank | Tool | Scenarios | Failures | Avg Fairness | Avg Adoption | Avg Keyword Cov. | Avg LLM Quality | Avg Efficiency | Avg Tokens | Avg Time | Total Cost | Avg Grounding |")
-    lines.append("|-----:|------|----------:|--------:|------------:|-----------:|---------------:|---------------:|--------------:|-----------:|--------:|-----------:|--------------:|")
+    lines.append("| Rank | Tool | Scenarios | Failures | **Cited Recall** | **Rel Audit** | Avg Fairness | Avg Adoption | Avg Keyword Cov. | Avg LLM Quality | Avg Efficiency | Avg Tokens | Avg Time | Total Cost | Avg Grounding |")
+    lines.append("|-----:|------|----------:|--------:|---------------:|-----------:|------------:|-----------:|---------------:|---------------:|--------------:|-----------:|--------:|-----------:|--------------:|")
     for i, row in enumerate(aggregate):
         badge = _rank_badge(i)
         af = f"{row['avg_fairness']:.4f}" if row["avg_fairness"] is not None else "—"
@@ -518,8 +537,10 @@ def format_markdown(tables, aggregate, header):
             ag = "—"
         fails = row.get("failures", 0)
         fail_cell = f"**{fails}**" if fails else "0"
+        acr = f"{row['avg_cited_recall']:.4f}" if row.get("avg_cited_recall") is not None else "—"
+        ara = f"{row['avg_relationship_audit']:.4f}" if row.get("avg_relationship_audit") is not None else "—"
         lines.append(
-            f"| {i+1} | {row['tool']}{badge} | {row['scenarios']} | {fail_cell} | {af} | {aa} | {akw} | {alq} | {ae} |"
+            f"| {i+1} | {row['tool']}{badge} | {row['scenarios']} | {fail_cell} | {acr} | {ara} | {af} | {aa} | {akw} | {alq} | {ae} |"
             f" {row['avg_tokens']:,} | {at} | {co} | {ag} |"
         )
     lines.append("")

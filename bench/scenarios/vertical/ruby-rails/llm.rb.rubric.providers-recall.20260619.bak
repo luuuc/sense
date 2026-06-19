@@ -1,0 +1,226 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The judge scores the answer text first;
+# side-context (wall_time, tokens, completed/failed) is provided for the criteria
+# it bears on, map_quality (did this save downstream exploration?) and
+# uncertainty (was confidence calibrated against effort?).
+#
+# Step names MUST match scenarios/llm.rb.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to add a new external LLM provider
+  to the llm.rb gem with only small, targeted follow-up lookups, not a fresh
+  exploration of the codebase. Score for that audience, not a human reader, not a
+  docs page. A perfect answer leaves the agent ready to create the provider class,
+  its factory entry, and its request/response/stream/error components; a weak
+  answer forces the agent to re-explore the codebase before it can act.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is the llm.rb gem,
+          and where providers live, the base (lib/llm/provider.rb), the concrete
+          providers (lib/llm/providers/<name>.rb) each with a subdir of components
+          (lib/llm/providers/<name>/), and the factory methods that hand back a
+          provider (LLM.openai etc. in lib/llm.rb)? Could the agent pick an entry
+          point and start working with only small, targeted lookups?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (lib/llm/provider.rb,
+          lib/llm/providers/openai.rb, lib/llm.rb) rather than vague ("the provider
+          layer")? Are abstractions tied to actual files and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each provider has both a class and a subdir of
+          small components (separation of request building, response parsing,
+          streaming, errors), not just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where the answer is unsure how the provider, components, and factory
+          connect, does it flag that so the agent doesn't act blindly?
+
+  - name: Trace a chat call from the entry point to request and response handling
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer trace the path with file:line: from the factory (LLM.x in
+          lib/llm.rb) returning a provider, through the provider's
+          complete/chat/respond (lib/llm/provider.rb and the concrete provider), into
+          that provider's request_adapter (builds the request) and response_adapter
+          (parses the result)? Could the agent follow the same path for a new
+          provider?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the pieces named exactly (LLM.openai, Provider#complete,
+          request_adapter, response_adapter) with file:line, rather than "the
+          request code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY request building and response parsing are
+          separate per-provider components (provider APIs differ in both
+          directions), not just LIST the call chain?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where the path varies (chat vs complete vs respond,
+          streaming vs buffered) so the agent verifies?
+
+  - name: Map the provider family and its base contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the shared base (LLM::Provider in
+          lib/llm/provider.rb: the name / complete / chat / embed / respond /
+          responses / images / audio contract raising NotImplementedError) AND the
+          existing providers that implement it (OpenAI, Anthropic, Google, Ollama,
+          Bedrock, DeepSeek, xAI, ...), with file:line and how each differs,
+          including that a thin provider (DeepSeek) reuses a richer one's behavior?
+          This inheritance fan-out is grep-invisible; a strong answer names that
+          breadth and the reuse so the agent knows what to implement vs inherit.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the providers named concretely by file (providers/openai.rb,
+          providers/anthropic.rb) and the contract methods (complete, chat, embed)
+          cited, rather than "the providers"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY some providers are thin (OpenAI-compatible
+          APIs reuse OpenAI's components), not just LIST the classes?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any contract method or reuse it could not confirm
+          (a capability a provider lacks, what DeepSeek inherits) so the agent
+          checks?
+
+  - name: Map the per-provider component families
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map the parallel component families with file:line: the
+          request builders (providers/<name>/request_adapter.rb) and the response
+          parsers (providers/<name>/response_adapter.rb) across providers (OpenAI,
+          Anthropic, Google, Ollama, ...), and tie each provider's components
+          together? A strong answer makes the per-provider component correspondence
+          explicit so the agent creates every piece a new provider needs.
+      specificity:
+        weight: 0.25
+        question: |
+          Are the components named concretely by file
+          (providers/openai/request_adapter.rb,
+          providers/anthropic/response_adapter.rb) rather than "the adapters"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY these components are per-provider (each API
+          has its own request and response shape), not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag any component it could not confirm (a provider
+          missing one, or reusing another's) so the agent checks before copying a
+          pattern?
+
+  - name: Map the streaming and error-handling paths
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map, per provider with file:line, the streaming parser
+          (providers/<name>/stream_parser.rb) that handles incremental chunks AND
+          the error handler (providers/<name>/error_handler.rb) that maps HTTP
+          failures to the library's shared typed errors? Could the agent give the
+          new provider correct streaming and error handling without re-reading every
+          file?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the components named exactly (stream_parser, error_handler per
+          provider) with file:line, rather than "the streaming and error code"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY streaming and error mapping are per-provider
+          (different chunk formats and error bodies) over a shared error type set,
+          not just NAME the pieces?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag where a provider's streaming/error shape differs (a
+          provider with a stream_decoder or no stream parser) so the agent verifies?
+
+  - name: Find every site that must change to add a new provider
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer enumerate the full fan-out: the new provider class
+          (providers/<name>.rb subclassing LLM::Provider, blast 44), the factory
+          method in lib/llm.rb, and the per-provider components
+          (request_adapter, response_adapter, stream_parser, error_handler, models
+          under providers/<name>/), plus the spec matrix? A new provider touches a
+          class, a factory entry, and several parallel component families; a strong
+          answer names that breadth with file:line. Could the agent open the PR from
+          this list?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the sites named concretely (a new providers/<name>.rb, the LLM.<name>
+          factory method, the component files under providers/<name>/) rather than
+          "add the provider and tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each site is affected (class vs factory vs
+          each component family vs tests), not just LIST them?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer acknowledge what static reading can miss (which
+          components can be reused vs must be new, the factory registration, fixtures)
+          so the agent knows to verify?
+
+  - name: Produce the edit map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer produce a complete, actionable edit map: the new files to
+          create (providers/<name>.rb plus the component files under
+          providers/<name>/) and the existing files to change (the LLM.<name>
+          factory in lib/llm.rb, anything the base contract requires) plus the
+          specs, with file:line throughout? Could a teammate open the PR from this
+          map alone?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the files and insertion points concrete (the provider class, the
+          factory method, request_adapter/response_adapter/stream_parser/
+          error_handler files, a spec) rather than "create the provider and add
+          tests"?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY each file is in the map (class vs factory vs
+          which component family), not just LIST files?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the answer flag the parts it is least sure about (which components to
+          reuse, the provider's streaming/error shape, fixtures) so the agent
+          confirms before committing?

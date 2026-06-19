@@ -249,7 +249,30 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 		EstimatedFileReadsAvoided: uniqueFiles,
 		EstimatedTokensSaved:      uniqueFiles * AvgTokensPerFile,
 	}
+	resp.Completeness = graphCompleteness(&resp, symbolsReturned)
 	return resp
+}
+
+// graphCompleteness builds the consolidated stop/verify verdict for a
+// graph response, reusing the existing
+// low_confidence_hidden / omitted_edges / truncated signals so the agent
+// can branch on ONE field. "complete" means nothing was filtered or
+// dropped; otherwise "partial" with the hidden count and how to widen.
+// Dynamic-dispatch residual stays in index_caveat, never folded in here.
+func graphCompleteness(resp *GraphResponse, symbolsReturned int) *Completeness {
+	hidden := resp.LowConfidenceHidden + resp.OmittedEdges
+	if resp.Truncated || hidden > 0 {
+		advice := "Partial: re-run with min_confidence=0.3 or a specific direction to see the rest."
+		if resp.OmittedEdges > 0 {
+			advice = "Partial: edges dropped for token budget — narrow with a direction or a specific symbol."
+		}
+		return &Completeness{Verdict: "partial", Resolved: symbolsReturned, Hidden: hidden, Advice: advice}
+	}
+	return &Completeness{
+		Verdict:  "complete",
+		Resolved: symbolsReturned,
+		Advice:   "Complete resolvable edge set — act on it, do not re-grep. Dynamic-dispatch residual, if any, is in index_caveat.",
+	}
 }
 
 // BuildFullGraphResponse builds the complete response for a multi-hop
@@ -276,6 +299,9 @@ func BuildFullGraphResponse(ctx context.Context, gr *model.GraphResult, files Fi
 		resp.SenseMetrics.EstimatedFileReadsAvoided = uniqueFiles
 		resp.SenseMetrics.EstimatedTokensSaved = uniqueFiles * AvgTokensPerFile
 	}
+	// Layer truncation is known only here — recompute the verdict so a
+	// multi-hop trim downgrades "complete" honestly.
+	resp.Completeness = graphCompleteness(&resp, resp.SenseMetrics.SymbolsReturned)
 	return resp
 }
 
