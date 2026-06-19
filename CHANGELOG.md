@@ -1,16 +1,16 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.9.0] - 2026-06-19
+
+### Features
+
+- add completeness verdict and per-result relation to sense_blast/sense_graph
 ## [1.8.0] - 2026-06-18
 
 ### Features
 
 - qualify colliding bases, exclude test scaffolding
-## [1.7.2] - 2026-06-18
-
-### Benchmark
-
-- Add gold_f1 scoring and relationship audit
 ## [1.7.1] - 2026-06-17
 
 ### Bug Fixes
@@ -338,10 +338,6 @@ All notable changes to Sense.
 ### Refactoring
 
 - consolidate harness — promote bench2/ to bench/
-
-### Bench2
-
-- add scoring doc, README updates, bench script
 ## [0.84.1] - 2026-05-12
 
 ### Bug Fixes
