@@ -12,6 +12,33 @@ One binary, one local index, four tools for your AI. No SaaS account, no API key
 
 > Sense sits on your machine, has no learning curve, and isn't for you. It's for your AI.
 
+## What Sense believes
+
+A codebase is structure, not just text. The graph of what calls what, what breaks what, and how the team writes is real, knowable, and worth holding onto. Sense keeps it on your machine and hands it to your AI.
+
+The rest follows from that. Local, because your code is yours. Read-only, because understanding shouldn't require permission to change things. Four tools, because your AI needs a few that work, not a hundred to pick from.
+
+These aren't features. They're the reason Sense looks the way it does.
+
+## What Your AI Gets
+
+Four tools for your AI. A full CLI for you. No sprawl.
+
+| Tool | Capability |
+|---|---|
+| `sense_graph` | Symbol relationships, callers, callees, inheritance, tests, dead code |
+| `sense_search` | Hybrid bi-encoder + cross-encoder semantic code search with keyword and text fallback |
+| `sense_blast` | Blast radius, affected code, affected tests, risk score |
+| `sense_conventions` | Detected project conventions from source |
+
+Your AI stops reading 30 files to answer "who calls this?" It stops hallucinating dependencies. It stops writing code that's correct but doesn't match how your team writes code.
+
+### Convention detection
+
+Of the four tools, convention detection is the one nobody else does well. AI tools don't just struggle with structure. They struggle with style. They write correct code that doesn't follow how YOUR codebase writes code.
+
+Sense detects patterns from your actual source code: key types and their declarations, framework idioms (Rails associations, Go interfaces, Django models), architectural layers, and naming conventions. Your AI follows these patterns because it sees them, not because it was told about them. Convention detection isn't a feature. It's the thing that makes AI-written code feel like it belongs.
+
 ## What changes
 
 Measured across 7 real-world codebases ([Discourse](https://github.com/discourse/discourse), [Flask](https://github.com/pallets/flask), [Next.js](https://github.com/vercel/next.js/), [Axum](https://github.com/tokio-rs/axum), [Gin](https://github.com/gin-gonic/gin), [Javalin](https://github.com/javalin/javalin), and a private e-commerce repo).
@@ -91,25 +118,6 @@ sense setup
 ## Setup & forget
 
 After `sense setup`, there's nothing left to do. The MCP server your editor already launches watches your working tree in the background and re-indexes changes as they land, so the index stays current whether the edit came from your AI, your own editor, a `git pull`, or a branch switch. No second process to start, no `--watch` to remember. The summary regenerates on every scan. Your AI gets faster answers and burns fewer tokens, and you just stop noticing the friction that used to be there.
-
-## What Your AI Gets
-
-Four tools for your AI. A full CLI for you. No sprawl.
-
-| Tool | Capability |
-|---|---|
-| `sense_graph` | Symbol relationships, callers, callees, inheritance, tests, dead code |
-| `sense_search` | Hybrid bi-encoder + cross-encoder semantic code search with keyword and text fallback |
-| `sense_blast` | Blast radius, affected code, affected tests, risk score |
-| `sense_conventions` | Detected project conventions from source |
-
-Your AI stops reading 30 files to answer "who calls this?" It stops hallucinating dependencies. It stops writing code that's correct but doesn't match how your team writes code.
-
-### Convention detection
-
-Of the four tools, convention detection is the one nobody else does well. AI tools don't just struggle with structure. They struggle with style. They write correct code that doesn't follow how YOUR codebase writes code.
-
-Sense detects patterns from your actual source code: key types and their declarations, framework idioms (Rails associations, Go interfaces, Django models), architectural layers, and naming conventions. Your AI follows these patterns because it sees them, not because it was told about them. Convention detection isn't a feature. It's the thing that makes AI-written code feel like it belongs.
 
 ## How It Works
 
