@@ -49,6 +49,10 @@ OPENCODE_MAX_SECS="${OPENCODE_MAX_SECS:-1200}"     # hard ceiling floor (was a f
 OPENCODE_FIRST_GRACE="${OPENCODE_FIRST_GRACE:-240}" # allow this long for the FIRST streamed byte (MCP cold start); 0 bytes past it = a hang
 OPENCODE_STALL_IDLE="${OPENCODE_STALL_IDLE:-150}"   # after output starts, kill only if the stream goes silent this long (stuck mid-run)
 OPENCODE_RETRIES="${OPENCODE_RETRIES:-1}"           # extra attempts for a TRUE no-output hang (total attempts = retries+1)
+OPENCODE_MIN_ANSWER_CHARS="${OPENCODE_MIN_ANSWER_CHARS:-200}" # a run whose final assistant text is shorter than this is a
+                                                    # truncated/empty-stream artifact, not a real answer: retry it, and flag
+                                                    # it as invalid if it stays empty (the audit answers run ~4000+ chars, so
+                                                    # 200 is far below any real answer yet catches the 0/94-char degenerate runs)
 while [[ $# -gt 0 ]]; do case "$1" in
   --tool) TOOLS_CSV="$2"; shift 2;;
   --repo) REPO="$2"; shift 2;;
@@ -146,7 +150,7 @@ for tool in "${TOOLS[@]}"; do
   fi
 
   raw="$out/opencode-raw.jsonl"; LOGFILE="$out/opencode.log"; : > "$LOGFILE"
-  attempts=$((OPENCODE_RETRIES + 1)); start=$(date +%s); rc=0; otok=0
+  attempts=$((OPENCODE_RETRIES + 1)); start=$(date +%s); rc=0; otok=0; achars=0
   for attempt in $(seq 1 "$attempts"); do
     git -C "$repo_dir" checkout -- . 2>/dev/null || true   # reset tracked edits between attempts (keeps untracked sense surface)
     ( cd "$repo_dir" && PATH="$run_path" run_guarded "$raw" \
@@ -167,14 +171,50 @@ try:
     u=d.get('usage') or {}; t+=int(u.get('output_tokens') or 0)
 except FileNotFoundError: pass
 print(t)" 2>/dev/null || echo 0)
-    # Accept any run that produced a real answer (rc 0, or output even if capped:
-    # a slow sense run that streamed 14k tokens is a valid, if truncated, datum,
-    # NOT a failure). Retry ONLY a true no-output hang (rc!=0 AND 0 tokens).
-    if [ "$rc" -eq 0 ] || [ "${otok:-0}" -gt 0 ]; then
-      [ "$attempt" -gt 1 ] && echo "[opencode]   recovered on attempt $attempt (rc=$rc, out_tok=$otok)" >&2
+    # Inspect the FINAL assistant answer, built exactly like the scorer's
+    # read_answer_text (concatenated assistant text blocks). Emits two values:
+    #   achars = answer length. A run can stream tokens (otok>0) yet leave an
+    #            empty/near-empty final answer when the stream truncates -- a
+    #            failed datum, not a real 0.0.
+    #   perr   = 1 if the "answer" is actually an ollama-cloud provider error
+    #            (the 94-char `{"error":{"type":"llm_call_failed",...Operation
+    #            not allowed...}}` blob = a rate-limit/session cap, NOT a model
+    #            answer). Classified separately so cap hits are legible vs plain
+    #            truncations.
+    read achars perr < <(python3 -c "
+import json
+parts=[]
+try:
+  for l in open('$out/transcript.json'):
+    l=l.strip()
+    if not l: continue
+    try: d=json.loads(l)
+    except: continue
+    e=d.get('event', d)
+    if e.get('type') != 'assistant': continue
+    for b in e.get('message', {}).get('content', []):
+      if b.get('type') == 'text' and b.get('text'): parts.append(b['text'])
+except FileNotFoundError: pass
+ans='\n'.join(parts)
+perr = 1 if ('llm_call_failed' in ans or 'Operation not allowed' in ans) else 0
+print(len(ans), perr)" 2>/dev/null || echo "0 0")
+    achars="${achars:-0}"; perr="${perr:-0}"
+    # Accept a run only if it produced a REAL answer: tokens streamed AND a
+    # final answer of usable length AND not a provider error. Retry everything
+    # else: a true no-output hang (otok=0), an empty/truncated answer (achars <
+    # min), or a provider cap error (perr=1) -- all were previously scored 0.0.
+    if [ "${otok:-0}" -gt 0 ] && [ "${achars:-0}" -ge "$OPENCODE_MIN_ANSWER_CHARS" ] && [ "$perr" -eq 0 ]; then
+      [ "$attempt" -gt 1 ] && echo "[opencode]   recovered on attempt $attempt (rc=$rc, out_tok=$otok, answer_chars=$achars)" >&2
       break
     fi
-    echo "[opencode]   attempt $attempt/$attempts: no output (rc=$rc, 0 tok) -- $([ "$attempt" -lt "$attempts" ] && echo retrying || echo 'giving up')" >&2
+    if [ "$perr" -eq 1 ]; then
+      reason="provider error (llm_call_failed / 'Operation not allowed' -- likely an ollama-cloud cap)"
+    elif [ "${otok:-0}" -gt 0 ] && [ "${achars:-0}" -lt "$OPENCODE_MIN_ANSWER_CHARS" ]; then
+      reason="empty/truncated answer (out_tok=$otok, answer_chars=$achars < $OPENCODE_MIN_ANSWER_CHARS)"
+    else
+      reason="no output (rc=$rc, 0 tok)"
+    fi
+    echo "[opencode]   attempt $attempt/$attempts: $reason -- $([ "$attempt" -lt "$attempts" ] && echo retrying || echo 'giving up')" >&2
   done
   wall=$(( $(date +%s) - start ))
 
@@ -193,10 +233,10 @@ print(t)" 2>/dev/null || echo 0)
 
   commit=$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || echo "")
   ver=""; [[ "$tool" == sense ]] && ver="$SVER"
-  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" "$attempts" "$otok" > "$out/run_meta.json" <<'PY'
+  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" "$attempts" "$otok" "$achars" "$OPENCODE_MIN_ANSWER_CHARS" "$perr" > "$out/run_meta.json" <<'PY'
 import json, sys
-tool, repo, scen, wall, model, commit, ver, rc, attempts, otok = sys.argv[1:11]
-rc = int(rc); otok = int(otok)
+tool, repo, scen, wall, model, commit, ver, rc, attempts, otok, achars, min_chars, perr = sys.argv[1:14]
+rc = int(rc); otok = int(otok); achars = int(achars); min_chars = int(min_chars); perr = int(perr)
 # Classify the watchdog exit so the contaminated-vs-real distinction is legible
 # downstream (124 hard cap / 125 stalled / 126 cold-start hang).
 KIND = {0: None, 124: "hard_cap_timeout", 125: "stalled_midrun", 126: "no_first_output_hang"}
@@ -207,20 +247,38 @@ meta = {
     "harness": "opencode", "provider": "ollama-cloud",
     "auth_mode": "opencode_cli", "mode": "single_prompt",
     "opencode_exit_code": rc, "attempts": int(attempts), "output_tokens": otok,
+    "answer_chars": achars,
     "cost_usd_note": "ollama-cloud bills off-platform; per-token cost left null",
 }
 kind = KIND.get(rc, "opencode_session_failed")
 if kind:
     meta["watchdog_kind"] = kind
-# Only a TRUE no-output hang is a failed run; a capped/stalled run that still
-# streamed tokens is a valid (truncated) datum, not a 0.
-if rc != 0 and otok == 0:
+# Failure classes that are NOT real 0.0 data and must be flagged so they are not
+# trusted as genuine ties: (1) a provider cap error (the answer IS an
+# `llm_call_failed`/"Operation not allowed" blob = ollama-cloud rate-limit/session
+# cap; re-run the repo after reset), (2) a true no-output hang (rc!=0 AND 0
+# tokens), and (3) an empty/truncated final answer (tokens streamed but the
+# answer text is below min_chars -- the 0-char degenerate runs). A capped/stalled
+# run that DID leave a long real answer stays a valid (truncated) datum.
+# Check provider-error FIRST: its blob is ~94 chars so it also trips the
+# min_chars gate, but the cap diagnosis is the more actionable one.
+if perr == 1:
+    meta["error"] = "provider_cap_error"
+    meta["watchdog_kind"] = "provider_cap_error"
+    meta["note"] = "final answer was an ollama-cloud provider error (llm_call_failed / 'Operation not allowed'); likely a rate-limit/session cap -- re-run this repo after the cap resets, do NOT score as a 0.0"
+elif achars < min_chars:
+    meta["error"] = "empty_final_answer"
+    meta["note"] = f"final answer only {achars} chars (< {min_chars}); truncated/empty stream, retried and still short -- not a real 0.0"
+elif rc != 0 and otok == 0:
     meta["error"] = "opencode_session_failed"
 elif rc != 0:
-    meta["note"] = f"watchdog stopped ({kind}) but produced {otok} output tokens; kept as a truncated-but-valid run"
+    meta["note"] = f"watchdog stopped ({kind}) but produced {otok} output tokens and a {achars}-char answer; kept as a truncated-but-valid run"
 print(json.dumps(meta, indent=2))
 PY
-  echo "[opencode]   $tool rc=$rc wall=${wall}s attempts=$attempts out_tok=$otok" >&2
+  if [ "${perr:-0}" -eq 1 ]; then flag=" *** INVALID: provider cap error (Operation not allowed) -- re-run after reset ***";
+  elif [ "${achars:-0}" -lt "$OPENCODE_MIN_ANSWER_CHARS" ]; then flag=" *** INVALID: empty/truncated answer ***";
+  else flag=""; fi
+  echo "[opencode]   $tool rc=$rc wall=${wall}s attempts=$attempts out_tok=$otok answer_chars=$achars$flag" >&2
 done
 
 SJ=(--tool "$TOOLS_CSV" --repo "$REPO")
