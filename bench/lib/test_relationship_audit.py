@@ -109,5 +109,109 @@ class GradeTest(unittest.TestCase):
         self.assertEqual(set(r["missed_covered"]), {"concern", "dep"})
 
 
+class ContradictionTest(unittest.TestCase):
+    """Fix 3 — anti-fabrication: a covered item with a confident-FALSE relation is
+    `contradicted`, strictly worse than omission, and drops grounded_precision."""
+
+    def test_contradiction_penalises_precision_not_recall(self):
+        # All three named; one (dep) is characterised with a WRONG relation.
+        cj, ex = _stub([
+            {"id": "model", "covered": True, "related": True, "contradicted": False},
+            {"id": "concern", "covered": True, "related": True, "contradicted": False},
+            {"id": "dep", "covered": True, "related": False, "contradicted": True},
+        ])
+        r = ra.grade("a", GOLD, call_judge=cj, extract_json=ex)
+        self.assertEqual(r["covered"], 3)          # all named → recall unchanged
+        self.assertEqual(r["covered_recall"], 1.0)
+        self.assertEqual(r["contradicted"], 1)
+        self.assertEqual(r["contradictions"], ["dep"])
+        self.assertEqual(r["related"], 2)          # the contradicted item is NOT related
+        self.assertAlmostEqual(r["grounded_precision"], 2 / 3, places=4)
+
+    def test_contradiction_beats_related_when_both_set(self):
+        # A grader that marks both related and contradicted: contradiction wins,
+        # so a false claim can never be laundered into a related credit.
+        cj, ex = _stub([
+            {"id": "model", "covered": True, "related": True, "contradicted": True},
+            {"id": "concern", "covered": True, "related": True, "contradicted": False},
+            {"id": "dep", "covered": False, "related": False, "contradicted": True},
+        ])
+        r = ra.grade("a", GOLD, call_judge=cj, extract_json=ex)
+        self.assertEqual(r["contradicted"], 1)     # only "model" (dep not covered)
+        self.assertEqual(r["contradictions"], ["model"])
+        self.assertEqual(r["related"], 1)          # only "concern"
+
+    def test_no_contradictions_gives_full_precision(self):
+        cj, ex = _stub([
+            {"id": "model", "covered": True, "related": True},
+            {"id": "concern", "covered": True, "related": False},   # vague, not false
+            {"id": "dep", "covered": False, "related": False},
+        ])
+        r = ra.grade("a", GOLD, call_judge=cj, extract_json=ex)
+        self.assertEqual(r["contradicted"], 0)
+        self.assertEqual(r["grounded_precision"], 1.0)   # silence/vagueness ≠ fabrication
+
+    def test_precision_none_when_nothing_covered(self):
+        cj, ex = _stub([
+            {"id": "model", "covered": False},
+            {"id": "concern", "covered": False},
+            {"id": "dep", "covered": False},
+        ])
+        r = ra.grade("a", GOLD, call_judge=cj, extract_json=ex)
+        self.assertIsNone(r["grounded_precision"])
+
+
+class ReconcileAuditsTest(unittest.TestCase):
+    """2-judge-agreement gate: a contradiction counts only when judges agree
+    (unanimous by default); recall uses a gentler majority rule."""
+
+    def _audit(self, items):
+        # Minimal audit dict (only the fields reconcile_audits reads).
+        return {"items": items}
+
+    def test_contradiction_requires_unanimity(self):
+        # liquid-embed flagged by BOTH → kept; trend-detector by ONE → dropped.
+        a1 = self._audit([
+            {"id": "liquid", "covered": True, "related": False, "contradicted": True},
+            {"id": "trend", "covered": True, "related": False, "contradicted": True},
+            {"id": "ok", "covered": True, "related": True, "contradicted": False},
+        ])
+        a2 = self._audit([
+            {"id": "liquid", "covered": True, "related": False, "contradicted": True},
+            {"id": "trend", "covered": True, "related": True, "contradicted": False},
+            {"id": "ok", "covered": True, "related": True, "contradicted": False},
+        ])
+        r = ra.reconcile_audits([a1, a2], labels=["opus", "sonnet"])
+        self.assertEqual(r["contradictions"], ["liquid"])         # only the agreed one
+        self.assertEqual(r["contradicted"], 1)
+        self.assertEqual([d["id"] for d in r["dropped_contradictions"]], ["trend"])
+        self.assertEqual(r["dropped_contradictions"][0]["by"], ["opus"])  # who flagged it
+        self.assertAlmostEqual(r["grounded_precision"], 2 / 3, places=4)  # 1 of 3 covered is contra
+
+    def test_recall_uses_majority_not_unanimity(self):
+        # For n=2, majority == both; an item only one judge covered is not covered.
+        a1 = self._audit([{"id": "x", "covered": True, "related": True, "contradicted": False}])
+        a2 = self._audit([{"id": "x", "covered": False, "related": False, "contradicted": False}])
+        r = ra.reconcile_audits([a1, a2])
+        self.assertEqual(r["covered"], 0)
+        self.assertEqual(r["total"], 1)
+
+    def test_three_judge_majority_keeps_two_of_three_recall(self):
+        mk = lambda cov: {"items": [{"id": "x", "covered": cov, "related": cov, "contradicted": False}]}
+        r = ra.reconcile_audits([mk(True), mk(True), mk(False)])
+        self.assertEqual(r["covered"], 1)   # 2/3 majority covers it
+        # but a contradiction needs all three
+        x = lambda c: {"items": [{"id": "y", "covered": True, "related": False, "contradicted": c}]}
+        r2 = ra.reconcile_audits([x(True), x(True), x(False)])
+        self.assertEqual(r2["contradicted"], 0)
+        self.assertEqual(r2["dropped_contradictions"][0]["votes"], 2)
+
+    def test_none_audits_dropped(self):
+        a = self._audit([{"id": "x", "covered": True, "related": True, "contradicted": False}])
+        self.assertIsNone(ra.reconcile_audits([None, None]))
+        r = ra.reconcile_audits([a, None])
+        self.assertEqual(r["covered"], 1)   # single surviving audit, unanimous over n=1
+
+
 if __name__ == "__main__":
     unittest.main()
