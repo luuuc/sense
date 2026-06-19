@@ -63,6 +63,11 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.DirectCallers = resp.DirectCallers[:n-trimStep(n-1)]
 		resp.Truncated = true
 	}
+	// Budget trimming may have dropped callers — recompute the verdict so
+	// "complete" never survives a trim that actually shed dependents.
+	if resp.Completeness != nil {
+		resp.Completeness = blastCompleteness(resp, resp.TotalAffected)
+	}
 }
 
 // trimStep returns how many trailing items to drop this iteration —
@@ -104,6 +109,7 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 		entry := BlastCaller{
 			Symbol:      qualifiedOrName(c),
 			File:        file,
+			Relation:    "calls " + r.Symbol.Name,
 			LineStart:   c.LineStart,
 			LineEnd:     c.LineEnd,
 			Ref:         FormatRef(file, c.LineStart),
@@ -158,7 +164,7 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, Relation: "inherits " + r.Symbol.Name, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedSubclasses = append(resp.AffectedSubclasses, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -167,7 +173,7 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, Relation: "composes " + r.Symbol.Name, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedViaComposition = append(resp.AffectedViaComposition, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -176,7 +182,7 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 		if path, ok := files(s.FileID); ok {
 			file = path
 		}
-		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
+		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, Relation: "includes " + r.Symbol.Name, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, entry)
 		tier2All = append(tier2All, entry)
 	}
@@ -218,7 +224,44 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 		EstimatedFileReadsAvoided: uniqueFiles,
 		EstimatedTokensSaved:      uniqueFiles * AvgTokensPerFile,
 	}
+	resp.Completeness = blastCompleteness(&resp, r.TotalAffected)
 	return resp
+}
+
+// blastCompleteness builds the consolidated stop/verify verdict.
+// "complete" means the enumerated set IS the full
+// statically-resolvable dependent set — the agent should act on it and
+// NOT re-grep. It is deliberately conservative: any budget trim, a hit on
+// the direct-caller cap, or affected symbols left un-enumerated downgrades
+// to "partial". Dynamic-dispatch residual is left to index_caveat and
+// never folded into "complete", so the verdict can't over-claim into a
+// duck-typed gap (the Lobsters failure mode).
+func blastCompleteness(resp *BlastResponse, totalAffected int) *Completeness {
+	// total_affected is the engine's count of the direct+indirect caller union.
+	// The inherit/include/compose groups are a re-classification of those SAME
+	// caller IDs by edge kind, not additional symbols, so they must NOT be summed
+	// in — doing so would understate `hidden` and let "complete" mask callers the
+	// tier cap or a trim dropped. Count only the caller union, matching the
+	// denomination of total_affected.
+	enumerated := len(resp.DirectCallers) + len(resp.IndirectCallers)
+	hidden := totalAffected - enumerated
+	if hidden < 0 {
+		hidden = 0
+	}
+	capped := len(resp.DirectCallers) >= tier1Cap
+	if hidden > 0 || capped {
+		return &Completeness{
+			Verdict:  "partial",
+			Resolved: enumerated,
+			Hidden:   hidden,
+			Advice:   "Partial: total_affected is the true count. Narrow with a direction or query a specific name for the rest.",
+		}
+	}
+	return &Completeness{
+		Verdict:  "complete",
+		Resolved: enumerated,
+		Advice:   "Complete resolvable dependent set — act on it, do not re-grep. Dynamic-dispatch residual, if any, is in index_caveat.",
+	}
 }
 
 // BuildDiffBlastResponse assembles one BlastResponse from many

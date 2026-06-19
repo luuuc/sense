@@ -115,6 +115,8 @@ type GraphResponse struct {
 	CoverageNote string `json:"coverage_note,omitempty"`
 	VerifyHint   string `json:"verify_hint,omitempty"`
 	IndexCaveat  string `json:"index_caveat,omitempty"`
+	// Completeness is the consolidated stop/verify verdict.
+	Completeness *Completeness `json:"completeness,omitempty"`
 	// ViewEdges is the per-subject view-reachability signal: "present" when a
 	// view template reaches this symbol, "none" when view-dispatch is a live
 	// question for it but no view edge exists, "" (omitted) otherwise. See
@@ -314,6 +316,8 @@ type BlastResponse struct {
 
 	VerifyHint  string `json:"verify_hint,omitempty"`
 	IndexCaveat string `json:"index_caveat,omitempty"`
+	// Completeness is the consolidated stop/verify verdict.
+	Completeness *Completeness `json:"completeness,omitempty"`
 	// ViewEdges is the per-subject view-reachability signal: "present" when a
 	// view template reaches this symbol, "none" when view-dispatch is a live
 	// question for it but no view edge exists, "" (omitted) otherwise. See
@@ -333,13 +337,40 @@ type BlastTierSummary struct {
 
 // BlastCaller is the shape of a direct_callers entry.
 type BlastCaller struct {
-	Symbol      string    `json:"symbol"`
-	File        string    `json:"file"`
+	Symbol string `json:"symbol"`
+	File   string `json:"file"`
+	// Relation is a one-line "how this reaches the subject" phrase
+	// (calls / inherits / includes / composes <subject>), so the agent
+	// knows the edge kind per entry without re-opening the file. The kind
+	// is already known from which bucket the entry came from; surfacing it
+	// inline is what lets the agent act without a follow-up read.
+	Relation    string    `json:"relation,omitempty"`
 	LineStart   int       `json:"line_start,omitempty"`
 	LineEnd     int       `json:"line_end,omitempty"`
 	Ref         string    `json:"ref,omitempty"`
 	ViaTemporal bool      `json:"via_temporal,omitempty"`
 	CallSite    *CallSite `json:"call_site,omitempty"`
+}
+
+// Completeness is a single, machine-branchable verdict on whether the
+// returned set is the full *statically resolvable* dependent set, so the
+// agent can decide to STOP searching vs verify specific names. "complete"
+// deliberately covers ONLY resolvable static edges — dynamic-dispatch
+// residual is reported separately in index_caveat and is NEVER folded into
+// "complete", so the verdict can't over-claim into a duck-typed gap.
+//
+// It is the DERIVED top-level branch point, computed from the granular
+// signals that still ship alongside it (low_confidence_hidden, omitted_edges,
+// truncated for graph; total_affected and the tier cap for blast). Those
+// remain because they carry detail the verdict collapses (which floor, how
+// many, why); Completeness is the one field a consumer should branch on.
+// Resolved is "items enumerated in this response": direct+indirect callers
+// for blast, edges returned for graph.
+type Completeness struct {
+	Verdict  string `json:"verdict"`          // "complete" | "partial"
+	Resolved int    `json:"resolved"`         // edges enumerated in this response
+	Hidden   int    `json:"hidden,omitempty"` // affected symbols not enumerated (budget/cap)
+	Advice   string `json:"advice"`
 }
 
 // BlastIndirect is the shape of an indirect_callers entry. Via names

@@ -163,7 +163,9 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // detectors, so the `conventions` response's structure line moved from counting
 // the fixture's test function to domain-only (internal/auth/ "3 of 6"). No other
 // response changed.
-const oracleGolden = "131642008d18c908ba84202b29570a7822c92b80dbbaa4e2c2231e9519b4a181"
+// Added the `completeness` verdict to blast/graph responses and per-caller
+// `relation` to blast callers (terminal payloads) — digest moved.
+const oracleGolden = "250acefd023052c452684b7c0f1dc344e9c9c42c3aad39358511d8b81659851b"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))
