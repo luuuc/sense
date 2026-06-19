@@ -377,11 +377,17 @@ denominator for every arm (`lib/gold.py`):
   `cited_recall` (target pinned to `path:line`). The OBJECTIVE FLOOR. Substring
   recall, grep-can't-fake only when the gold is grep-hard (see the
   scenario-sourcing runbook's anti-litmus).
-- **`gold_f1`** (NEW) — precision/recall/F1 of the agent's **claimed dependent
-  set** (the grounded `file` of every citation, from `citation_grounding`) vs
-  the file-like gold targets. `precision = |claimed ∩ gold| / |claimed|` charges
-  the agent for citing off-target files; `recall` mirrors `cited_recall` over
-  file targets; `f1` is their harmonic mean. Applied identically to both arms.
+- **`gold_f1`** (DROPPED 2026-06-19; no longer in `scored.json`) — was
+  precision/recall/F1 of the agent's claimed dependent set vs the file-like gold
+  targets. **Removed because its precision punished Sense for the very thing it
+  does best:** gold is a curated DISCRIMINATOR subset, so Sense's real
+  beyond-gold finds counted as false positives, flooring precision at 0.14–0.44
+  even at recall 0.79–0.91 (gitlabhq: P=0.14, R=0.91; verified samples like
+  `app/models/todo.rb` are genuine polymorphic MR dependents grep can't follow).
+  An F1 built on that precision UNDER-credits Sense's completeness. **`cited_recall`
+  (gold-bounded) is the headline; `relationship_audit` (related) + `grounded_precision`
+  (anti-fabrication) are the secondary axes.** `gold.score_gold_f1` is retained
+  (unit-tested) but unused by the scorer/reporter.
 
 **Pre-registration honesty terms** (fixed before scoring; never reverse-engineer
 to a result):

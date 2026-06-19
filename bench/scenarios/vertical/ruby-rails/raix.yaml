@@ -196,23 +196,23 @@ scoring:
 # cited are scored. Headline is CUMULATIVE efficiency at held accuracy.
 gold:
   # the chat loop + the function dispatch DSL (the heart of tool-calling)
-  - {id: chat-loop,        group: core,       match: [raix/chat_completion.rb]}
-  - {id: function-dispatch,group: core,       match: [raix/function_dispatch.rb]}
+  - {id: chat-loop,        group: core,       match: [raix/chat_completion.rb], relation: "`Raix::ChatCompletion` concern — builds a message transcript and runs the chat-completion loop against the OpenRouter/RubyLLM client"}
+  - {id: function-dispatch,group: core,       match: [raix/function_dispatch.rb], relation: "`Raix::FunctionDispatch` concern — declarative `function` definitions for ChatCompletion classes; dispatches the model's tool calls to those functions"}
   # declaration -> schema + structured output
-  - {id: tool-adapter,     group: tools,      match: [raix/function_tool_adapter.rb]}
-  - {id: response-format,  group: tools,      match: [raix/response_format.rb]}
+  - {id: tool-adapter,     group: tools,      match: [raix/function_tool_adapter.rb], relation: "`Raix::FunctionToolAdapter` converts Raix function declarations into `RubyLLM::Tool` instances"}
+  - {id: response-format,  group: tools,      match: [raix/response_format.rb], relation: "`Raix::ResponseFormat` converts input into a JSON schema used to structure and validate AI responses"}
   # conversation/message adapters applied before sending
-  - {id: message-adapter,  group: transcript, match: [message_adapters/base.rb]}
-  - {id: transcript-adapter,group: transcript,match: [raix/transcript_adapter.rb]}
-  - {id: multimodal,       group: transcript, match: [raix/multimodal_content_adapter.rb]}
+  - {id: message-adapter,  group: transcript, match: [message_adapters/base.rb], relation: "`Raix::MessageAdapters::Base#transform` transforms a transcript message into the format expected by the OpenAI API"}
+  - {id: transcript-adapter,group: transcript,match: [raix/transcript_adapter.rb], relation: "`Raix::TranscriptAdapter` converts between Raix's transcript-array format and RubyLLM `Message` objects"}
+  - {id: multimodal,       group: transcript, match: [raix/multimodal_content_adapter.rb], relation: "`Raix::MultimodalContentAdapter` translates OpenAI-style multimodal content arrays (text + image_url) into a `RubyLLM::Content`"}
   # external MCP tools joining the same dispatch
-  - {id: mcp-entry,        group: mcp,        match: [raix/mcp.rb]}
-  - {id: mcp-tool,         group: mcp,        match: [raix/mcp/tool.rb]}
-  - {id: mcp-sse,          group: mcp,        match: [raix/mcp/sse_client.rb]}
-  - {id: mcp-stdio,        group: mcp,        match: [raix/mcp/stdio_client.rb]}
+  - {id: mcp-entry,        group: mcp,        match: [raix/mcp.rb], relation: "`Raix::MCP` concern — the `mcp <url>` DSL that fetches a remote MCP server's tool list and exposes each remote tool as an inline function"}
+  - {id: mcp-tool,         group: mcp,        match: [raix/mcp/tool.rb], relation: "`Raix::MCP::Tool` represents an MCP tool with its metadata and schema"}
+  - {id: mcp-sse,          group: mcp,        match: [raix/mcp/sse_client.rb], relation: "`Raix::MCP::SseClient` communicates with an MCP server over Server-Sent Events (JSON-RPC 2.0)"}
+  - {id: mcp-stdio,        group: mcp,        match: [raix/mcp/stdio_client.rb], relation: "`Raix::MCP::StdioClient` communicates with an MCP server over stdio (JSON-RPC)"}
   # prompt/declaration context the loop runs within
-  - {id: prompt-decl,      group: context,    match: [raix/prompt_declarations.rb]}
-  - {id: completion-ctx,   group: context,    match: [raix/completion_context.rb]}
+  - {id: prompt-decl,      group: context,    match: [raix/prompt_declarations.rb], relation: "`Raix::PromptDeclarations` concern — chains prompts and handles user responses serially (with FunctionDispatch support)"}
+  - {id: completion-ctx,   group: context,    match: [raix/completion_context.rb], relation: "`Raix::CompletionContext` — context passed to before_completion hooks; exposes the chat_completion instance, mutable messages (PII redaction/filtering), and params"}
   # test matrix
-  - {id: spec:chat,        group: specs,      match: [chat_completion_spec.rb]}
-  - {id: spec:dispatch,    group: specs,      match: [function_dispatch_spec.rb]}
+  - {id: spec:chat,        group: specs,      match: [chat_completion_spec.rb], relation: "ChatCompletion spec — the chat-completion loop"}
+  - {id: spec:dispatch,    group: specs,      match: [function_dispatch_spec.rb], relation: "FunctionDispatch spec — tool-call dispatch"}

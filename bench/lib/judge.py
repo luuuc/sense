@@ -668,7 +668,9 @@ def main(argv):
         if relationship_audit is not None:
             print(
                 f"  relationship audit: covered={relationship_audit['covered_recall']} "
-                f"related={relationship_audit['related_recall']}",
+                f"related={relationship_audit['related_recall']} "
+                f"grounded_precision={relationship_audit.get('grounded_precision')} "
+                f"contradictions={relationship_audit.get('contradicted', 0)}",
                 file=sys.stderr,
             )
     except (SystemExit, KeyError, ValueError) as e:

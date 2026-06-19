@@ -96,7 +96,7 @@ class HeadlineTableTest(unittest.TestCase):
 class FormatMarkdownSmokeTest(unittest.TestCase):
     """End-to-end render of one repo so format_markdown's new branches run."""
 
-    def test_primary_and_secondary_tables_present(self):
+    def test_primary_table_and_blind_composite_retired(self):
         tables = [{
             "repo": "lobsters",
             "rows": [
@@ -122,10 +122,14 @@ class FormatMarkdownSmokeTest(unittest.TestCase):
             "cites_hallucinated": 0, "avg_grounding": 1.0,
         }]
         md = reporter.format_markdown(tables, aggregate, {"total": 1})
-        self.assertIn("Cited recall (fixed)", md)            # primary table
-        self.assertIn("Secondary — locked fairness", md)      # secondary table
-        self.assertIn("0.774", md)                            # fairness preserved
-        self.assertIn("-34%", md)                             # billed delta
+        self.assertIn("Cited recall (fixed)", md)            # primary table present
+        self.assertIn("-34%", md)                            # billed delta present
+        # The blind fairness composite is RETIRED — no secondary table, and the
+        # llm_quality/fairness composite must not be rendered as a scoreboard.
+        self.assertNotIn("Secondary — locked fairness", md)
+        self.assertNotIn("LLM Quality", md)
+        self.assertIn("RETIRED", md)
+        self.assertIn("B-score", md)                          # the fair replacement
 
 
 if __name__ == "__main__":
@@ -162,3 +166,99 @@ class RankByRecallHeadline(unittest.TestCase):
         md = reporter.format_markdown([], agg, {"total": 1})
         self.assertIn("Cited Recall", md)
         self.assertIn("Rel Audit", md)
+
+
+class FabricationAggregateTest(unittest.TestCase):
+    """Fix 3 — the aggregate surfaces grounded_precision + the contradiction count
+    so a confident-false baseline is visibly penalised, not rewarded."""
+
+    def test_aggregates_precision_and_contradictions(self):
+        results = [
+            {"tool": "baseline", "gold_recall": {"cited_recall": 0.8},
+             "relationship_audit": 0.8, "grounded_precision": 0.50,
+             "contradictions": 3, "metrics": {}},
+            {"tool": "sense", "gold_recall": {"cited_recall": 0.9},
+             "relationship_audit": 0.9, "grounded_precision": 1.0,
+             "contradictions": 0, "metrics": {}},
+        ]
+        agg = reporter.build_aggregate(results)
+        by = {r["tool"]: r for r in agg}
+        self.assertAlmostEqual(by["baseline"]["avg_grounded_precision"], 0.50)
+        self.assertEqual(by["baseline"]["contradictions"], 3)
+        self.assertAlmostEqual(by["sense"]["avg_grounded_precision"], 1.0)
+        self.assertEqual(by["sense"]["contradictions"], 0)
+        md = reporter.format_markdown([], agg, {"total": 2})
+        self.assertIn("Grounded Prec.", md)
+        self.assertIn("Contradict.", md)
+
+    def test_missing_precision_renders_none(self):
+        # Pre-Fix-3 data (no grounded_precision/contradictions) stays unchanged.
+        results = [
+            {"tool": "sense", "gold_recall": {"cited_recall": 0.9},
+             "relationship_audit": 0.9, "metrics": {}},
+        ]
+        agg = reporter.build_aggregate(results)
+        self.assertIsNone(agg[0]["avg_grounded_precision"])
+        self.assertEqual(agg[0]["contradictions"], 0)
+
+
+class BScoreTest(unittest.TestCase):
+    """The cited-dominant fair composite that replaced the blind fairness score."""
+
+    def test_b_score_formula(self):
+        results = [
+            {"tool": "sense", "gold_recall": {"cited_recall": 0.80},
+             "relationship_audit": 0.90, "related_recall": 0.70,
+             "grounded_precision": 1.0, "metrics": {}},
+        ]
+        agg = reporter.build_aggregate(results)
+        # 0.55*0.80 + 0.25*0.70 + 0.20*1.0 = 0.44 + 0.175 + 0.20 = 0.815
+        self.assertAlmostEqual(agg[0]["b_score"], 0.815, places=4)
+
+    def test_b_score_none_without_relation_axes(self):
+        # Gems (no relation gold) → related/grounded_precision absent → B None.
+        results = [
+            {"tool": "sense", "gold_recall": {"cited_recall": 0.80},
+             "relationship_audit": None, "metrics": {}},
+        ]
+        agg = reporter.build_aggregate(results)
+        self.assertIsNone(agg[0]["b_score"])
+
+
+class ProcessEfficiencyHeldRecallTest(unittest.TestCase):
+    """Fix 4 / Judging Contract rule 5: process-cost savings are surfaced ONLY at
+    held recall — never as a standalone rank over a less-complete answer."""
+
+    def _agg(self, base_recall, sense_recall):
+        results = [
+            {"tool": "baseline", "gold_recall": {"cited_recall": base_recall},
+             "relationship_audit": base_recall,
+             "metrics": {"read_count": 16, "tool_calls": 20, "token_total_billed": 100000}},
+            {"tool": "sense", "gold_recall": {"cited_recall": sense_recall},
+             "relationship_audit": sense_recall,
+             "metrics": {"read_count": 4, "tool_calls": 6, "token_total_billed": 65000}},
+        ]
+        return reporter.build_aggregate(results)
+
+    def test_savings_shown_at_parity(self):
+        md = "\n".join(reporter._process_efficiency_md(self._agg(0.90, 0.90)))
+        self.assertIn("Process efficiency (at held recall)", md)
+        self.assertIn("parity", md)
+        self.assertIn("Reads", md)
+        self.assertIn("-75%", md)   # 16 → 4 reads
+
+    def test_savings_shown_as_bonus_when_recall_higher(self):
+        md = "\n".join(reporter._process_efficiency_md(self._agg(0.70, 0.95)))
+        self.assertIn("HIGHER", md)
+        self.assertIn("Reads", md)
+
+    def test_not_claimed_when_recall_below_parity(self):
+        md = "\n".join(reporter._process_efficiency_md(self._agg(0.90, 0.60)))
+        self.assertIn("NOT claimed", md)
+        # The savings table must be withheld when recall is below parity.
+        self.assertNotIn("| Reads |", md)
+
+    def test_single_arm_skips_block(self):
+        results = [{"tool": "sense", "gold_recall": {"cited_recall": 0.9},
+                    "relationship_audit": 0.9, "metrics": {}}]
+        self.assertEqual(reporter._process_efficiency_md(reporter.build_aggregate(results)), [])

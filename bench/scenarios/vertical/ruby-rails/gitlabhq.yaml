@@ -184,7 +184,7 @@ gold:
   - {id: d:notes-resolve,  group: dependents, match: [app/services/notes/resolve_service.rb], relation: "Notes::ResolveService resolves discussion notes on an MR"}
   - {id: d:milestone-prom, group: dependents, match: [app/services/milestones/promote_service.rb], relation: "Milestones::PromoteService re-points an MR's milestone when promoted"}
   - {id: d:issuable-destroy,group: dependents, match: [app/services/issuable/destroy_service.rb], relation: "Issuable::DestroyService#destroy_ci_records tears down an MR's CI records"}
-  - {id: d:ghost-user,     group: dependents, match: [app/services/users/migrate_records_to_ghost_user_service.rb], relation: "reassigns an MR's authorship when a user is ghost-migrated"}
+  - {id: d:ghost-user,     group: dependents, match: [app/services/users/migrate_records_to_ghost_user_service.rb], relation: "reassigns an MR's authorship to the Ghost User when a user is ghost-migrated", disambiguator: "REASSIGNS author_id — verified @1f9c256f0d: migrate_merge_requests:86 calls batched_migrate(MergeRequest, :author_id) → sets author_id to the ghost user. NOT a nullify; the dependent: :nullify path (user.rb) is a separate association, not the MR authorship migration"}
   - {id: d:timelog,        group: dependents, match: [app/services/timelogs/create_service.rb], relation: "Timelogs::CreateService logs time against an MR"}
   - {id: d:auto-merge,     group: dependents, match: [app/workers/auto_merge_process_worker.rb], relation: "AutoMergeProcessWorker processes auto-merge for MRs"}
   - {id: d:event,          group: dependents, match: [app/models/event.rb], relation: "Event targets an MR (event feed / activity)"}

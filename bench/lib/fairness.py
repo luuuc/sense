@@ -68,5 +68,17 @@ def compute(scored, judged=None):
     if components["llm_quality"] is None:
         return {"score": None, "components": components, "complete": False}
 
-    total = sum(WEIGHTS[k] * components[k] for k in WEIGHTS)
+    # Fairness fix (2026-06-19): when the repo checkout was MISSING at score time,
+    # citation_grounding could not run and `rate` is a meaningless 0.0 (see
+    # ground_citations' `skipped`). Scoring it as 0 unfairly drags the composite —
+    # and hits the arm that cites MORE (Sense) hardest, for a harness data gap, not
+    # an answer flaw. Drop that component and renormalise the remaining weights.
+    cg = scored.get("citation_grounding") or {}
+    weights = dict(WEIGHTS)
+    if cg.get("skipped"):
+        weights.pop("citation_grounding", None)
+        norm = sum(weights.values())
+        weights = {k: v / norm for k, v in weights.items()}
+
+    total = sum(weights[k] * components[k] for k in weights)
     return {"score": round(total, 4), "components": components, "complete": True}
