@@ -21,7 +21,7 @@
 #
 # Prereqs: clones at $SENSE_BENCH_ROOT/{baseline,sense}/<repo>; sense arm
 # already `sense scan`-ed; `codex` logged in (`codex login`); `sense` on PATH.
-# Judge stays claude-opus-4-7 (set in judge.py); it runs on the Claude
+# Judge stays claude-sonnet-4-6 (set in judge.py); it runs on the Claude
 # subscription, untouched by this script.
 
 set -uo pipefail

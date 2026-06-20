@@ -31,7 +31,7 @@
 #
 # Prereqs: clones at $SENSE_BENCH_ROOT/{baseline,sense}/<repo>; sense arm already
 # `sense scan`-ed; opencode authed for ollama-cloud (`opencode providers list`);
-# `sense` on PATH. Judge stays claude-opus-4-7 on the Claude subscription.
+# `sense` on PATH. Judge stays claude-sonnet-4-6 on the Claude subscription.
 
 set -uo pipefail
 

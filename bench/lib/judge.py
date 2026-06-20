@@ -9,8 +9,8 @@ rubric. Calls Claude Opus 4.7 once per step with the rubric's four
 criteria. Writes judged.json next to scored.json (or to --out).
 
 Reproducibility tuple: {prompt version, model id, scenario rubric}.
-temperature is omitted from requests — it's deprecated on
-claude-opus-4-7 — so the model runs in its default sampling mode and
+temperature is omitted from requests (deprecated on recent Claude
+judges) — so the model runs in its default sampling mode and
 the variance baseline (results/judge-variance.md) characterises the
 residual non-determinism. The prompt is loaded from judge_prompt.v1.md;
 bump the filename when changing it.
@@ -37,7 +37,7 @@ JUDGE_PROMPT_VERSION = "v1"
 JUDGE_PROMPT_V2_PATH = os.path.join(LIB_DIR, "judge_prompt.v2.md")
 JUDGE_PROMPT_VERSION_EXTENDED = "v2-rel"
 RELATIONSHIP_KEY = "relationship"
-JUDGE_MODEL = "claude-opus-4-7"
+JUDGE_MODEL = os.environ.get("BENCH_JUDGE_MODEL", "claude-sonnet-4-6")
 ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
@@ -295,7 +295,7 @@ def _call_judge_via_cli(system_text: str, user_text: str, max_tokens: int = 1024
         input="",
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=int(os.environ.get("BENCH_JUDGE_CLI_TIMEOUT", "420")),
     )
     if proc.returncode != 0:
         # Surface the CLI's stderr verbatim — usually one line. If the user
@@ -335,7 +335,7 @@ def call_judge(system_text, user_text, *, api_key, max_tokens=1024, retries=3):
     payload = {
         "model": JUDGE_MODEL,
         "max_tokens": max_tokens,
-        # No temperature: deprecated on claude-opus-4-7. The model runs
+        # No temperature: deprecated on recent Claude judges. The model runs
         # in its default deterministic-ish sampling mode, and the variance
         # baseline (results/judge-variance.md) measures whatever residual
         # non-determinism remains.

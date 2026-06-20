@@ -6,7 +6,7 @@
 #
 # Idempotent: skips any (repo, model) already benched, so re-running after a
 # rate-limit failure only fills the gaps. Resilient: a failed run is logged and
-# the sweep continues. Judge stays claude-opus-4-7 (set in judge.py).
+# the sweep continues. Judge stays claude-sonnet-4-6 (set in judge.py).
 #
 #   bash bench/sweep-rails.sh
 #   MODELS="claude-opus-4-8" REPOS="ruby_llm" bash bench/sweep-rails.sh   # subset

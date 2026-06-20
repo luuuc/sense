@@ -6,7 +6,7 @@
 # context accumulates the way it does in real daily use. Concatenates every
 # turn's stream-json into one transcript.json and sums wall time, then
 # score -> judge (--via-cli) -> report. Subscription only (no API key);
-# judge stays claude-opus-4-7 (set in judge.py).
+# judge stays claude-sonnet-4-6 (set in judge.py).
 #
 #   bash bench/session-run.sh --tool baseline,sense --repo discourse [--model M]
 #

@@ -9,7 +9,7 @@
 #
 # Uses --no-build: trusts the currently installed sense binary + the existing
 # .sense index (re-index the repo with the target sense version FIRST).
-# Judge stays claude-opus-4-7.
+# Judge stays claude-sonnet-4-6.
 
 set -uo pipefail
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -34,7 +34,7 @@ REPO_SHA="$(git -C "$REPO_CLONE" rev-parse --short HEAD 2>/dev/null || echo '?')
 echo "# $REPO — variance ($RUNS runs per model)" > "$OUT"
 echo "" >> "$OUT"
 echo "**run date (UTC):** $RUN_DATE  ·  **models:** $MODELS  ·  **repo:** $REPO @ $REPO_SHA" >> "$OUT"
-echo "sense: $(sense --version 2>/dev/null | head -1)  ·  judge: claude-opus-4-7" >> "$OUT"
+echo "sense: $(sense --version 2>/dev/null | head -1)  ·  judge: ${BENCH_JUDGE_MODEL:-claude-sonnet-4-6}" >> "$OUT"
 
 # Ensure the repo's Sense index matches the CURRENT scan engine before benching any
 # model — the index is shared across all models, so this runs once per repo. Rebuilds
