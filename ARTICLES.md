@@ -14,12 +14,6 @@ In chronological order.
 - 2026-05-08 — [What codebase intelligence actually does (and where it doesn't)](https://medium.com/@lucdiallo/what-codebase-intelligence-actually-does-and-where-it-doesnt-0efafeae2d49) (Medium)
 - 2026-05-15 — How do you benchmark an MCP server you built? ([Medium](https://medium.com/@lucdiallo/how-do-you-benchmark-an-mcp-server-you-built-b8eb70bf49f3), [dev.to](https://dev.to/luuuc/how-do-you-benchmark-an-mcp-server-you-built-2e8j))
 
-## Benchmarking AI on the Ruby AI stack (in progress)
+## Benchmarking AI on Ruby and Rails (in progress)
 
-How well does an AI agent navigate real Ruby and Rails code, with and without a structural map? This series runs the same scenarios on each repo twice, plain Claude Code as the baseline and Claude Code plus Sense, on an open and reproducible harness, then reports where each one wins and where it loses. Links are added as each piece publishes.
-
-- Can Claude actually navigate RubyLLM? I benchmarked it.
-- Tracing a tool call through Langchain.rb, with and without a code map.
-- Benchmarking AI on llm.rb, the Ruby runtime that speaks MCP.
-- Where does the handoff happen? Benchmarking AI on a Ruby agent framework.
-- Is Ruby really the most AI-friendly language? I measured it on real codebases.
+How well does an AI agent navigate real Ruby and Rails code, with and without a structural map? This series runs the same maintainer task on each repo twice, plain Claude Code as the baseline and Claude Code plus Sense, on an open and reproducible harness, then reports where each one wins and where it loses. It spans 13 codebases, from large Rails apps down to the Ruby AI-stack gems. Links are added here as each piece publishes.
