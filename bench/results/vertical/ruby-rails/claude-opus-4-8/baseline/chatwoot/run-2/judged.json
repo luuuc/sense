@@ -1,0 +1,370 @@
+{
+  "scenario": "Chatwoot work session - audit the Inbox contract before a teardown rework",
+  "repo": "chatwoot",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "chatwoot.rubric.yaml"
+  },
+  "scenario_quality": 0.7733,
+  "relationship_audit": {
+    "total": 17,
+    "covered": 11,
+    "related": 7,
+    "contradicted": 0,
+    "covered_recall": 0.6471,
+    "related_recall": 0.4118,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "cache-keys-concern",
+      "dep:accounts-ctrl",
+      "dep:dashboard-ctrl",
+      "dep:stale-notif-job",
+      "dep:assignee-handler",
+      "dep:twitter-webhook"
+    ],
+    "missed_related": [
+      "cache-keys-concern",
+      "dep:accounts-ctrl",
+      "dep:dashboard-ctrl",
+      "dep:widget-tests",
+      "dep:stale-notif-job",
+      "dep:assignee-handler",
+      "dep:twitter-webhook",
+      "dep:whatsapp-create",
+      "dep:chatwoot-hub",
+      "dep:slack-unfurl"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "inbox-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "cache-keys-concern",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "channelable-concern",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "contact-inbox",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "enterprise-inbox",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "delete-object-job",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:accounts-ctrl",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:dashboard-ctrl",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:widget-tests",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:assignment-job",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:imap-fetch-job",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:stale-notif-job",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:assignee-handler",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:twitter-webhook",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:whatsapp-create",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:chatwoot-hub",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:slack-unfurl",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The answer names the platform type, the full Rails layout with sub-directories, Inbox at app/models/inbox.rb:41, the polymorphic channel at :60, conversations/contacts at :63-64/:68, concerns at :43-47, channel subtypes in app/models/channel/, and four enterprise overlay files with paths \u2014 an agent can pick an entry point with only targeted lookups."
+        },
+        "specificity": {
+          "score": 0.92,
+          "rationale": "Every claim is anchored to a concrete file path and line number (e.g., 'app/models/inbox.rb:60', 'app/models/concerns/channelable.rb', 'enterprise/app/models/enterprise/audit/inbox.rb'); channel subtypes are individually listed rather than summarised as 'the channel layer'."
+        },
+        "justification": {
+          "score": 0.65,
+          "rationale": "The enterprise overlay pattern is explained (prepend_mod_with/include_mod_with with the advisory to always check enterprise/), but the answer lists concerns without explaining WHY shared behavior is pulled in through concerns rather than direct methods, and does not explain WHY the channel relationship is polymorphic rather than typed columns."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer carries no uncertainty flags at all despite 289s wall time suggesting a broad search; it does not acknowledge any concern method or association it failed to open or verify, leaving the agent no signal about what to double-check."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "The connecting relationship is stated for every layer: polymorphic 'belongs_to :channel' at :60, has_many associations with line numbers, concerns 'included at :43-47', Channelable 'included by every Channel::*' as the reverse side, and the enterprise overlay wired via prepend_mod_with at :269-271 \u2014 these are paths, not just file names."
+        }
+      },
+      "step_quality": 0.809,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1888,
+        "cache_creation_input_tokens": 18155,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the Inbox contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.92,
+          "rationale": "The answer maps every major contract layer with file:line \u2014 concerns (Reportable at :43, Avatarable :44, OutOfOffisable :45, AccountCacheRevalidator :46, InboxAgentAvailability :47), all named associations with their dependent semantics (polymorphic :channel at :60, :conversations :68, :contact_inboxes :63), lifecycle callbacks, the capability surface, and all three enterprise overlay files. The agent could start changing the teardown contract with only very small follow-up lookups."
+        },
+        "specificity": {
+          "score": 0.88,
+          "rationale": "Concrete file paths and line numbers appear for nearly every piece: `app/models/concerns/reportable.rb:7`, `app/models/concerns/out_of_offisable.rb:9`, `enterprise/app/models/enterprise/concerns/inbox.rb`, etc. The only gap is that `app/models/concerns/cache_keys.rb` (named in the rubric) is absent, though that may reflect the actual codebase."
+        },
+        "justification": {
+          "score": 0.62,
+          "rationale": "The 'Key takeaway' block explicitly explains the mixed inline-vs-async destroy contract and its consequence, which is the most important WHY. However, the answer does not explain why behavior is shared through concerns structurally versus defined inline, nor why the enterprise tier reopens rather than inherits the class \u2014 the reasoning behind the shape is mostly absent."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer presents all facts with full confidence and never flags a piece it could not verify (e.g., concern method bodies it did not open, or whether InboxAgentAvailability's method signatures are stable). The agent has no signal about which claims to double-check before acting."
+        },
+        "relationship": {
+          "score": 0.78,
+          "rationale": "Each concern is tied to what it adds to Inbox (Reportable \u2192 `has_many :reporting_events, dependent: :destroy`; Avatarable \u2192 `has_one_attached :avatar`), and associations state the exact Rails relation type and dependent option (`belongs_to :channel, polymorphic: true, dependent: :destroy`; `has_many :conversations \u2026 destroy_async`). The inverse channel-side relationship (`channel has_one :inbox, as: :channel`) is not stated, which is the primary polymorphic seam the rubric flags."
+        }
+      },
+      "step_quality": 0.767,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2024,
+        "cache_creation_input_tokens": 18609,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how an inbox and its attached data are torn down",
+      "scores": {
+        "map_quality": {
+          "score": 0.93,
+          "rationale": "The answer delivers a fully ordered 5-step trace from `InboxesController#destroy:77-80` enqueuing the job, through `purge_heavy_associations` (`:18-22`) and `batch_destroy` (`:36-40`) running before `object.destroy!`, then the dependent chain, then after-destroy callbacks, then the Enterprise audit step \u2014 each with file:line, async vs inline explicitly flagged throughout. An agent can walk this chain and change teardown safely with only small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Every layer is pinned: `DeleteObjectJob#purge_heavy_associations` at `:18-22`, `batch_destroy` at `:36-40`, `inbox.rb:60,71,80,260`, `auto_assignment/inbox_round_robin_service.rb:5-7`, enterprise overlay path \u2014 plus individual associations named as `:destroy` vs `:destroy_async`. The handful of association line numbers cited as approximate (e.g. `conversation.rb:109-115`) are the only minor gap."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "The answer explains WHY the batched pre-purge runs before `object.destroy!`: 'to avoid `destroy_async` fan-out timeouts/races', and WHY the `dependent: :destroy_async` declarations are the fallback for the non-batched direct-destroy route. The design rationale is stated, not just the call chain."
+        },
+        "uncertainty": {
+          "score": 0.55,
+          "rationale": "The answer does not explicitly flag anything it could not open or verify \u2014 no 'I didn't inspect X' markers. The note that async is a 'fallback path' and that the Enterprise overlay 'also adds' records is calibrated inference, but the agent gets no explicit warning about which dependent: semantics were not fully opened."
+        },
+        "relationship": {
+          "score": 0.92,
+          "rationale": "The teardown is written as an explicit connected chain \u2014 trigger \u2192 `DeleteObjectJob.perform_later` \u2192 `purge_heavy_associations` before `object.destroy!` \u2192 `batch_destroy` in 5 000-record batches \u2192 dependent chain fires (inline `:destroy` vs async `:destroy_async` labeled per-association) \u2192 `after_destroy` callback \u2192 Enterprise audit \u2014 with order and mode stated at every hop, not just a grouped file list."
+        }
+      },
+      "step_quality": 0.872,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2176,
+        "cache_creation_input_tokens": 18406,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Audit every dependent of the Inbox contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "All six required areas are present and clearly labeled, with breadth that goes well beyond what grep would return \u2014 channelable concern, every associated model, enterprise overlay, lib integrations, provider services. File:line is tight in section A (the indirect dependents most likely to be missed) and adequate in B\u2013F; an agent can pick entry points immediately without re-exploring."
+        },
+        "specificity": {
+          "score": 0.75,
+          "rationale": "Section A is excellent (e.g., `contact_inbox.rb:32 belongs_to :inbox`, `working_hour.rb:24`, `portal.rb:38 has_many :inboxes dependent: :nullify`); sections B\u2013F list files in bulk without per-file line numbers or individual one-phrase descriptions, so the agent needs a few targeted lookups inside those blocks."
+        },
+        "justification": {
+          "score": 0.68,
+          "rationale": "The grouping labels ('central teardown', 'reverse side of the polymorphic link', 'round-robin callbacks', 'portal teardown nullifies inbox.portal_id') explain WHY each area is affected; however B\u2013F name function roles rather than explaining why a change to the Inbox contract propagates there specifically, leaving the agent to infer impact rather than read it."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer never flags what a static pass cannot capture \u2014 no note that polymorphic callers reached only through an association may be incomplete, no caveat about the enterprise overlay potentially having additional dependents, and no warning about dynamic dispatch or indirect listener subscriptions that could remain invisible to a structural scan."
+        },
+        "relationship": {
+          "score": 0.6,
+          "rationale": "Section A explicitly states the connecting relation for each model (`belongs_to :inbox`, `has_one :inbox, as: :channel` on channelable, `has_many :inboxes dependent: :destroy_async` on account, `dispatch_inbox_reauthorization_event` through reauthorizable concern), which is the strongest part; sections B\u2013F are mostly correct file lists with no per-dependent connecting path stated, so the agent knows what is affected in those areas but not the route by which each file reaches Inbox."
+        }
+      },
+      "step_quality": 0.707,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1929,
+        "cache_creation_input_tokens": 19990,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how inbox availability and identity are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The answer covers all three expected areas (assignment, IMAP-fetch, periodic maintenance) with file:line throughout and names specific guards in each; an agent could write correct teardown guards from this map with only small targeted follow-ups. The one gap is no shared/central guard layer is surfaced, but the coverage across the scattered jobs is strong."
+        },
+        "specificity": {
+          "score": 0.88,
+          "rationale": "Guards are named at method-plus-line granularity \u2014 `Inbox.find_by(id: inbox_id); return unless inbox` at `:26-27`, `should_fetch_emails?` at `:14-22`, `stale_without_conversations` at `contact_inbox.rb:37` \u2014 giving the agent concrete insertion points rather than 'the validation code'."
+        },
+        "justification": {
+          "score": 0.72,
+          "rationale": "The enqueue-then-run gap rationale appears once explicitly ('destroyed between enqueue and run') and the closing pattern summary articulates the design rule; the orphan-conversation service is called 'the explicit teardown-safety net' with a cause. The IMAP and maintenance sections name guards without stating why each check exists beyond the assignment section's explanation."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "The answer presents the guard coverage as complete with no flags for jobs that might assume the inbox still exists or guards that are implicit rather than explicit; an agent acting on this map would not know where to verify before relying on the stated completeness."
+        },
+        "relationship": {
+          "score": 0.78,
+          "rationale": "Each job's re-confirmation path is stated: PeriodicAssignmentJob re-loads via `account.inboxes.joins`, AssignmentJob re-fetches by `Inbox.find_by(id:)`, FetchImapEmailInboxesJob re-queries `Inbox.where(channel_type:)`, and RemoveOrphanConversationsService uses `left_outer_joins(:inbox)` then `where(inboxes: { id: nil })` \u2014 the lookup or association used to revalidate is named for each, with the enqueue-then-run gap called out for the identity guard."
+        }
+      },
+      "step_quality": 0.7675,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1766,
+        "cache_creation_input_tokens": 18480,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer covers jobs, models/concerns, enterprise overlay, services, and Redis cleanup with a clear 4-tier risk ranking and file:line throughout; however, request-handling controllers and lib integrations (chatwoot_hub, Slack link-unfurl) named in prior steps are absent from the blast, and provider services only appear at the tail of the lowest tier without specifics."
+        },
+        "specificity": {
+          "score": 0.85,
+          "rationale": "Nearly every item carries a concrete file:line citation (e.g. `delete_object_job.rb:18-22`, `inbox.rb:60-76`, `channelable.rb:6`, `contact_inbox.rb:34,37`) paired with a stated mechanism; the lowest tier is the only area where specificity softens to class names without lines."
+        },
+        "justification": {
+          "score": 0.83,
+          "rationale": "The answer explains *why* each tier is ranked as it is: delete_object_job silently no-ops via `respond_to?` leaving orphan storms, channelable forms a two-way destroy risking loops, reports builders only break if the public method surface changes \u2014 causal reasoning is consistent across tiers."
+        },
+        "uncertainty": {
+          "score": 0.35,
+          "rationale": "The 'must re-verify' tail section is an implicit acknowledgment of gaps but the answer never explicitly flags which dependents were surfaced only structurally (e.g. association-reached or enterprise-only paths it could not confirm), so the agent cannot tell which items need additional lookup before acting."
+        },
+        "relationship": {
+          "score": 0.78,
+          "rationale": "Most high-risk items state the connecting mechanism: delete_object_job's `heavy_associations` guard, channelable's `has_one :inbox, dependent: :destroy_async` / `belongs_to :channel dependent: :destroy` two-way path, account's `has_many :inboxes, dependent: :destroy_async`; the medium and lower tiers name files and FK holders without stating the relation by which each reaches the Inbox teardown path."
+        }
+      },
+      "step_quality": 0.7375,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1726,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 34815
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "The map is complete and actionable: primary edits with file:line (inbox.rb:60,71,62-76,80,260; channelable.rb:6; reportable.rb:7; delete_object_job.rb:18-22; enterprise mirrors), dependents grouped across five areas with file:line, spec files named per area, and factories called out explicitly. A teammate could orient from this map with only small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.87,
+          "rationale": "Line-level precision throughout the edit targets (`:62-76`, `:80,260`, `:18-22`) and spec files named concretely (`spec/jobs/delete_object_job_spec.rb`, `spec/factories/inboxes.rb`); minor gap is that the enterprise overlay files are named without line numbers, and several dependent files in the large grouped lists lack line specificity."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "Primary edit files are well-explained (e.g., channelable.rb \"keep the two-way destroy consistent\", delete_object_job.rb \"silently no-ops if renamed\") and specs state what each should cover; the five-group dependents list provides area-level grouping but individual entries such as `conversation.rb:101,109-115` or `campaign.rb:45` have no explanation of why the teardown change affects them specifically."
+        },
+        "uncertainty": {
+          "score": 0.35,
+          "rationale": "The only explicit hedge is the note that spec writing was not performed, which is a scope disclaimer rather than an uncertainty flag; the answer does not flag where the enterprise overlay behavior was not fully confirmed, nor where association cleanup semantics (inline vs async) were inferred rather than verified, leaving the agent without cues on what to double-check."
+        },
+        "relationship": {
+          "score": 0.62,
+          "rationale": "The \"Files to edit\" section explicitly names the connecting relationships (polymorphic `belongs_to :channel :60`, reverse `has_one :inbox as: :channel channelable.rb:6`, `heavy_associations[Inbox]` in the job), which is strong; but the large dependents section is a grouped file list \u2014 entries like `conversation.rb:101,109-115`, `contact_inbox.rb:32,34,37`, and `campaign.rb:45` name the files without stating the association or concern route that makes each one part of this edit."
+        }
+      },
+      "step_quality": 0.753,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3385,
+        "cache_creation_input_tokens": 21591,
+        "cache_read_input_tokens": 16203
+      }
+    }
+  ]
+}

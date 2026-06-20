@@ -1,153 +1,358 @@
 {
-  "scenario": "Lobsters work session - the shared vote/score recalculation (tight)",
+  "scenario": "Lobsters work session - audit the Story contract before a teardown rework",
   "repo": "lobsters",
   "judge": {
-    "model": "claude-opus-4-7",
+    "model": "claude-sonnet-4-6",
     "prompt_version": "v2-rel",
     "rubric_path": "lobsters.rubric.yaml"
   },
-  "scenario_quality": 0.8783,
+  "scenario_quality": 0.1124,
   "relationship_audit": {
-    "total": 7,
-    "covered": 7,
-    "related": 7,
-    "covered_recall": 1.0,
-    "related_recall": 1.0,
-    "missed_covered": [],
-    "missed_related": [],
+    "total": 14,
+    "covered": 3,
+    "related": 2,
+    "contradicted": 0,
+    "covered_recall": 0.2143,
+    "related_recall": 0.1429,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "c:token",
+      "a:stories-ctrl",
+      "d:link",
+      "d:search",
+      "d:stats",
+      "d:user-canflag",
+      "d:users-helper",
+      "d:inbox-mbox",
+      "d:markdowner",
+      "d:mod-flagged",
+      "d:mod-mails"
+    ],
+    "missed_related": [
+      "c:token",
+      "a:stories-ctrl",
+      "d:comment",
+      "d:link",
+      "d:search",
+      "d:stats",
+      "d:user-canflag",
+      "d:users-helper",
+      "d:inbox-mbox",
+      "d:markdowner",
+      "d:mod-flagged",
+      "d:mod-mails"
+    ],
+    "contradictions": [],
     "items": [
       {
-        "id": "vote-cast",
+        "id": "story-model",
         "covered": true,
-        "related": true
+        "related": true,
+        "contradicted": false
       },
       {
-        "id": "vote-target",
-        "covered": true,
-        "related": true
+        "id": "c:token",
+        "covered": false,
+        "related": false,
+        "contradicted": false
       },
       {
-        "id": "comment-recalc",
-        "covered": true,
-        "related": true
+        "id": "a:stories-ctrl",
+        "covered": false,
+        "related": false,
+        "contradicted": false
       },
       {
-        "id": "calc-confidence",
+        "id": "d:comment",
         "covered": true,
-        "related": true
+        "related": false,
+        "contradicted": false
       },
       {
-        "id": "confidence-order",
-        "covered": true,
-        "related": true
+        "id": "d:link",
+        "covered": false,
+        "related": false,
+        "contradicted": false
       },
       {
-        "id": "story-recalc",
-        "covered": true,
-        "related": true
+        "id": "d:search",
+        "covered": false,
+        "related": false,
+        "contradicted": false
       },
       {
-        "id": "calc-hotness",
+        "id": "d:stats",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:user-canflag",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:vote-target",
         "covered": true,
-        "related": true
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:users-helper",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:inbox-mbox",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:markdowner",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:mod-flagged",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:mod-mails",
+        "covered": false,
+        "related": false,
+        "contradicted": false
       }
     ]
   },
   "steps": [
     {
-      "step": "Locate the recalculation and how its target is resolved",
+      "step": "Orient in the codebase",
       "scores": {
         "map_quality": {
-          "score": 1.0,
-          "rationale": "Pins the call site at app/models/vote.rb:181 (`t.update_score_and_recalculate!(score_delta, flag_delta)`) and the target resolution at vote.rb:180 with Vote#target at vote.rb:185-191 returning Comment.find or Story.find \u2014 exactly what the rubric asks for."
+          "score": 0.0,
+          "rationale": "The answer never names the project (Lobsters), never describes the Rails directory layout, and never locates Story as the central submission model \u2014 it jumps directly into vote recalculation internals (Vote.vote_thusly_on_story_or_comment_for_user_because, update_score_and_recalculate!) that belong to a later step. The agent receives no usable orientation map."
         },
         "specificity": {
-          "score": 1.0,
-          "rationale": "Both the call site (vote.rb:181) and resolution (vote.rb:180, 185-191) are given with exact file:line, plus the enclosing method at vote.rb:127."
+          "score": 0.05,
+          "rationale": "Concrete file:line paths are present (app/models/vote.rb:127, app/models/story.rb:693-718) but every one of them is scoped to vote recalculation, not to the orientation the step asks for; no path for app/models/story.rb as the central model, no mention of app/mailboxes, lib/extras, or concern directories."
         },
         "justification": {
-          "score": 0.7,
-          "rationale": "States the target is resolved via `Vote#target` returning Comment or Story so dispatch is polymorphic, but does not explicitly say the call site cannot statically know which definition runs \u2014 the polymorphism is shown rather than spelled out."
+          "score": 0.0,
+          "rationale": "The answer never explains why Story is the central submission other records hang off, or why the app is structured the way it is; it explains the vote-recalculation call chain instead, which is off-topic for this step."
         },
         "uncertainty": {
-          "score": 0.3,
-          "rationale": "Confident summary with no flagged unknowns or hops left unopened; the run completed but no caveats are surfaced."
+          "score": 0.0,
+          "rationale": "No uncertainty flags relevant to codebase orientation are raised; the answer expresses no uncertainty at all, but on the wrong topic entirely."
         },
         "relationship": {
-          "score": 1.0,
-          "rationale": "Explicitly shows the target resolves to one of two kinds (`Comment.find(comment_id) if comment_id present, else Story.find(story_id)`) and labels the two implementations as polymorphic, deciding which definition runs."
+          "score": 0.0,
+          "rationale": "No connecting relationships between Story and its dependents (comments, votes, tags, flags via associations or concerns) are stated; the only relationship described is Vote#target dispatching to Story or Comment, which is vote-recalculation plumbing, not an orientation-level association map."
         }
       },
-      "step_quality": 0.885,
+      "step_quality": 0.01,
       "usage": {
-        "input_tokens": 6,
-        "output_tokens": 511,
-        "cache_creation_input_tokens": 21064,
-        "cache_read_input_tokens": 22522
+        "input_tokens": 3,
+        "output_tokens": 1652,
+        "cache_creation_input_tokens": 18631,
+        "cache_read_input_tokens": 16203
       }
     },
     {
-      "step": "Document what the recalculation recomputes and persists",
+      "step": "Map the Story contract and what it is built on",
       "scores": {
         "map_quality": {
-          "score": 1.0,
-          "rationale": "Pins both divergent definitions exactly: Story#update_score_and_recalculate! @ story.rb:693-718 writing score/flags/hotness via calculated_hotness @ 550, and Comment#update_score_and_recalculate! @ comment.rb:339-363 writing score/flags/confidence/confidence_order via calculated_confidence @ 232. No conflation."
+          "score": 0.05,
+          "rationale": "The answer maps vote recalculation internals (Vote.vote_thusly_on_story_or_comment_for_user_because, update_score_and_recalculate!) rather than Story's contract: the Token concern it includes, the associations (has_many :comments, has_many :votes, has_many :taggings) other records hang off, and what a change must preserve. The step's core deliverable \u2014 Story's contract surface \u2014 is entirely absent."
         },
         "specificity": {
-          "score": 1.0,
-          "rationale": "Per-kind methods, columns, and value helpers all named with file:line (calculated_confidence @ comment.rb:232, confidence_order column; calculated_hotness @ story.rb:550, hotness column)."
+          "score": 0.1,
+          "rationale": "File:line citations are present and precise, but they point to vote-path internals (vote.rb:127, vote.rb:181, story.rb:693-718) rather than the contract pieces the step requires (the Token concern file, association declarations in story.rb). Concrete references for the wrong content are not useful to the agent."
         },
         "justification": {
-          "score": 0.7,
-          "rationale": "Implicitly distinguishes the two paths by labeling them per-kind and listing different columns, but doesn't explicitly state WHY the two compute different values (per-thread confidence vs front-page hotness ranking)."
+          "score": 0.0,
+          "rationale": "The answer gives no explanation of why Story's contract is shaped the way it is \u2014 there is no discussion of Story as the central submission model, why other records hang off it, or what invariant a teammate must preserve before touching it."
         },
         "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer flags no uncertainty about any part of the Story contract; it simply does not address the contract at all."
+        },
+        "relationship": {
+          "score": 0.1,
+          "rationale": "The only relationship stated is that Vote#target dispatches polymorphically to Story or Comment (vote.rb:185-191), which is a single indirect connection to Story \u2014 the has_many associations (comments, votes, taggings) and the concern-inclusion bindings that define the contract are never named."
+        }
+      },
+      "step_quality": 0.0575,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1561,
+        "cache_creation_input_tokens": 18613,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how a story is created and ranked",
+      "scores": {
+        "map_quality": {
+          "score": 0.08,
+          "rationale": "The answer maps vote-driven score recalculation (Vote.vote_thusly\u2026 \u2192 update_score_and_recalculate! \u2192 calculated_hotness) but never touches what the step actually asked for: the controller create path that makes a submission a stored Story, URL/link handling, or markdown rendering. Three of four required layers are entirely absent."
+        },
+        "specificity": {
+          "score": 0.2,
+          "rationale": "The file:line citations are concrete (app/models/vote.rb:127, app/models/story.rb:693-718, etc.) but they address vote recalculation, not story creation; concreteness in the wrong place provides the agent no traction on the actual task."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "No explanation of why the creation pipeline (URL validation, markdowner, initial hotness) is shaped the way it is; the answer only explains vote-delta propagation, which is a different question."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer does not flag that it skipped the controller create path, URL handling, or markdown rendering; the agent would wrongly believe those layers were covered."
+        },
+        "relationship": {
+          "score": 0.15,
+          "rationale": "A chain is described (cast vote \u2192 Vote#target resolution \u2192 update_score_and_recalculate! \u2192 calculated_hotness / calculated_confidence) but it is the vote-update chain, not the submission \u2192 controller \u2192 URL/markdown \u2192 score chain the step required; the connecting relationships for the actual creation path are absent."
+        }
+      },
+      "step_quality": 0.1055,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1550,
+        "cache_creation_input_tokens": 18597,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Audit every dependent of the Story contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer audits the vote-recalculation sub-path (Vote.vote_thusly_on_story_or_comment_for_user_because \u2192 update_score_and_recalculate!) and never enumerates the required dependent areas: content/rendering (link URL handler, markdowner), search (search indexer), statistics (stats/graph cache), inbound email (the mailbox), or moderation (flagged-stories/mod-mail controllers). The heart of the step \u2014 a grouped, exhaustive fan-out map \u2014 is entirely absent."
+        },
+        "specificity": {
+          "score": 0.08,
+          "rationale": "File:line citations exist (app/models/vote.rb:127, app/models/story.rb:693-718, spec/models/vote_spec.rb:15-82) but they all belong to a single vote-recalculation chain; the dozens of other dependents (search.rb, inbox_mailbox.rb, markdowner.rb, stats helpers, moderation controllers) receive no citation at all."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The answer explains the polymorphic dispatch from Vote to Story well, but provides no grouping-by-area rationale and no explanation of why the search, stats, email, or moderation dependents are affected \u2014 because those areas are never mentioned."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer never acknowledges that a static pass can miss concern- or association-reached dependents, nor flags any area it could not confirm; there is no uncertainty signaling of any kind."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "The one relationship stated \u2014 Vote reaches Story via polymorphic target resolution at vote.rb:185-191 \u2014 is correct, but the step requires relationship paths for every dependent area (association, concern, derive route for search/stats/mailbox/markdowner); none of those are present."
+        }
+      },
+      "step_quality": 0.051,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1516,
+        "cache_creation_input_tokens": 18716,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how story identity and visibility are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer entirely addresses vote-recalculation machinery (Vote#vote_thusly_on_story_or_comment_for_user_because, Story/Comment#update_score_and_recalculate!), not the presence/visibility guards in search indexing, stats, inbound-email, or moderation paths that the step requires; no relevant file:line is provided."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Every concrete file:line in the answer (app/models/vote.rb:127, app/models/story.rb:693, etc.) is about score/hotness computation, not identity or visibility confirmation; the answer does not name a single guard for the asked paths."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "The answer never addresses why work must re-confirm story existence or visibility (deletion/hiding risk); it explains the vote-delta recalculation rationale instead, which is orthogonal to this step."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No flags about missing or implicit visibility guards appear, because the answer does not attempt to answer the question; uncertainty markers present relate only to the vote-scoring topic."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No connecting path from any guard to any dependent (search, stats, mailbox, moderation) is stated; the only relationship described is the vote-target polymorphic dispatch, which is irrelevant to this step."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1089,
+        "cache_creation_input_tokens": 18604,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.1,
+          "rationale": "The answer covers only the vote-scoring subsystem (vote.rb:127, story.rb:693-718, comment.rb:339-363) and completely omits the areas the rubric demands: rendering/markdown (markdowner), search indexer, stats/graph cache, inbound-email mailbox, and moderation controllers. An agent using this answer would still need a full codebase exploration to find the scattered dependents that actually page someone."
+        },
+        "specificity": {
+          "score": 0.25,
+          "rationale": "Within the narrow vote/score path the answer is precise (vote.rb:181, story.rb:550, comment.rb:232), but five major dependent areas carry zero file:line entries \u2014 the answer cannot let the agent skip a search over those areas."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "There is no risk ranking or explanation of WHY one dependent is higher-risk than another; the answer does not explain which change would page someone vs which is low-risk, only that vote callers pass (0,0) to force recompute."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer never flags that it has only audited the voting path and has not examined rendering, search, stats, email, or moderation, leaving the agent with false confidence that the blast radius has been fully assessed."
+        },
+        "relationship": {
+          "score": 0.2,
+          "rationale": "Within the vote path the answer does trace the polymorphic dispatch chain (Vote \u2192 Vote#target \u2192 Story/Comment \u2192 update_score_and_recalculate!) explicitly, but it names no connecting relationship for search/stats/mailbox/rendering dependents because those areas are entirely absent from the answer."
+        }
+      },
+      "step_quality": 0.15,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1518,
+        "cache_creation_input_tokens": 18630,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.3,
+          "rationale": "The voting/flagging sub-path is well-mapped with file:line (vote.rb:181, story.rb:693-718, comment.rb:339-363, hidden_story.rb:15/21), but the full dependent set required by the rubric \u2014 rendering (URL handler, markdowner), search indexer, stats/graph cache, inbound-email mailbox, moderation controllers, and the concern \u2014 is entirely absent; the map covers one area out of six."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "Within the covered area every reference is concrete with file:line and named method (e.g., 'Vote#target @ app/models/vote.rb:185-191', 'calculated_hotness @ app/models/story.rb:550'), but the narrow scope means four to five whole areas have zero specific entries."
+        },
+        "justification": {
+          "score": 0.45,
+          "rationale": "The answer explains WHY the (0,0) callers (hidden_story, comment callbacks) must still pass and why each column is written, but offers no justification for why search/stats/mailbox/moderation are absent from the map, nor why the shared concern is omitted."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged anywhere despite the answer covering only the voting area and silently omitting search, stats, email, rendering, and moderation dependents that prior steps should have surfaced."
+        },
+        "relationship": {
           "score": 0.5,
-          "rationale": "Answer asserts column lists definitively without flagging anything as unverified; no explicit uncertainty marker, though the precision suggests the raw UPDATE was actually read."
-        },
-        "relationship": {
-          "score": 1.0,
-          "rationale": "Cleanly attributes each branch to its own definition and cascade \u2014 Story \u2192 calculated_hotness \u2192 hotness column; Comment \u2192 calculated_confidence \u2192 confidence/confidence_order \u2014 keeping the two paths fully distinct with no conflation."
+          "rationale": "The vote path chain is explicit and correct (Vote.vote_thusly \u2192 target resolution \u2192 polymorphic dispatch \u2192 columns written), but there are no connecting-relationship statements for any dependent outside that chain; the other five areas are not even named, let alone connected."
         }
       },
-      "step_quality": 0.905,
+      "step_quality": 0.4125,
       "usage": {
-        "input_tokens": 6,
-        "output_tokens": 555,
-        "cache_creation_input_tokens": 21057,
-        "cache_read_input_tokens": 22522
-      }
-    },
-    {
-      "step": "Map the change and the specs that cover it",
-      "scores": {
-        "map_quality": {
-          "score": 0.95,
-          "rationale": "Delivers concrete edit targets (story.rb:693-718, comment.rb:339-363), the single call site (vote.rb:181), other 0/0 callers, and per-model specs (vote_spec, story_spec, comment_spec) all with file:line \u2014 agent can land the change with minimal follow-up."
-        },
-        "specificity": {
-          "score": 0.95,
-          "rationale": "Nearly every reference is pinned with file:line ranges (e.g. 'spec/models/story_spec.rb:404-429', 'app/models/comment.rb:339-363'); only a couple of spec lines are single-line anchors but still concrete."
-        },
-        "justification": {
-          "score": 0.75,
-          "rationale": "Notes story specs cover hotness/calculated_hotness and comment specs cover confidence/confidence_order_path, implicitly explaining WHY each is in the map, but doesn't always spell it out for the vote_spec entries."
-        },
-        "uncertainty": {
-          "score": 0.3,
-          "rationale": "No explicit flagging of which spec ranges might be off or any hop not fully opened; the answer reads as fully confident throughout."
-        },
-        "relationship": {
-          "score": 0.9,
-          "rationale": "Map keeps each definition cleanly tied to its own value method, columns, and specs \u2014 Story\u2192calculated_hotness/hotness\u2192story_spec, Comment\u2192calculated_confidence/confidence_order\u2192comment_spec \u2014 no conflation."
-        }
-      },
-      "step_quality": 0.845,
-      "usage": {
-        "input_tokens": 6,
-        "output_tokens": 527,
-        "cache_creation_input_tokens": 21058,
-        "cache_read_input_tokens": 22522
+        "input_tokens": 3,
+        "output_tokens": 2286,
+        "cache_creation_input_tokens": 18608,
+        "cache_read_input_tokens": 16203
       }
     }
   ]

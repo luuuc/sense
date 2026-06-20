@@ -1,0 +1,352 @@
+{
+  "scenario": "Redmine work session - audit the Issue contract before a teardown rework",
+  "repo": "redmine",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "redmine.rubric.yaml"
+  },
+  "scenario_quality": 0.4738,
+  "relationship_audit": {
+    "total": 16,
+    "covered": 14,
+    "related": 14,
+    "contradicted": 0,
+    "covered_recall": 0.875,
+    "related_recall": 0.875,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "d:queries-helper",
+      "d:calendar"
+    ],
+    "missed_related": [
+      "d:queries-helper",
+      "d:calendar"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "issue-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:issues-ctrl",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:issues-helper",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:time-entry",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:changeset",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:journal",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:issue-relation",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:project",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:mail-handler",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:reports-ctrl",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:queries-helper",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:context-menus",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:auto-completes",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:gantt",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:calendar",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:my-helper",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer correctly identifies Redmine as a Rails issue-tracker, maps the directory layout well, and pins Issue at app/models/issue.rb:20. It names the three shared behaviors by listing 'attachable, customizable, watchable' under lib/plugins/, but never gives concrete file paths for the three collaborator records (app/models/attachment.rb, app/models/watcher.rb, app/models/custom_value.rb) and omits CustomValue/CustomField entirely \u2014 the agent still needs a lookup to find those entry points."
+        },
+        "specificity": {
+          "score": 0.4,
+          "rationale": "Issue gets a concrete file:line (app/models/issue.rb:20) and lib/plugins/ is named with mixin labels; everything else \u2014 Attachment, Watcher, and the missing CustomValue \u2014 appears only as bare names with no file path or line, so the agent cannot jump directly to the three collaborator records the task centers on."
+        },
+        "justification": {
+          "score": 0.28,
+          "rationale": "The answer names the acts_as_* pattern and lists the mixin names but never explains WHY: that shared teardown, storage, and query behavior is factored into opt-in mixins so every participating model inherits the same collaborator-record contract through a polymorphic association rather than duplicating it."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer presents every claim with equal confidence and flags nothing as unverified; the rubric asks for explicit uncertainty where the connections were not confirmed, which this answer does not provide."
+        },
+        "relationship": {
+          "score": 0.22,
+          "rationale": "The answer lists the mixin names (attachable, customizable, watchable) and the collaborator records (Attachment, Watcher) in separate bullets but never joins them: it does not state that a model opts into a mixin which then hangs the collaborator off it via a polymorphic has_many (e.g. as: :container), so the chain from host model to stored row is absent."
+        }
+      },
+      "step_quality": 0.398,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1740,
+        "cache_creation_input_tokens": 17711,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the Issue contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.82,
+          "rationale": "The answer maps all three contracts with file:line at both the inclusion site (issue.rb:48-50) and the plugin implementation (acts_as_attachable.rb:52, acts_as_customizable.rb:28, acts_as_watchable.rb:29), covers associations with their :dependent semantics, and adds a 'what you must know' section covering teardown, custom destroy, and callback ordering. Stored-record files (app/models/attachment.rb, app/models/watcher.rb, app/models/custom_value.rb) are never cited, which a targeted follow-up would need, but the mixin paths largely compensate."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "Plugin mixin files are named concretely with line numbers, and the four 'what to know' points quote exact line ranges. However, app/models/attachment.rb, app/models/watcher.rb, and app/models/custom_value.rb \u2014 the stored-record side of each contract \u2014 are absent, so the agent must locate them via follow-up lookups."
+        },
+        "justification": {
+          "score": 0.58,
+          "rationale": "The answer explains what each mixin injects (hooks, associations, callbacks) and why teardown semantics matter ('Changing these is exactly the rework'), but never states WHY the architecture is shaped as shared polymorphic mixins reused across many record types \u2014 it names the pieces without explaining the design rationale."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No uncertainty flags appear anywhere in the answer; nothing is marked as unconfirmed, inferred, or needing verification, despite referencing mixin internals and callback orderings that the agent would need to open before trusting."
+        },
+        "relationship": {
+          "score": 0.35,
+          "rationale": "The answer names each mixin and states what it injects ('adds attachments', 'adds custom_values', 'adds watchers') but never states the polymorphic 'as:' clause (has_many :attachments, as: :container; has_many :watchers, as: :watchable; has_many :custom_values, as: :customized) that binds the collaborator record to the host \u2014 exactly the connecting relationship the criterion requires."
+        }
+      },
+      "step_quality": 0.589,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2008,
+        "cache_creation_input_tokens": 18189,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how an issue and its attached data are handled on change",
+      "scores": {
+        "map_quality": {
+          "score": 0.6,
+          "rationale": "The answer traces the broader lifecycle (journals, notifications, time entries, changesets, parent/child rollups) with file:line and inline/async markers throughout. However, the rubric's core ask \u2014 how a participating record GAINS its attached rows via mixin wiring, and how those rows are cleaned up through the mixin's dependent association \u2014 is reduced to a single phrase: 'attachments/watchers/custom_values removed via the plugins', with no file:line for the mixin teardown path the agent would need to rework safely."
+        },
+        "specificity": {
+          "score": 0.55,
+          "rationale": "File:line is concrete for the broader call chain (issue.rb:2009, issues_controller.rb:431-468, journal.rb:66, webhook.rb:115, etc.), but the mixin's has_many with dependent: \u2014 the exact teardown anchor for the three contracts \u2014 is never cited by file or line, which is the most safety-critical specific for the stated task."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The answer describes WHAT fires (close_duplicates, reschedule_following_issues, create_journal, etc.) but does not explain WHY teardown for attachments/watchers/custom_values is delegated to the shared mixin's dependent association so every participant inherits uniform cleanup; 'via the plugins' is label, not rationale."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer does not flag any part of the cleanup it could not confirm \u2014 notably the dependent: semantics inside the attachment/watcher/custom_value mixins are stated without caveat, leaving the agent with false confidence about paths that were not opened."
+        },
+        "relationship": {
+          "score": 0.45,
+          "rationale": "The journal \u2192 after_create_commit \u2192 Mailer.deliver_issue_edit async chain and the parent-rollup path are assembled as explicit connected routes. But the chain the rubric prizes most \u2014 shared mixin opt-in \u2192 polymorphic has_many \u2192 dependent: destroy callback \u2192 collaborator row teardown \u2014 is absent; the three contracts appear only as a terminal label with no connecting path."
+        }
+      },
+      "step_quality": 0.455,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2401,
+        "cache_creation_input_tokens": 18136,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Audit every dependent of the Issue contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.2,
+          "rationale": "The answer enumerates Issue's general callers (controllers, queries, mailers) thoroughly with file:line, but completely omits the core of what the rubric asks: which models participate in each of the three shared contracts (attachment, watcher, custom_value) through mixin opt-in. The rubric's named examples (message.rb, board.rb, time_entry.rb as mixin-participant examples) are either absent or appear only in unrelated direct-Issue contexts; the mixin-participant fan-out that is 'the heart of the ticket' is nowhere grouped or identified."
+        },
+        "specificity": {
+          "score": 0.3,
+          "rationale": "File:line citations are concrete and individual throughout (e.g. 'issue_relation.rb:86', 'version.rb:419'), but the criterion asks for each participant to state 'which contract each takes part in'; none of the entries are anchored to the attachment/watcher/custom_value contract axis the rubric measures, so the specificity is on the wrong dimension."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "Grouping is by architectural area (controllers, helpers, integrations) rather than by contract (attachable/watchable/customizable), and the one-phrase descriptions explain how a file calls Issue, not why a model is a mixin participant that inherits shared behavior through a polymorphic association."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The rubric specifically asks whether the answer flags that a text search for the collaborator class misses mixin-only participants; there is no such acknowledgment anywhere, leaving the agent no warning before acting on the (incomplete) list."
+        },
+        "relationship": {
+          "score": 0.1,
+          "rationale": "The answer states direct-Issue relationships ('belongs_to :issue', 'load single issue') but never names the connecting path through a shared mixin and its polymorphic association (has_many :attachments as: :container, acts_as_watchable, acts_as_customizable) for any of the three contracts; the rubric's requirement to state HOW each participant reaches the collaborator record via mixin is unmet."
+        }
+      },
+      "step_quality": 0.19,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2767,
+        "cache_creation_input_tokens": 19825,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how issue identity and visibility are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.65,
+          "rationale": "Strong coverage of issue-level guards with file:line throughout (Issue.visible at issue.rb:84, visible_condition at :137, find_issue at application_controller.rb:394) and cross-subsystem funneling (mailer, autocomplete, gantt, journals), but the rubric asks specifically about how the attachable/watchable/customizable contracts key off per-record guards \u2014 that delegation chain is implied rather than mapped, and `attachments_editable?/deletable?` at :218-233 is listed without tracing how it connects to the mixin contract."
+        },
+        "specificity": {
+          "score": 0.8,
+          "rationale": "Exact method names, line numbers, and SQL conditions are given throughout: `Issue.visible_condition` builds from `issues_visibility`/`is_private`/`view_issues` at :137, `find_issue` raises Unauthorized at :394, `mailer.rb:603` filters before `:639` \u2014 these are immediately actionable for an agent reading the code."
+        },
+        "justification": {
+          "score": 0.45,
+          "rationale": "The answer explains that raw find enables a login redirect (\"rather than 404 a hidden-but-existing issue\") and that visible_condition builds SQL from role+privacy flags, but it does not explain WHY attached rows (Attachment, Watcher, CustomValue) inherit the host issue's visibility \u2014 that the attached row carries no independent permission and resolves entirely through the host record's guard \u2014 which is the structural WHY the rubric asks for."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer presents all guards confidently with no hedging; it does not flag where a guard is implicit (e.g. whether `attachments_editable?` at :218 actually delegates internally to `visible?` or is independently checked), leaving the agent to assume correctness without a verification cue."
+        },
+        "relationship": {
+          "score": 0.3,
+          "rationale": "Guards are listed and grouped by subsystem but the chain 'attached row -> host issue -> visible_condition check' is never written as an explicit path; `attachments_editable?` appears as a bullet alongside `deletable?` with no stated route back to the host record's permission, so an agent cannot confirm the delegation path without reading issue.rb itself."
+        }
+      },
+      "step_quality": 0.535,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2234,
+        "cache_creation_input_tokens": 18168,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.42,
+          "rationale": "The answer produces a well-ranked, file:line blast map for Issue's own direct associations (journals, time_entries, relations_from/to, destroy override, parent rollups), but never assesses the blast radius across the three shared contracts (attachable/watchable/customizable) and the full set of participating models those mixins pull in \u2014 Message, News, Project, Version, WikiPage for attachments, Board/WikiPage for watchers, etc. The rubric asks 'across all three'; the answer delivers only one model's direct teardown."
+        },
+        "specificity": {
+          "score": 0.7,
+          "rationale": "File:line is present throughout \u2014 `issues_controller.rb:431`, `issue.rb:260`, `time_entry.rb:20`, `version.rb:255`, `journal.rb:27` \u2014 and each entry names a concrete method or association, not just a directory. The specificity is strong but scoped entirely to Issue's own associations rather than to the shared-mixin participants the rubric targets."
+        },
+        "justification": {
+          "score": 0.65,
+          "rationale": "The answer explains why each tier is risky: 'double-handle or orphan time entries', '`delete_all` skips callbacks; if reworked to `:destroy`, rescheduling/journaling side-effects newly fire', 'async; a destroyed issue dereferenced in a queued job throws'. These are causal explanations, not labels. However, no justification is offered for why participants in the three shared contracts (e.g. Message, Version, WikiPage) are or are not at risk, because those participants never appear."
+        },
+        "uncertainty": {
+          "score": 0.28,
+          "rationale": "The answer cites sense_blast aggregate numbers (200 direct callers, 257 symbols, 66 files) but flags no uncertainty about what that search could miss, specifically the participants that reach attached data only through the polymorphic mixin and never name the collaborator class. There is no 'I did not confirm X' signal anywhere in the response."
+        },
+        "relationship": {
+          "score": 0.2,
+          "rationale": "The answer names some association semantics on Issue directly ('dependent: :destroy', 'delete_all') but never constructs a path from a storage/teardown change through the shared mixin to a downstream participant \u2014 the form 'attachable concern \u2192 has_many :attachments, as: :container \u2192 Message/News/Version' is entirely absent. Risk entries are Issue-centric method lists, not mixin-routed chains."
+        }
+      },
+      "step_quality": 0.4525,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2635,
+        "cache_creation_input_tokens": 18279,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.82,
+          "rationale": "Extraordinarily detailed: files-to-edit with line ranges, dependents grouped by six named areas, test files with specific method names, and fixtures \u2014 a teammate could work from this map directly. Minor gap: dependents are grouped by area (request/models/reporting) rather than by contract (attachable/watchable/customizable), so the agent cannot immediately see which participants belong to which shared behavior."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Nearly every entry carries a file:line citation \u2014 associations at issue.rb:41-46, destroy override at :260, controller path at issues_controller.rb:431-465, specific test method names (test_destroy_*, test_bulk_update_*), and named fixture files \u2014 making this immediately actionable."
+        },
+        "justification": {
+          "score": 0.5,
+          "rationale": "The answer lists exhaustively but rarely explains why a file is in the map; 'Journal belongs_to issue (journal.rb:27)' appears without stating that it is present because journals is a dependent::destroy association whose teardown semantics are the change target. The blast_radius section provides partial rationale ('relations delete_all vs destroy') but this is the exception, not the rule."
+        },
+        "uncertainty": {
+          "score": 0.35,
+          "rationale": "Only a single hedge appears ('Shared pieces likely touched') across the entire answer; the agent is given no flags about what was inferred through the mixin rather than confirmed by opening the acts_as source, no note on whether dependent-cleanup semantics in acts_as_attachable.rb were actually read, and no caution on fixture coverage adequacy."
+        },
+        "relationship": {
+          "score": 0.6,
+          "rationale": "The map cites acts_as_attachable/customizable/watchable at issue.rb:48-50 and labels associations like 'dependent::destroy' and 'delete_all', but does not trace the chain from each contract's shared mixin through the polymorphic association to the participant, nor does it state which test exercises which contract \u2014 tests are listed by subject file rather than by the shared behavior they exercise."
+        }
+      },
+      "step_quality": 0.697,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2218,
+        "cache_creation_input_tokens": 21775,
+        "cache_read_input_tokens": 16203
+      }
+    }
+  ]
+}

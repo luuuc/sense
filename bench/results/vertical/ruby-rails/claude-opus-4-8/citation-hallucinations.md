@@ -6,24 +6,9 @@ Not yet folded into the fairness score — see pitch 20-04.
 
 ## baseline
 
-### baseline/chatwoot  — 100/108 grounded
-
-**Unresolved**
-- `acr.rb:5` — file not found at acr.rb
-- `iaa.rb:4` — file not found at iaa.rb
-- `iaa.rb:28` — file not found at iaa.rb
-- `...remove_stale_contact_inboxes_service.rb:14` — file not found at ...remove_stale_contact_inboxes_service.rb
-- `enterprise/.../delete_object_job.rb:4` — file not found at enterprise/.../delete_object_job.rb
-- `enterprise/.../concerns/inbox.rb:5` — file not found at enterprise/.../concerns/inbox.rb
-- `message/inbox_member/agent_bot_inbox.rb:19` — file not found at message/inbox_member/agent_bot_inbox.rb
-- `/inbox_capacity_limit.rb:20` — file not found at /inbox_capacity_limit.rb
+_No ungrounded citations._
 
 ## sense
-
-### sense/chatwoot  — 105/106 grounded
-
-**Unresolved**
-- `.../captain/inboxes_controller.rb:1` — file not found at .../captain/inboxes_controller.rb
 
 ### sense/forem  — 129/174 grounded
 
