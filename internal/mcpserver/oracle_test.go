@@ -165,7 +165,11 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // response changed.
 // Added the `completeness` verdict to blast/graph responses and per-caller
 // `relation` to blast callers (terminal payloads) — digest moved.
-const oracleGolden = "250acefd023052c452684b7c0f1dc344e9c9c42c3aad39358511d8b81659851b"
+// blast direct_callers are now enumerated area-stratified (breadth-first
+// across subsystems) and emitted area-clustered, so the fixture's two
+// callers reorder by area name (internal/auth before internal/handler)
+// instead of by symbol ID — digest moved.
+const oracleGolden = "b0342fc640957d5d134c63d2a807242141bde4a618f5c409843c723e2f3cb9f9"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))

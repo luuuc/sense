@@ -62,12 +62,18 @@ func TestBlastCompletenessPartialHidden(t *testing.T) {
 }
 
 func TestBlastCompletenessPartialCapped(t *testing.T) {
-	callers := make([]BlastCaller, tier1Cap)
-	resp := &BlastResponse{DirectCallers: callers}
-	// total == enumerated (no hidden), but the cap was hit -> partial.
-	c := blastCompleteness(resp, tier1Cap)
+	// Enumerated direct_callers are capped at directEnumCap, but the by-area
+	// map records more direct callers than were enumerated. total ==
+	// enumerated so `hidden` is 0, yet the response is partial because the
+	// inline list does not show every direct caller.
+	callers := make([]BlastCaller, directEnumCap)
+	resp := &BlastResponse{
+		DirectCallers:       callers,
+		DirectCallersByArea: map[string]int{"app/models": 200},
+	}
+	c := blastCompleteness(resp, directEnumCap)
 	if c.Verdict != "partial" {
-		t.Fatalf("verdict = %q, want partial (cap hit)", c.Verdict)
+		t.Fatalf("verdict = %q, want partial (enum cap hit, by-area carries the rest)", c.Verdict)
 	}
 }
 

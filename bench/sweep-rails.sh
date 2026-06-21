@@ -55,7 +55,7 @@ for m in $MODELS; do
     #   codex ids (gpt-5.x, or a codex: prefix) -> codex
     #   everything else (claude-*) -> the subscription Claude runner
     case "$m" in
-      *:cloud|ollama-cloud/*|ollama/*)
+      kimi-for-coding/*|zai-coding-plan/*|zhipuai-coding-plan/*|minimax-coding-plan/*|minimax-cn-coding-plan/*|alibaba-coding-plan/*|alibaba-coding-plan-cn/*|moonshotai/*|moonshotai-cn/*|*:cloud|ollama-cloud/*|ollama/*)
         run=(bash bench/opencode-run.sh --tool baseline,sense --repo "$r" --model "$m") ;;
       codex:*)
         run=(bash bench/codex-run.sh --tool baseline,sense --repo "$r" --model "${m#codex:}") ;;
