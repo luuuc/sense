@@ -30,6 +30,9 @@ cd "$BENCH_DIR/.."
 # truth; results are durable per model, so no separate .doc snapshot is kept).
 VERTICAL="${VERTICAL-ruby-rails}"
 source "$BENCH_DIR/lib/bench-paths.sh"
+# Subscription-throttle pacing helpers (inter-repo spacing for the metered arms
+# only). Default-on; BENCH_THROTTLE_PACING=0 = no-op. The opus dispatch never paces.
+source "$BENCH_DIR/lib/throttle-pacing.sh"
 
 MODELS="${MODELS:-claude-opus-4-8}"
 REPOS="${REPOS:-ruby_llm discourse}"
@@ -54,13 +57,15 @@ for m in $MODELS; do
     #      ignored Sense; opencode's native provider + CLI channel replaces it)
     #   codex ids (gpt-5.x, or a codex: prefix) -> codex
     #   everything else (claude-*) -> the subscription Claude runner
+    # paced=1 marks a metered dispatch (opencode/codex); the opus runner stays paced=0.
+    paced=0
     case "$m" in
       kimi-for-coding/*|zai-coding-plan/*|zhipuai-coding-plan/*|minimax-coding-plan/*|minimax-cn-coding-plan/*|alibaba-coding-plan/*|alibaba-coding-plan-cn/*|moonshotai/*|moonshotai-cn/*|*:cloud|ollama-cloud/*|ollama/*)
-        run=(bash bench/opencode-run.sh --tool baseline,sense --repo "$r" --model "$m") ;;
+        run=(bash bench/opencode-run.sh --tool baseline,sense --repo "$r" --model "$m"); paced=1 ;;
       codex:*)
-        run=(bash bench/codex-run.sh --tool baseline,sense --repo "$r" --model "${m#codex:}") ;;
+        run=(bash bench/codex-run.sh --tool baseline,sense --repo "$r" --model "${m#codex:}"); paced=1 ;;
       gpt-*|o3*|o4*)
-        run=(bash bench/codex-run.sh --tool baseline,sense --repo "$r" --model "$m") ;;
+        run=(bash bench/codex-run.sh --tool baseline,sense --repo "$r" --model "$m"); paced=1 ;;
       *)
         run=(bash bench/bench-sense-local.sh --tool baseline,sense --repo "$r" --no-build --model "$m") ;;
     esac
@@ -69,6 +74,9 @@ for m in $MODELS; do
     else
       echo "[FAIL run] $r / $m  (rerun later — sweep is idempotent)"
     fi
+    # Inter-repo spacing for the metered arms only, so the next repo starts in a
+    # less-drained window. The opus dispatch (paced=0) is unaffected.
+    [ "$paced" = 1 ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between repos (after $r/$m)"
   done
 done
 echo "[sweep] complete $(date +%H:%M:%S)"

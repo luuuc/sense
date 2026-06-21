@@ -30,6 +30,12 @@ BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 # Resolves SCENARIOS_DIR + RESULTS_DIR for the global or VERTICAL bench.
 source "$BENCH_DIR/lib/bench-paths.sh"
+# Subscription-throttle pacing for this METERED arm (default-on; BENCH_THROTTLE_PACING=0
+# = exact pre-pacing behavior). codex exec is single-shot (no retry loop), so the
+# exponential backoff does not apply here; inter-session spacing, the per-plan lock,
+# the cooldown (gated in runs-variance) and the health log do. The opus runner never
+# sources this.
+source "$BENCH_DIR/lib/throttle-pacing.sh"
 LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 
@@ -66,6 +72,11 @@ elif command -v gtimeout >/dev/null; then TIMEOUT_BIN=gtimeout; fi
 SENSE_BIN_DIR="$(dirname "$(command -v sense)")"
 SCRUBBED_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vFx "$SENSE_BIN_DIR" | paste -sd: -)"
 
+# Strict serialization: hold the codex (GPT subscription) session lock so two
+# sessions on the SAME metered plan can never overlap. Independent of the
+# opencode lock, so a kimi sweep and a gpt sweep stay concurrent. Released on exit.
+pace_lock_acquire codex
+
 SCEN="$SCENARIOS_DIR/$REPO.yaml"
 [[ -f "$SCEN" ]] || { echo "no scenario $SCEN" >&2; exit 1; }
 SCEN_NAME=$(python3 -c "import yaml;print(yaml.safe_load(open('$SCEN'))['name'])")
@@ -78,9 +89,17 @@ fi
 if [[ -n "$TIMEOUT_BIN" ]]; then TO=("$TIMEOUT_BIN" "$SECS"); else TO=(env); fi
 
 IFS=',' read -ra TOOLS <<< "$TOOLS_CSV"
+# Optional sense-first ordering (BENCH_SENSE_FIRST=1): heavier sense arm first,
+# into the fresher window. Default preserves input order. 3.2-safe (no mapfile).
+ORDERED=(); while IFS= read -r _t; do [ -n "$_t" ] && ORDERED+=("$_t"); done < <(pace_order_tools "${TOOLS[@]}")
+TOOLS=("${ORDERED[@]}")
+arm_idx=0
 for tool in "${TOOLS[@]}"; do
   repo_dir="$SENSE_BENCH_ROOT/$tool/$REPO"
   [[ -d "$repo_dir/.git" ]] || { echo "[codex] SKIP $tool: clone missing at $repo_dir" >&2; continue; }
+  # Inter-arm spacing so the second arm starts in a less-drained window.
+  [ "$arm_idx" -gt 0 ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between arms (next $tool/$REPO)"
+  arm_idx=$(( arm_idx + 1 ))
   out="$RESULTS_DIR/$tool/$REPO"; mkdir -p "$out"
   echo "[codex] $tool/$REPO model=$MODEL sandbox=$SANDBOX timeout=${SECS}s" >&2
 
@@ -152,6 +171,10 @@ if int(rc) != 0:
 print(json.dumps(meta, indent=2))
 PY
   echo "[codex]   $tool rc=$rc wall=${wall}s" >&2
+  # Throttle-health line per session. codex exec yields no per-stream token/answer
+  # counts here, so otok/achars are '-'; class is derived from the exit code.
+  [ "$rc" -eq 0 ] && hclass=ok || hclass=session_failed
+  pace_health_log "$REPO" "$tool" "$wall" "-" "-" "1" "$hclass"
 done
 
 SJ=(--tool "$TOOLS_CSV" --repo "$REPO")

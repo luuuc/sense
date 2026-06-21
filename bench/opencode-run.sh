@@ -39,6 +39,10 @@ BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
 # Resolves SCENARIOS_DIR + RESULTS_DIR for the global or VERTICAL bench.
 source "$BENCH_DIR/lib/bench-paths.sh"
+# Subscription-throttle pacing for this METERED arm (default-on; BENCH_THROTTLE_PACING=0
+# = exact pre-pacing behavior). Sourced AFTER bench-paths so the health log can default
+# under RESULTS_DIR. The claude/opus runner never sources this.
+source "$BENCH_DIR/lib/throttle-pacing.sh"
 LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 
@@ -79,6 +83,10 @@ unset ANTHROPIC_API_KEY BENCHMARK_ANTHROPIC_API_KEY
 
 SENSE_BIN_DIR="$(dirname "$(command -v sense)")"
 SCRUBBED_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vFx "$SENSE_BIN_DIR" | paste -sd: -)"
+
+# Strict serialization: hold the opencode (Kimi subscription) session lock so two
+# sessions on the SAME metered plan can never overlap. Released on exit.
+pace_lock_acquire opencode
 
 SCEN="$SCENARIOS_DIR/$REPO.yaml"
 [[ -f "$SCEN" ]] || { echo "no scenario $SCEN" >&2; exit 1; }
@@ -126,9 +134,17 @@ run_guarded() {  # $1 = raw file (absolute); $2.. = command
 }
 
 IFS=',' read -ra TOOLS <<< "$TOOLS_CSV"
+# Optional sense-first ordering (BENCH_SENSE_FIRST=1): run the heavier sense arm
+# into the fresher window. Default keeps the input order. 3.2-safe (no mapfile).
+ORDERED=(); while IFS= read -r _t; do [ -n "$_t" ] && ORDERED+=("$_t"); done < <(pace_order_tools "${TOOLS[@]}")
+TOOLS=("${ORDERED[@]}")
+arm_idx=0
 for tool in "${TOOLS[@]}"; do
   repo_dir="$SENSE_BENCH_ROOT/$tool/$REPO"
   [[ -d "$repo_dir/.git" ]] || { echo "[opencode] SKIP $tool: clone missing at $repo_dir" >&2; continue; }
+  # Inter-arm spacing so the second arm starts in a less-drained window.
+  [ "$arm_idx" -gt 0 ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between arms (next $tool/$REPO)"
+  arm_idx=$(( arm_idx + 1 ))
   out="$RESULTS_DIR/$tool/$REPO"; mkdir -p "$out"
   echo "[opencode] $tool/$REPO model=$MODEL timeout=${SECS}s" >&2
 
@@ -215,6 +231,16 @@ print(len(ans), perr)" 2>/dev/null || echo "0 0")
       reason="no output (rc=$rc, 0 tok)"
     fi
     echo "[opencode]   attempt $attempt/$attempts: $reason -- $([ "$attempt" -lt "$attempts" ] && echo retrying || echo 'giving up')" >&2
+    # Pace the retry by failure class. A provider cap (perr=1) or a truncated
+    # answer (tokens streamed but the answer is below min) means the window is
+    # drained -- back off LONG so the next attempt lands in a fresher window. A
+    # TRUE no-output hang (0 tokens) is not throttle-related: retry it fast (the
+    # watchdog already burned time), so skip the backoff.
+    if [ "$attempt" -lt "$attempts" ]; then
+      if [ "$perr" -eq 1 ] || { [ "${otok:-0}" -gt 0 ] && [ "${achars:-0}" -lt "$OPENCODE_MIN_ANSWER_CHARS" ]; }; then
+        pace_backoff "$attempt" "throttle/truncation before retry"
+      fi
+    fi
   done
   wall=$(( $(date +%s) - start ))
 
@@ -275,10 +301,14 @@ elif rc != 0:
     meta["note"] = f"watchdog stopped ({kind}) but produced {otok} output tokens and a {achars}-char answer; kept as a truncated-but-valid run"
 print(json.dumps(meta, indent=2))
 PY
-  if [ "${perr:-0}" -eq 1 ]; then flag=" *** INVALID: provider cap error (Operation not allowed) -- re-run after reset ***";
-  elif [ "${achars:-0}" -lt "$OPENCODE_MIN_ANSWER_CHARS" ]; then flag=" *** INVALID: empty/truncated answer ***";
-  else flag=""; fi
+  if [ "${perr:-0}" -eq 1 ]; then flag=" *** INVALID: provider cap error (Operation not allowed) -- re-run after reset ***"; hclass=cap;
+  elif [ "${achars:-0}" -lt "$OPENCODE_MIN_ANSWER_CHARS" ]; then flag=" *** INVALID: empty/truncated answer ***"; hclass=truncated;
+  elif [ "$rc" -eq 126 ]; then flag=""; hclass=hang;
+  elif [ "$rc" -ne 0 ]; then flag=""; hclass=watchdog;
+  else flag=""; hclass=ok; fi
   echo "[opencode]   $tool rc=$rc wall=${wall}s attempts=$attempts out_tok=$otok answer_chars=$achars$flag" >&2
+  # Throttle-health line per session so onset is observable live.
+  pace_health_log "$REPO" "$tool" "$wall" "$otok" "$achars" "$attempts" "$hclass"
 done
 
 SJ=(--tool "$TOOLS_CSV" --repo "$REPO")
