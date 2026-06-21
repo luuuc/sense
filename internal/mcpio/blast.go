@@ -3,12 +3,39 @@ package mcpio
 import (
 	"context"
 	"fmt"
+	"path"
+	"sort"
 
 	"github.com/luuuc/sense/internal/blast"
 )
 
 const (
-	tier1Cap         = 200
+	tier1Cap = 200
+	// directEnumCap bounds how many direct callers are enumerated inline.
+	// On a high-fan-out hub a flat dump of all (up to tier1Cap) direct
+	// callers is ~9k tokens in one tool result; the agent rarely needs the
+	// full list as line-addressable entries. direct_callers_by_area carries
+	// the true magnitude and structural shape, total_affected the true
+	// count, so enumerating only the top slice keeps the response small
+	// without hiding how big the radius is. The enumerated entries are the
+	// actionable subset; the by-area map is the map of the rest. The
+	// enumerated subset is the highest-confidence slice (see
+	// BuildBlastResponse), so a modest cap still surfaces the most relevant
+	// callers, still far under tier1Cap. 60 was chosen to hold recall: it
+	// kept Opus's discourse cited-recall flat across three runs (30 was too
+	// aggressive and dropped it). The weak/throttled-model case is NOT
+	// proven safe — that bench scenario is too noisy to discriminate (see
+	// the project memory on the small-subscription bench). directEnumCap and
+	// BlastTokenBudget are two distinct knobs: this caps the COUNT of
+	// enumerated callers; the budget is the token backstop that trims
+	// further only when the enumerated subset (with its snippets) is itself
+	// large enough to exceed the budget — at this cap it rarely fires.
+	directEnumCap = 60
+	// indirectEnumCap bounds the enumerated indirect_callers list. Indirect
+	// callers are the weakest "what breaks?" signal (reached via N hops);
+	// capping them keeps a high-fan-out blast small. total_affected still
+	// reports every indirect caller in the radius.
+	indirectEnumCap  = 20
 	tier2ExamplesCap = 5
 	// blastTestExamplesCap bounds the affected-test sample kept when a
 	// response must be trimmed to fit a token budget. tests_affected_count
@@ -99,7 +126,10 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 
 	hasTiers := len(r.SymbolTiers) > 0
 	tier1Count := 0
+	directTier1 := 0
 	var tier2All []BlastCaller
+
+	var tier1Direct []rankedCaller
 
 	for _, c := range r.DirectCallers {
 		var file string
@@ -118,17 +148,41 @@ func BuildBlastResponse(ctx context.Context, r blast.Result, files FileLookup, s
 		}
 
 		if !hasTiers || r.SymbolTiers[c.ID] == blast.TierBreaks {
-			if tier1Count < tier1Cap {
-				resp.DirectCallers = append(resp.DirectCallers, entry)
-				tier1Count++
-			}
+			// Every tier-1 direct caller feeds the by-area map (the true
+			// structural shape), but only directEnumCap are enumerated
+			// inline (the actionable subset).
+			addArea(&resp.DirectCallersByArea, file)
+			directTier1++
+			tier1Direct = append(tier1Direct, rankedCaller{entry: entry, area: areaOf(file), id: c.ID, conf: r.DirectConfidence[c.ID]})
 		} else {
 			tier2All = append(tier2All, entry)
 		}
 	}
+
+	// Enumerate inline breadth-first across areas. Only the enumerated
+	// callers carry file:line and are citable, so the subset must span the
+	// blast radius rather than sample one corner of it. On a high-fan-out
+	// hub every direct caller often has confidence 1.0, so a flat conf-DESC
+	// rank degenerates to id-ASC, and IDs cluster by scan directory — the
+	// top-cap slice ends up entirely in one big low-ID area while every
+	// scattered area is crowded out. Instead: group by area, then round-
+	// robin so each area surfaces its best exemplar before any area
+	// surfaces a second. Within an area the exemplar is the existing signal
+	// (confidence DESC, then ID ASC); areas are visited by descending area
+	// count, tiebreak area-name ASC, so the selection and its order are
+	// fully deterministic. The by-area map and total_affected still carry
+	// the full magnitude.
+	resp.DirectCallers = enumerateByArea(tier1Direct, directEnumCap)
+	// Charge the full tier-1 direct count against the shared tier1Cap so
+	// indirect enumeration keeps its prior ceiling even though only the top
+	// directEnumCap direct callers are enumerated inline. Indirect callers
+	// are additionally bounded by indirectEnumCap: on a high-fan-out hub they
+	// must not expand to fill the room freed by capping the direct list, or
+	// the response stays large for the weakest signal.
+	tier1Count = directTier1
 	for _, hop := range r.IndirectCallers {
 		if !hasTiers || r.SymbolTiers[hop.Symbol.ID] == blast.TierBreaks {
-			if tier1Count < tier1Cap {
+			if tier1Count < tier1Cap && len(resp.IndirectCallers) < indirectEnumCap {
 				var file string
 				if path, ok := files(hop.Symbol.FileID); ok {
 					file = path
@@ -248,7 +302,11 @@ func blastCompleteness(resp *BlastResponse, totalAffected int) *Completeness {
 	if hidden < 0 {
 		hidden = 0
 	}
-	capped := len(resp.DirectCallers) >= tier1Cap
+	// The enumerated direct_callers are capped at directEnumCap; the by-area
+	// map carries the full tier-1 direct count. If more direct callers exist
+	// than were enumerated, the response is partial even when total_affected
+	// happens to match (e.g. all callers are direct and there are >cap of them).
+	capped := sumAreas(resp.DirectCallersByArea) > len(resp.DirectCallers)
 	if hidden > 0 || capped {
 		return &Completeness{
 			Verdict:  "partial",
@@ -359,6 +417,128 @@ func BuildDiffBlastResponse(ctx context.Context, ref string, results []blast.Res
 		EstimatedTokensSaved:      uniqueFiles * AvgTokensPerFile,
 	}
 	return resp
+}
+
+// rankedCaller pairs a tier-1 direct caller's wire entry with the keys
+// that drive area-stratified enumeration: area groups callers into
+// subsystems, conf/id pick the exemplar within an area.
+type rankedCaller struct {
+	entry BlastCaller
+	area  string
+	id    int64
+	conf  float64
+}
+
+// areaOf returns the subsystem key for a file — its parent directory,
+// the same key addArea tallies. An unresolved file falls under ".".
+func areaOf(file string) string {
+	if file == "" {
+		return "."
+	}
+	return path.Dir(file)
+}
+
+// enumerateByArea selects up to cap direct callers breadth-first across
+// areas. Each area contributes its best exemplar before any area
+// contributes a second, so a small scattered area (lib/email) surfaces a
+// citable exemplar instead of being crowded out by a big low-ID area.
+// Areas are visited by descending member count, tiebreak area-name ASC;
+// within an area the exemplar order is the existing signal (confidence
+// DESC, then ID ASC). The returned slice is area-clustered in that same
+// visitation order, so the reader sees the enumerated callers by
+// subsystem. Selection and order are deterministic across builds.
+//
+// When the callers span MORE areas than limit, round-robin seats one per
+// area, so the most-populated limit areas each get an exemplar and the
+// smaller tail is represented only in direct_callers_by_area — summarised,
+// never hidden (see TestBuildBlastResponseMoreAreasThanCap). Descending
+// count means a bigger (more-affected) subsystem is never dropped for a
+// one-off; the long tail loses its inline exemplar but keeps its true
+// count in by_area, which is what makes that tradeoff acceptable.
+func enumerateByArea(callers []rankedCaller, limit int) []BlastCaller {
+	if len(callers) == 0 || limit <= 0 {
+		return nil
+	}
+
+	// Bucket by area, then rank within each bucket by the existing signal.
+	buckets := map[string][]rankedCaller{}
+	for _, rc := range callers {
+		buckets[rc.area] = append(buckets[rc.area], rc)
+	}
+	areas := make([]string, 0, len(buckets))
+	for area, b := range buckets {
+		sort.SliceStable(b, func(i, j int) bool {
+			if b[i].conf != b[j].conf {
+				return b[i].conf > b[j].conf
+			}
+			return b[i].id < b[j].id
+		})
+		buckets[area] = b
+		areas = append(areas, area)
+	}
+	// Deterministic area visitation: most-populated first (its breadth is
+	// most worth sampling), tiebreak by area name so two equal-count areas
+	// always order the same way.
+	sort.SliceStable(areas, func(i, j int) bool {
+		if len(buckets[areas[i]]) != len(buckets[areas[j]]) {
+			return len(buckets[areas[i]]) > len(buckets[areas[j]])
+		}
+		return areas[i] < areas[j]
+	})
+
+	// Round-robin: rank r takes the r-th exemplar from every area in turn,
+	// so each area surfaces its best before any surfaces a second. Stop at
+	// cap. Areas that received a slot in this pass are emitted
+	// area-clustered (in visitation order) so the reader groups them by
+	// subsystem; the round-robin only decides WHICH callers are chosen.
+	chosen := map[string][]BlastCaller{}
+	picked := 0
+	for rank := 0; picked < limit; rank++ {
+		progressed := false
+		for _, area := range areas {
+			b := buckets[area]
+			if rank >= len(b) {
+				continue
+			}
+			progressed = true
+			chosen[area] = append(chosen[area], b[rank].entry)
+			picked++
+			if picked >= limit {
+				break
+			}
+		}
+		if !progressed {
+			break // every area exhausted
+		}
+	}
+
+	out := make([]BlastCaller, 0, picked)
+	for _, area := range areas {
+		out = append(out, chosen[area]...)
+	}
+	return out
+}
+
+// addArea increments the by-area tally for a caller's file directory.
+// The area is the file's parent directory — coarse enough to name a
+// subsystem (app/models, app/jobs) yet fine enough to distinguish them.
+// A file at the repo root, or a caller with no resolved file, falls under
+// ".". The map is lazily allocated so a zero-caller blast omits the field.
+func addArea(m *map[string]int, file string) {
+	if *m == nil {
+		*m = make(map[string]int)
+	}
+	(*m)[areaOf(file)]++
+}
+
+// sumAreas totals the by-area direct-caller tally — the true tier-1
+// direct count, even when direct_callers enumerates only the top slice.
+func sumAreas(m map[string]int) int {
+	n := 0
+	for _, v := range m {
+		n += v
+	}
+	return n
 }
 
 func countUniqueBlastFiles(resp BlastResponse) int {

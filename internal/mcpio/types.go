@@ -298,6 +298,15 @@ type BlastResponse struct {
 	GraphEdgesTraversed int             `json:"graph_edges_traversed"`
 	TotalAffected       int             `json:"total_affected"`
 
+	// DirectCallersByArea groups EVERY direct caller by its file's
+	// directory, e.g. {"app/models": 40, "app/jobs": 18}. It is computed
+	// from the full caller set before direct_callers is capped, so it
+	// reports the true magnitude and structural shape (which subsystems
+	// depend on the subject) even when direct_callers enumerates only the
+	// top slice. The values sum to the true direct-caller count; pair it
+	// with total_affected for the full radius.
+	DirectCallersByArea map[string]int `json:"direct_callers_by_area,omitempty"`
+
 	AffectedSubclasses     []BlastCaller `json:"affected_subclasses"`
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
 	AffectedViaIncludes    []BlastCaller `json:"affected_via_includes"`

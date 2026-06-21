@@ -169,6 +169,15 @@ type Result struct {
 	// keyed by symbol ID. Used for call-site snippet generation.
 	DirectEdgeSites map[int64]EdgeSite
 
+	// DirectConfidence records the cumulative path confidence for each
+	// direct caller, keyed by symbol ID. This is the same score the
+	// engine ranks by at the MaxResults cap boundary (capResults). Response
+	// shapers use it to enumerate the highest-confidence subset inline when
+	// the full direct list is capped: only enumerated callers carry
+	// file:line and are citable, so the enumerated slice must be the most
+	// relevant callers, not an arbitrary (ID-ordered) prefix.
+	DirectConfidence map[int64]float64
+
 	EdgesTraversed    int
 	SubjectHasCallees bool
 	// ViewReached is true when a view template (ERB) reaches the subject via a
@@ -248,7 +257,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 
 	isSelf := selfMethodPredicate(subject, seedSet)
-	directCallers, directTemporalIDs, directEdgeSites, excludedD := state.buildDirectCallers(directIDs, symbolsByID, isSelf)
+	directCallers, directTemporalIDs, directEdgeSites, directConfidence, excludedD := state.buildDirectCallers(directIDs, symbolsByID, isSelf)
 	indirectCallers, excludedI := state.buildIndirectCallers(indirectIDs, symbolsByID, isSelf)
 	totalAffectedCount -= excludedD + excludedI
 
@@ -277,6 +286,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		ViewReached:            viewReached,
 		DirectTemporalIDs:      directTemporalIDs,
 		DirectEdgeSites:        directEdgeSites,
+		DirectConfidence:       directConfidence,
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
@@ -607,14 +617,16 @@ func selfMethodPredicate(subject model.Symbol, seedSet map[int64]struct{}) selfM
 }
 
 // buildDirectCallers hydrates the direct-caller IDs into symbols (skipping the
-// subject's own members), recording which were reached via a temporal edge and
-// each one's edge site. Returns the callers, the temporal-ID set, the edge-site
-// map, and the count excluded as self-members.
-func (s *bfsState) buildDirectCallers(directIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) ([]model.Symbol, map[int64]bool, map[int64]EdgeSite, int) {
+// subject's own members), recording which were reached via a temporal edge,
+// each one's edge site, and its cumulative path confidence. Returns the
+// callers, the temporal-ID set, the edge-site map, the confidence map, and the
+// count excluded as self-members.
+func (s *bfsState) buildDirectCallers(directIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) ([]model.Symbol, map[int64]bool, map[int64]EdgeSite, map[int64]float64, int) {
 	excluded := 0
 	callers := make([]model.Symbol, 0, len(directIDs))
 	temporalIDs := map[int64]bool{}
 	edgeSites := make(map[int64]EdgeSite, len(directIDs))
+	confidence := make(map[int64]float64, len(directIDs))
 	for _, id := range directIDs {
 		sym, ok := symbolsByID[id]
 		if !ok {
@@ -631,9 +643,10 @@ func (s *bfsState) buildDirectCallers(directIDs []int64, symbolsByID map[int64]m
 		if es, ok := s.edgeSites[id]; ok {
 			edgeSites[id] = es
 		}
+		confidence[id] = s.pathConf[id]
 	}
 	sortSymbolsByID(callers)
-	return callers, temporalIDs, edgeSites, excluded
+	return callers, temporalIDs, edgeSites, confidence, excluded
 }
 
 // buildIndirectCallers hydrates the indirect-caller IDs into CallerHops

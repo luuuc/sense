@@ -148,9 +148,10 @@ func TestBuildBlastResponseViaTemporal(t *testing.T) {
 	}
 }
 
-func TestBuildBlastResponseTier1Cap(t *testing.T) {
-	// Build a Result with 250 Tier-1 (calls-edge) direct callers.
-	// The response should cap at 200.
+func TestBuildBlastResponseDirectEnumCap(t *testing.T) {
+	// Build a Result with 250 Tier-1 (calls-edge) direct callers. The
+	// enumerated direct_callers list is bounded at directEnumCap, but the
+	// by-area map and total_affected preserve the true magnitude.
 	var directCallers []model.Symbol
 	tiers := make(map[int64]blast.Tier)
 	for i := int64(1); i <= 250; i++ {
@@ -173,11 +174,379 @@ func TestBuildBlastResponseTier1Cap(t *testing.T) {
 
 	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
 
-	if len(resp.DirectCallers) != 200 {
-		t.Errorf("DirectCallers = %d, want 200 (tier1 cap)", len(resp.DirectCallers))
+	if len(resp.DirectCallers) != directEnumCap {
+		t.Errorf("DirectCallers = %d, want %d (direct enum cap)", len(resp.DirectCallers), directEnumCap)
+	}
+	// by-area carries the full tier-1 direct count even though only the top
+	// slice is enumerated. noFiles → all callers fall under the "." area.
+	if got := sumAreas(resp.DirectCallersByArea); got != 250 {
+		t.Errorf("by-area sum = %d, want 250 (full direct count preserved)", got)
 	}
 	if resp.TotalAffected != 250 {
 		t.Errorf("TotalAffected = %d, want 250 (pre-cap count preserved)", resp.TotalAffected)
+	}
+}
+
+func TestBuildBlastResponseByAreaTruthful(t *testing.T) {
+	// 40 direct callers across three subsystems: 30 under app/models,
+	// 7 under app/jobs, 3 under lib/foo. Only directEnumCap are enumerated
+	// inline, but the by-area map must report all 40 grouped by directory so
+	// the agent sees the structural shape and true total.
+	type area struct {
+		dir string
+		n   int
+	}
+	areas := []area{{"app/models", 70}, {"app/jobs", 7}, {"lib/foo", 3}}
+	var directCallers []model.Symbol
+	tiers := make(map[int64]blast.Tier)
+	paths := map[int64]string{}
+	var id int64
+	for _, a := range areas {
+		for i := 0; i < a.n; i++ {
+			id++
+			directCallers = append(directCallers, model.Symbol{ID: id, Qualified: fmt.Sprintf("C%d", id), FileID: id})
+			tiers[id] = blast.TierBreaks
+			paths[id] = fmt.Sprintf("%s/file%d.rb", a.dir, i)
+		}
+	}
+	files := func(fid int64) (string, bool) { p, ok := paths[fid]; return p, ok }
+
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		DirectCallers: directCallers,
+		AffectedTests: []string{},
+		TotalAffected: 30,
+		SymbolTiers:   tiers,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	if len(resp.DirectCallers) != directEnumCap {
+		t.Errorf("enumerated direct_callers = %d, want %d", len(resp.DirectCallers), directEnumCap)
+	}
+	want := map[string]int{"app/models": 70, "app/jobs": 7, "lib/foo": 3}
+	for dir, n := range want {
+		if resp.DirectCallersByArea[dir] != n {
+			t.Errorf("by_area[%q] = %d, want %d", dir, resp.DirectCallersByArea[dir], n)
+		}
+	}
+	if got := sumAreas(resp.DirectCallersByArea); got != 80 {
+		t.Errorf("by_area sum = %d, want 80 (true direct count)", got)
+	}
+	if resp.Completeness == nil || resp.Completeness.Verdict != "partial" {
+		t.Errorf("verdict = %v, want partial (more direct callers than enumerated)", resp.Completeness)
+	}
+}
+
+func TestBuildBlastResponseEnumeratesHighestConfidence(t *testing.T) {
+	// 80 tier-1 direct callers in ID order (> directEnumCap so the cap
+	// bites), with confidence deliberately NOT monotonic in ID: caller i
+	// gets confidence that peaks in the middle of the ID range. The
+	// enumerated subset must be the highest-confidence callers (DESC),
+	// tie-broken by ID ASC — NOT the lowest-ID prefix the engine's
+	// determinism sort yields.
+	const n = 80
+	var directCallers []model.Symbol
+	tiers := make(map[int64]blast.Tier)
+	conf := map[int64]float64{}
+	for i := int64(1); i <= n; i++ {
+		directCallers = append(directCallers, model.Symbol{
+			ID: i, Qualified: fmt.Sprintf("Caller%02d", i), FileID: 100,
+		})
+		tiers[i] = blast.TierBreaks
+		// Tent function over [1,n]: confidence rises then falls, so the
+		// top-confidence callers cluster around the middle IDs, far from
+		// the lowest-ID prefix.
+		if i <= n/2 {
+			conf[i] = float64(i) / 100.0
+		} else {
+			conf[i] = float64(n-i+1) / 100.0
+		}
+	}
+
+	r := blast.Result{
+		Symbol:           model.Symbol{ID: 0, Qualified: "Subject"},
+		DirectCallers:    directCallers,
+		AffectedTests:    []string{},
+		TotalAffected:    n,
+		SymbolTiers:      tiers,
+		DirectConfidence: conf,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, noFiles, nil)
+
+	if len(resp.DirectCallers) != directEnumCap {
+		t.Fatalf("enumerated direct_callers = %d, want %d", len(resp.DirectCallers), directEnumCap)
+	}
+
+	// Expected enumerated set: the directEnumCap highest-confidence IDs,
+	// ordered by confidence DESC then ID ASC. Reconstruct independently.
+	type rc struct {
+		id   int64
+		conf float64
+	}
+	var ranked []rc
+	for id, c := range conf {
+		ranked = append(ranked, rc{id, c})
+	}
+	sortRanked := func(a, b rc) bool {
+		if a.conf != b.conf {
+			return a.conf > b.conf
+		}
+		return a.id < b.id
+	}
+	// simple insertion sort to avoid pulling in sort just for the oracle
+	for i := 1; i < len(ranked); i++ {
+		for j := i; j > 0 && sortRanked(ranked[j], ranked[j-1]); j-- {
+			ranked[j], ranked[j-1] = ranked[j-1], ranked[j]
+		}
+	}
+
+	// The enumerated entries must be confidence-DESC (highest first) and
+	// match the expected top-cap IDs.
+	prev := 2.0
+	for i, c := range resp.DirectCallers {
+		gotConf := conf[symbolID(c.Symbol)]
+		if gotConf > prev {
+			t.Errorf("enumerated[%d] conf %.3f > previous %.3f — not confidence-descending", i, gotConf, prev)
+		}
+		prev = gotConf
+		wantID := ranked[i].id
+		if symbolID(c.Symbol) != wantID {
+			t.Errorf("enumerated[%d] = %s (conf %.3f), want id %d (conf %.3f)", i, c.Symbol, gotConf, wantID, ranked[i].conf)
+		}
+	}
+
+	// Determinism: a second build produces a byte-identical enumerated set.
+	resp2 := BuildBlastResponse(context.Background(), r, noFiles, nil)
+	if len(resp2.DirectCallers) != len(resp.DirectCallers) {
+		t.Fatalf("non-deterministic length: %d vs %d", len(resp2.DirectCallers), len(resp.DirectCallers))
+	}
+	for i := range resp.DirectCallers {
+		if resp.DirectCallers[i].Symbol != resp2.DirectCallers[i].Symbol {
+			t.Errorf("non-deterministic at %d: %q vs %q", i, resp.DirectCallers[i].Symbol, resp2.DirectCallers[i].Symbol)
+		}
+	}
+
+	// by_area sum and total stay truthful over the FULL set.
+	if got := sumAreas(resp.DirectCallersByArea); got != n {
+		t.Errorf("by_area sum = %d, want %d", got, n)
+	}
+	if resp.TotalAffected != n {
+		t.Errorf("TotalAffected = %d, want %d", resp.TotalAffected, n)
+	}
+}
+
+// TestBuildBlastResponseMoreAreasThanCap pins the behaviour when a symbol's
+// callers span MORE distinct areas than directEnumCap. Round-robin can seat
+// only one caller per area, so exactly directEnumCap areas get a citable
+// exemplar (most-populated area first, name-tiebroken). The remaining areas
+// are NOT hidden — every one still appears in direct_callers_by_area with
+// its true count. This is the antirez/Kent "long tail" case: it must be
+// summarised, never silently dropped.
+func TestBuildBlastResponseMoreAreasThanCap(t *testing.T) {
+	const nAreas = 70 // > directEnumCap
+	var directCallers []model.Symbol
+	tiers := make(map[int64]blast.Tier)
+	paths := map[int64]string{}
+	for i := int64(1); i <= nAreas; i++ {
+		directCallers = append(directCallers, model.Symbol{ID: i, Qualified: fmt.Sprintf("C%d", i), FileID: i})
+		tiers[i] = blast.TierBreaks
+		paths[i] = fmt.Sprintf("area%03d/file.rb", i) // one caller, one area
+	}
+	files := func(fid int64) (string, bool) { p, ok := paths[fid]; return p, ok }
+
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		DirectCallers: directCallers,
+		AffectedTests: []string{},
+		TotalAffected: nAreas,
+		SymbolTiers:   tiers,
+	}
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	// Exactly cap callers, each from a distinct area (one-per-area: here one
+	// file per area, so distinct files prove distinct areas).
+	if len(resp.DirectCallers) != directEnumCap {
+		t.Fatalf("enumerated = %d, want %d (cap)", len(resp.DirectCallers), directEnumCap)
+	}
+	seenFile := map[string]bool{}
+	for _, c := range resp.DirectCallers {
+		if seenFile[c.File] {
+			t.Errorf("file %q enumerated twice — round-robin must seat one per area when areas exceed the cap", c.File)
+		}
+		seenFile[c.File] = true
+	}
+	// The un-enumerated tail is summarised, not hidden: by_area carries EVERY area.
+	if len(resp.DirectCallersByArea) != nAreas {
+		t.Errorf("by_area areas = %d, want %d (every area incl. the un-enumerated tail)", len(resp.DirectCallersByArea), nAreas)
+	}
+	if got := sumAreas(resp.DirectCallersByArea); got != nAreas {
+		t.Errorf("by_area sum = %d, want %d (true direct count)", got, nAreas)
+	}
+	if resp.Completeness == nil || resp.Completeness.Verdict != "partial" {
+		t.Errorf("verdict = %v, want partial (more areas than enumerated)", resp.Completeness)
+	}
+
+	// Deterministic: a second build yields the identical enumerated set.
+	resp2 := BuildBlastResponse(context.Background(), r, files, nil)
+	if len(resp2.DirectCallers) != len(resp.DirectCallers) {
+		t.Fatalf("non-deterministic length: %d vs %d", len(resp2.DirectCallers), len(resp.DirectCallers))
+	}
+	for i := range resp.DirectCallers {
+		if resp.DirectCallers[i].Symbol != resp2.DirectCallers[i].Symbol {
+			t.Errorf("non-deterministic at %d: %q vs %q", i, resp.DirectCallers[i].Symbol, resp2.DirectCallers[i].Symbol)
+		}
+	}
+}
+
+// symbolID parses the trailing integer from a "CallerNN" qualified name,
+// the oracle the confidence-ranking test uses to map a wire entry back to
+// its fixture ID.
+func symbolID(qualified string) int64 {
+	var id int64
+	// names are "CallerNN"; scan the digit suffix.
+	for i := 0; i < len(qualified); i++ {
+		if qualified[i] >= '0' && qualified[i] <= '9' {
+			_, _ = fmt.Sscanf(qualified[i:], "%d", &id)
+			break
+		}
+	}
+	return id
+}
+
+func TestBuildBlastResponseEnumeratesBreadthAcrossAreas(t *testing.T) {
+	// One big area swamps the ID range, plus many small scattered areas.
+	// A flat conf-DESC/id-ASC rank (every conf 1.0 → pure id-ASC) would
+	// fill the enumerated set entirely from the big low-ID area and crowd
+	// out every scattered area. Breadth-first enumeration must surface a
+	// citable exemplar from each scattered area before the big area takes a
+	// second slot.
+	bigArea := "app/models"
+	scattered := []string{
+		"lib/email", "lib/backup_restore", "lib/file_store",
+		"lib/cooked", "lib/auth", "lib/jobs", "lib/search",
+		"lib/tasks", "lib/validators", "lib/serializers",
+	}
+
+	var directCallers []model.Symbol
+	tiers := make(map[int64]blast.Tier)
+	conf := map[int64]float64{}
+	paths := map[int64]string{}
+	var id int64
+
+	// 60 callers in the big area, all the lowest IDs (scan-order clustering).
+	for i := 0; i < 60; i++ {
+		id++
+		directCallers = append(directCallers, model.Symbol{ID: id, Qualified: fmt.Sprintf("Big%d", id), FileID: id})
+		tiers[id] = blast.TierBreaks
+		conf[id] = 1.0
+		paths[id] = fmt.Sprintf("%s/file%d.rb", bigArea, i)
+	}
+	// One caller in each scattered area, all at higher IDs.
+	for _, area := range scattered {
+		id++
+		directCallers = append(directCallers, model.Symbol{ID: id, Qualified: fmt.Sprintf("S_%s_%d", area, id), FileID: id})
+		tiers[id] = blast.TierBreaks
+		conf[id] = 1.0
+		paths[id] = fmt.Sprintf("%s/file.rb", area)
+	}
+	files := func(fid int64) (string, bool) { p, ok := paths[fid]; return p, ok }
+
+	total := len(directCallers)
+	r := blast.Result{
+		Symbol:           model.Symbol{ID: 0, Qualified: "Upload"},
+		DirectCallers:    directCallers,
+		AffectedTests:    []string{},
+		TotalAffected:    total,
+		SymbolTiers:      tiers,
+		DirectConfidence: conf,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	if len(resp.DirectCallers) != directEnumCap {
+		t.Fatalf("enumerated = %d, want %d", len(resp.DirectCallers), directEnumCap)
+	}
+
+	// (a) Breadth: EVERY scattered area must have a citable exemplar, and
+	// the big area must not monopolize the enumerated set.
+	enumAreas := map[string]int{}
+	for _, c := range resp.DirectCallers {
+		enumAreas[areaOf(c.File)]++
+	}
+	for _, area := range scattered {
+		if enumAreas[area] == 0 {
+			t.Errorf("scattered area %q has no enumerated exemplar (crowded out)", area)
+		}
+	}
+	if enumAreas[bigArea] >= directEnumCap {
+		t.Errorf("big area %q monopolized the enumerated set (%d of %d)", bigArea, enumAreas[bigArea], directEnumCap)
+	}
+	// 10 scattered areas each get a slot; the big area takes the remaining
+	// 20. No single area exceeds the big area's share.
+	if enumAreas[bigArea] != directEnumCap-len(scattered) {
+		t.Errorf("big area got %d slots, want %d (cap minus scattered)", enumAreas[bigArea], directEnumCap-len(scattered))
+	}
+
+	// (d) by_area sum + total stay truthful over the FULL set.
+	if got := sumAreas(resp.DirectCallersByArea); got != total {
+		t.Errorf("by_area sum = %d, want %d", got, total)
+	}
+	if resp.TotalAffected != total {
+		t.Errorf("TotalAffected = %d, want %d", resp.TotalAffected, total)
+	}
+
+	// (c) Determinism: a second build is identical entry-for-entry.
+	resp2 := BuildBlastResponse(context.Background(), r, files, nil)
+	if len(resp2.DirectCallers) != len(resp.DirectCallers) {
+		t.Fatalf("non-deterministic length: %d vs %d", len(resp2.DirectCallers), len(resp.DirectCallers))
+	}
+	for i := range resp.DirectCallers {
+		if resp.DirectCallers[i].Symbol != resp2.DirectCallers[i].Symbol {
+			t.Errorf("non-deterministic at %d: %q vs %q", i, resp.DirectCallers[i].Symbol, resp2.DirectCallers[i].Symbol)
+		}
+	}
+}
+
+func TestBuildBlastResponseAreaExemplarIsHighestConfidence(t *testing.T) {
+	// (b) Within an area, the chosen exemplar is the highest-confidence
+	// caller, NOT the lowest-ID one. Two areas, each with three callers
+	// whose top-confidence member is at the HIGHEST id (so id-ASC would
+	// pick the wrong one). With cap=2, each area contributes exactly its
+	// best exemplar.
+	type caller struct {
+		id   int64
+		conf float64
+		area string
+	}
+	callers := []caller{
+		{1, 0.3, "app/a"}, {2, 0.5, "app/a"}, {3, 0.9, "app/a"}, // best is id 3
+		{4, 0.4, "app/b"}, {5, 0.95, "app/b"}, {6, 0.6, "app/b"}, // best is id 5
+	}
+
+	// Drive enumerateByArea directly with a tight cap so each area yields
+	// exactly its best exemplar.
+	var ranked []rankedCaller
+	for _, c := range callers {
+		ranked = append(ranked, rankedCaller{
+			entry: BlastCaller{Symbol: fmt.Sprintf("C%d", c.id)},
+			area:  c.area, id: c.id, conf: c.conf,
+		})
+	}
+	got := enumerateByArea(ranked, 2)
+	gotSet := map[string]bool{}
+	for _, e := range got {
+		gotSet[e.Symbol] = true
+	}
+	if !gotSet["C3"] {
+		t.Errorf("app/a exemplar should be C3 (conf 0.9), got %v", got)
+	}
+	if !gotSet["C5"] {
+		t.Errorf("app/b exemplar should be C5 (conf 0.95), got %v", got)
+	}
+	if len(got) != 2 {
+		t.Errorf("enumerated = %d, want 2 (one exemplar per area)", len(got))
 	}
 }
 
@@ -430,13 +799,19 @@ func TestBlastResponseRefField(t *testing.T) {
 
 	resp := BuildBlastResponse(context.Background(), r, files, nil)
 
-	// DirectCallers — with file
-	if resp.DirectCallers[0].Ref != "lib/caller.rb:25" {
-		t.Errorf("DirectCallers[0].Ref = %q, want %q", resp.DirectCallers[0].Ref, "lib/caller.rb:25")
+	// Look the entries up by symbol — area-stratified enumeration clusters
+	// by directory, so the Ref assertions must not assume input order.
+	refBySymbol := map[string]string{}
+	for _, c := range resp.DirectCallers {
+		refBySymbol[c.Symbol] = c.Ref
 	}
-	// DirectCallers — no file (lookup miss)
-	if resp.DirectCallers[1].Ref != "" {
-		t.Errorf("DirectCallers[1].Ref = %q, want empty (no file)", resp.DirectCallers[1].Ref)
+	// DirectCaller — with file
+	if got := refBySymbol["DirectCaller"]; got != "lib/caller.rb:25" {
+		t.Errorf("DirectCaller.Ref = %q, want %q", got, "lib/caller.rb:25")
+	}
+	// DirectCaller — no file (lookup miss)
+	if got := refBySymbol["NoFileCaller"]; got != "" {
+		t.Errorf("NoFileCaller.Ref = %q, want empty (no file)", got)
 	}
 
 	// IndirectCallers

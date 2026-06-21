@@ -198,8 +198,14 @@ func DefaultParams() Defaults {
 		BlastMaxHops:           5,
 		BlastMinConfidence:     0.3,
 		BlastResultCap:         200,
-		BlastTokenBudget:       12000,
-		GraphTokenBudget:       12000,
-		GraphSegmentCallers:    false,
+		// Blast got the full right-sizing treatment (area-stratified
+		// enumeration + direct_callers_by_area), validated to hold recall.
+		// Graph received only this budget reduction (12000->8000) — the
+		// stratification/by-area work was NOT applied to graph and graph was
+		// not benched; trimming there is still ApplyGraphBudget's
+		// least-relevant-first edge drop.
+		BlastTokenBudget:    8000,
+		GraphTokenBudget:    8000,
+		GraphSegmentCallers: false,
 	}
 }
