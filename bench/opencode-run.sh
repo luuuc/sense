@@ -42,9 +42,9 @@ source "$BENCH_DIR/lib/bench-paths.sh"
 LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 
-TOOLS_CSV="baseline,sense"; REPO=""; MODEL="ollama-cloud/deepseek-v4-pro"
+TOOLS_CSV="baseline,sense"; REPO=""; MODEL="kimi-for-coding/k2p7"
 SESSION_TIMEOUT=""; KEEP_RAW=0
-# Stability knobs (ollama-cloud over opencode is flaky). See the watchdog below.
+# Stability knobs (cloud/subscription providers over opencode can be flaky). See the watchdog below.
 OPENCODE_MAX_SECS="${OPENCODE_MAX_SECS:-1200}"     # hard ceiling floor (was a flat 600 that killed slow-but-working sense runs)
 OPENCODE_FIRST_GRACE="${OPENCODE_FIRST_GRACE:-240}" # allow this long for the FIRST streamed byte (MCP cold start); 0 bytes past it = a hang
 OPENCODE_STALL_IDLE="${OPENCODE_STALL_IDLE:-150}"   # after output starts, kill only if the stream goes silent this long (stuck mid-run)
@@ -244,11 +244,11 @@ meta = {
     "tool": tool, "repo": repo, "scenario": scen,
     "wall_time_seconds": int(wall), "model": model,
     "repo_commit": commit or None, "tool_version": ver or None,
-    "harness": "opencode", "provider": "ollama-cloud",
+    "harness": "opencode", "provider": (model.split("/", 1)[0] if "/" in model else "opencode"),
     "auth_mode": "opencode_cli", "mode": "single_prompt",
     "opencode_exit_code": rc, "attempts": int(attempts), "output_tokens": otok,
     "answer_chars": achars,
-    "cost_usd_note": "ollama-cloud bills off-platform; per-token cost left null",
+    "cost_usd_note": "opencode subscription bills off-platform; per-token cost left null",
 }
 kind = KIND.get(rc, "opencode_session_failed")
 if kind:

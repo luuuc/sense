@@ -58,7 +58,8 @@ for m in $MODELS; do
   # RUNS times and file each invocation's flat output into a run-N/ subdir, giving
   # variance-row.py / pergroup.py the same run-N shape on every harness.
   case "$m" in
-    *:cloud|ollama-cloud/*|ollama/*) runner=(bash bench/opencode-run.sh --tool baseline,sense --repo "$REPO" --model "$m"); per_run=1 ;;
+    kimi-for-coding/*|zai-coding-plan/*|zhipuai-coding-plan/*|minimax-coding-plan/*|minimax-cn-coding-plan/*|alibaba-coding-plan/*|alibaba-coding-plan-cn/*|moonshotai/*|moonshotai-cn/*|*:cloud|ollama-cloud/*|ollama/*) \
+                                     runner=(bash bench/opencode-run.sh --tool baseline,sense --repo "$REPO" --model "$m"); per_run=1 ;;
     codex:*)                         runner=(bash bench/codex-run.sh    --tool baseline,sense --repo "$REPO" --model "${m#codex:}"); per_run=1 ;;
     gpt-*|o3*|o4*)                   runner=(bash bench/codex-run.sh    --tool baseline,sense --repo "$REPO" --model "$m"); per_run=1 ;;
     *)                               runner=(bash bench/bench-sense-local.sh --tool baseline,sense --repo "$REPO" --no-build --model "$m" --runs "$RUNS"); per_run=0 ;;
