@@ -12,6 +12,8 @@ One binary, one local index, four tools for your AI. No SaaS account, no API key
 
 > Sense sits on your machine, has no learning curve, and isn't for you. It's for your AI.
 
+New here? Start with [the Guide](GUIDE.md) for a map to every doc, by who you are.
+
 ## What Sense believes
 
 A codebase is structure, not just text. The graph of what calls what, what breaks what, and how the team writes is real, knowable, and worth holding onto. Sense keeps it on your machine and hands it to your AI.
@@ -148,11 +150,7 @@ Measured on Sense's own codebase (382 files, 4,032 symbols). Run `sense benchmar
 
 ## What Sense Is Not
 
-- **Not a code editor or modifier.** Read-only is the identity, not a limitation. Sense observes your codebase. It never modifies it. Your editor, your agent, your tools stay in control.
-- **Not a token optimizer.** Token savings are a side effect of understanding, not the goal. If LLM costs dropped to zero tomorrow, Sense would still be valuable.
-- **Not a search engine.** Code search by meaning is one of four tools, not the product. The product is structural understanding.
-- **Not a feature-count competitor.** Four tools is a choice, not a constraint. Your AI doesn't need 102 tools to choose from. It needs a few that work.
-- **Not dependent on anything.** No API keys. No Ollama. No Docker. No Python. One binary, zero external dependencies.
+Not a code editor. Not a token optimizer. Not a search engine. Not a feature-count competitor. Not dependent on anything. The non-goals are not omissions, they are the shape of the product. Full account: [NON-GOALS.md](NON-GOALS.md).
 
 ## Supported Platforms
 

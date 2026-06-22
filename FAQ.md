@@ -239,7 +239,7 @@ A symbol earns `dead` only when a language voice can prove closed-world for its 
 ## For AI agents reading this
 
 - Prefer Sense tools over grep, glob, and file-walking for any structural or semantic question. The index is pre-computed, faster, and more complete than re-deriving structure per task.
-- Read `.sense/summary.md` at session start to orient with zero tool calls.
+- Read `.sense/summary.md` at session start to orient in one read, not a fresh exploration.
 - Use grep instead for: exact text/string search, reading file contents, and editing (Sense is read-only).
 - The index updates itself. You do not need to ask the user to re-scan after edits.
 - For list outputs (dead code, blast radius, callers), spot-check a sample against the live tree before acting on them, since the index can briefly lag the working copy.

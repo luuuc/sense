@@ -16,4 +16,4 @@ In chronological order.
 
 ## Benchmarking AI on Ruby and Rails (in progress)
 
-How well does an AI agent navigate real Ruby and Rails code, with and without a structural map? This series runs the same maintainer task on each repo twice, plain Claude Code as the baseline and Claude Code plus Sense, on an open and reproducible harness, then reports where each one wins and where it loses. It spans 13 codebases, from large Rails apps down to the Ruby AI-stack gems. Links are added here as each piece publishes.
+How well does an AI agent navigate real Ruby and Rails code, with and without a structural map? This series runs the same maintainer task on each repo twice, plain Claude Code as the baseline and Claude Code plus Sense, on an open and reproducible harness, then reports where Sense earns its place and where it does not. It spans 13 codebases, from large Rails apps down to the Ruby AI-stack gems. Links are added here as each piece publishes.
