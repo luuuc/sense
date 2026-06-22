@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.10.0] - 2026-06-21
+
+### Features
+
+- right-size sense_blast output with area-stratified enumeration
 ## [1.9.0] - 2026-06-19
 
 ### Features
