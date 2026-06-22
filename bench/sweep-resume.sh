@@ -49,11 +49,15 @@ BIG="gitlabhq rails"
 modelroot="$RESULTS_DIR/$(echo "$MODEL" | tr '/:' '__')"
 echo "sweep-resume: model=$MODEL runs=$RUNS root=$modelroot skip_big=$SKIP_BIG"
 
-is_valid() {  # $1=repo — a sense run-1 transcript exists with no cap/empty error
+is_valid() {  # $1=repo — sense run-1 exists; no cap/empty/stall/hard-cap on EITHER arm
   local rd="$modelroot/sense/$1"
   [ -f "$rd/run-1/transcript.json" ] || return 1
-  ! grep -lq "provider_cap_error\|empty_final_answer\|opencode_session_failed" \
-      "$rd"/run-*/run_meta.json 2>/dev/null
+  # Reject explicit error flags AND the watchdog kinds opencode-run.sh already records
+  # (stalled_midrun=rc125, hard_cap_timeout=rc124). A throttle stall-kill keeps error=None
+  # but its partial answer can clear the char gate, so it would otherwise look "valid" and
+  # get skipped. Scan BOTH arms: a baseline stall contaminates the comparison too.
+  ! grep -lq "provider_cap_error\|empty_final_answer\|opencode_session_failed\|stalled_midrun\|hard_cap_timeout" \
+      "$modelroot/sense/$1"/run-*/run_meta.json "$modelroot/baseline/$1"/run-*/run_meta.json 2>/dev/null
 }
 capped() {  # $1=repo — last run flagged a provider cap error
   grep -lq "provider_cap_error" "$modelroot/sense/$1"/run-*/run_meta.json 2>/dev/null \
