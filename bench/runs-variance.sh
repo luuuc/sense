@@ -19,6 +19,10 @@ cd "$BENCH_DIR/.."
 # bench-sense-local.sh and variance-row.py write/read the vertical subtree.
 VERTICAL="${VERTICAL-ruby-rails}"
 source "$BENCH_DIR/lib/bench-paths.sh"
+# Subscription-throttle pacing helpers. Used ONLY in the metered opencode/codex
+# dispatch (per_run=1 below); the claude/opus branch never calls a pace_* helper,
+# so the opus path is byte-unchanged. Default-on; BENCH_THROTTLE_PACING=0 = no-op.
+source "$BENCH_DIR/lib/throttle-pacing.sh"
 
 REPO="${1:?usage: runs-variance.sh <repo>}"
 MODELS="${MODELS:-claude-opus-4-8}"
@@ -76,6 +80,13 @@ for m in $MODELS; do
         mkdir -p "$rd/run-$k"
         find "$rd" -maxdepth 1 -type f -exec mv {} "$rd/run-$k/" \;
       done
+      # Throttle-onset cooldown + inter-run spacing for the metered arms only.
+      # Read this run's run_meta (both arms) to classify the session; after N
+      # consecutive degraded sessions pace_note_session pauses a window-reset
+      # cooldown. Then space the next run. The opus path never reaches here.
+      cls="$(pace_session_classify "$REPO" "$RESULTS_DIR" "$k")"
+      pace_note_session "$cls"
+      [ "$k" -lt "$RUNS" ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between runs ($REPO run $k of $RUNS)"
     done
   fi
   if [ "$ok" = 1 ]; then
