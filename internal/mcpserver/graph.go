@@ -181,10 +181,6 @@ func (h *handlers) shapeGraphResponse(ctx context.Context, resp *mcpio.GraphResp
 		compactDispatchInferred(resp.DispatchInferred)
 	}
 
-	h.seenMu.Lock()
-	h.seenSymbols[gr.Root.Symbol.ID] = true
-	h.seenMu.Unlock()
-
 	h.tracker.Record("sense_graph", p.symbol,
 		resp.SenseMetrics.EstimatedFileReadsAvoided, resp.SenseMetrics.EstimatedTokensSaved, false)
 
@@ -198,6 +194,15 @@ func (h *handlers) shapeGraphResponse(ctx context.Context, resp *mcpio.GraphResp
 	// Keep hub responses within the MCP token budget — sheds deeper layers
 	// and trims the longest edge list, recording the count in OmittedEdges.
 	mcpio.ApplyGraphBudget(resp, h.defaults.GraphTokenBudget)
+
+	// Mark the root AND the FINAL rendered called_by callers seen — AFTER the
+	// budget trim, so a later sense_blast collapses ONLY callers the model
+	// actually received, never ones the budget dropped (collapsing an unshown
+	// caller would silently lose it). The rendered called_by set is exactly
+	// blast's depth-1 direct-caller set; inherit/include/compose and indirect
+	// callers are not marked — blast lists those separately. Test callers,
+	// segmented into their own bucket, are intentionally left un-collapsed.
+	h.markSeen(append(renderedCallerIDs(resp), gr.Root.Symbol.ID))
 }
 
 const (
@@ -283,6 +288,7 @@ func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.Symbo
 	}
 
 	var inferred []mcpio.DispatchInferredRef
+	var inferredIDs []int64
 	for _, eqID := range equivIDs {
 		if len(inferred) >= maxDispatchInferred {
 			break
@@ -292,15 +298,19 @@ func (h *handlers) resolveDispatchCallers(ctx context.Context, root *model.Symbo
 			continue
 		}
 		via := qualifiedOrNameRef(eqSym.Symbol)
-		inferred = appendDispatchCallers(inferred, eqSym.Inbound, via, directCallers, lookup)
+		inferred = appendDispatchCallers(inferred, &inferredIDs, eqSym.Inbound, via, directCallers, lookup)
 	}
+	// Dispatch-inferred callers reach the subject via interface dispatch — a
+	// later sense_blast counts them among its direct callers, so record them
+	// here to dedup that re-dump.
+	h.markSeen(inferredIDs)
 	return inferred
 }
 
 // appendDispatchCallers folds one dispatch-equivalent method's inbound call
 // edges into inferred, skipping callers already seen (direct or via an earlier
 // equivalent) and stopping once the per-query cap is reached.
-func appendDispatchCallers(inferred []mcpio.DispatchInferredRef, inbound []model.EdgeRef, via string, directCallers map[string]struct{}, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {
+func appendDispatchCallers(inferred []mcpio.DispatchInferredRef, ids *[]int64, inbound []model.EdgeRef, via string, directCallers map[string]struct{}, lookup mcpio.FileLookup) []mcpio.DispatchInferredRef {
 	for _, e := range inbound {
 		if e.Edge.Kind != model.EdgeCalls {
 			continue
@@ -313,6 +323,7 @@ func appendDispatchCallers(inferred []mcpio.DispatchInferredRef, inbound []model
 			continue
 		}
 		directCallers[callerName] = struct{}{}
+		*ids = append(*ids, e.Target.ID)
 
 		var filePath *string
 		if p, ok := lookup(e.Target.FileID); ok {
@@ -329,6 +340,25 @@ func appendDispatchCallers(inferred []mcpio.DispatchInferredRef, inbound []model
 		})
 	}
 	return inferred
+}
+
+// renderedCallerIDs collects the symbol ids of the callers the graph response
+// ACTUALLY rendered in its
+// called_by bucket, read after segmentation and the budget trim. These are
+// exactly the depth-1 callers the model received and exactly blast's direct-
+// caller set, so a later sense_blast can collapse them with no risk of hiding
+// a caller that was never shown. Test callers (segmented into their own
+// bucket) and indirect/inherit/include/compose targets are deliberately not
+// returned — blast enumerates those separately. IDs of 0 (unresolved-source
+// view edges) are skipped: they carry no symbol blast could match.
+func renderedCallerIDs(resp *mcpio.GraphResponse) []int64 {
+	ids := make([]int64, 0, len(resp.Edges.CalledBy))
+	for _, c := range resp.Edges.CalledBy {
+		if c.ID != 0 {
+			ids = append(ids, c.ID)
+		}
+	}
+	return ids
 }
 
 func qualifiedOrNameRef(s model.Symbol) string {

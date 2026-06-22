@@ -348,6 +348,7 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 				}
 				fp := fileRefOrNil(e.Target.FileID, files)
 				edges.Calls = append(edges.Calls, CallEdgeRef{
+					ID:         e.Target.ID,
 					Symbol:     qualifiedOrName(e.Target),
 					File:       fp,
 					LineStart:  e.Target.LineStart,
@@ -430,6 +431,7 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 					}
 				}
 				edges.CalledBy = append(edges.CalledBy, CallEdgeRef{
+					ID:         e.Target.ID,
 					Symbol:     sym,
 					File:       fp,
 					LineStart:  lineStart,

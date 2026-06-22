@@ -295,7 +295,8 @@ func TestAppendDispatchCallers(t *testing.T) {
 	}
 	directCallers := map[string]struct{}{"pkg.Dup": {}}
 
-	got := appendDispatchCallers(nil, inbound, "pkg.S.M", directCallers, lookup)
+	var ids []int64
+	got := appendDispatchCallers(nil, &ids, inbound, "pkg.S.M", directCallers, lookup)
 	if len(got) != 1 {
 		t.Fatalf("want 1 appended (non-call and dup skipped), got %d: %+v", len(got), got)
 	}
@@ -305,10 +306,15 @@ func TestAppendDispatchCallers(t *testing.T) {
 	if got[0].File == nil || *got[0].File != "caller.go" {
 		t.Errorf("want file caller.go from lookup, got %v", got[0].File)
 	}
+	// Only the emitted (non-skipped) caller's id is collected.
+	if len(ids) != 1 {
+		t.Errorf("collected ids = %v, want exactly the emitted caller", ids)
+	}
 
 	// At the per-query cap, further callers are not appended.
 	full := make([]mcpio.DispatchInferredRef, maxDispatchInferred)
-	capped := appendDispatchCallers(full,
+	var overflowIDs []int64
+	capped := appendDispatchCallers(full, &overflowIDs,
 		[]model.EdgeRef{{Edge: model.Edge{Kind: model.EdgeCalls}, Target: model.Symbol{Qualified: "pkg.Overflow"}}},
 		"pkg.S.M", map[string]struct{}{}, lookup)
 	if len(capped) != maxDispatchInferred {
