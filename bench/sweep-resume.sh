@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
-# sweep-resume.sh — walk the rails-vertical repos in BIGGEST-OPUS-WIN-FIRST order,
-# resumable + cap-aware, so a metered LLM arm (opencode ollama-cloud / codex gpt)
-# spends its window on the most DISCRIMINATING repos and continues next session
-# with NO loss when a usage cap trips.
+# sweep-resume.sh — walk the rails-vertical repos in BIGGEST↔SMALLEST INTERLEAVE
+# order (biggest, smallest, 2nd-biggest, 2nd-smallest, …), resumable + cap-aware,
+# so any arm — the Opus headline or a metered LLM arm (opencode ollama-cloud /
+# codex gpt) — hits the most bench-revealing repos FIRST and continues next
+# session with NO loss when a usage cap trips.
 #
-# Why win-order (not smallest-first): the cheap/LLM arms hit usage caps mid-sweep.
-# Smallest-first burns the cap on small-readable repos where even Sense ties; the
-# Opus headline shows the win concentrates on the big scattered-fan-out repos. So
-# we run the biggest-Opus-win repos FIRST — a capped session still produces the
-# rows that matter for the LLM-vs-Opus comparison.
+# Why interleave (not smallest-first, not pure-biggest-first): the big repos
+# (discourse, rails, forem) are both where Sense's reach win concentrates AND
+# where any harness/scoring regression surfaces — so test them early, while you
+# can still tweak the bench or Sense, instead of burning the window on small
+# repos that produce no concrete result. The interleaved small repo after each
+# big one is near-free and confirms the score/judge pipeline still works end to
+# end before the next big spend.
+#
+# EXCEPTION — gitlabhq runs LAST (not first), even though it is the biggest: a
+# rescan of its 177k-symbol index can take HOURS, and we don't want that to block
+# the whole sweep at the very start. So discourse (the biggest repo that rescans
+# quickly) anchors the front; gitlabhq is appended last so every other result
+# lands before the sweep risks a multi-hour gitlabhq rebuild/bench.
 #
 # Resume: a repo already benched VALID for this model is SKIPPED, so re-running the
 # script after a cap reset continues where it stopped.
 # Cap pause: if a run comes back with a provider cap error, the sweep STOPS cleanly
-# (re-run next session to resume). SKIP_BIG=1 defers the huge repos (gitlabhq/rails)
-# so a tight window is not blown on one 177k-symbol repo.
+# (re-run next session to resume). SKIP_BIG=1 defers the cost-outlier repos
+# (gitlabhq/rails) for a metered arm whose window genuinely can't afford a 178k/52k
+# embed-and-bench — note this overrides the test-huge-first intent, so only set it
+# when the cap forces it (the Opus headline runs WITHOUT SKIP_BIG).
 #
-#   MODELS="ollama-cloud/qwen3-coder:480b" RUNS=2 bash bench/sweep-resume.sh
-#   MODELS="codex/gpt-5.5" RUNS=2 SKIP_BIG=1 bash bench/sweep-resume.sh
+#   MODELS="ollama-cloud/qwen3-coder-next" RUNS=2 bash bench/sweep-resume.sh
+#   MODELS="gpt-5.5" RUNS=2 SKIP_BIG=1 bash bench/sweep-resume.sh   # cap-tight metered arm
 #
 set -uo pipefail
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"; cd "$BENCH_DIR/.."
@@ -25,10 +36,14 @@ VERTICAL="${VERTICAL-ruby-rails}"; source "$BENCH_DIR/lib/bench-paths.sh"
 MODEL="${MODELS:?set MODELS to ONE model id}"; RUNS="${RUNS:-2}"
 SKIP_BIG="${SKIP_BIG:-0}"
 
-# Biggest Opus cited-recall win first → lowest. Ties (lobsters/raix) + the re-aimed
-# redmine sit last (least likely to separate on an LLM). Update if the Opus board moves.
-WINORDER=(mastodon gitlabhq chatwoot discourse solidus forem ruby_llm rails llm.rb langchainrb redmine lobsters raix)
-# The cost outliers (run last / behind SKIP_BIG): 177k+ and the framework.
+# Biggest↔smallest interleave by indexed-symbol count (see bench/index-state.json),
+# but with gitlabhq moved to the very END (its rescan can take hours — see the header).
+# Interleaved 12 non-gitlab repos: discourse(59k) raix(177) rails(52k) langchainrb(1.0k)
+# forem(18k) lobsters(1.8k) mastodon(18k) ruby_llm(2.0k) chatwoot(14k) llm.rb(2.2k)
+# redmine(13k) solidus(9k); then gitlabhq(178k) last.
+# Keep in sync with rescan-all.sh (which uses the same sizes, smallest-first, for indexing).
+WINORDER=(discourse raix rails langchainrb forem lobsters mastodon ruby_llm chatwoot llm.rb redmine solidus gitlabhq)
+# The cost outliers held back by SKIP_BIG=1 (only when a metered cap forces it): 178k + the framework.
 BIG="gitlabhq rails"
 
 modelroot="$RESULTS_DIR/$(echo "$MODEL" | tr '/:' '__')"

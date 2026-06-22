@@ -26,7 +26,7 @@ source "$BENCH_DIR/lib/throttle-pacing.sh"
 
 REPO="${1:?usage: runs-variance.sh <repo>}"
 MODELS="${MODELS:-claude-opus-4-8}"
-RUNS="${RUNS:-3}"
+RUNS="${RUNS:-2}"   # RUNS=2 is the campaign cost cap for all vertical benches (×3 costs too much)
 # Per-repo run-spread report, across models. Lives in the tracked bench tree (the
 # vertical base, not a model root) alongside the per-model reports + matrix.
 OUT="$RESULTS_DIR/variance/$REPO.md"

@@ -15,6 +15,8 @@
 #
 #   bash bench/opencode-run.sh --tool baseline,sense --repo ruby_llm
 #   bash bench/opencode-run.sh --repo discourse --model deepseek-v4-pro:cloud  # campaign id, auto-mapped
+#   bash bench/opencode-run.sh --repo discourse --model ollama-cloud/qwen3-coder-next  # Qwen coder arm
+#   bash bench/opencode-run.sh --repo discourse --model kimi-for-coding/k2p7           # Kimi for Coding arm
 #
 # Sense via MCP (primary) + CLI (fallback), both counted in channels.json. The
 # sense arm gets opencode's canonical surface from full `sense setup`
