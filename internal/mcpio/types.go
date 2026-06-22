@@ -192,6 +192,11 @@ type GraphEdges struct {
 // may have no indexed file — the documented example includes
 // `"file": null` for exactly that case.
 type CallEdgeRef struct {
+	// ID is the target symbol's id, kept off the wire (json:"-"). It rides
+	// through segmentation and the budget trim so the handler can mark the
+	// FINAL rendered called_by set seen — a later sense_blast then collapses
+	// only callers the model actually received, never ones the budget dropped.
+	ID           int64      `json:"-"`
 	Symbol       string     `json:"symbol"`
 	File         *string    `json:"file"`
 	LineStart    int        `json:"line_start,omitempty"`
@@ -331,10 +336,26 @@ type BlastResponse struct {
 	// view template reaches this symbol, "none" when view-dispatch is a live
 	// question for it but no view edge exists, "" (omitted) otherwise. See
 	// viewedges.go for the full contract.
-	ViewEdges    string       `json:"view_edges,omitempty"`
-	SenseMetrics BlastMetrics `json:"-"`
-	Freshness    *Freshness   `json:"freshness,omitempty"`
-	NextSteps    []NextStep   `json:"next_steps"`
+	ViewEdges string `json:"view_edges,omitempty"`
+	// SeenVia summarises the direct callers collapsed out of the enumerated
+	// list because an earlier sense_graph/sense_blast call already returned
+	// them to this session. It is a token-saving deduplication, not a
+	// truncation: the data is already in the agent's context, so the magnitude
+	// fields (total_affected, direct_callers_by_area) and the completeness
+	// verdict are unaffected. Present only when at least one caller was
+	// collapsed.
+	SeenVia      *BlastSeenSummary `json:"seen_elsewhere,omitempty"`
+	SenseMetrics BlastMetrics      `json:"-"`
+	Freshness    *Freshness        `json:"freshness,omitempty"`
+	NextSteps    []NextStep        `json:"next_steps"`
+}
+
+// BlastSeenSummary collapses direct callers already returned earlier this
+// session into a single count + note, instead of re-enumerating them. Count
+// is how many enumerated direct callers were omitted; Note explains why.
+type BlastSeenSummary struct {
+	Count int    `json:"count"`
+	Note  string `json:"note"`
 }
 
 // BlastTierSummary holds a count plus a capped set of examples for

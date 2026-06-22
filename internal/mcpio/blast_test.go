@@ -2,7 +2,9 @@ package mcpio
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/luuuc/sense/internal/blast"
@@ -1379,5 +1381,208 @@ func TestRiskRank(t *testing.T) {
 		if got := riskRank(c.risk); got != c.want {
 			t.Errorf("riskRank(%q) = %d, want %d", c.risk, got, c.want)
 		}
+	}
+}
+
+// --- Per-session seen-caller deduplication (option B) -----------------------
+
+// seenSet is a SeenFunc backed by a set literal — the test-side stand-in for
+// the handler's per-session seenSymbols map.
+func seenSet(ids ...int64) SeenFunc {
+	m := map[int64]bool{}
+	for _, id := range ids {
+		m[id] = true
+	}
+	return func(id int64) bool { return m[id] }
+}
+
+// blastFixture builds a small high-tier blast.Result with N direct callers,
+// one per area, so each enumerated caller maps to a distinct file/area.
+func seenBlastFixture(n int) (blast.Result, FileLookup) {
+	var callers []model.Symbol
+	tiers := map[int64]blast.Tier{}
+	conf := map[int64]float64{}
+	paths := map[int64]string{}
+	for i := int64(1); i <= int64(n); i++ {
+		callers = append(callers, model.Symbol{ID: i, Qualified: fmt.Sprintf("C%d", i), FileID: i})
+		tiers[i] = blast.TierBreaks
+		conf[i] = 1.0
+		paths[i] = fmt.Sprintf("area%03d/file.rb", i)
+	}
+	r := blast.Result{
+		Symbol:           model.Symbol{ID: 0, Qualified: "Subject"},
+		DirectCallers:    callers,
+		AffectedTests:    []string{},
+		TotalAffected:    n,
+		SymbolTiers:      tiers,
+		DirectConfidence: conf,
+		Risk:             blast.RiskLow,
+	}
+	files := func(fid int64) (string, bool) { p, ok := paths[fid]; return p, ok }
+	return r, files
+}
+
+// TestBuildBlastResponseSeenNilIsByteIdentical pins the single-call-safe
+// invariant: a nil SeenFunc (CLI path, empty seen-set) collapses nothing, so
+// the response equals the un-deduplicated build exactly.
+func TestBuildBlastResponseSeenNilIsByteIdentical(t *testing.T) {
+	r, files := seenBlastFixture(5)
+	plain := BuildBlastResponse(context.Background(), r, files, nil)
+	seenNil := BuildBlastResponseSeen(context.Background(), r, files, nil, nil)
+
+	if seenNil.SeenVia != nil {
+		t.Errorf("nil seen-set must not set seen_elsewhere, got %+v", seenNil.SeenVia)
+	}
+	pj, _ := json.Marshal(plain)
+	sj, _ := json.Marshal(seenNil)
+	if string(pj) != string(sj) {
+		t.Errorf("nil SeenFunc must be byte-identical to BuildBlastResponse\nplain: %s\nseen:  %s", pj, sj)
+	}
+}
+
+// TestBuildBlastResponseSeenCollapsesPerID pins that ONLY the specific seen
+// ids are collapsed — unseen callers stay fully enumerated, and the collapsed
+// count is summarised in seen_elsewhere.
+func TestBuildBlastResponseSeenCollapsesPerID(t *testing.T) {
+	r, files := seenBlastFixture(5)
+	// Mark 3 of the 5 direct callers as already returned this session.
+	resp := BuildBlastResponseSeen(context.Background(), r, files, nil, seenSet(1, 2, 3))
+
+	if len(resp.DirectCallers) != 2 {
+		t.Errorf("enumerated direct_callers = %d, want 2 (only the 2 unseen)", len(resp.DirectCallers))
+	}
+	for _, c := range resp.DirectCallers {
+		if id := symbolID(c.Symbol); id == 1 || id == 2 || id == 3 {
+			t.Errorf("seen caller C%d must not be enumerated", id)
+		}
+	}
+	if resp.SeenVia == nil || resp.SeenVia.Count != 3 {
+		t.Fatalf("seen_elsewhere = %+v, want count 3", resp.SeenVia)
+	}
+	if !strings.Contains(resp.SeenVia.Note, "3 of 5") {
+		t.Errorf("seen_elsewhere note = %q, want it to mention 3 of 5", resp.SeenVia.Note)
+	}
+}
+
+// TestBuildBlastResponseSeenPreservesMagnitude pins that the collapse leaves
+// total_affected, affected_symbols, affected_files, and direct_callers_by_area
+// reporting the TRUE full set — the by-area map is computed before collapse.
+func TestBuildBlastResponseSeenPreservesMagnitude(t *testing.T) {
+	r, files := seenBlastFixture(5)
+	full := BuildBlastResponse(context.Background(), r, files, nil)
+	collapsed := BuildBlastResponseSeen(context.Background(), r, files, nil, seenSet(1, 2, 3))
+
+	if collapsed.TotalAffected != full.TotalAffected {
+		t.Errorf("total_affected = %d, want %d (unchanged by collapse)", collapsed.TotalAffected, full.TotalAffected)
+	}
+	if collapsed.AffectedSymbols != full.AffectedSymbols {
+		t.Errorf("affected_symbols = %d, want %d", collapsed.AffectedSymbols, full.AffectedSymbols)
+	}
+	if collapsed.AffectedFiles != full.AffectedFiles {
+		t.Errorf("affected_files = %d, want %d (collapsed callers' files still counted)", collapsed.AffectedFiles, full.AffectedFiles)
+	}
+	if sumAreas(collapsed.DirectCallersByArea) != sumAreas(full.DirectCallersByArea) {
+		t.Errorf("by_area sum = %d, want %d (full set, computed before collapse)",
+			sumAreas(collapsed.DirectCallersByArea), sumAreas(full.DirectCallersByArea))
+	}
+	if len(collapsed.DirectCallersByArea) != len(full.DirectCallersByArea) {
+		t.Errorf("by_area areas = %d, want %d", len(collapsed.DirectCallersByArea), len(full.DirectCallersByArea))
+	}
+}
+
+// TestBuildBlastResponseSeenKeepsCompleteVerdict pins the load-bearing
+// invariant: collapsing already-seen callers is a dedup, not a truncation, so
+// a response that was "complete" stays "complete" even when every direct
+// caller is collapsed.
+func TestBuildBlastResponseSeenKeepsCompleteVerdict(t *testing.T) {
+	r, files := seenBlastFixture(5)
+	// Without collapse this fixture is complete (5 callers, all enumerated).
+	full := BuildBlastResponse(context.Background(), r, files, nil)
+	if full.Completeness == nil || full.Completeness.Verdict != "complete" {
+		t.Fatalf("precondition: full build must be complete, got %+v", full.Completeness)
+	}
+
+	// Collapse ALL five — the agent already holds them from the prior call.
+	resp := BuildBlastResponseSeen(context.Background(), r, files, nil, seenSet(1, 2, 3, 4, 5))
+	if len(resp.DirectCallers) != 0 {
+		t.Fatalf("all callers seen, enumerated should be 0, got %d", len(resp.DirectCallers))
+	}
+	if resp.Completeness == nil || resp.Completeness.Verdict != "complete" {
+		t.Errorf("verdict = %+v, want complete (seen-collapse is not truncation)", resp.Completeness)
+	}
+	if resp.Truncated {
+		t.Error("Truncated must stay false — collapse is not a budget trim")
+	}
+	if resp.Completeness.Hidden != 0 {
+		t.Errorf("hidden = %d, want 0 (collapsed callers are in the agent's context, not hidden)", resp.Completeness.Hidden)
+	}
+}
+
+// TestBuildBlastResponseSeenLeavesNonCallerSetsAlone pins that the collapse
+// never touches the inherit/include/compose affected sets or indirect callers:
+// those may NOT have appeared in the prior graph response, so they stay fully
+// enumerated even when their ids coincide with the seen set.
+func TestBuildBlastResponseSeenLeavesNonCallerSetsAlone(t *testing.T) {
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		DirectCallers: []model.Symbol{{ID: 1, Qualified: "C1", FileID: 1}},
+		IndirectCallers: []blast.CallerHop{
+			{Symbol: model.Symbol{ID: 2, Qualified: "I2", FileID: 2}, Via: model.Symbol{ID: 1, Qualified: "C1"}, Hops: 2},
+		},
+		AffectedSubclasses:     []model.Symbol{{ID: 3, Qualified: "Sub3", FileID: 3}},
+		AffectedViaComposition: []model.Symbol{{ID: 4, Qualified: "Comp4", FileID: 4}},
+		AffectedViaIncludes:    []model.Symbol{{ID: 5, Qualified: "Inc5", FileID: 5}},
+		AffectedTests:          []string{},
+		TotalAffected:          2, // direct + indirect union
+	}
+	// Mark every id seen — even the indirect/subclass/compose/include ids.
+	resp := BuildBlastResponseSeen(context.Background(), r, noFiles, nil, seenSet(1, 2, 3, 4, 5))
+
+	if len(resp.DirectCallers) != 0 || resp.SeenVia == nil || resp.SeenVia.Count != 1 {
+		t.Errorf("direct caller C1 should collapse: callers=%d seen=%+v", len(resp.DirectCallers), resp.SeenVia)
+	}
+	// Only DIRECT callers collapse; the other relations are untouched.
+	if len(resp.IndirectCallers) != 1 {
+		t.Errorf("indirect_callers = %d, want 1 (never collapsed)", len(resp.IndirectCallers))
+	}
+	if len(resp.AffectedSubclasses) != 1 {
+		t.Errorf("affected_subclasses = %d, want 1 (never collapsed)", len(resp.AffectedSubclasses))
+	}
+	if len(resp.AffectedViaComposition) != 1 {
+		t.Errorf("affected_via_composition = %d, want 1 (never collapsed)", len(resp.AffectedViaComposition))
+	}
+	if len(resp.AffectedViaIncludes) != 1 {
+		t.Errorf("affected_via_includes = %d, want 1 (never collapsed)", len(resp.AffectedViaIncludes))
+	}
+}
+
+// TestBuildDiffBlastResponseSeenCollapses pins the same dedup on the diff
+// builder: a seen direct caller is collapsed, magnitude (total_affected, the
+// risk-factor count) reflects the full deduplicated union, not the remainder.
+func TestBuildDiffBlastResponseSeenCollapses(t *testing.T) {
+	results := []blast.Result{
+		{
+			Symbol: model.Symbol{ID: 1, Qualified: "A"},
+			Risk:   blast.RiskLow,
+			DirectCallers: []model.Symbol{
+				{ID: 10, Qualified: "Seen", FileID: 1},
+				{ID: 11, Qualified: "New", FileID: 2},
+			},
+			AffectedTests: []string{},
+		},
+	}
+	resp := BuildDiffBlastResponseSeen(context.Background(), "HEAD~1", results, noFiles, nil, seenSet(10))
+
+	if len(resp.DirectCallers) != 1 || resp.DirectCallers[0].Symbol != "New" {
+		t.Errorf("direct_callers = %+v, want only the unseen 'New'", resp.DirectCallers)
+	}
+	if resp.SeenVia == nil || resp.SeenVia.Count != 1 {
+		t.Fatalf("seen_elsewhere = %+v, want count 1", resp.SeenVia)
+	}
+	if resp.TotalAffected != 2 {
+		t.Errorf("total_affected = %d, want 2 (full dedup union, not the remainder)", resp.TotalAffected)
+	}
+	if !strings.Contains(resp.RiskFactors[0], "2 direct callers") {
+		t.Errorf("risk factor = %q, want it to report 2 direct callers (full magnitude)", resp.RiskFactors[0])
 	}
 }

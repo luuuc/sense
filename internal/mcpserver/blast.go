@@ -12,6 +12,7 @@ import (
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/model"
 )
 
 func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -328,7 +329,21 @@ func (h *handlers) blastSymbol(ctx context.Context, symbol, fileHint string, opt
 		return p, ok
 	}
 
-	return mcpio.BuildBlastResponse(ctx, blastResult, lookup, snippets), nil
+	resp := mcpio.BuildBlastResponseSeen(ctx, blastResult, lookup, snippets, h.seenPredicate())
+	// Symmetry: record every direct caller so a later sense_graph/sense_blast
+	// dedups against this blast, exactly as graph records its edge targets.
+	h.markSeen(directCallerIDs(blastResult.DirectCallers))
+	return resp, nil
+}
+
+// directCallerIDs extracts the symbol ids of a blast result's direct callers,
+// the set marked seen after a blast so later calls can dedup against it.
+func directCallerIDs(callers []model.Symbol) []int64 {
+	ids := make([]int64, len(callers))
+	for i, c := range callers {
+		ids[i] = c.ID
+	}
+	return ids
 }
 
 func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options, snippets *mcpio.SnippetReader) (mcpio.BlastResponse, error) {
@@ -364,5 +379,9 @@ func (h *handlers) blastDiff(ctx context.Context, ref string, opts blast.Options
 		return p, ok
 	}
 
-	return mcpio.BuildDiffBlastResponse(ctx, ref, results, lookup, snippets), nil
+	resp := mcpio.BuildDiffBlastResponseSeen(ctx, ref, results, lookup, snippets, h.seenPredicate())
+	for _, r := range results {
+		h.markSeen(directCallerIDs(r.DirectCallers))
+	}
+	return resp, nil
 }

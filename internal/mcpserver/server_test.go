@@ -247,6 +247,9 @@ func TestMCPIntegration(t *testing.T) {
 			Risk          string `json:"risk"`
 			DirectCallers []any  `json:"direct_callers"`
 			TotalAffected int    `json:"total_affected"`
+			SeenVia       *struct {
+				Count int `json:"count"`
+			} `json:"seen_elsewhere"`
 		}
 		if err := json.Unmarshal([]byte(text), &blastResp); err != nil {
 			t.Fatalf("parse blast JSON: %v\n%s", err, text)
@@ -259,8 +262,22 @@ func TestMCPIntegration(t *testing.T) {
 		default:
 			t.Errorf("risk = %q, want low/medium/high", blastResp.Risk)
 		}
-		if len(blastResp.DirectCallers) < 5 {
-			t.Errorf("direct_callers = %d, want >= 5", len(blastResp.DirectCallers))
+		// Earlier subtests already ran sense_graph on extract.Register in this
+		// same session, so the call-edge targets are marked seen and this blast
+		// collapses them into seen_elsewhere rather than re-dumping them. The
+		// radius is unchanged: total_affected still reports the full set, and
+		// the enumerated direct callers plus the collapsed count cover it.
+		enumerated := len(blastResp.DirectCallers)
+		collapsed := 0
+		if blastResp.SeenVia != nil {
+			collapsed = blastResp.SeenVia.Count
+		}
+		if blastResp.TotalAffected < 5 {
+			t.Errorf("total_affected = %d, want >= 5 (magnitude must survive seen-collapse)", blastResp.TotalAffected)
+		}
+		if enumerated+collapsed < 5 {
+			t.Errorf("direct_callers(%d) + seen_elsewhere(%d) = %d, want >= 5",
+				enumerated, collapsed, enumerated+collapsed)
 		}
 	})
 

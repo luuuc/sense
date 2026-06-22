@@ -107,9 +107,10 @@ func setupGitRepo(t *testing.T) (dir string, h *handlers, cleanup func()) {
 	}
 
 	engine := &handlers{
-		adapter: adapter,
-		db:      adapter.DB(),
-		dir:     dir,
+		adapter:     adapter,
+		db:          adapter.DB(),
+		dir:         dir,
+		seenSymbols: make(map[int64]bool),
 	}
 
 	cleanup = func() {

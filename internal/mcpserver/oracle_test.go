@@ -169,7 +169,16 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // across subsystems) and emitted area-clustered, so the fixture's two
 // callers reorder by area name (internal/auth before internal/handler)
 // instead of by symbol ID — digest moved.
-const oracleGolden = "b0342fc640957d5d134c63d2a807242141bde4a618f5c409843c723e2f3cb9f9"
+// Per-session blast dedup: the three graph calls on auth.Verify earlier in
+// this sequence mark its call-edge targets seen, so the blast on auth.Verify
+// now collapses both already-returned direct callers into seen_elsewhere
+// (direct_callers: [], seen_elsewhere.count: 2). Magnitude (total_affected,
+// direct_callers_by_area, affected_files) and the "complete" verdict are
+// unchanged — only the duplicate enumeration is gone — so the digest moved.
+// All direct callers of auth.Verify are collapsed (count == directTier1), so
+// the seen_elsewhere note now uses the "all N … see that response" phrasing
+// instead of "only new callers are listed" — digest moved.
+const oracleGolden = "62793f531d39e5a80e6c8a1189b5a713d9970dc57595324dcc1f522af1d1e0f5"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))
