@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.0] - 2026-06-22
+
+### Features
+
+- collapse already-seen callers in sense_blast (graph/blast session dedup)
 ## [1.10.0] - 2026-06-21
 
 ### Features
