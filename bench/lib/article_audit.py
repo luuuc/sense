@@ -5,7 +5,7 @@ Complements `check_article_stats.py` (which checks headline NUMBERS are fresh) b
 checking everything else the maintain workflow needs:
 
   COVERAGE   — every benched repo has exactly one pack; numbering is contiguous.
-  STRUCTURE  — frontmatter parses; required keys present; teardowns have Blocks A-I.
+  STRUCTURE  — frontmatter parses; required keys present; teardowns have Blocks A-J.
   REFERENCES — every local markdown link resolves; no links to removed files.
   SYNC       — every pack appears in the README board (and vice-versa).
   DISCIPLINE — (warn) no em-dashes in body prose; flag mentions of removed files.
@@ -30,7 +30,7 @@ DEFAULT_ARTICLES = os.path.join(VERTICAL_DIR, "articles")
 DEFAULT_RESULTS = os.path.join(
     REPO_ROOT, "bench", "results", "vertical", "ruby-rails", "claude-opus-4-8")
 
-REQUIRED_BLOCKS = list("ABCDEFGHI")
+REQUIRED_BLOCKS = list("ABCDEFGHIJ")
 REQUIRED_KEYS = ("repo", "data", "agents")
 TEARDOWN_KEYS = ("axes", "stats")
 # docs whose links we police (current set; archive/ is historical, skipped)
@@ -99,7 +99,7 @@ def audit(articles_dir=DEFAULT_ARTICLES, results_root=DEFAULT_RESULTS):
                 if k not in fm:
                     out.append((WARN, "keys", f"{name}: missing frontmatter `{k}`"))
             # tolerate "## Block A — x", "## Block A. X", "## Block A: x", etc.
-            found = set(re.findall(r"^## Block ([A-I])\b", body, re.M))
+            found = set(re.findall(r"^## Block ([A-J])\b", body, re.M))
             missing = [b for b in REQUIRED_BLOCKS if b not in found]
             if missing:
                 out.append((FAIL, "blocks",

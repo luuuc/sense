@@ -17,7 +17,7 @@ def _results(tmp_path, repos):
     return str(root)
 
 
-FULL_BODY = "\n".join(f"## Block {b} — x\nprose\n" for b in "ABCDEFGHI")
+FULL_BODY = "\n".join(f"## Block {b} — x\nprose\n" for b in "ABCDEFGHIJ")
 
 
 def test_real_set_has_no_fail():
