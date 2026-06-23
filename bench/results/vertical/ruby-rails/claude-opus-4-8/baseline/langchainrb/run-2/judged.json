@@ -6,7 +6,7 @@
     "prompt_version": "v1",
     "rubric_path": "langchainrb.rubric.yaml"
   },
-  "scenario_quality": 0.7535,
+  "scenario_quality": 0.678,
   "relationship_audit": {
     "total": 28,
     "covered": 27,
@@ -198,27 +198,27 @@
       "step": "Orient in the codebase",
       "scores": {
         "map_quality": {
-          "score": 0.92,
-          "rationale": "The answer hands the agent every entry point it needs: the four parallel per-provider families are named explicitly at the end, each mapped to a concrete path (llm/, llm/response/, assistant/llm/adapters/, assistant/messages/), with the selector at assistant/llm/adapter.rb and both base classes called out; the zeitwerk autoloading note saves the agent a false search for a require manifest."
+          "score": 0.9,
+          "rationale": "All six areas the rubric names are present with paths: raw clients (lib/langchain/llm/*.rb, base.rb), Assistant (lib/langchain/assistant.rb), adapters (assistant/llm/adapters/), messages (assistant/messages/), response wrappers (llm/response/), and the Adapter.build dispatch file (assistant/llm/adapter.rb); an agent can pick any entry point with only targeted lookups. The only gap is that no concrete existing adapter filenames (e.g., adapters/openai.rb) are cited to anchor the per-provider pattern."
         },
         "specificity": {
-          "score": 0.88,
-          "rationale": "Paths are concrete throughout \u2014 lib/langchain/llm/base.rb, assistant/llm/adapter.rb, assistant/llm/adapters/base.rb, assistant/messages/base.rb \u2014 and several include line references (e.g. tool_definition.rb:111-136, engine.rb:5-6); the only gap is that the per-provider message and response files are not individually named (openai_message.rb etc.), leaving a small targeted lookup."
+          "score": 0.85,
+          "rationale": "Paths are concrete throughout: lib/langchain/llm/base.rb, lib/langchain/assistant.rb:14, lib/langchain/assistant/llm/adapter.rb, lib/langchain/tool_definition.rb, adapters/base.rb, messages/base.rb, llm/response/base_response.rb \u2014 all tied to real files and class names. Missing file:line on adapter.rb for Adapter.build itself, but specificity is otherwise high."
         },
         "justification": {
-          "score": 0.45,
-          "rationale": "The answer labels each layer ('raw per-provider clients', 'per-provider integrations') but never states the architectural WHY \u2014 that the client handles raw API calls while the adapter exists specifically to format tool-calling for the Assistant; the two layers are named side-by-side without explaining the design boundary that separates them."
+          "score": 0.5,
+          "rationale": "The answer names what each layer does (clients 'perform chat/complete/embed'; the Assistant 'delegates all provider-specific work to an adapter') but does not explain WHY the two layers are separate (client = raw API transport; adapter = tool-call schema formatting and response parsing for the Assistant loop), leaving the agent to infer the design rationale rather than having it stated."
         },
         "uncertainty": {
-          "score": 0.1,
-          "rationale": "The answer presents every layer with full confidence and flags no uncertainties about how they connect or what a new provider must implement; a new-provider agent acting on this map has no signal about which parts are inferred vs confirmed."
+          "score": 0.15,
+          "rationale": "No uncertainty is flagged anywhere; the claim that 'the only manual wiring is the adapter registry' is stated as fact with no caveat, and the answer gives no warnings about what the agent should verify before acting on the map."
         }
       },
-      "step_quality": 0.693,
+      "step_quality": 0.695,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1725,
-        "cache_creation_input_tokens": 17237,
+        "output_tokens": 2214,
+        "cache_creation_input_tokens": 18750,
         "cache_read_input_tokens": 16203
       }
     },
@@ -226,27 +226,27 @@
       "step": "Trace how the assistant talks to a provider for a tool-calling turn",
       "scores": {
         "map_quality": {
-          "score": 0.88,
-          "rationale": "The answer traces every layer with file:line: Adapter.build at adapter.rb:8-24, build_chat_params at assistant.rb:341-347, the raw chat call at :348, extract_tool_call_args at :366, and tool_role at :180/:379 \u2014 the agent can follow this map directly to wire a new provider's selection with only small lookups."
+          "score": 0.62,
+          "rationale": "The answer traces the assistant.rb execution path well with file:line (Adapter.build at :57, build_chat_params at :341-347, extract_tool_call_args at :366, build_message at :393-394), giving an agent a solid entry point. The critical gap is that it never traces INTO assistant/llm/adapter.rb to show where and how the is_a? dispatch selects the concrete adapter \u2014 the agent still needs to open that file and find the chain itself."
         },
         "specificity": {
-          "score": 0.9,
-          "rationale": "Dispatch pieces are named exactly \u2014 'Adapter.build selects by llm.is_a?(...) at assistant/llm/adapter.rb:8-24', 'build_chat_params at assistant.rb:341-347', 'extract_tool_call_args at :366' \u2014 leaving no vague 'the adapter selection' hand-waving."
+          "score": 0.6,
+          "rationale": "Method names are exact (build_chat_params, extract_tool_call_args, tool_role, Adapter.build) with assistant.rb line numbers throughout; the class is named slightly wrong ('LLM::Adapter' not 'Assistant::LLM::Adapter'). The adapter.rb layer is entirely absent \u2014 no file:line for where Adapter.build lives or what the is_a? branches look like."
         },
         "justification": {
-          "score": 0.25,
-          "rationale": "The answer lists the is_a? chain and names the mechanism but never explains WHY is_a? is used (to keep the Assistant provider-agnostic) or that Adapter.build is the single insertion point a new provider must enter \u2014 it names the pieces without explaining the design rationale."
+          "score": 0.1,
+          "rationale": "The answer lists the call sequence but never explains WHY selection is done via an is_a? chain (to keep the Assistant provider-agnostic) or that Adapter.build is the single insertion point a new provider must add a branch to."
         },
         "uncertainty": {
-          "score": 0.1,
-          "rationale": "No flag that the is_a? chain is hardcoded rather than a registry, so the agent won't know it must add an explicit elsif branch to Adapter.build for a new provider rather than registering somewhere."
+          "score": 0.0,
+          "rationale": "No flags raised about the dispatch being a hardcoded is_a? chain rather than a registry, and no mention that a new provider requires an explicit branch \u2014 the agent would act on the description as if extension were straightforward."
         }
       },
-      "step_quality": 0.642,
+      "step_quality": 0.418,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1519,
-        "cache_creation_input_tokens": 17297,
+        "output_tokens": 1846,
+        "cache_creation_input_tokens": 18846,
         "cache_read_input_tokens": 16203
       }
     },
@@ -254,27 +254,27 @@
       "step": "Map the provider-integration family and its contract",
       "scores": {
         "map_quality": {
-          "score": 0.95,
-          "rationale": "All six adapters (OpenAI, Anthropic, AwsBedrockAnthropic, GoogleGemini, MistralAI, Ollama) are named with file paths and per-adapter behavioral differences; the base contract is fully enumerated with file:line. The bonus call-out of two undocumented-but-required methods (allowed_tool_choices, available_tool_names) that grep-invisible base.rb omits is exactly the kind of map-quality detail that saves the agent from a silent breakage."
+          "score": 0.9,
+          "rationale": "The answer names the shared base with full path, cites all five NotImplementedError contract methods with line ranges, enumerates all six concrete adapters with per-adapter diffs, and surfaces the informal de-facto extension (build_tools, allowed_tool_choices) that the base doesn't declare \u2014 leaving the agent with a near-complete picture needing only spot-checks."
         },
         "specificity": {
-          "score": 0.95,
-          "rationale": "Every adapter is cited by concrete file path (adapters/openai.rb, adapters/aws_bedrock_anthropic.rb, etc.), every contract method is named with a line number (base.rb:16, :30, :42, :49, :56), and per-adapter divergences are pinned to specific lines (:29, :50-64, :88-97). Nothing is described as 'the adapters' without a path."
+          "score": 0.88,
+          "rationale": "Every adapter is cited by filename (adapters/openai.rb, adapters/aws_bedrock_anthropic.rb, etc.) and every contract method carries a base.rb line number; per-adapter line citations (e.g., Anthropic :29, :48-55) make the differences immediately locatable rather than described in prose."
         },
         "justification": {
-          "score": 0.75,
-          "rationale": "The answer demonstrates WHY each adapter differs by showing format-level distinctions (to_openai_format vs to_anthropic_format vs function_calling_config, symbol-keyed vs string-keyed extraction), but never states the overarching principle ('formats differ per provider, so each adapter must translate') explicitly; the agent infers it from examples rather than having it handed to them."
+          "score": 0.5,
+          "rationale": "The answer shows HOW each adapter differs (format method, key shapes, param routing) but never states WHY the per-provider split exists \u2014 the rubric asks for 'tool-call formats and message shapes differ per provider' reasoning, which is absent; the agent gets the what without the why."
         },
         "uncertainty": {
-          "score": 0.82,
-          "rationale": "The prominent warning about allowed_tool_choices and available_tool_names not being in base.rb but silently required is a strong, actionable uncertainty flag. The answer does not flag other potential blind spots (e.g., whether any adapter also overrides a method the answer didn't check, or fixture/test requirements), but the one flag it does raise is the most consequential one."
+          "score": 0.62,
+          "rationale": "The answer flags the informal de-facto contract (build_tools etc.) as 'not in base but present in every concrete adapter' and notes Ollama 'has no build_tool_choice' as a deviation to check, but it does not explicitly say which findings it could not confirm from source or advise the agent to verify a specific pattern before copying it."
         }
       },
-      "step_quality": 0.8905,
+      "step_quality": 0.773,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1612,
-        "cache_creation_input_tokens": 17610,
+        "output_tokens": 1771,
+        "cache_creation_input_tokens": 19110,
         "cache_read_input_tokens": 16203
       }
     },
@@ -282,27 +282,27 @@
       "step": "Map the per-provider message and response families",
       "scores": {
         "map_quality": {
-          "score": 0.87,
-          "rationale": "Both hierarchies are mapped with file:line \u2014 base.rb attrs and abstract methods, all five per-provider message classes, base_response.rb contract, and five chat-capable response wrappers; the Tie section explicitly links adapter.build_message \u2192 Messages::* and client.chat \u2192 Response::* with concrete file:line (adapters/openai.rb:82,86, llm/openai.rb:148). The four-way per-provider correspondence is present but could be a single alignment table rather than separate prose blocks."
+          "score": 0.82,
+          "rationale": "Both hierarchies are mapped with file:line: messages/base.rb at :23-39, all five per-provider message files named, response/base_response.rb with key methods, per-provider response files in lib/langchain/llm/response/. The adapter tie-in is shown concretely (adapters/openai.rb:43 for build_message, :81-87 for tool_role) and consumer side at assistant.rb:305,311-312; however the four-way correspondence is only walked out for OpenAI, leaving the agent to infer the pattern for the other four providers."
         },
         "specificity": {
-          "score": 0.88,
-          "rationale": "Every per-provider file is named concretely (messages/openai_message.rb, response/anthropic_response.rb, etc.) and key methods carry line numbers (to_hash :52, tool_result block :70-83, role :19, tool_calls :27); GoogleGeminiMessage, MistralAIMessage, OllamaMessage lack line numbers, which is a small gap but not a blocker for an agent."
+          "score": 0.8,
+          "rationale": "Files are named concretely (openai_message.rb:6-15/:52, adapters/openai.rb:43/:81-87, assistant.rb:305,311-312) and full directory prefixes are given for both hierarchies; the per-provider message files lack their full lib/langchain/assistant/messages/ prefix, a minor gap an agent can fill with one targeted lookup."
         },
         "justification": {
-          "score": 0.65,
-          "rationale": "The answer shows HOW providers differ (Anthropic wraps tools in a user/tool_result block :70-83, MistralAI adds prefix:false :82-89, OpenAI uses image_url :135) but never states WHY the per-provider split exists (each API expects and returns a different wire shape); the \u26a0\ufe0f note that role/tool_calls are absent from base_response.rb is a genuine architectural insight that gestures at the reason without naming it."
+          "score": 0.45,
+          "rationale": "The answer shows what differs per-provider (ROLES, TOOL_ROLE, role predicates, to_hash serializer) but does not state the root cause \u2014 that each provider's API wire format for messages and responses differs \u2014 which is what a new-provider implementor needs to understand before choosing what to copy vs invent."
         },
         "uncertainty": {
-          "score": 0.72,
-          "rationale": "The \u26a0\ufe0f flag that role/tool_calls are not in base_response.rb and the parenthetical '(Non-chat: cohere/ai21/replicate/hugging_face/llama_cpp/aws_* responses.)' are real uncertainty signals that tell the agent which providers may lack a full message class or tool-call response; no explicit 'could not confirm' caveat is raised for the three message classes that were cited without line numbers."
+          "score": 0.25,
+          "rationale": "The answer lists 'aws/ai21/cohere/etc.' response wrappers without naming matching message classes for those providers, but never explicitly flags this gap or warns the agent to verify whether those providers need dedicated message classes before starting implementation."
         }
       },
-      "step_quality": 0.806,
+      "step_quality": 0.6555,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1931,
-        "cache_creation_input_tokens": 17515,
+        "output_tokens": 1761,
+        "cache_creation_input_tokens": 18698,
         "cache_read_input_tokens": 16203
       }
     },
@@ -310,27 +310,27 @@
       "step": "Map the raw LLM client family and its contract",
       "scores": {
         "map_quality": {
-          "score": 0.78,
-          "rationale": "The answer enumerates the base (llm/base.rb) with file:line for all four contract methods and lists 13 per-provider clients by file; three providers show the full raw\u2192wrapped path with file:line (openai.rb:148, anthropic.rb:126, mistralai.rb:42), plus the conventions section (DEFAULTS, depends_on, chat_parameters.update/remap/ignore) gives an agent a real implementation template. The gap is that most per-provider clients have no line numbers and the wrapping path is only traced for three of the thirteen."
+          "score": 0.82,
+          "rationale": "The answer names the base at `lib/langchain/llm/base.rb` with line-cited abstract methods (`chat :50`, `complete :58`, `embed :67`), lists all 13 per-provider clients by path, and traces the raw-to-wrapped pipeline concretely through `openai.rb:141-143` and `openai.rb:148`; streaming reassembly (`response_from_chunks`) is also cited. The agent could start implementing a client from this, though the per-provider list is collapsed into a brace-expansion glob rather than individual file:line entries."
         },
         "specificity": {
-          "score": 0.8,
-          "rationale": "Contract methods are cited with line numbers (:50/:58/:67/:76), client files are named concretely, and three wrapping examples carry file:line anchors \u2014 well above 'the clients' vagueness. The remaining ten providers lack any line reference, leaving targeted follow-up needed for each."
+          "score": 0.85,
+          "rationale": "Base contract methods are cited with file and line (`chat :50`, etc.); the wrapping call is named exactly (`Langchain::LLM::Response::OpenAIResponse.new(response) \u2014 openai.rb:148`); `chat_parameters.to_params` and `response_from_chunks` are named. Per-provider paths are concrete even if grouped as a brace expansion."
         },
         "justification": {
-          "score": 0.15,
-          "rationale": "The answer describes what the client does technically but never explains WHY it is separate from the adapter (raw API access versus Assistant tool-call formatting), which the rubric flags as the key architectural WHY the agent needs."
+          "score": 0.1,
+          "rationale": "The answer lists what the client does but never explains WHY there is a separate client vs. adapter (raw API calls vs. Assistant tool-call formatting); the architectural rationale for the two-layer split is absent."
         },
         "uncertainty": {
           "score": 0.1,
-          "rationale": "No flags about which providers may lack embed support or other capability gaps; the agent would act on the list as if all thirteen implement all three contract methods equally."
+          "rationale": "No uncertainty flags are raised \u2014 the answer does not note that several providers (e.g., llama_cpp, hugging_face) may not implement all three contract methods, or that embeddings support varies, leaving the agent to assume uniform capability across all 13 clients."
         }
       },
-      "step_quality": 0.557,
+      "step_quality": 0.5755,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1455,
-        "cache_creation_input_tokens": 17127,
+        "output_tokens": 1338,
+        "cache_creation_input_tokens": 18694,
         "cache_read_input_tokens": 16203
       }
     },
@@ -338,27 +338,27 @@
       "step": "Find every site that must change to add a new tool-calling provider",
       "scores": {
         "map_quality": {
-          "score": 0.92,
-          "rationale": "All four parallel hierarchies plus dispatch are named with concrete paths (llm/foo.rb, response/foo_response.rb, adapters/foo.rb, messages/foo_message.rb, adapter.rb:8-24), the spec matrix is complete (four spec files + adapter_spec edit + fixtures), and the bottom note explicitly calls out the single easy-to-miss wiring site; an agent could open the PR directly from this table."
+          "score": 0.88,
+          "rationale": "All four hierarchies are named with full paths (llm/foo.rb, response/foo_response.rb, messages/foo_message.rb, adapters/foo.rb) plus the Adapter.build branch at adapter.rb:8-24 and the full spec matrix; the extra tool_definition.rb:79-140 note adds value. The agent could open the PR from this list with only small lookups."
         },
         "specificity": {
           "score": 0.88,
-          "rationale": "Every entry gives a full lib/spec path with a concrete file name; the dispatch edit includes a line range (adapter.rb:8-24), method names are cited inline (DEFAULTS, depends_on, chat_parameters, ROLES, TOOL_ROLE, to_hash), and the spec edit carries its own line anchor (adapter_spec.rb:1-9)."
+          "rationale": "Every site is given a concrete file path; the dispatch site includes a line range (adapter.rb:8-24), tool_definition.rb is pinned to :79-140, and all five spec files are named explicitly rather than described generically."
         },
         "justification": {
           "score": 0.62,
-          "rationale": "The 'Concern' column labels each site (raw client vs response wrapper vs adapter vs dispatch vs message) and the closing note explains the consequence of missing #4, but the answer does not explain WHY each hierarchy is structurally separate (e.g., why the client handles raw API calls while the adapter formats tool-calling for the Assistant), so the agent must infer the architectural split."
+          "rationale": "The dispatch site gets a clear WHY ('without it Adapter.build raises ArgumentError') and the tool-schema site explains the reuse-vs-new-format choice, but the message and response wrapper entries only list fields without explaining WHY per-provider shapes require separate classes, and the client-vs-adapter separation rationale is deferred to prior steps rather than restated here."
         },
         "uncertainty": {
-          "score": 0.6,
-          "rationale": "The answer flags the conditional tool_definition.rb change, notes zeitwerk auto-loading (no require registry), and highlights the dispatch branch as easy to miss; it does not flag uncertainty about gem dependency_helper requirements, whether the stated line ranges are still accurate, or which VCR fixture format is expected \u2014 so the agent may act blindly on those details."
+          "score": 0.42,
+          "rationale": "The answer correctly flags the manual Adapter.build branch and Zeitwerk autoloading as the one place that can't be derived from the pattern, but it does not flag dependency_helper gem requirements, gemspec/Gemfile changes for a new SDK gem, or test fixtures, which the rubric specifically calls out as things static reading can miss."
         }
       },
-      "step_quality": 0.802,
+      "step_quality": 0.759,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1773,
-        "cache_creation_input_tokens": 17389,
+        "output_tokens": 1729,
+        "cache_creation_input_tokens": 18889,
         "cache_read_input_tokens": 16203
       }
     },
@@ -367,26 +367,26 @@
       "scores": {
         "map_quality": {
           "score": 0.95,
-          "rationale": "All four new files are named with model-on file:line references (e.g., 'model on lib/langchain/llm/openai.rb:17-149'), the dispatch branch is pinned to adapter.rb:8-24, four spec files and a conditional fixtures dir are listed, and the non-obvious zeitwerk no-manifest detail is flagged; a teammate could open the PR from the prose + JSON map alone."
+          "rationale": "All four new files are named with full paths, the single existing-file edit is pinned to adapter.rb:21 with the exact `elsif llm.is_a?` pattern, every spec is enumerated individually, and the Zeitwerk note rules out a hidden require-manifest edit \u2014 a teammate could open the PR from this map alone. The JSON summary re-encodes the same information in structured form, adding redundant confidence."
         },
         "specificity": {
           "score": 0.93,
-          "rationale": "Insertion points are exact ('add elsif llm.is_a?(Langchain::LLM::Foo) \u2192 LLM::Adapters::Foo.new' at adapter.rb:8-24), each new file has a line-ranged model-on reference, and the adapter contract methods (build_chat_params, extract_tool_call_args, etc.) are enumerated individually rather than described vaguely."
+          "rationale": "Insertion points are as concrete as possible: `adapter.rb:21`, `tool_definition.rb:134`, mirror anchors like `openai.rb:122-149` and `openai_response.rb:19-61`, and the de_facto contract methods (build_tools, allowed_tool_choices, build_tool_choice) are listed beyond the base contract \u2014 no vague 'add the adapter' language anywhere."
         },
         "justification": {
-          "score": 0.72,
-          "rationale": "The easiest-to-miss note ('without it Adapter.build raises Unsupported LLM type') and the 'maybe_tool_format' conditional explain WHY those sites are in the map, but the WHY for the client/response/message/adapter split is implicit in the model-on references rather than stated as a hierarchy rationale."
+          "score": 0.8,
+          "rationale": "The answer explains the client/response split ('client returns Response::FooResponse'), why adapter.rb is the only manual wiring ('ONLY manual wiring'), and why tool_definition.rb is conditional ('only if Foo's schema differs') \u2014 but the per-hierarchy WHY (raw API access vs. tool-call formatting vs. message shape) is implicit in the trace JSON rather than stated directly for each file in the create/change list."
         },
         "uncertainty": {
-          "score": 0.85,
-          "rationale": "Two concrete conditionals are flagged: tool_definition.rb only if the provider's tool schema differs, and spec/fixtures only if needed; the 'easiest_to_miss' field calls out the dispatch branch as the highest-risk omission, giving the agent clear verification targets."
+          "score": 0.65,
+          "rationale": "The tool-schema-format uncertainty is flagged well ('only if Foo's schema differs'), but the answer doesn't flag whether Foo genuinely needs a dedicated message class vs. reusing an existing one, doesn't mention fixture/VCR cassette requirements visible in the spec tree, and omits the dependency_helper gem registration that some providers require \u2014 gaps an agent would hit before committing."
         }
       },
-      "step_quality": 0.884,
+      "step_quality": 0.87,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1958,
-        "cache_creation_input_tokens": 20318,
+        "output_tokens": 1776,
+        "cache_creation_input_tokens": 20267,
         "cache_read_input_tokens": 16203
       }
     }

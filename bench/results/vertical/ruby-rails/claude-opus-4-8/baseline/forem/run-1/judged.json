@@ -6,22 +6,29 @@
     "prompt_version": "v2-rel",
     "rubric_path": "forem.rubric.yaml"
   },
-  "scenario_quality": 0.7261,
+  "scenario_quality": 0.7229,
   "relationship_audit": {
     "total": 23,
-    "covered": 23,
-    "related": 22,
-    "contradicted": 1,
-    "covered_recall": 1.0,
-    "related_recall": 0.9565,
-    "grounded_precision": 0.9565,
-    "missed_covered": [],
+    "covered": 20,
+    "related": 17,
+    "contradicted": 0,
+    "covered_recall": 0.8696,
+    "related_recall": 0.7391,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "d:feed-tag",
+      "d:feed-event",
+      "d:tag-hotness"
+    ],
     "missed_related": [
-      "d:liquid-embed-extr"
+      "d:admin-tools",
+      "d:video-states",
+      "d:feed-tag",
+      "d:feed-event",
+      "d:tag-hotness",
+      "d:welcome-gen"
     ],
-    "contradictions": [
-      "d:liquid-embed-extr"
-    ],
+    "contradictions": [],
     "items": [
       {
         "id": "article-model",
@@ -68,7 +75,7 @@
       {
         "id": "d:admin-tools",
         "covered": true,
-        "related": true,
+        "related": false,
         "contradicted": false
       },
       {
@@ -86,25 +93,25 @@
       {
         "id": "d:video-states",
         "covered": true,
-        "related": true,
+        "related": false,
         "contradicted": false
       },
       {
         "id": "d:feed-tag",
-        "covered": true,
-        "related": true,
+        "covered": false,
+        "related": false,
         "contradicted": false
       },
       {
         "id": "d:feed-event",
-        "covered": true,
-        "related": true,
+        "covered": false,
+        "related": false,
         "contradicted": false
       },
       {
         "id": "d:tag-hotness",
-        "covered": true,
-        "related": true,
+        "covered": false,
+        "related": false,
         "contradicted": false
       },
       {
@@ -128,7 +135,7 @@
       {
         "id": "d:welcome-gen",
         "covered": true,
-        "related": true,
+        "related": false,
         "contradicted": false
       },
       {
@@ -140,8 +147,8 @@
       {
         "id": "d:liquid-embed-extr",
         "covered": true,
-        "related": false,
-        "contradicted": true
+        "related": true,
+        "contradicted": false
       },
       {
         "id": "d:notifiable-action",
@@ -168,31 +175,31 @@
       "step": "Orient in the codebase",
       "scores": {
         "map_quality": {
-          "score": 0.85,
-          "rationale": "The answer names Forem (dev.to OSS Rails monolith), maps app/ subdirectories including models, services, workers, controllers, queries and more, places Article at app/models/article.rb:1 (1858 lines), and calls out app/services/articles/ and app/workers/articles/ as entry points \u2014 enough for targeted follow-ups. The only gap is that lib/ is not mentioned, which the rubric flags."
+          "score": 0.88,
+          "rationale": "The answer correctly identifies Forem as a Rails community platform, maps app/ sub-directories (models, services, workers, queries, decorators, policies, serializers, controllers, lib/), and pins Article at app/models/article.rb:1 as the hub that 'comments, reactions, tags, mentions, notifications, page views and feeds all attach to'; the agent has enough to pick an entry point with only targeted follow-ups."
         },
         "specificity": {
           "score": 0.9,
-          "rationale": "Every concern is cited with a concrete path and :1 line anchor (e.g. app/models/concerns/reactable.rb:1, algolia_searchable/searchable_article.rb:1), and sub-namespaces like app/models/articles/feeds/ are named \u2014 well above vague layer references."
+          "rationale": "Concern files are named concretely with paths and :1 line anchors (reactable.rb:1, taggable.rb:1, liquid_embeddable.rb:1, etc.), Article-specific service sub-paths (services/articles/ creator/updater/destroyer/unpublish) and worker directories (workers/articles/, workers/notifications/) are called out by name rather than left vague."
         },
         "justification": {
-          "score": 0.45,
-          "rationale": "The answer describes what each piece IS (Article is 'what users publish', concerns are 'shared pieces it is built on') but does not explain WHY this shape exists \u2014 e.g. why behavior is factored into concerns (shared reuse across Comment, PodcastEpisode, etc.) or why effects are pushed to Sidekiq workers (to keep requests fast)."
+          "score": 0.52,
+          "rationale": "The hub role is stated ('what readers publish; \u2026 all attach to it') and concerns are labeled 'shared pieces it is built on,' which hints at the reuse rationale, but the answer does not explain WHY behavior is pulled in through concerns rather than inline, nor WHY heavy effects are pushed to workers; an agent that encounters a novel concern would not know the architectural reason."
         },
         "uncertainty": {
-          "score": 0.2,
-          "rationale": "No uncertainty is flagged anywhere; every claim is stated as definitive, including paths the agent has not yet opened (e.g. the exact API surface of AlgoliaSearchable or the full feeds engine), leaving the downstream agent no signal about what to verify first."
+          "score": 0.45,
+          "rationale": "The one explicit flag ('Trackable exists but Article does NOT include it') is useful and precise, but the answer does not otherwise acknowledge which concern or service files were actually opened versus inferred from directory names, leaving the agent to assume the concern list is verified."
         },
         "relationship": {
-          "score": 0.55,
-          "rationale": "The answer uses 'hang off' to imply associations and frames concerns as 'built on', which is stronger than bare directory listing, but it never states the mechanism explicitly \u2014 no 'include Reactable', no 'has_many :comments', no 'effects fan out via Sidekiq workers' \u2014 so the connecting paths are implied rather than asserted."
+          "score": 0.73,
+          "rationale": "For each concern the answer names the association it supplies (has_many :reactions via Reactable, has_many :user_subscriptions via UserSubscriptionSourceable, etc.), making the binding relationship explicit; the worker and service layers are only listed by directory without stating the connecting path (e.g., callbacks, lifecycle hooks) by which they reach Article."
         }
       },
-      "step_quality": 0.675,
+      "step_quality": 0.757,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2143,
-        "cache_creation_input_tokens": 17807,
+        "output_tokens": 2252,
+        "cache_creation_input_tokens": 19633,
         "cache_read_input_tokens": 16203
       }
     },
@@ -200,31 +207,31 @@
       "step": "Map the Article contract and what it is built on",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "The answer maps all rubric-named concerns (Reactable, Taggable, LiquidEmbeddable, UserSubscriptionSourceable, search indexing) plus Purgeable, WebpageTrackable, PgSearch, and acts_as_taggable_on, with file:line for each; associations are enumerated with exact dependent strategies and the critical pre-change invariants (teardown mix, before_destroy ordering, serialized columns, counter-cache presence validations). An agent can pick entry points and act with only small follow-up reads."
+          "score": 0.95,
+          "rationale": "The answer covers every contract layer the rubric names \u2014 all nine included concerns with line numbers, every belongs_to/has_many with its dependent strategy and exact line, enums, serialized state, key published-facing scopes, and a closing 'what a teammate must know' summary; an agent could begin any targeted follow-up from this without fresh exploration."
         },
         "specificity": {
-          "score": 0.9,
-          "rationale": "Concerns are cited as `liquid_embeddable.rb:5`, `reactable.rb:5-10`, `searchable_article.rb:7`, etc.; associations carry line numbers like `:168`, `:170-195`; `Articles::Destroyer` is named at `destroyer.rb:11`. No vague gestures to 'the concerns layer'."
+          "score": 0.85,
+          "rationale": "Every association in article.rb carries a line number (e.g. `:168`, `:171`), and concern-supplied associations are pinned to their source file and line (`reactable.rb:5`, `liquid_embeddable.rb:5`, `user_subscription_sourceable.rb:7`); the concern file paths omit the `app/models/concerns/` prefix, which is the only non-trivial omission."
         },
         "justification": {
-          "score": 0.52,
-          "rationale": "The answer gives mechanical justifications (comments nullified rather than destroyed so Destroyer caches IDs first; before_destroy ordering is load-bearing) but does not explain WHY the architecture uses concerns to share behavior across multiple models or why specific dependent strategies were chosen as a design decision \u2014 only what breaks if violated."
+          "score": 0.65,
+          "rationale": "The 'What a teammate must know' section explains intentional choices (nullify on comments to leave rows, touch removed to avoid deadlock, counter_culture dependency on rating_votes destroy, denormalized cached_user feeding search), but the answer does not explain WHY behavior is extracted into concerns rather than living in the model (shared reuse across Reactable/Taggable users), which is the architectural motivation the rubric asks for."
         },
         "uncertainty": {
-          "score": 0.15,
-          "rationale": "The answer names every line number with full confidence and never flags a concern it didn't open or an association it couldn't confirm; the agent has no signal about which citations to verify before relying on them."
+          "score": 0.35,
+          "rationale": "The answer flags one implicit uncertainty ('orphan risk on teardown' for tag_adjustments missing a dependent strategy) but never explicitly states what it could not open or verify; the rest of the answer reads as fully confirmed, leaving the agent with no guidance on where to double-check."
         },
         "relationship": {
-          "score": 0.88,
-          "rationale": "Each concern explicitly names the relation or callback it contributes (`LiquidEmbeddable` \u2192 `has_many :liquid_embed_references + after_commit body-sync`; `Reactable` \u2192 `has_many :reactions`; `Purgeable` \u2192 `purge/soft_purge used by bust_cache`); associations state their `dependent:` strategy, which is the relationship mechanism that matters for a contract change. The chain from concern inclusion to the behavior it adds is stated for every entry."
+          "score": 0.82,
+          "rationale": "Each concern-supplied association is tied back to its source file and line (reactions via `reactable.rb:5`, user_subscriptions via `user_subscription_sourceable.rb:7`, liquid_embed_references via `liquid_embeddable.rb:5`), and every has_many states the exact dependent strategy and polymorphic nature where relevant; this is substantively above a plain file list, though the answer does not state which other models share the Reactable/Taggable concerns to complete the reuse relationship."
         }
       },
-      "step_quality": 0.764,
+      "step_quality": 0.799,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2240,
-        "cache_creation_input_tokens": 18314,
+        "output_tokens": 2134,
+        "cache_creation_input_tokens": 20148,
         "cache_read_input_tokens": 16203
       }
     },
@@ -232,31 +239,31 @@
       "step": "Trace how an article and its attached data are handled on change",
       "scores": {
         "map_quality": {
-          "score": 0.82,
-          "rationale": "The answer traces entry points (Creator/Updater/Destroyer), then walks each callback tier (before_validation \u2192 before_save \u2192 before_create \u2192 before_destroy \u2192 after_save \u2192 after_update_commit) with file:line, names specific workers and concerns, and clearly separates inline from async effects; the main gap is that feed-counter updates and the full mention/notification fan-out path (what update_notifications actually triggers) are not followed to their leaves, which would require a targeted follow-up lookup."
+          "score": 0.85,
+          "rationale": "The answer delivers a complete, ordered trace with file:line for entry points (Articles::Creator at creator.rb:26, Destroyer at destroyer.rb:5), callback hooks (before_save :305-:311, after_save :316-:319, after_update_commit :321-:343), and async workers (BustCacheWorker, ScoreCalcWorker, AlgoliaSearch::SearchIndexWorker), with inline-vs-async distinction throughout. The agent can pick any effect layer and make targeted lookups without re-exploring."
         },
         "specificity": {
-          "score": 0.78,
-          "rationale": "Workers, concerns, and cache paths are named concretely with file:line (e.g., EdgeCache::BustArticle at edge_cache/bust_article.rb:9, AlgoliaSearch::SearchIndexWorker via searchable_article.rb:38, Images::SocialImageWorker at :1675), but the feed-counter update path named in the rubric is absent and update_notifications/:1400 is cited without showing what it dispatches."
+          "score": 0.88,
+          "rationale": "Nearly every effect is named by exact symbol and file:line \u2014 EdgeCache::BustArticle at services/edge_cache/bust_article.rb:9, Mentions::CreateAll.call at updater.rb:79, GenerateArticleEmbeddingWorker at :1808, AlgoliaSearch::SearchIndexWorker at searchable_article.rb:37. No vague placeholders."
         },
         "justification": {
-          "score": 0.12,
-          "rationale": "The answer labels the two tiers 'Inline' and 'Asynchronous (Sidekiq)' but never explains WHY heavy effects are pushed to Sidekiq; there is no statement about keeping the request cycle fast or decoupling side effects from the save path."
+          "score": 0.18,
+          "rationale": "The answer labels effects as inline or async but never explains WHY heavy effects are pushed to Sidekiq \u2014 the rubric asks specifically for the 'keep the request fast / decouple side effects' rationale, which is entirely absent."
         },
         "uncertainty": {
           "score": 0.38,
-          "rationale": "The answer implicitly signals unverified interiors by using 'enqueues' and '\u2192' without opening the workers, and notes that WebpageTrackable/LiquidEmbeddable behavior is concern-driven; it does not explicitly flag any path as 'not fully opened' or 'verify before relying on'."
+          "rationale": "Async workers are marked as such, implicitly signaling they need further lookup, but the answer never explicitly flags 'I did not open this worker's internals' or 'this callback chain may have additional steps'; an agent acting on it would not know which parts to verify vs. trust."
         },
         "relationship": {
-          "score": 0.8,
-          "rationale": "Most effects are written as an explicit chain using '\u2192' (e.g., bust_cache \u2192 Articles::BustCacheWorker \u2192 EdgeCache::BustArticle; AlgoliaSearchable \u2192 trigger_sidekiq_worker \u2192 SearchIndexWorker; before_destroy_actions \u2192 BustMultipleCachesWorker), making the route from article change to each downstream effect clear; the notification and feed-counter legs are listed as method names without the connecting path from callback to final effect."
+          "score": 0.78,
+          "rationale": "The chain is written as connected paths \u2014 'after_save \u2192 bust_cache(:1663) \u2192 purge Fastly inline + async_bust \u2192 Articles::BustCacheWorker \u2192 EdgeCache::BustArticle', and 'before_destroy \u2192 bust_cache(destroying:true) \u2192 enqueues BustMultipleCachesWorker' \u2014 making the route explicit, not merely a file list. Most effect groups have their connecting callback or service call stated."
         }
       },
-      "step_quality": 0.659,
+      "step_quality": 0.6945,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1848,
-        "cache_creation_input_tokens": 18342,
+        "output_tokens": 1812,
+        "cache_creation_input_tokens": 20014,
         "cache_read_input_tokens": 16203
       }
     },
@@ -264,31 +271,31 @@
       "step": "Audit every dependent of the Article contract",
       "scores": {
         "map_quality": {
-          "score": 0.8,
-          "rationale": "All eight areas from the rubric are present, and non-obvious dependents the rubric explicitly names \u2014 welcome generator (`broadcasts/welcome_notification/generator.rb`), campaign scope (`campaign.rb:30`), feed liquid tag (`liquid_tags/feed_tag.rb`), liquid embed extractor, prominent-org queries \u2014 are included; the social-image generator is the one notable omission. The breadth is strong enough that an agent could start reviewing with only a handful of gap-fill lookups."
+          "score": 0.72,
+          "rationale": "All eight areas from the rubric are present and individually named for most entries \u2014 `find_featured_story.rb`, `welcome_notification/generator.rb`, `bust_comment.rb`, `article_score_calculator_for_user.rb`, data-update-script orphan semantics. The coverage fails only where request handling collapses a long tail of controllers into a single sentence ('profile_pins_controller.rb, discussion_locks_controller.rb \u2026 each reads/derives articles') with no per-file line numbers, directly violating the rubric's 'do not collapse' rule."
         },
         "specificity": {
-          "score": 0.62,
-          "rationale": "A meaningful subset has file:line citations (`articles_controller.rb:202,256,265,304`, `variant_query.rb:286`, `feed_event.rb:6,10`, `bust_article.rb:9`), but large swaths of Section A and the model-level dependents at the end of H are collapsed into bare filenames or grouped lists ('various controllers and services' equivalents like 'read article context for rendering/targeting' across eight controllers), which forces the agent to open those files rather than go straight to a targeted lookup."
+          "score": 0.63,
+          "rationale": "Workers, services, and most moderation/onboarding entries have concrete file:line and a one-phrase use \u2014 e.g. `articles/bust_cache_worker.rb:8 \u2014 EdgeCache::BustArticle.call` and `services/spam/handler.rb:49 \u2014 article.update_column(:automod_label,\u2026)`. The tail end of the controllers section and the analytics section collapse to summary phrases with no line numbers, leaving the agent unable to navigate directly to those sites."
         },
         "justification": {
-          "score": 0.62,
-          "rationale": "Grouping by area is correct and each entry carries at least a one-phrase explanation; the `delete_articles.rb` entry ('manually tears down \u2026 replicates teardown contract by hand') is a standout. However, most explanations describe what the file does, not why a contract change would break it, so the agent still needs to reason about impact rather than being handed it."
+          "score": 0.65,
+          "rationale": "Per-entry phrases explain how each dependent uses the article ('spam recheck + update_score', 'guards published?', 'only Article notifiable') and grouping by area conveys the functional reason for inclusion. There is no explanation of WHY heavy effects are async or WHY concern-mediated dependents are structurally harder to audit \u2014 the rubric's 'why each dependent is affected' is satisfied at entry level but not at architectural level."
         },
         "uncertainty": {
-          "score": 0.2,
-          "rationale": "The preamble notes '~200 files reference the contract' but the answer never explicitly flags what a static pass cannot see \u2014 dependents reached only through a polymorphic concern, an association two hops away, or a service that derives data from articles without naming the class \u2014 leaving the agent to assume coverage is complete when it may not be."
+          "score": 0.1,
+          "rationale": "The answer never flags what a static pass can miss \u2014 no acknowledgment that concern/association-mediated dependents or derive-from-article paths may be incomplete, no note that the collapsed controller list is unverified. The data-update-script section hints at teardown semantics but frames it as 'must be re-validated' rather than 'this pass may have missed some'."
         },
         "relationship": {
-          "score": 0.55,
-          "rationale": "Explicit association syntax appears for model-level dependents (`belongs_to :article`, `has_many :articles, dependent: :destroy`, `polymorphic notifiable: Article`) and a handful of services, but the majority of non-obvious dependents in sections C, D, G, and H state what the file does without naming the connecting relationship (e.g., `campaign.rb:30` is listed with no path, `broadcasts/welcome_notification/generator.rb` says 'tied to admin articles' without stating the derive-from-articles route), so a plain file list rather than an assembled relationship chain describes most of the answer."
+          "score": 0.52,
+          "rationale": "Some entries are strong \u2014 `comments_controller.rb:36 \u2014 commentable.is_a?(Article)`, `purgeable.rb:49 \u2014 purge/soft_purge mixin`, `mentions/create_all.rb:85 \u2014 when Article send mention inline` \u2014 name the actual connecting path. Many others, particularly the collapsed controller tail and the analytics section, state only a vague phrase like 'each reads/derives articles for its area', which a text search could produce without a structural index; no concern/association route is traced for those entries."
         }
       },
-      "step_quality": 0.627,
+      "step_quality": 0.5895,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 3226,
-        "cache_creation_input_tokens": 21035,
+        "output_tokens": 2176,
+        "cache_creation_input_tokens": 22655,
         "cache_read_input_tokens": 16203
       }
     },
@@ -296,31 +303,31 @@
       "step": "Trace how article identity and visibility are guarded",
       "scores": {
         "map_quality": {
-          "score": 0.88,
-          "rationale": "The answer covers all four cited paths \u2014 cache (bust_cache_worker.rb:4, bust_article.rb:9), feed (variant_query.rb:286), mention (mentions/create_all.rb:77,80), social-image (social_image_worker.rb) \u2014 plus search/embedding, with file:line throughout; the agent can audit every guard site without re-exploring. The SocialImageWorker divergence (raises vs no-op) is flagged, which is the one gap that would otherwise require a separate lookup."
+          "score": 0.82,
+          "rationale": "The answer covers all four guard layers \u2014 existence, published/visibility, search eligibility, and authorization \u2014 with file:line for each, including the feeds, cache, social-image, and mention paths the rubric calls out. The agent could assign guards to a reworked contract from this answer with only small targeted lookups."
         },
         "specificity": {
-          "score": 0.9,
-          "rationale": "Every guard is named at the method level with line numbers: `find_by(id:) \u2192 return unless article` at bust_cache_worker.rb:4, the published scope formula at article.rb:411-414, `scheduled?` at article.rb:663, `permission_denied?` at stories_controller.rb:432, `indexable` at searchable_article.rb:45 \u2014 concrete throughout, not paraphrased."
+          "score": 0.88,
+          "rationale": "Guards are named with precise file:line throughout: `article.rb:411` for the published scope, `bust_article.rb:10/50`, `searchable_article.rb:42:46`, `article_policy.rb:73/92`, and a long enumeration of worker-level existence checks. No vague 'the validation code' wording."
         },
         "justification": {
-          "score": 0.8,
-          "rationale": "The answer explicitly states the race-condition WHY \u2014 'the article may have been destroyed between enqueue and run' \u2014 and the takeaway extends it to the soft-delete scenario. The visibility re-check rationale (article may have been unpublished between enqueue and execute) is implied but not stated as clearly as the existence guard rationale."
+          "score": 0.48,
+          "rationale": "The answer implies the reason (workers do find_by so they bail if the record is gone; SocialImageWorker's `find` is flagged as 'less defensive') but never states the core WHY \u2014 that background work must re-confirm because the article may have been unpublished or destroyed between enqueue and execution. The implication is there; the explicit reasoning is not."
         },
         "uncertainty": {
           "score": 0.62,
-          "rationale": "The SocialImageWorker divergence is correctly flagged as risky (raises rather than no-ops), and the takeaway warns that soft-delete defeats `find_by` guards across all sites. However, the answer does not flag services that may assume the article still exists without any guard \u2014 the 'missing guard' case the rubric asks about \u2014 so the agent cannot distinguish covered from uncovered paths without follow-up reads."
+          "rationale": "`Images::SocialImageWorker:8` is explicitly flagged as weaker (raises on missing rather than returning early), and the destroyer sequencing caveat is noted. The mention fan-out and notification paths are not examined for missing guards, leaving a gap the answer does not acknowledge."
         },
         "relationship": {
-          "score": 0.75,
-          "rationale": "Most guards are connected to the effect they gate: `find_by \u2192 return unless` protects each named worker, the published scope gates `EdgeCache::BustArticle` home/tag busting at bust_article.rb:25,44,57, `permission_denied?` gates the request-path, `indexable` gates search indexing. The mention path names the branch (`when Article` at create_all.rb:80) but does not state what downstream notification effect that gate prevents, leaving one chain implicit."
+          "score": 0.52,
+          "rationale": "The layered taxonomy (existence \u2192 published \u2192 indexability \u2192 policy) provides structural framing, and a few guards are connected to their downstream effect (EdgeCache tag-page bust, Slack message send). The bulk of the worker enumeration, however, is a list of existence-check sites without stating the chain 'guard at X prevents effect Y', making the guard-to-dependent paths mostly implicit rather than explicit."
         }
       },
-      "step_quality": 0.82,
+      "step_quality": 0.701,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2106,
-        "cache_creation_input_tokens": 17969,
+        "output_tokens": 1825,
+        "cache_creation_input_tokens": 19823,
         "cache_read_input_tokens": 16203
       }
     },
@@ -328,31 +335,31 @@
       "step": "Assess the blast radius of the contract change",
       "scores": {
         "map_quality": {
-          "score": 0.82,
-          "rationale": "Four-tier risk ranking covers teardown ordering, async workers, counter caches, search/embeddings, and notifications with file:line throughout; the 'lower risk' bucket names decorators/liquid tags/feed queries but omits analytics, moderation (discussion_lock appears in teardown but not as a separate blast area), and onboarding dependents (welcome generator, campaign scope) that the rubric lists as required coverage areas."
+          "score": 0.68,
+          "rationale": "The answer covers teardown/orphan risk, async fan-out, and read/derive paths with file:line and a clear \ud83d\udd34/\ud83d\udfe0/\ud83d\udfe1 risk ranking \u2014 solid across workers, notifications, caching, feeds, and analytics. However, moderation (discussion lock, readinglist) and onboarding/lifecycle (the welcome generator, campaign scope) are entirely absent, two areas the rubric names explicitly as part of a complete blast-radius audit."
         },
         "specificity": {
-          "score": 0.85,
-          "rationale": "High-risk items are concretely cited: 'destroyer.rb:11-22', 'article.rb:171', 'bust_cache_worker.rb:4', 'score_calc_worker.rb:8', 'feed_event.rb:10' \u2014 each with a stated reason; the green tier reverts to category labels ('decorators, serializers, liquid tags') with no file:line, leaving that zone unactionable."
+          "score": 0.72,
+          "rationale": "High-risk items are very concrete \u2014 `article.rb:171`, `destroyer.rb:11,17-19`, `reactable.rb:5`, `reaction_counter_sync_worker.rb:80`, `bust_article.rb:9`, `updater.rb:83` \u2014 giving the agent exact entry points. The medium tier falls back to glob notation (`feeds/*`, `services/ai/*`, `admin/*`) rather than file-level citations, which is too vague for targeted follow-up."
         },
         "justification": {
           "score": 0.78,
-          "rationale": "The teardown ordering section explains the mechanism clearly \u2014 'change comments to :destroy/:delete_all and this manual cleanup double-handles or breaks notification removal' and 'silently desyncs \u2192 orphan rows'; the lower-risk tier is labelled 'fail-soft' with no reasoning, and the async-worker justification ('soft-delete approach defeats these guards') is stated but not developed."
+          "rationale": "The answer consistently explains the mechanism behind each risk: comments survive destroy because Destroyer caches `.ids` beforehand; rating_votes carry `:destroy` because of counter_culture cascade; notifications have double-handling that leaves dangling rows on strategy change. This WHY-per-item reasoning is present for all high-risk entries and most medium ones, letting the agent reason about edge cases rather than just matching file names."
         },
         "uncertainty": {
-          "score": 0.25,
-          "rationale": "The answer provides a re-verification checklist at the end but never explicitly flags uncertainty \u2014 no 'I did not open X', no 'this path is indirect and may need confirmation', no acknowledgment that concern/association-reached dependents were inferred rather than confirmed; the agent cannot distinguish confident from speculative claims."
+          "score": 0.22,
+          "rationale": "The 'Must re-verify' section is prescriptive rather than epistemic \u2014 it lists what to check, not what the answer is uncertain about. There is no explicit flagging of dependents reached only through a concern or derive path that static analysis might miss, or of any association whose exact `dependent:` strategy was not opened and confirmed."
         },
         "relationship": {
-          "score": 0.74,
-          "rationale": "High-risk relationships are expressed as paths: 'comments is dependent: :nullify (article.rb:171) \u2192 Destroyer caches IDs before destroy \u2192 strategy change double-handles'; 'counter_culture :user/:organization (article.rb:50) \u2192 teardown skips counter updates \u2192 stale counts'; the medium and lower tiers name files or workers without stating the connecting association/concern/derive route that makes each one risky."
+          "score": 0.68,
+          "rationale": "For the highest-risk items the answer assembles explicit chains: association strategy change \u2192 Destroyer caches ids \u2192 breaks nullify assumption \u2192 notification removal fails; or strategy change \u2192 triggers per-reaction callbacks \u2192 counter_culture sync fails. The medium tier weakens to 'rely on published/counters' without tracing which association or derive route connects each dependent to the contract change, leaving the agent to fill in the path itself."
         }
       },
-      "step_quality": 0.747,
+      "step_quality": 0.657,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1772,
-        "cache_creation_input_tokens": 18285,
+        "output_tokens": 2403,
+        "cache_creation_input_tokens": 20004,
         "cache_read_input_tokens": 16203
       }
     },
@@ -360,31 +367,31 @@
       "step": "Produce the change + verification map",
       "scores": {
         "map_quality": {
-          "score": 0.88,
-          "rationale": "The map covers all three required layers (model+concerns to edit with line ranges, dependents grouped by area, specs+fixtures to update) and the JSON consolidation makes it immediately actionable; the only gap is that the 'review/touch' list collapses to 'all find_by(id:) guarded workers' rather than naming each, and controllers are absent from the map even though they appear in step 4."
+          "score": 0.9,
+          "rationale": "The map covers all three required layers \u2014 files to edit with line ranges (article.rb:168-196, reactable.rb:5, webpage_trackable.rb:5-9, etc.), dependents grouped into eight named areas (Lifecycle, Caching, Notifications/mentions, Search/index, Webpage/domains, Counters/scores, Concepts/trends/polls/ratings, Orphan-cleanup data scripts), and specs/fixtures down to factory names; a teammate could execute the change from this map alone. The only small gap is that spec/requests/articles coverage is absent, and some worker-spec paths are listed without line numbers."
         },
         "specificity": {
-          "score": 0.9,
-          "rationale": "file:line is present throughout: article.rb:168-234, :1408, :1663, :253-267; concerns at :5/:7; spec paths like spec/services/articles/destroyer_spec.rb and spec/factories/articles.rb are named rather than described; insertion points for the cascade changes are explicit."
+          "score": 0.91,
+          "rationale": "Insertion points are concrete throughout: article.rb:168-196, article.rb:1408, article.rb:1663, reactable.rb:5, destroyer.rb:11-21, spec/models/article_destroy_spec.rb, spec/factories/articles.rb \u2014 far beyond 'edit the model and add tests'; the JSON block doubles down with per-association line numbers (discussion_lock:168, comments:171, etc.)."
         },
         "justification": {
-          "score": 0.68,
-          "rationale": "Area labels (Lifecycle services, Caching, etc.) give implicit why, and key files get explicit reasoning \u2014 destroyer.rb gets 'comment-ID caching + Notification.remove_all', delete_articles gets 'manual-teardown parity with Destroyer', worker specs get 'find_by(id:) \u2192 return unless guard'; but most files in the long review lists carry no individual justification."
+          "score": 0.78,
+          "rationale": "WHY is supplied for the most important pieces: comments nullify 'survive teardown', rating_votes destroy because of counter_culture, worker specs exist to verify 'return unless article still holds post-teardown', and data scripts are flagged because they 'encode expected teardown semantics'. A handful of the grouped dependents (e.g. concepts/trends/polls) are listed without an explicit why-affected sentence, keeping the score short of top."
         },
         "uncertainty": {
-          "score": 0.45,
-          "rationale": "'add if missing' on delete_articles_spec and the vague 'all find_by(id:) guarded workers' are the only explicit uncertainty signals; there is no flagging of which concern semantics or fixture traits the agent should confirm before committing, leaving implicit gaps the agent would have to discover."
+          "score": 0.8,
+          "rationale": "Real uncertainties are called out: '(If teardown logic moves to a service)' as a conditional edit path, 'tag_adjustments NO dependent option \u2014 orphan risk', 'notifications double-handled in Destroyer+Updater', and 'no reactable/webpage_trackable teardown shared example exists \u2014 add one'; these let the agent know which parts to confirm before committing rather than assuming completeness."
         },
         "relationship": {
-          "score": 0.78,
-          "rationale": "The chain is explicit for the highest-risk items \u2014 'comments nullify (article.rb:171) \u2192 destroyer.rb:11 must cache ids before destroy', delete_all/nullify/destroy strategy distinctions per association, counter_culture and FeedEvent#update_article_counters_and_scores connections, and each spec tied to a specific behavior path; the 'all find_by(id:) guarded workers' entry is the one place the connecting route is dropped."
+          "score": 0.84,
+          "rationale": "Each edited file is connected to the change via the mechanism: concerns are named by the association/strategy they govern (reactable.rb:5 \u2192 'reactions dependent: :destroy'), specs are tied to what path they exercise ('verify existence-guard return unless article still holds'), and the JSON teardown_associations block makes the strategy-to-line chain explicit for every child. A few grouped dependents in the review section (e.g. concepts workers) state area without the connecting route, holding the score slightly below top."
         }
       },
-      "step_quality": 0.791,
+      "step_quality": 0.862,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2253,
-        "cache_creation_input_tokens": 22751,
+        "output_tokens": 1843,
+        "cache_creation_input_tokens": 22066,
         "cache_read_input_tokens": 16203
       }
     }

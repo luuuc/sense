@@ -6,7 +6,7 @@
     "prompt_version": "v2-rel",
     "rubric_path": "rails.rubric.yaml"
   },
-  "scenario_quality": 0.7918,
+  "scenario_quality": 0.7454,
   "relationship_audit": {
     "total": 18,
     "covered": 18,
@@ -134,31 +134,31 @@
       "step": "Orient in the codebase",
       "scores": {
         "map_quality": {
-          "score": 0.92,
-          "rationale": "The answer names the Rails monorepo, pins ActiveRecord::Relation to activerecord/lib/active_record/relation.rb:5, lists the full relation/ subdir with every module (query_methods, finder_methods, spawn_methods, delegation, merger, etc.), and adds value objects with file:line. An agent could pick an entry point and begin targeted lookups immediately with no exploratory pass."
+          "score": 0.88,
+          "rationale": "The answer hands the agent a precise map: Rails monorepo confirmed, ActiveRecord::Relation placed at activerecord/lib/active_record/relation.rb:5, the full mixin directory listed by name, two named entry points with file:line (core.rb:442, scoping/named.rb:22), and three subclasses with file:line. An agent can pick any of those entry points and make targeted lookups rather than a fresh exploration."
         },
         "specificity": {
           "score": 0.9,
-          "rationale": "All abstractions are tied to concrete paths with line numbers \u2014 relation.rb:5, where_clause.rb:6, from_clause.rb:4, predicate_builder.rb:12 \u2014 and the module names inside relation/ are listed explicitly rather than described as 'the query layer'."
+          "rationale": "Every abstraction is tied to a concrete path and line: relation.rb:5, query_methods/finder_methods/spawn_methods/etc. named individually, CollectionProxy at associations/collection_proxy.rb:31, AssociationRelation at association_relation.rb:4. Nothing is left at a vague 'query layer' level."
         },
         "justification": {
-          "score": 0.6,
-          "rationale": "The answer says 'lazy query value returned by finders/scopes/associations' and 'query interface split into mixins', which touches the what, but does not explain WHY the architecture defers execution until enumeration or WHY the interface is composed from separate modules rather than living in one class; the rationale is present as label not explanation."
+          "score": 0.38,
+          "rationale": "The answer labels the object 'lazy' and notes it 'accumulates a query as it is chained', but does not explain WHY the query interface is decomposed into mixed-in modules rather than a monolithic class, nor WHY execution is deferred until enumeration. It names the pieces without the architectural reasoning behind the split."
         },
         "uncertainty": {
-          "score": 0.4,
-          "rationale": "The caveats note (blast truncation, name-collision false positives, dynamic dependents) applies to steps 4-7; for the orientation step itself no uncertainty is flagged about any layer boundary the agent might act on blindly."
+          "score": 0.45,
+          "rationale": "No uncertainty is flagged anywhere; the answer reads as fully confident. At orientation depth this is partially acceptable, but the answer doesn't acknowledge, for instance, that the mixin list was not verified to be complete or that delegation semantics weren't opened."
         },
         "relationship": {
-          "score": 0.8,
-          "rationale": "The answer explicitly connects finders/scopes/associations to Relation ('lazy query value returned by...'), states it accumulates a query as it is chained, and says the query interface is mixed in from modules in the relation/ subdir; the include mechanism (relation.rb:68-70) appears in step 2 rather than step 1, but the directional path finder\u2192Relation\u2192mixin-surface is present."
+          "score": 0.58,
+          "rationale": "The answer states that finders/scopes/associations return a Relation, which is the key relationship, and it names the entry-point class methods that create one. However, it does not state that the query interface modules are *included into* Relation, does not mention that chaining *spawns* a fresh relation, and does not explain how delegation routes to the model class \u2014 those connecting paths are listed by file name but not by relationship type."
         }
       },
-      "step_quality": 0.792,
+      "step_quality": 0.706,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2923,
-        "cache_creation_input_tokens": 23150,
+        "output_tokens": 1980,
+        "cache_creation_input_tokens": 19520,
         "cache_read_input_tokens": 16203
       }
     },
@@ -166,31 +166,31 @@
       "step": "Map the Relation contract and what it is built on",
       "scores": {
         "map_quality": {
-          "score": 0.92,
-          "rationale": "All 10 includes are listed with file:line at `relation.rb:68-70`, state structure pinned to `relation.rb:54-66/78/98/1227`, and every major module (QueryMethods, FinderMethods, Calculations, SpawnMethods, Delegation, Batches, Explain, SignedId::RelationMethods, TokenFor::RelationMethods, Enumerable) is enumerated with its own file:line \u2014 an agent can immediately see what the contract must preserve without any exploratory reads."
+          "score": 0.88,
+          "rationale": "The answer maps the full mixin stack with file:line (relation.rb:68-70 for the include declarations, spawn_methods.rb:8/:9, delegation.rb:5, query_methods.rb:9, calculations.rb:216, finder_methods.rb:458), names the @values canonical contract (VALUE_METHODS/MULTI_VALUE_METHODS/SINGLE_VALUE_METHODS/CLAUSE_METHODS at relation.rb:54-66), and lists the helper value objects (WhereClause, FromClause, QueryAttribute, PredicateBuilder) \u2014 enough for an agent to know what a change must preserve without broad re-exploration."
         },
         "specificity": {
-          "score": 0.93,
-          "rationale": "Every contract piece is tied to an exact file:line \u2014 `query_methods.rb:9`, `finder_methods.rb:6`, `calculations.rb:7`, `spawn_methods.rb:8`, `delegation.rb:5` \u2014 with no vague labels; VALUE_METHODS constants are pinned to `relation.rb:54-66` and the includes block to `:68-70`."
+          "score": 0.88,
+          "rationale": "Every module is tied to a concrete file and most to a line number; arel at query_methods.rb:1673, build_arel :1828, merge at spawn_methods.rb:33/:43 are exactly the kind of insertion-point coordinates an agent needs; the only small gap is finder_methods.rb missing its class-open line."
         },
         "justification": {
-          "score": 0.7,
-          "rationale": "The teammate_notes explain mechanics (VALUE_METHODS drives accessor generation and except/only, bang mutates vs non-bang spawns, Delegation builds a per-model subclass at runtime), but the answer does not explain WHY the interface was decomposed into focused modules rather than a monolith \u2014 the architectural rationale behind the composition is absent."
+          "score": 0.68,
+          "rationale": "The answer explains that @values is the invariant that merging, spawning, and arel-building all key off, and characterizes each module's role (chainable builders, cloning on spawn, model-class delegation) \u2014 but it does not explain WHY the query interface is split into focused modules (design intent) or WHY delegation uses per-class caching rather than method_missing."
         },
         "uncertainty": {
-          "score": 0.4,
-          "rationale": "The caveats section flags blast-radius limitations (sense_blast truncation, dynamic-dispatch misses), but the contract mapping itself carries no 'couldn't confirm' markers \u2014 no note that `delegation.rb`'s `generate_method` or `method_missing` fallback chain was not fully verified before being stated as part of the contract."
+          "score": 0.15,
+          "rationale": "The answer presents all information with full confidence and flags no part of the contract it did not open or verify; there is no hedge on delegation internals, on how RelationMethods extensions are wired, or on any method it cited by line without reading."
         },
         "relationship": {
-          "score": 0.78,
-          "rationale": "Each mixin entry names what surface it contributes via parenthetical labels ('chaining/where/order/joins/arel', 'spawn/merge/except/only', 'per-model relation subclass, method dispatch to model'), and teammate_notes connect VALUE_METHODS to the spawn/clone path \u2014 but the binding is stated as labels rather than explicit 'module X is included into Relation at line:68 and contributes Y, accessed through Z' chains, leaving the relationship partially implicit."
+          "score": 0.75,
+          "rationale": "The table states the binding role of each module (include at relation.rb:68-70, what each contributes, that @values ties spawn/merge/arel together), and the note 'a teammate must keep these and the @values shape stable' articulates the invariant chain; however, HOW spawn clones (dup + reset) and HOW delegation routes (delegated_classes caching vs method_missing) are implied but not spelled out as explicit paths."
         }
       },
-      "step_quality": 0.809,
+      "step_quality": 0.751,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2756,
-        "cache_creation_input_tokens": 23128,
+        "output_tokens": 2054,
+        "cache_creation_input_tokens": 19663,
         "cache_read_input_tokens": 16203
       }
     },
@@ -198,31 +198,31 @@
       "step": "Trace how a query is built up and executed",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "The answer delivers an 8-step ordered trace with file:line at every layer: core.rb:442 (relation birth) \u2192 named.rb:22/45 (scope resolution) \u2192 query_methods.rb:1113 (chaining) \u2192 spawn_methods.rb:9 (clone) \u2192 merger.rb:58 (merge) \u2192 query_methods.rb:1673/1828 (arel compile) \u2192 relation.rb:1243 (to_sql) \u2192 relation.rb:1212/1436/1460/1492 (execute+instantiate). An agent could enter the path at any layer and work safely; the only small gap is that the async/future_result execution path is not traced."
+          "score": 0.85,
+          "rationale": "The answer traces all five stages (Create \u2192 Chain \u2192 Merge \u2192 To SQL \u2192 Execute) in order with file:line at each layer; an agent can pick any entry point and follow the chain to the SQL execution without exploratory reads. Minor gap: the `apply_join_dependency` branch is named but not fully separated from the main path."
         },
         "specificity": {
-          "score": 0.9,
-          "rationale": "Every layer is pinned to exact symbol and line: SpawnMethods#spawn at spawn_methods.rb:9, Merger#merge at merger.rb:58, HashMerger at merger.rb:17, arel/build_arel at query_methods.rb:1673/1828, to_sql at relation.rb:1243, exec_main_query at relation.rb:1460 \u2014 no vague 'query layer' language. A minor gap is that build_where_clause/:1692 is cited but not walked into PredicateBuilder."
+          "score": 0.88,
+          "rationale": "Every key symbol is named with exact file:line: `SpawnMethods#spawn` at `spawn_methods.rb:9`, `Relation::Merger` at `relation/merger.rb:6,17`, `exec_queries` at `relation.rb:1436`, `querying.rb:67` \u2014 no hand-waving like 'the query code'."
         },
         "justification": {
-          "score": 0.45,
-          "rationale": "The bang-vs-non-bang distinction is noted ('non-bang spawns, bang mutates') but the answer never states WHY chaining spawns a fresh relation \u2014 the immutability / laziness invariant that makes the design safe to chain is absent; the agent is given the what but not the why of deferred execution."
+          "score": 0.4,
+          "rationale": "The answer describes the copy-then-mutate mechanism ('clone \u2192 initialize_copy dups @values') but never explains WHY chaining clones (so each unexecuted relation is independent and can be reused) or WHY execution is deferred until `#load`; the design rationale is absent."
         },
         "uncertainty": {
-          "score": 0.55,
-          "rationale": "The caveats section flags that spawn/merge semantics were not fully opened ('spawn = clone (or model.all if already in scope)' acknowledges an edge case), and blast truncation is disclosed; but the answer does not flag that the async exec path or the arel-visitor layer were not verified, which matters for a agent about to change query execution."
+          "score": 0.15,
+          "rationale": "No uncertainty flags anywhere \u2014 the answer presents every line with full confidence, including the eager-load branch and `instantiate_records` path, without noting any layer it did not open or verify."
         },
         "relationship": {
-          "score": 0.9,
-          "rationale": "Both the JSON (explicit order 1-8 with connecting layer labels) and the inline walkthrough write the path as a single connected chain \u2014 'Core::ClassMethods#relation \u2192 Named#all \u2192 where!/spawn \u2192 merge! \u2192 Merger#merge \u2192 arel \u2192 build_arel \u2192 to_sql \u2192 load \u2192 exec_queries \u2192 exec_main_query \u2192 instantiate_records' \u2014 so the route, not just the endpoints, is clear to the agent."
+          "score": 0.8,
+          "rationale": "The staged structure ('each builder \u2026 calls SpawnMethods#spawn \u2192 clone \u2192 initialize_copy'; '#load \u2192 exec_queries \u2192 exec_main_query \u2192 model._query_by_sql') assembles the path as an explicit chain with connecting arrows, not a flat file list; the route from finder to SQL execution is readable end-to-end."
         }
       },
-      "step_quality": 0.7975,
+      "step_quality": 0.7085,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2702,
-        "cache_creation_input_tokens": 23115,
+        "output_tokens": 1858,
+        "cache_creation_input_tokens": 19480,
         "cache_read_input_tokens": 16203
       }
     },
@@ -230,31 +230,31 @@
       "step": "Audit every dependent of the Relation contract",
       "scores": {
         "map_quality": {
-          "score": 0.88,
-          "rationale": "All eight areas the rubric names are hit with file:line: connection_handling.rb:415, sanitization.rb:213, integration.rb:163, encryption/extended_deterministic_queries.rb:24, signed_id.rb:32, join_dependency.rb:189, scoping/named.rb:154, plus the cross-gem pair (activesupport/core_ext/enumerable.rb:145 and railties/commands/query/query_command.rb:174). The dedicated 'type_or_case_tests_reaching_relation_without_classname_grep' block explicitly surfaces the short-name/=== gap the rubric highlights. Minor gap: the rubric calls out `pick` as the mirrored core-ext method, but the answer names pluck/excluding/in_order_of instead."
+          "score": 0.9,
+          "rationale": "Hits every area the rubric names \u2014 connection_handling, sanitization `=== Relation`, integration cache key, encryption prepend, signed_id mixin, join_dependency, scoping/named, activesupport Enumerable core-ext, railties query command \u2014 and adds predicate_builder/preloader/arel extras; groups by detection method so the agent knows which areas require non-grep discovery. False-positive section shows active curation. Minor gap: group A lists module filenames without full paths, but the rubric's key scattered sites are all present."
         },
         "specificity": {
-          "score": 0.87,
-          "rationale": "Every scattered call-site entry carries a file:line pair and a one-phrase description (e.g. 'with_role_and_shard scopes a relation', 'replace_bind_variable', 'case result when ActiveRecord::Relation -> render', 'collection_cache_key on a relation'); all six files the rubric names by path are present. insert_all.rb:47 is listed but its one-phrase note is absent, a small gap."
+          "score": 0.8,
+          "rationale": "All major scattered call sites carry file:line and a one-phrase description (sanitization.rb:214, connection_handling.rb:419, integration.rb:163, signed_id.rb:33/37, encryption/extended_deterministic_queries.rb:28, enumerable.rb:161, query_command.rb:152/172); group A module entries omit line numbers and use short filenames rather than full relative paths, which weakens actionability for those entries."
         },
         "justification": {
-          "score": 0.72,
-          "rationale": "Most step-4 entries give a phrase-level 'how it uses the relation', and the step-6 blast-radius table adds explicit 'why' reasoning (e.g. 'monkeypatches relation methods \u2014 silently breaks if signatures move' for encryption, 'inherit spawn/clone/merge/exec; any contract change reaches every has_many/has_one' for subclasses). Entries like insert_all, reflection, and predicate_builder get listed without a clear explanation of the mechanism that makes them affected."
+          "score": 0.76,
+          "rationale": "Each group is labeled with its mechanism (SQL bind-variable handling, connection role/shard execution, collection cache, encrypted-query rewriting, cross-gem mirror, etc.) satisfying the 'one phrase on how it uses the relation' bar; the answer doesn't explain WHY the === pattern was chosen over a direct reference or WHY encryption prepends rather than subclasses, which would have lifted the score for an agent weighing change risk."
         },
         "uncertainty": {
-          "score": 0.78,
-          "rationale": "The caveats block explicitly flags blast truncation, name-collision false positives, and that dynamic dependents (encryption prepend, delegation method_missing, named-scope metaprogramming) were not reachable by classname grep and had to be confirmed by read+grep. The answer would be stronger if it flagged which specific entries remain unverified rather than grouping all uncertainty at the end."
+          "score": 0.65,
+          "rationale": "The header 'miss a class-name grep' and the false-positives section acknowledge the static-analysis blind spots; however, there is no explicit caveat that short-name reaches inside the query layer itself were not exhaustively verified, and no note that cross-gem dependents in other gems (e.g., activemodel) may exist, leaving the agent without a clear 'verify these three before committing' signal."
         },
         "relationship": {
-          "score": 0.73,
-          "rationale": "The connecting relationship is stated for most key dependents: 'install_support prepends RelationQueries' (encryption), 'case result when ActiveRecord::Relation' (railties type test), 'RelationMethods#find_signed via scoping' (signed_id), and the === section names the specific case-test and type-guard patterns the rubric targets. However, several scattered entries (insert_all, reflection, uniqueness, database_statements) are named without stating the path by which they reach the Relation object, falling short of 'route/relationship per dependent' for the full list."
+          "score": 0.82,
+          "rationale": "The hardest-to-find dependents all carry their connecting mechanism: `Relation === value` type test (sanitization, query_methods), `return_value.is_a? Relation` + `.load` (connection_handling), `Relation.prepend(RelationQueries)` (encryption), `mixed into Relation at relation.rb:70` (signed_id), `mirror Calculations#pick/pluck` (enumerable), `execute_sql`/`tabular_result_parts_for` (railties); group A and C entries are lighter (no mechanism stated for the module mixins themselves), but the rubric-critical unqualified and cross-gem paths are covered."
         }
       },
-      "step_quality": 0.814,
+      "step_quality": 0.818,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 3179,
-        "cache_creation_input_tokens": 23288,
+        "output_tokens": 3252,
+        "cache_creation_input_tokens": 20437,
         "cache_read_input_tokens": 16203
       }
     },
@@ -263,30 +263,30 @@
       "scores": {
         "map_quality": {
           "score": 0.85,
-          "rationale": "The answer gives file:line for the full inheritance chain (CollectionProxy < Relation at collection_proxy.rb:31, AssociationRelation < Relation at association_relation.rb:4, DisableJoinsAssociationRelation at disable_joins_association_relation.rb:4) and for where association queries are built (AssociationScope#scope at association_scope.rb:21, plus reflection.rb:336, preloader/association.rb:294, etc.); an agent can pick up these entry points and start working with only small targeted follow-ups."
+          "rationale": "The answer gives file:line for all key pieces: CollectionProxy < Relation (collection_proxy.rb:31), AssociationRelation < Relation (association_relation.rb:4), AssociationScope.scope (association_scope.rb:6,:21), the disable-joins variants, and the delegation hook \u2014 enough for an agent to enter the change knowing which subclasses inherit the interface and where scope construction occurs. The reader path through CollectionAssociation#reader:34 adds the entry-point the agent needs."
         },
         "specificity": {
           "score": 0.88,
-          "rationale": "Every piece is named by exact class and file:line \u2014 CollectionProxy at associations/collection_proxy.rb:31, AssociationScope at associations/association_scope.rb:21, AssociationRelation at association_relation.rb:4 \u2014 rather than 'the association code'; the additional query-build sites (reflection.rb:336/:200, has_many_through_association.rb:71, preloader/through_association.rb:104) are equally concrete."
+          "rationale": "Every piece carries a concrete file:line: Association#scope at :107, target_scope at :314, CollectionAssociation#reader at :34, DisableJoinsAssociationScope#add_constraints at :33, Delegation.delegated_classes at :9 \u2014 none of the cited symbols are vague or file-only."
         },
         "justification": {
-          "score": 0.62,
-          "rationale": "The note 'CollectionProxy/AssociationRelation inherit the entire QueryMethods/SpawnMethods/Calculations surface; changing spawn/merge/clone semantics changes association collections too' explains the mechanism and consequence, but does not articulate WHY the collection is built on Relation in the first place (so association queries get the same chainable, lazy interface as scopes and finders)."
+          "score": 0.48,
+          "rationale": "The answer notes that AssociationRelation overrides exec_queries to route through @association, and that CollectionProxy is what #reader returns, but it never states WHY the association stack is built on Relation \u2014 that associations need the same chainable, lazy-query interface \u2014 leaving the design rationale implicit rather than explained."
         },
         "uncertainty": {
-          "score": 0.25,
-          "rationale": "Step5 flags nothing about which CollectionProxy delegation paths were not fully opened (e.g. delegate_to_target? or method_missing in the proxy) or about whether AssociationScope's scope method was read vs inferred; the agent must assume completeness."
+          "score": 0.15,
+          "rationale": "No uncertainty is flagged; the answer presents every path as fully confirmed without noting, for example, that delegation forwarding mechanics or the merge!/scope_for_association semantics were not fully opened, so the agent has no cues to verify before acting."
         },
         "relationship": {
           "score": 0.72,
-          "rationale": "The answer labels each subclass with its connecting relationship ('< Relation; wraps association, delegates query interface'; 'exec_queries override') and the note states the inheritance of the mixin surface explicitly; the path from association collection through CollectionProxy to the Relation contract is present, though not assembled as a single explicit chain statement."
+          "rationale": "The connecting relationships are stated via explicit inheritance notation (`< Relation`, `< Relation`) and the create/merge! call chain from Association#scope through AssociationRelation, and the reader path from CollectionAssociation \u2192 CollectionProxy \u2014 these are genuine path statements, not just a file list. The answer stops short of writing the full chain (Relation change \u2192 subclasses inherit \u2192 exec_queries override routes through association \u2192 scope built by AssociationScope) as a single explicit route, slightly limiting actionability."
         }
       },
-      "step_quality": 0.7355,
+      "step_quality": 0.7045,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2372,
-        "cache_creation_input_tokens": 23098,
+        "output_tokens": 1844,
+        "cache_creation_input_tokens": 19249,
         "cache_read_input_tokens": 16203
       }
     },
@@ -295,30 +295,30 @@
       "scores": {
         "map_quality": {
           "score": 0.82,
-          "rationale": "step6_blast_radius_ranked covers all major areas (subclasses, merger/spawn, delegation, encryption prepend, arel execution, cross-gem CLI type-test, scoping, bind/statement cache, activesupport core_ext) with file:line and a risk tier; however connection_handling.rb and join_dependency.rb are not ranked in step6 itself \u2014 they are deferred to 'all entries in step4' \u2014 so an agent reading only the blast section misses those entries without backtracking."
+          "rationale": "The answer covers all the discriminating areas the rubric names: sanitization's `=== Relation` (sanitization.rb:214), connection_handling.rb:419 role/shard load, join_dependency.rb:189, scoping/named.rb:197, encryption's extended_deterministic_queries.rb:28, signed_id.rb:33, the Enumerable core-ext, and the railties query renderer \u2014 plus the subclasses, merger, and spawn chain. A risk ranking groups them so the agent can triage without re-exploring."
         },
         "specificity": {
-          "score": 0.88,
-          "rationale": "Each ranked entry states a concrete ref (e.g., 'merger.rb:58, spawn_methods.rb:9/43, relation.rb:98', 'encryption/extended_deterministic_queries.rb:24/43/106', 'railties query_command.rb:174') and a one-phrase reason; items included in the ranked list are highly actionable, with the only gap being a few scattered call sites that are pointer-deferred rather than explicitly cited."
+          "score": 0.8,
+          "rationale": "Critical dependents carry file:line throughout (sanitization.rb:214, query_methods.rb:1762/1782/2008, connection_handling.rb:419, join_dependency.rb:189, delegation.rb:7-18/52, signed_id.rb:33, arel/visitors/to_sql.rb:787); cross-gem entries name the file but omit line numbers, which is a small gap."
         },
         "justification": {
-          "score": 0.82,
-          "rationale": "Risk levels are well-reasoned: 'inherit spawn/clone/merge/exec' for subclasses, 'monkeypatches relation methods \u2014 silently breaks if signatures move' for encryption, 'cross-gem === ActiveRecord::Relation; behavior change in to_sql/records' for the CLI renderer, and 'parallel API to verify for parity, not a direct caller' for activesupport distinguish execution-path risk from render-only risk; the pointer-deferred items (connection_handling, join_dependency) are not justified in step6 itself."
+          "score": 0.68,
+          "rationale": "The highest-risk group explains the WHY well \u2014 subclasses `depend on super and @values/init shape`, merger `reads the raw @values bag` so any VALUE_METHODS change breaks it, spawn `clone semantics underpin every chain`; the Medium tier is weaker, with `own test suites, easy to forget` as the stated reason rather than a structural explanation of the impact path."
         },
         "uncertainty": {
-          "score": 0.78,
-          "rationale": "The caveats block explicitly flags that 'dynamic dependents (encryption prepend, delegation method_missing, named-scope metaprogramming) reach Relation without naming the class' and that blast was truncated with name-collision false positives, and confirms each listed dependent was verified by read or grep; it does not flag which specific unqualified short-name call sites might still be missing."
+          "score": 0.22,
+          "rationale": "There is no explicit flagging of which dependents were surfaced only structurally (unqualified short-name references, cross-gem reach) and therefore need agent verification before acting; the `Must re-verify after change` section is a to-do checklist, not an acknowledgment of where the analysis may be incomplete."
         },
         "relationship": {
-          "score": 0.78,
-          "rationale": "For each ranked dependent, the connecting relationship is stated: 'inherit spawn/clone/merge/exec' (subclass inheritance), 'Relation.create builds dynamic subclass; method_missing assumes current instance API' (delegation), 'monkeypatches via prepend' (encryption), 'cross-gem === type-test' (CLI renderer), 'parallel mirroring API' (activesupport); connection_handling's role-scoping relationship and join_dependency's eager-load constraint path are not stated in step6 because those dependents were deferred to step4."
+          "score": 0.68,
+          "rationale": "The answer states the connecting relationship for the highest-risk items \u2014 inheritance (`depend on super`), internal-state coupling (`reads the raw @values bag`), `===` type-test for sanitization, role/shard `.load` for connection_handling \u2014 but for cross-gem dependents (Enumerable, railties renderer, arel visitor) the path from the Relation change to the dependent is named but not traced as an explicit route."
         }
       },
-      "step_quality": 0.82,
+      "step_quality": 0.707,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 3709,
-        "cache_creation_input_tokens": 23145,
+        "output_tokens": 2747,
+        "cache_creation_input_tokens": 19623,
         "cache_read_input_tokens": 16203
       }
     },
@@ -326,31 +326,31 @@
       "step": "Produce the change + verification map",
       "scores": {
         "map_quality": {
-          "score": 0.85,
-          "rationale": "Edit targets (relation.rb:5, spawn_methods.rb, merger.rb, query_methods.rb, delegation.rb) and tests are enumerated with file:line throughout; cross-gem dependents (railties query_command.rb:174, activesupport core_ext enumerable.rb:145/132/197) appear explicitly. The 'must_review_or_touch' section punts to 'all entries in step4+5+6' rather than synthesizing them into the map itself, so a teammate must scroll back rather than read step7 alone."
+          "score": 0.9,
+          "rationale": "The answer delivers a comprehensive, actionable map across all required areas: contract files with line ranges (relation.rb:54-66, spawn_methods.rb, merger.rb), dependents grouped by area including scattered call sites (sanitization.rb:214, connection_handling.rb:419, signed_id.rb:33) and cross-gem (enumerable.rb:161, query_command.rb:152/172), and test files throughout. The JSON block adds a lifecycle trace (create \u2192 chain_spawn \u2192 merge \u2192 to_sql \u2192 execute) that makes the change path navigable. A teammate could begin landing the change from this map with only small lookup gaps (a few misc items like predicate_builder/* lack full line precision)."
         },
         "specificity": {
-          "score": 0.85,
-          "rationale": "Concrete file paths across every layer: activerecord/lib/active_record/sanitization.rb:213, encryption/extended_deterministic_queries.rb:24, statement_cache.rb:162, railties query_command.rb:174, activesupport/test/core_ext/enumerable_test.rb \u2014 all named, not summarized as 'query helpers' or 'add tests'."
+          "score": 0.88,
+          "rationale": "Nearly every dependent carries file:line: association_relation.rb:4, collection_proxy.rb:31, encryption/extended_deterministic_queries.rb:28, integration.rb:163, arel/visitors/to_sql.rb:787. The test list names concrete files (relations_test.rb, merging_test.rb, collection_cache_key_test.rb) but falls back to globs for adapter tests and 'cross-gem: activesupport enumerable pick/pluck' without a path, which slightly weakens a few entries."
         },
         "justification": {
           "score": 0.72,
-          "rationale": "Edit-target entries carry inline role labels ('state, initialize/initialize_copy/reset', '@values accessors, arel/build_arel') and the blast-radius section explains why each dependent is risky; test files are listed without per-entry justification of which code path each exercises, leaving the agent to infer."
+          "rationale": "Grouping keys like 'type_tests_=== or is_a', 'build_execute_extend', and 'cross_gem' encode the reason each file belongs, and the lifecycle_trace makes the causal flow clear. However, the answer mostly labels areas rather than explaining WHY a specific change to Relation's @values/VALUE_METHODS contract forces a review of, say, sanitization.rb:214 vs connection_handling.rb:419 \u2014 the causal link per file is implied by the category, not stated."
         },
         "uncertainty": {
-          "score": 0.75,
-          "rationale": "The caveats block explicitly names dynamic/unqualified dependents (encryption prepend, delegation method_missing, named-scope metaprogramming, blast truncation) as the least-certain layer; within the step7 map itself no per-item uncertainty flags appear, so the agent must carry the caveat mentally while reading the file list."
+          "score": 0.6,
+          "rationale": "The answer explicitly calls out false positives (actionpack journey/route.rb etc.) confirmed via grep spot-checks and acknowledges the bare-name Relation challenge in the method note. But it does not flag which cross-gem dependents or unqualified-reference entries it is least confident about, leaving the agent without a clear 'verify these before committing' shortlist for the riskiest unknowns."
         },
         "relationship": {
-          "score": 0.62,
-          "rationale": "Edit targets state their connection ('spawn/merge/merge!/except/only', 'subclass build + dispatch if spawn/clone changes') and cross-gem entries carry the type-test path ('case result when ActiveRecord::Relation'); the test section groups by area but does not articulate which test exercises which change-to-dependent chain, so the chain is implicit rather than written out per entry."
+          "score": 0.82,
+          "rationale": "The JSON keys make the connecting relationship explicit for most entries: 'AssociationRelation<Relation' and 'CollectionProxy<Relation' state subclassing; 'type_tests_=== or is_a' names the mechanism; cross-gem entries include 'core-ext mirror' and 'query renderer' as connecting phrases; the lifecycle_trace assembles the full chain. The misc group (uniqueness.rb, enum.rb, insert_all.rb, reflection.rb) lacks explicit per-entry relationship statements, weakening that cluster."
         }
       },
-      "step_quality": 0.7745,
+      "step_quality": 0.823,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2237,
-        "cache_creation_input_tokens": 23125,
+        "output_tokens": 2401,
+        "cache_creation_input_tokens": 21494,
         "cache_read_input_tokens": 16203
       }
     }

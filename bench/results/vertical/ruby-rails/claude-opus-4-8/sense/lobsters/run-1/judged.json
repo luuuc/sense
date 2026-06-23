@@ -6,40 +6,19 @@
     "prompt_version": "v2-rel",
     "rubric_path": "lobsters.rubric.yaml"
   },
-  "scenario_quality": 0.1589,
+  "scenario_quality": 0.7846,
   "relationship_audit": {
     "total": 14,
-    "covered": 3,
-    "related": 2,
+    "covered": 13,
+    "related": 13,
     "contradicted": 0,
-    "covered_recall": 0.2143,
-    "related_recall": 0.1429,
+    "covered_recall": 0.9286,
+    "related_recall": 0.9286,
     "grounded_precision": 1.0,
     "missed_covered": [
-      "c:token",
-      "a:stories-ctrl",
-      "d:link",
-      "d:search",
-      "d:stats",
-      "d:user-canflag",
-      "d:users-helper",
-      "d:inbox-mbox",
-      "d:markdowner",
-      "d:mod-flagged",
       "d:mod-mails"
     ],
     "missed_related": [
-      "c:token",
-      "a:stories-ctrl",
-      "d:comment",
-      "d:link",
-      "d:search",
-      "d:stats",
-      "d:user-canflag",
-      "d:users-helper",
-      "d:inbox-mbox",
-      "d:markdowner",
-      "d:mod-flagged",
       "d:mod-mails"
     ],
     "contradictions": [],
@@ -52,44 +31,44 @@
       },
       {
         "id": "c:token",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "a:stories-ctrl",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:comment",
         "covered": true,
-        "related": false,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:link",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:search",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:stats",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:user-canflag",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
@@ -100,26 +79,26 @@
       },
       {
         "id": "d:users-helper",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:inbox-mbox",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:markdowner",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
         "id": "d:mod-flagged",
-        "covered": false,
-        "related": false,
+        "covered": true,
+        "related": true,
         "contradicted": false
       },
       {
@@ -135,31 +114,31 @@
       "step": "Orient in the codebase",
       "scores": {
         "map_quality": {
-          "score": 0.0,
-          "rationale": "The answer provides zero orientation: no identification of Lobsters as a link-aggregator, no description of app layout (app/models, app/controllers, app/mailboxes, lib/extras), and no location of the Story model. An agent reading this would still need a complete fresh exploration to even know what project this is."
+          "score": 0.75,
+          "rationale": "The answer covers project identity, most key directories (models, controllers, mailboxes, extras), and pins Story at app/models/story.rb:3 with a hub count of 51 callers; app/helpers/ is absent despite the rubric naming it, but the remaining map is dense enough for small targeted lookups."
         },
         "specificity": {
-          "score": 0.1,
-          "rationale": "The answer cites concrete file:line references (app/models/vote.rb:181, :177, :185-191, :150-166), but every cited path is about voting mechanics \u2014 none name story.rb, any concern, or the associated models (comments, taggings, votes) the rubric requires."
+          "score": 0.85,
+          "rationale": "Paths are concrete with line numbers throughout: app/models/story.rb:3, app/models/concerns/token.rb:1, extras/markdowner.rb, origin.rb:7, story_finder.rb \u2014 well above the 'model layer' vagueness threshold."
         },
         "justification": {
-          "score": 0.0,
-          "rationale": "The answer explains why vote dispatch is polymorphic, which is irrelevant to this step; it offers no explanation of why Story is the central model or why the architecture hangs other records off it."
+          "score": 0.6,
+          "rationale": "The answer labels Story 'the thing users post, comment on, vote on, tag and flag' and cites '51 callers in the index' as evidence of centrality, but stops there; it does not explain why Story anchors those records (e.g., foreign-key ownership, submission lifecycle) rather than another model."
         },
         "uncertainty": {
-          "score": 0.0,
-          "rationale": "No uncertainty is flagged about how project layers connect, because the answer never attempts to describe those layers at all."
+          "score": 0.2,
+          "rationale": "No uncertainty is flagged anywhere; the answer presents every claim with equal confidence, so an agent acting on it has no signal about which connections are inferred vs. confirmed."
         },
         "relationship": {
-          "score": 0.05,
-          "rationale": "The only relationship mentioned is the polymorphic vote-to-Story link via Vote#target \u2014 one incidental path that names Story as a lookup target, not as the central submission model with comments/votes/tags/flags hanging off it through associations or concerns."
+          "score": 0.5,
+          "rationale": "The Token concern inclusion is correctly typed and located (app/models/story.rb:206); but Comment, Vote, Tag/Tagging, Domain/Origin are listed as 'immediate model neighbors' with no stated association type (has_many, belongs_to, polymorphic), so the connecting relationships for the dependents that matter most to the audit are absent."
         }
       },
-      "step_quality": 0.03,
+      "step_quality": 0.6425,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1457,
-        "cache_creation_input_tokens": 17082,
+        "output_tokens": 1737,
+        "cache_creation_input_tokens": 18891,
         "cache_read_input_tokens": 16203
       }
     },
@@ -167,31 +146,31 @@
       "step": "Map the Story contract and what it is built on",
       "scores": {
         "map_quality": {
-          "score": 0.05,
-          "rationale": "The answer does not map the Story contract at all \u2014 it covers score/hotness recalculation internals only, omitting the concern(s) Story includes, the associations records hang off it through (comments, votes, taggings), and what a teammate must preserve before changing it. An agent still needs a fresh exploration to find any of those contract pieces."
+          "score": 0.95,
+          "rationale": "The answer maps the full contract with file:line for the model (story.rb:3), the Token concern (token.rb:1 via story.rb:206), every named association with line numbers, lifecycle callbacks (story.rb:259-263), and the soft-delete path (story.rb:761) \u2014 an agent can proceed with only minimal targeted lookups. The only minor gap is that the story_text body content field is not explicitly called out as part of the readable contract."
         },
         "specificity": {
-          "score": 0.15,
-          "rationale": "File:line citations are concrete for what is covered (story.rb:693-718, story.rb:550), but the Token concern, `has_many :comments`, `has_many :votes`, and `has_many :taggings` \u2014 the core contract pieces the rubric asks for \u2014 are entirely absent."
+          "score": 1.0,
+          "rationale": "Every contract piece is cited with exact file:line \u2014 concern at story.rb:206 \u2192 token.rb:1, associations at story.rb:4 through story.rb:54, callbacks at story.rb:259-263, custom setters at story.rb:1168/649/1059 \u2014 nothing is left at 'the model layer' level of vagueness."
         },
         "justification": {
-          "score": 0.1,
-          "rationale": "The answer explains why the SQL UPDATE is authoritative (recomputed from votes table, not deltas), but gives no explanation for why the contract is shaped as it is \u2014 why the concern is included, why associations are structured the way they are."
+          "score": 0.85,
+          "rationale": "The answer explains WHY the contract matters: token immutability constrains teardown/rebuild, `:restrict_with_exception` makes Story non-hard-deletable in practice, and the soft-delete path (is_gone?) is the real lifecycle gate; it also flags the duplicate SavedStory mapping as a wart. The deeper architectural WHY (why a separate Token concern rather than inline) is lightly treated but the operational consequences are fully explained."
         },
         "uncertainty": {
-          "score": 0.05,
-          "rationale": "The answer flags no uncertainty about what it could not confirm, which is concerning given how much of the contract is simply missing from the answer."
+          "score": 0.45,
+          "rationale": "The answer flags the SavedStory duplicate as something to reconcile but does not explicitly acknowledge any parts of the contract it could not confirm or verify \u2014 no hedging on whether all callbacks are listed or whether any associations were missed; the confidence is high and unqualified throughout."
         },
         "relationship": {
-          "score": 0.0,
-          "rationale": "No connecting relationships are stated \u2014 the concern that supplies shared behavior and the associations through which other records hang off Story are not mentioned at all, let alone linked to Story by relation type."
+          "score": 0.95,
+          "rationale": "Every association is named with its Rails relation type (belongs_to, has_many, has_one), its dependent behavior (destroy/nullify/restrict_with_exception), and what it binds through (counter_cache, through:, class_name); the Token concern's binding mechanism (after_initialize, token= override, validations) is spelled out explicitly, and Comment's touch: true side-effect is called out \u2014 not merely a file list."
         }
       },
-      "step_quality": 0.0675,
+      "step_quality": 0.895,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1346,
-        "cache_creation_input_tokens": 17175,
+        "output_tokens": 1619,
+        "cache_creation_input_tokens": 19692,
         "cache_read_input_tokens": 16203
       }
     },
@@ -199,31 +178,31 @@
       "step": "Trace how a story is created and ranked",
       "scores": {
         "map_quality": {
-          "score": 0.1,
-          "rationale": "The answer never traces story creation: the stories controller create action, URL handling, and markdown rendering are entirely absent. It maps only the vote-triggered score recalculation cycle (vote.rb:181 \u2192 update_score_and_recalculate!), which is one sub-machine of the ranking path but not the submission-to-stored-Story chain the step asks for. The agent would need a full fresh exploration to find the controller create path, Markdowner, and URL/link pipeline."
+          "score": 0.95,
+          "rationale": "The answer delivers a numbered, ordered 9-step trace from controller entry through URL normalization, markdown rendering, Rails callbacks (before_validation, before_save, after_create, after_save), score machinery, and async jobs \u2014 each with concrete file:line. An agent could follow and modify any layer without re-exploring."
         },
         "specificity": {
-          "score": 0.15,
-          "rationale": "The pieces that are cited are concrete with file:line (vote.rb:181, story.rb:693, comment.rb:339, story.rb:550), but the required pieces \u2014 stories controller create, URL/link handler, extras/markdowner.rb \u2014 are completely unaddressed. Specificity credit is limited to what is present, which covers only the scoring sub-path."
+          "score": 0.95,
+          "rationale": "Every layer cites exact symbol and file:line: `StoriesController#create stories_controller.rb:21`, `Markdowner.to_html extras/markdowner.rb:41`, `Story#update_score_and_recalculate! story.rb:693`, ranking scopes at `story.rb:83/82/102/184/124` \u2014 nothing is left at 'the controller' or 'some helper'."
         },
         "justification": {
-          "score": 0.2,
-          "rationale": "The single genuine WHY is the note that 'score/flags are recomputed authoritatively from the votes table in raw SQL, not from the deltas', which is a real invariant. There is no explanation of why hotness is shaped the way it is, why URL handling runs before persisting, or why markdown is rendered at creation time rather than on read."
+          "score": 0.55,
+          "rationale": "The hotness components are named (tag hotness_mod, comment points, merged-story scores, log-scaled) but WHY log-scale or why the initial upvote drives recalculation rather than an at-save computation is not explained; the chain is described, not reasoned about."
         },
         "uncertainty": {
-          "score": 0.2,
-          "rationale": "The answer flags a real spec gap (comment score/flags have no direct value assertion), which is a useful uncertainty signal. However, it does not flag that the entire creation path \u2014 controller, URL handling, Markdowner \u2014 was never opened, leaving the agent with a false sense of completeness on the chain."
+          "score": 0.1,
+          "rationale": "The answer raises no uncertainty flags anywhere \u2014 no caveat about whether cited line numbers match the current HEAD, no note about steps it could not open (e.g., the full Vote recalculation path or what `Utils.normalize` does internally), leaving the agent to assume completeness."
         },
         "relationship": {
-          "score": 0.2,
-          "rationale": "The vote \u2192 target resolution \u2192 polymorphic dispatch \u2192 recalculate! chain is made explicit with the resolve path through vote.rb:185-191. But the required chain \u2014 submission \u2192 controller \u2192 URL/markdown \u2192 score \u2014 is absent; the answer substitutes a different, narrower chain that starts mid-flow at the vote call site rather than at creation."
+          "score": 0.88,
+          "rationale": "The numbered steps with explicit `\u2192` arrows assemble a clear chain (controller \u2192 url= \u2192 Markdowner \u2192 assign_initial_attributes \u2192 callbacks \u2192 Vote \u2192 hotness scopes \u2192 jobs), and inter-step dependencies like 'initial upvote drives update_score_and_recalculate!' are stated; minor gap is that the path from Vote back into hotness recalculation isn't fully closed."
         }
       },
-      "step_quality": 0.155,
+      "step_quality": 0.791,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2402,
-        "cache_creation_input_tokens": 18296,
+        "output_tokens": 1842,
+        "cache_creation_input_tokens": 19277,
         "cache_read_input_tokens": 16203
       }
     },
@@ -231,31 +210,31 @@
       "step": "Audit every dependent of the Story contract",
       "scores": {
         "map_quality": {
-          "score": 0.05,
-          "rationale": "The answer audits one internal mechanism \u2014 the vote-recalculation path through vote.rb:181 \u2192 update_score_and_recalculate! \u2014 and completely omits the required breadth: no search indexer, no stats/graph cache, no inbox mailbox, no markdowner/URL handler, no flag-permission check, no moderation controllers. An agent reading this would still need a full fresh exploration of every area the rubric names."
+          "score": 0.88,
+          "rationale": "All six rubric areas are covered with concrete file:line entries \u2014 StoryText/Link/Markdowner/Domain for rendering, Search#perform_story_search!/comment_search! for search, Stats.fill_stories_graph_cache for statistics, Vote/HiddenStory/SavedStory/ReadRibbon for voting, InboxMailbox for email, Mod::StoriesController/FlaggedController/ModNote for moderation. The ERB partial list and the catch-all 'Other' section lack line numbers, but the coverage breadth is sufficient for the agent to start with only targeted lookups."
         },
         "specificity": {
-          "score": 0.1,
-          "rationale": "Within its narrow vote-recalculation scope the answer is concrete (vote.rb:181, comment.rb:339-363, story.rb:693-718) but every file the rubric requires \u2014 app/models/search.rb, app/mailboxes/inbox_mailbox.rb, extras/markdowner.rb, the stats/graph cache, the flagged-stories and mod-mail controllers \u2014 is entirely absent, so specificity over the actual dependent set is zero."
+          "score": 0.85,
+          "rationale": "The overwhelming majority of entries give symbol name, file, and line (e.g. 'Vote#target vote.rb:185', 'Stats.fill_stories_graph_cache stats.rb:30', 'InboxMailbox#parent inbox_mailbox.rb:34') with a one-phrase explanation. The ERB partials group is the main exception \u2014 filenames only, no line numbers \u2014 and 'FakeDataGenerator#generate lib/tasks/fake_data.rake:45' is slightly vague, but these are minor."
         },
         "justification": {
-          "score": 0.1,
-          "rationale": "The answer explains the mechanics of score/flag recomputation in detail but provides no area-based grouping or explanation of WHY each dependent area is affected by a Story contract change, which is what the step asks for."
+          "score": 0.65,
+          "rationale": "Grouping by area provides implicit justification for why each group is affected, and individual entries name the consuming method or attribute (e.g. 'tag.hotness_mod feeds calculated_hotness'). However, the answer does not explain WHY a Story contract change propagates risk to each dependent \u2014 it describes how they use Story without connecting that use to what would break on a contract change."
         },
         "uncertainty": {
-          "score": 0.15,
-          "rationale": "The answer flags one real gap (comment score/flags have no direct value assertion in specs), but never acknowledges that it has only surveyed one narrow path and left the vast majority of the dependent landscape unexamined."
+          "score": 0.1,
+          "rationale": "The answer never flags what a static pass can miss \u2014 no acknowledgment of dynamic-dispatch callers, polymorphic associations, concern-injected paths, or rake/job callers that might not be traceable statically. The rubric specifically asks for this caveat; its absence leaves the agent unwarned about coverage gaps."
         },
         "relationship": {
-          "score": 0.05,
-          "rationale": "The one relationship stated \u2014 Vote#target dispatches polymorphically to Story.find or Comment.find \u2014 is correct but covers a single call site; the answer states no connecting relationship for any of the non-obvious dependents (search, stats, mailbox, markdowner) because those dependents are never named."
+          "score": 0.82,
+          "rationale": "Most dependents carry an explicit connecting relationship: associations are named ('belongs_to :story', 'has_many :votes destroy', 'has_one :story_text'), service/derive paths are stated ('Story.pluck(:created_at)', 'Story.where(short_id:) from In-Reply-To', 'renders story.description'). Non-obvious reach routes \u2014 InboxMailbox via email header parsing, Stats via bulk pluck, Markdowner via re-render job \u2014 are connected rather than just listed. The ERB partials and FakeDataGenerator entries omit the connecting route."
         }
       },
-      "step_quality": 0.0775,
+      "step_quality": 0.7495,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1873,
-        "cache_creation_input_tokens": 19284,
+        "output_tokens": 1997,
+        "cache_creation_input_tokens": 20836,
         "cache_read_input_tokens": 16203
       }
     },
@@ -263,31 +242,31 @@
       "step": "Trace how story identity and visibility are guarded",
       "scores": {
         "map_quality": {
-          "score": 0.0,
-          "rationale": "The answer maps vote recalculation machinery (Vote#vote_thusly_on_story_or_comment_for_user_because, update_score_and_recalculate!) and spec coverage for score/flags, not presence or visibility guards in the search, stats, inbound-email, or moderation paths. None of the four required areas appear at all."
+          "score": 0.88,
+          "rationale": "Covers all four named areas (search via `Story.base(@searcher) search.rb:230`, stats at `stats.rb:22,35`, inbound email at `inbox_mailbox.rb:45,71`, moderation via `flagged_controller.rb:11`) with file:line throughout; the agent can enter any path with only targeted lookups rather than re-exploring from scratch."
         },
         "specificity": {
-          "score": 0.0,
-          "rationale": "All concrete file:line citations (vote.rb:181, comment.rb:339, story.rb:693) belong to a different domain \u2014 vote scoring \u2014 rather than the visibility guard checks the step asks for."
+          "score": 0.93,
+          "rationale": "Nearly every guard is cited at exact file:line \u2014 `is_gone? story.rb:761`, `can_be_seen_by_user? story.rb:582`, `not_deleted story.rb:76`, `accepting_comments? story.rb:300`, `inbox_mailbox.rb:71` \u2014 leaving almost nothing vague."
         },
         "justification": {
-          "score": 0.0,
-          "rationale": "The answer explains why vote deltas are recomputed from the votes table in raw SQL, which is unrelated to why work must re-confirm a story is not deleted or hidden before acting on it."
+          "score": 0.5,
+          "rationale": "The answer names and locates guards well but rarely states WHY re-confirmation is needed (e.g., a story may be deleted or merged between submission and indexing); the stats note says 'intentional' and the mailbox note flags a gap, but the underlying motivation for guards across paths goes mostly unstated."
         },
         "uncertainty": {
-          "score": 0.0,
-          "rationale": "The only flagged gap is missing direct assertions on comment score/flags in specs \u2014 a test-coverage note in the wrong domain, not a flag about where a story-visibility guard is absent or implicit."
+          "score": 0.82,
+          "rationale": "Two gaps are explicitly flagged: `InboxMailbox` does not call `is_gone?`/`accepting_comments?` unlike `CommentsController#create`, and `stats.rb` applies no visibility guard at all; these are the most actionable uncertainty disclosures in the answer."
         },
         "relationship": {
-          "score": 0.0,
-          "rationale": "The answer traces Vote#target -> Story.find / Comment.find and the polymorphic dispatch to update_score_and_recalculate!, but states no path by which any guard protects a search, stats, mailbox, or moderation dependent from acting on a gone or hidden story."
+          "score": 0.78,
+          "rationale": "Most guards are connected to their dependents by a stated path \u2014 `not_deleted` backs the `base` scope which backs `Story.base(@searcher) search.rb:230`, `is_gone?` is consumed by `CommentsController#create comments_controller.rb:18` and `SendWebmentionJob send_webmention_job.rb:63` \u2014 rather than listed in isolation; the mailbox chain (`Story.where` \u2192 `parent.nil?` check \u2192 `Comment#save!`) is also traced end-to-end."
         }
       },
-      "step_quality": 0.0,
+      "step_quality": 0.807,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1194,
-        "cache_creation_input_tokens": 19172,
+        "output_tokens": 1847,
+        "cache_creation_input_tokens": 19140,
         "cache_read_input_tokens": 16203
       }
     },
@@ -295,31 +274,31 @@
       "step": "Assess the blast radius of the contract change",
       "scores": {
         "map_quality": {
-          "score": 0.1,
-          "rationale": "The answer covers only one of the six required blast-radius areas (voting/flagging \u2014 specifically the score recalculation machinery) and completely omits rendering (comments, markdowner, link URL handler), search (search indexer), stats/graph cache, inbound email (inbox mailbox), and moderation (flagged-stories, mod-mail controllers); there is no risk ranking across areas, which is the explicit deliverable of this step."
+          "score": 0.82,
+          "rationale": "The answer covers all six areas the rubric asks about (voting, search via story_text/search.rb, stats, comments, moderation, inbound email at inbox_mailbox.rb:34) with file:line and a three-tier risk ranking; the only gap is that 'rendering' (link URL handler, markdown re-renderer) is not surfaced as a named area, though search rendering is touched."
         },
         "specificity": {
-          "score": 0.25,
-          "rationale": "Within the narrow voting path the answer is concrete and precise (vote.rb:181, story.rb:693-718, comment.rb:339-363 with column-level file:line), but five major blast-radius areas produce zero named files, so the agent would still need a full codebase sweep to find them."
+          "score": 0.85,
+          "rationale": "Nearly every item carries a concrete file:line reference (vote.rb:127/179, search.rb:154/262/284, story.rb:36/44/52/553/563/693, inbox_mailbox.rb:34, stats.rb:22/35); the few without line numbers (send_webmention_job.rb:63, create_story_card_job.rb:5) still name the file and method."
         },
         "justification": {
-          "score": 0.2,
-          "rationale": "The voting path is well explained (polymorphic dispatch, raw-SQL authoritative recompute, karma side-effect sharing score_delta), but the answer never explains why a dependent in any other area (search, stats, email, moderation) is high or low risk \u2014 those areas are simply absent."
+          "score": 0.82,
+          "rationale": "The answer explains the consequence for each high-risk item ('mis-scores karma sitewide', 'search silently returns wrong results', 'double-counts hotness or strands merged children'); medium and lower-risk items give briefer but still causal reasons ('cascades to comment votes/links/notifications', 'drift breaks moderation gates')."
         },
         "uncertainty": {
-          "score": 0.2,
-          "rationale": "The answer correctly flags that comment score/flags have no direct assertion, but never acknowledges that entire blast-radius domains (search, stats, mailbox, moderation) were not examined, leaving the agent with a false sense of completeness."
+          "score": 0.25,
+          "rationale": "The answer does not flag where its static analysis is uncertain or where connections are indirect/derive-reached; 'lower risk but must re-verify' reads as a confidence tier, not an acknowledgment that those paths could not be fully confirmed (e.g., inbox_mailbox's indirect reach through story identity is noted as a missing guard but not flagged as uncertain in coverage)."
         },
         "relationship": {
-          "score": 0.2,
-          "rationale": "The relationship chain within voting is traced precisely (Vote.vote_thusly \u2192 t = v.target \u2192 Story.find \u2192 Story#update_score_and_recalculate! \u2192 writes score/flags/hotness), but for the five unexamined areas there are no connecting relationships at all, so the agent cannot follow any path beyond the scoring machinery."
+          "score": 0.78,
+          "rationale": "Most high-risk items name the association strategy binding them to Story ('has_many :votes, dependent: :destroy', 'restrict_with_exception', 'nullify + counter_cache', 'belongs_to :story, touch: true'), which is strong; medium and lower-risk items are thinner, listing files without always naming the relation (e.g., the stats.rb plucks and inbox_mailbox are named but the path from the Story contract change to each is not made explicit)."
         }
       },
-      "step_quality": 0.175,
+      "step_quality": 0.761,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 2011,
-        "cache_creation_input_tokens": 19198,
+        "output_tokens": 1939,
+        "cache_creation_input_tokens": 19368,
         "cache_read_input_tokens": 16203
       }
     },
@@ -327,31 +306,31 @@
       "step": "Produce the change + verification map",
       "scores": {
         "map_quality": {
-          "score": 0.45,
-          "rationale": "The map is thorough and actionable for the vote-recalculation internals (vote.rb:181 \u2192 polymorphic dispatch \u2192 comment.rb:339 / story.rb:693 \u2192 value methods \u2192 spec ranges) but never produces the area-grouped dependent map the step explicitly requires: search indexer, stats/graph cache, mailbox, markdowner, flagged-stories controller, and helpers that each reach the Story contract and must be reviewed before landing. The 'every dependent grouped by area' half of the deliverable is absent."
+          "score": 0.88,
+          "rationale": "The answer delivers a complete, grouped map: edits named with file:line (story.rb:13-54, concerns/token.rb:1), dependents grouped by area (content/rendering, search, stats, voting/flagging, inbound email, moderation, other), and a specs/fixtures section with concrete paths plus an explicit ADD list for missing coverage. Every area the rubric names is present with file:line; the JSON block reinforces the prose map so an agent could act from either format alone."
         },
         "specificity": {
-          "score": 0.85,
-          "rationale": "Within its scope the answer is precise throughout: exact file:line for both implementations (comment.rb:339-363, story.rb:693-718), the exact columns written per line, the call-site contract at vote.rb:181, and spec ranges with sub-line call-out (bitpacking_spec.rb:156). The missing areas have no specificity because they are not present, not because the answer is vague."
+          "score": 0.9,
+          "rationale": "Line numbers are supplied throughout: story.rb:693, vote.rb:127, inbox_mailbox.rb:34/71, search.rb:229/117/347, stats.rb:16/30, mod/flagged_controller.rb:9. Spec paths are concrete (spec/models/story_spec.rb, spec/mailboxes/*, spec/fixtures/inbound_emails) rather than 'add tests for the model layer'."
         },
         "justification": {
-          "score": 0.7,
-          "rationale": "The answer explains WHY the SQL recompute is authoritative (not driven by deltas), WHY the target resolution is polymorphic, and WHY the bitpacking spec is the comment confidence regression guard \u2014 solid reasoning for what is covered. No justification is offered for why the broader dependents (search, stats, mailbox, etc.) were excluded or are safe to skip."
+          "score": 0.72,
+          "rationale": "The answer explains WHY token.rb is conditional ('only if teardown ever rebuilds a Story'), flags the savings/saved_stories duplication ('reconcile'), and states why stats/mailbox are gaps ('no is_gone? check', 'counts deleted/merged'). However, many entries in the dependents_by_area section are name-and-line without a sentence on why the change forces that file into scope."
         },
         "uncertainty": {
-          "score": 0.65,
-          "rationale": "The coverage gap for comment score/flags is flagged explicitly and precisely ('no direct assertion on a comment's recomputed score/flags value'). The answer does not flag any uncertainty about whether dependents outside the vote path (search, stats, moderation paths) need verification, which would matter for a teammate landing the change."
+          "score": 0.74,
+          "rationale": "Three explicit gaps are flagged: InboxMailbox missing is_gone? check (inbox_mailbox.rb:71), Stats counting deleted/merged stories (stats.rb:22/35), and the savings/saved_stories duplication (story.rb:43/54). The blast_radius_ranked list ends with '(re-verify)' for the indirect dependents. Uncertainty is present but not uniformly applied \u2014 several dependents have no confidence qualifier."
         },
         "relationship": {
-          "score": 0.55,
-          "rationale": "The chain within the vote path is explicitly assembled: single call site \u2192 Vote#target resolution \u2192 polymorphic dispatch \u2192 each implementation \u2192 value methods \u2192 each spec. For the absent area-grouped dependents, no connecting relationship is stated; the relationship criterion requires stating HOW each dependent reaches the Story contract, which is entirely missing for the non-vote surface."
+          "score": 0.88,
+          "rationale": "The teardown contract maps every dependent: association type (destroy/nullify/restrict_with_exception) plus line; the creation chain is assembled as an ordered sequence (StoriesController#create \u2192 url= \u2192 set_domain_and_origin \u2192 Markdowner \u2192 callbacks \u2192 jobs); the concern inclusion is explicit ('included story.rb:206'); counter-cache relationships are stated per association ('domain story.rb:5, origin story.rb:6'). A few entries in dependents_by_area (e.g. HomeController, StoryFinder) are named without a stated relationship to the contract change, keeping the score from a full 1.0."
         }
       },
-      "step_quality": 0.6075,
+      "step_quality": 0.846,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1847,
-        "cache_creation_input_tokens": 19176,
+        "output_tokens": 1813,
+        "cache_creation_input_tokens": 22114,
         "cache_read_input_tokens": 16203
       }
     }

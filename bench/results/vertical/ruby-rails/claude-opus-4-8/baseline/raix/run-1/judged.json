@@ -6,19 +6,22 @@
     "prompt_version": "v1",
     "rubric_path": "raix.rubric.yaml"
   },
-  "scenario_quality": 0.7682,
+  "scenario_quality": 0.7636,
   "relationship_audit": {
     "total": 15,
-    "covered": 15,
+    "covered": 13,
     "related": 13,
     "contradicted": 0,
-    "covered_recall": 1.0,
+    "covered_recall": 0.8667,
     "related_recall": 0.8667,
     "grounded_precision": 1.0,
-    "missed_covered": [],
+    "missed_covered": [
+      "response-format",
+      "prompt-decl"
+    ],
     "missed_related": [
       "response-format",
-      "completion-ctx"
+      "prompt-decl"
     ],
     "contradictions": [],
     "items": [
@@ -42,7 +45,7 @@
       },
       {
         "id": "response-format",
-        "covered": true,
+        "covered": false,
         "related": false,
         "contradicted": false
       },
@@ -90,14 +93,14 @@
       },
       {
         "id": "prompt-decl",
-        "covered": true,
-        "related": true,
+        "covered": false,
+        "related": false,
         "contradicted": false
       },
       {
         "id": "completion-ctx",
         "covered": true,
-        "related": false,
+        "related": true,
         "contradicted": false
       },
       {
@@ -119,27 +122,27 @@
       "step": "Orient in the codebase",
       "scores": {
         "map_quality": {
-          "score": 0.92,
-          "rationale": "Covers every piece the rubric names \u2014 chat loop (chat_completion.rb:73, :297, :340), function DSL (function_dispatch.rb:46, :126), schema conversion (function_tool_adapter.rb:50), message adapters (base.rb, transcript_adapter.rb, multimodal_content_adapter.rb), and MCP (mcp.rb + mcp/{tool,sse_client,stdio_client}.rb) \u2014 plus the Zeitwerk loader and supporting files; an agent can pick any entry point with only small, targeted follow-up reads."
+          "score": 0.85,
+          "rationale": "The answer names every rubric-required piece with concrete file paths: ChatCompletion in chat_completion.rb, FunctionDispatch in function_dispatch.rb, function_tool_adapter.rb, message_adapters/base.rb, multimodal_content_adapter.rb, and the MCP subtree (mcp.rb, tool.rb, sse_client.rb, stdio_client.rb). The 'Shape' summary at the end gives the agent an entry-point pattern; only small lookups (e.g., exact method signatures) remain."
         },
         "specificity": {
-          "score": 0.93,
-          "rationale": "Every abstraction is tied to a concrete file and most to a line number (e.g., 'dispatch_tool_function (:297)', 'tools (:126)', 'function_tool_adapter.rb (:50, :6)'); nothing is left as vague prose like 'the chat code'."
+          "score": 0.85,
+          "rationale": "Every module is tied to a file path and named as a Ruby concern or class (e.g., 'ChatCompletion concern', 'FunctionDispatch concern', 'RubyLLM::Tool'); one inline line reference (lib/raix.rb:23-25) is included, though most other files lack line numbers. No vague 'the chat code' style references appear."
         },
         "justification": {
-          "score": 0.4,
-          "rationale": "The answer names the mixin pattern ('ActiveSupport::Concern mixins you include into a host class to give it AI powers') but never explains WHY this composable-mixin design was chosen \u2014 the a la carte rationale (so a host class selectively adds chat, function-dispatch, MCP, etc.) is absent; it names the mechanism without the motivation."
+          "score": 0.45,
+          "rationale": "The 'Shape' paragraph shows that FunctionDispatch and MCP are optional includes ('+ optionally'), implying a la carte composition, but the answer never explains WHY the design uses composable mixins rather than inheritance (e.g., so any arbitrary host class gains only the behavior it needs). The why is implied at best, not stated."
         },
         "uncertainty": {
           "score": 0.2,
-          "rationale": "No uncertainty flags anywhere \u2014 the answer presents the composition order, the loop re-entry path, and all adapter wiring with equal confidence; an agent acting on this has no signal about where to verify (e.g., how prompt_declarations.rb overrides chat_completion, or how the MCP tools actually join the dispatch path)."
+          "rationale": "The answer flags no uncertainty anywhere \u2014 it presents all module interactions, the dispatch flow, and the MCP path as fully known facts, leaving the agent with no guidance on where to verify before acting (e.g., how ChatCompletion actually invokes FunctionDispatch at runtime, or which host-class inclusion order matters)."
         }
       },
-      "step_quality": 0.7105,
+      "step_quality": 0.6725,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1838,
-        "cache_creation_input_tokens": 16951,
+        "output_tokens": 1654,
+        "cache_creation_input_tokens": 18494,
         "cache_read_input_tokens": 16203
       }
     },
@@ -147,27 +150,27 @@
       "step": "Trace a tool-call round-trip through the chat loop",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "The answer traces every layer of the round-trip with file:line \u2014 entry at chat_completion.rb:73, model call at :147, detection at :160-161, max_tool_calls guard at :165-177, dispatch loop at :180-187 \u2192 :297, transcript append at function_dispatch.rb:80-101, recursion at :200-209, and terminal at :221-235; an agent could locate and change any layer immediately with only small lookups."
+          "score": 0.92,
+          "rationale": "The answer traces every layer with file:line in execution order: entry at chat_completion.rb:73, tool-list build at :91-97, model request at :147/:340-444, tool-call extraction at :160, limit check at :165-177, dispatch at :180-187 into function_dispatch.rb:67-106, transcript append at :80-101, auto-continue at :195-209, stop path at :210-218, and final text at :221-235 \u2014 an agent could open any of these sites and act immediately."
         },
         "specificity": {
-          "score": 0.95,
-          "rationale": "Every step names the exact method and line range (e.g., `dispatch_tool_function` :186\u2192:297, `stop_tool_calls_and_respond!` at function_dispatch.rb:122, transcript push at :80-101); nothing is described as 'the chat code' or similarly vague."
+          "score": 0.9,
+          "rationale": "Every named piece is concrete: chat_completion, dispatch_tool_function, max_tool_calls, stop_tool_calls_and_respond!, available_tools, and the two-entry transcript append (assistant tool_calls + tool result) all carry exact file:line rather than prose stand-ins; nothing is left as 'the chat code'."
         },
         "justification": {
-          "score": 0.55,
-          "rationale": "The answer describes the recursion mechanism ('recurse with `messages: nil` and decremented `max_tool_calls`') and notes the 'atomic push' of tool-call + result pairs, but it mostly lists steps rather than explaining WHY results must re-enter the transcript before the loop continues or WHY the loop auto-recurses instead of requiring the caller to re-enter."
+          "score": 0.62,
+          "rationale": "The auto-continue condition ('if last message isn't a plain assistant text reply, recurse with messages: nil') explains the mechanism, and noting two transcript entries explains how results re-enter; but the answer does not say WHY the design recurses (to let the model see its own tool results and decide whether to call more tools) \u2014 it lists the mechanics without the architectural rationale."
         },
         "uncertainty": {
-          "score": 0.6,
-          "rationale": "Branch points (max_tool_calls overflow, stop_tool_calls_and_respond!, the loop over multiple tool calls) are described accurately, but the answer never explicitly flags these as spots the agent should verify before acting \u2014 it presents them as settled facts rather than conditional paths worth double-checking."
+          "score": 0.45,
+          "rationale": "The branching points (max_tool_calls cutoff at :165-177, stop_tool_calls_and_respond! at :210-218, multiple calls in the dispatch loop) are all present in the answer, but they are stated as established facts rather than flagged as places the agent should verify before changing; there is no explicit 'confirm this before acting' language."
         }
       },
-      "step_quality": 0.7975,
+      "step_quality": 0.7845,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1581,
-        "cache_creation_input_tokens": 16935,
+        "output_tokens": 1725,
+        "cache_creation_input_tokens": 18422,
         "cache_read_input_tokens": 16203
       }
     },
@@ -176,26 +179,26 @@
       "scores": {
         "map_quality": {
           "score": 0.9,
-          "rationale": "The answer traces every link the rubric names with file:line: `FunctionDispatch.function` at `:46`, `@functions` storage at `:47-65`, `tools` at `:126-130`, `filtered_tools` / `available_tools` at `:303-313`, and `FunctionToolAdapter.convert_tools_for_ruby_llm` + `create_tool_from_function` in `function_tool_adapter.rb`. An agent could open those exact locations and add a new capability without further exploration."
+          "rationale": "The answer traces the full pipeline \u2014 declaration at function_dispatch.rb:46-107, storage in @functions at :27, tool-list wrapping at :126-130, FunctionToolAdapter conversion at function_tool_adapter.rb:6-57, chat_completion.rb integration at :96/:382-385, and filtering via filtered_tools at :303-313 \u2014 with enough file:line precision that an agent could follow each step to add a new capability. The rubric names 'available_tools' but the answer uses 'filtered_tools', which appears to be the real method name; the concept is fully covered."
         },
         "specificity": {
-          "score": 0.9,
-          "rationale": "Every piece is named by exact method, constant, and line range \u2014 `UndeclaredToolError :310`, `params({additionalProperties:false, strict:true}...)` at `:16-22`, `attr_reader :functions :27` \u2014 leaving no vague placeholders like 'the function code'."
+          "score": 0.92,
+          "rationale": "Every step carries exact file:line citations (e.g., 'required/optional flags drive the required array :54-62; empty required deleted :63'; 'params({additionalProperties:false, strict:true}.merge(...)) :16-22') and names concrete symbols (FunctionDispatch, FunctionToolAdapter, filtered_tools, UndeclaredToolError) rather than vague labels."
         },
         "justification": {
-          "score": 0.35,
-          "rationale": "The answer describes the mechanics thoroughly but never explains WHY the design is a class-level DSL on a host class (so behavior is added \u00e0 la carte and declarations are shared across instances); the `execute` routing hint implies the host-class pattern but the reasoning is absent."
+          "score": 0.5,
+          "rationale": "The answer describes the mechanism in detail (define_method, @functions class-level storage, verbatim JSON schema forwarding) but does not explain WHY the design uses a class-level DSL on a mixin \u2014 the architectural reason that host classes declare tools declaratively via inclusion \u2014 leaving the agent with a how-map but not a why-model for the design."
         },
         "uncertainty": {
-          "score": 0.2,
-          "rationale": "The answer is uniformly confident with no explicit flags on where things are easy to get wrong \u2014 no warnings about the `required`-deletion edge case, the `strict:true` schema constraint, or how `available_tools` interacts with MCP tools versus declared functions."
+          "score": 0.28,
+          "rationale": "The answer is uniformly confident throughout and does not flag verification points; it mentions UndeclaredToolError and the additionalProperties/strict merge but never explicitly warns the agent to verify schema format requirements, parameter naming constraints, or the interaction between filtered_tools selection and tool registration ordering before acting."
         }
       },
-      "step_quality": 0.685,
+      "step_quality": 0.732,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1655,
-        "cache_creation_input_tokens": 16785,
+        "output_tokens": 1760,
+        "cache_creation_input_tokens": 18396,
         "cache_read_input_tokens": 16203
       }
     },
@@ -203,27 +206,27 @@
       "step": "Map how the conversation is adapted before it is sent",
       "scores": {
         "map_quality": {
-          "score": 0.9,
-          "rationale": "All three rubric-required components are present with file:line: transcript_adapter.rb (with :14, :26-30, :63-80, :82-119), message_adapters/base.rb:17, and multimodal_content_adapter.rb:20; the final assembly in ruby_llm_request (:349-372) closes the loop from adapter output to provider call, so the agent has a complete entry-point map with only small targeted lookups needed."
+          "score": 0.88,
+          "rationale": "All three required adapters are covered with file:line: MessageAdapters::Base (message_adapters/base.rb:17-27), MultimodalContentAdapter (multimodal_content_adapter.rb:20-38), and TranscriptAdapter (transcript_adapter.rb:14-30); the two-stage pipeline (abbreviated\u2192role/content\u2192RubyLLM) plus where each hooks into chat_completion.rb gives the agent concrete entry points to trace or extend any transform step."
         },
         "specificity": {
-          "score": 0.95,
-          "rationale": "Every adapter is cited by exact file path and line range (e.g. 'chat_completion.rb:139', 'multimodal_content_adapter.rb:20', 'base.rb:17'), and specific method names (transform, flatten, normalize_message_format, message_to_raix_format, translate, translatable?, attachment_source) are pinned to lines \u2014 no vague references to 'the message code'."
+          "score": 0.9,
+          "rationale": "Every adapter is cited by exact file:line (e.g. 'message_adapters/base.rb:17-27', 'chat_completion.rb:349-372', 'multimodal_content_adapter.rb:51-61') rather than vague labels; the three rubric-required filenames all appear verbatim."
         },
         "justification": {
-          "score": 0.68,
-          "rationale": "The answer describes what each adapter does (legacy-form conversion, Anthropic cache-control multipart, base64 image decoding) but does not explicitly state WHY the pipeline requires these distinct passes (provider-shape normalization, multimodal content isolation); the reasons must be inferred from the descriptions rather than being stated directly."
+          "score": 0.62,
+          "rationale": "The answer describes *what* each stage does (maps legacy shapes, rewrites to Anthropic multipart cache-control form, decodes base64 URIs) but only partially surfaces *why* the pipeline exists \u2014 provider-shape normalization is implicit in the 'anthropic/claude-3 + cache_at' branch, and the multimodal rationale is mechanistic rather than framed as a deliberate normalization boundary; the agent would need to infer the design intent."
         },
         "uncertainty": {
-          "score": 0.55,
-          "rationale": "Conditional paths are factually described ('returns content untouched otherwise', 'when cache_at is set', 'either RubyLLM::Chat or @pending_messages') but none are flagged as verification points for the agent; there is no explicit callout that provider differences or the multimodal branch could behave unexpectedly and should be confirmed."
+          "score": 0.52,
+          "rationale": "Conditionals are described in passing ('only acts on arrays of hashes containing an image_url part', 'anthropic/claude-3 + cache_at') but the answer never explicitly flags them as verification points for the agent; a reader following the map confidently might miss edge cases in the assistant/tool_calls branch or the provider-difference path."
         }
       },
-      "step_quality": 0.816,
+      "step_quality": 0.779,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1459,
-        "cache_creation_input_tokens": 16834,
+        "output_tokens": 1507,
+        "cache_creation_input_tokens": 18457,
         "cache_read_input_tokens": 16203
       }
     },
@@ -231,55 +234,55 @@
       "step": "Map how external tools plug into the same dispatch",
       "scores": {
         "map_quality": {
-          "score": 0.97,
-          "rationale": "The answer covers every required piece with file:line: Raix::MCP::Tool at mcp/tool.rb:11, both transport DSL entry points (sse_mcp :41, stdio_mcp :54), SseClient at mcp/sse_client.rb:10 and StdioClient, the mcp concern :70-162 that filters tools and registers them into @functions, and chat_completion.rb:184 as the call-time authorization point \u2014 an agent can open any of these files and act immediately."
+          "score": 0.92,
+          "rationale": "Traces the full path: MCP::Tool representation at mcp/tool.rb:11-66, DSL entry points at mcp.rb:41-56, client tools/call_tool in both sse_client.rb and stdio_client.rb with line ranges, joining dispatch via `function` DSL at :108 and .functions array shared with FunctionToolAdapter, through to chat_completion.rb:186. The agent has a complete map and needs only small targeted lookups."
         },
         "specificity": {
-          "score": 0.97,
-          "rationale": "Every piece is pinned to a concrete file and line range (mcp/tool.rb:29-35 for from_json, mcp/sse_client.rb:32 for tools/list, mcp/sse_client.rb:47 for call_tool, mcp.rb:108-113 for function registration + parameter overwrite, mcp.rb:120-157 for define_method proxy); nothing is left at the level of 'the MCP code'."
+          "score": 0.93,
+          "rationale": "Every piece is pinned to file:line \u2014 mcp/tool.rb:11-66, mcp.rb:41-43/54-56/70-162/96/108-117, mcp/sse_client.rb:32-77, mcp/stdio_client.rb:16-52, chat_completion.rb:184/186 \u2014 no vague references to 'the MCP code'."
         },
         "justification": {
-          "score": 0.9,
-          "rationale": "The answer explains WHY the design works: registering a real Raix function declaration then overwriting :parameters with the MCP input_schema means the entry 'flows through the exact same @functions \u2192 tools \u2192 FunctionToolAdapter path', giving the model one calling path; 'Same dispatch path, no special-casing' directly addresses the why."
+          "score": 0.8,
+          "rationale": "Explains that MCP tools register via the same `function` DSL and live in the same `.functions` array so 'FunctionToolAdapter exactly like local functions', and notes the auth guard at :184 is satisfied for the same reason; could be marginally stronger on the design intent (one model-facing path) but the mechanism is clear."
         },
         "uncertainty": {
-          "score": 0.42,
-          "rationale": "The answer implicitly flags differences (coerce_arguments :168, transcript mirroring :131-152, only/except filtering) but never explicitly tells the agent to verify these branches or notes which line numbers were inferred vs confirmed; an agent acting on this map would not know where to apply extra caution."
+          "score": 0.48,
+          "rationale": "Differences from local functions are surfaced implicitly (coerce_arguments, input_schema overwrite, client.call_tool transport layer) but no explicit 'verify before acting' flags or uncertainty markers; an agent reading this could miss that the coercion path and remote schema source are areas to double-check."
         }
       },
-      "step_quality": 0.8735,
+      "step_quality": 0.8325,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1551,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 33073
+        "output_tokens": 1694,
+        "cache_creation_input_tokens": 18443,
+        "cache_read_input_tokens": 16203
       }
     },
     {
       "step": "Find every site that depends on the tool-call contract",
       "scores": {
         "map_quality": {
-          "score": 0.85,
-          "rationale": "Covers all rubric-required areas with file:line: chat loop (chat_completion.rb with specific line ranges), declaration+schema (function_dispatch.rb, function_tool_adapter.rb), conversation adapters (transcript_adapter.rb, base.rb, multimodal_content_adapter.rb), external MCP path (mcp.rb, mcp/tool.rb, sse_client.rb, stdio_client.rb), and the full spec matrix; also surfaces prompt_declarations.rb as a re-entry point the rubric doesn't explicitly require, which is additive."
+          "score": 0.93,
+          "rationale": "All five subsystems named in the rubric are covered with concrete file:line ranges: the chat loop (tool assembly 91-97, dispatch 180-187, auto-continue 195-209, etc.), declaration+schema (function_dispatch.rb 46-107, function_tool_adapter.rb 6-57), adapters (base.rb:17-47, transcript_adapter.rb:14-97), MCP external path (mcp.rb 70-162, mcp/tool.rb, sse/stdio clients), and the full spec matrix including VCR cassettes. An agent could open a PR from this list with only targeted lookups to confirm exact line boundaries."
         },
         "specificity": {
-          "score": 0.9,
-          "rationale": "Nearly every entry carries a concrete file:line or line-range (e.g. `chat_completion.rb:162-177`, `function_tool_adapter.rb:6-48`, `mcp/sse_client.rb:32-77`), leaving the agent with targeted lookups rather than exploratory searching; the spec list names individual files and line anchors rather than 'update the tests'."
+          "score": 0.94,
+          "rationale": "Every section gives concrete file paths with exact line ranges rather than vague labels; even secondary specs (nil_content_spec.rb:85, mcp/stdio_client_spec.rb call_tool :52-101, VCR cassette directory) are named explicitly, leaving nothing described only as 'the tool code'."
         },
         "justification": {
           "score": 0.5,
-          "rationale": "Category headers encode the high-level why (\"Chat loop (runs the call)\", \"Declaration \u2192 schema\", \"External tools\"), but per-file justification is thin \u2014 entries like `spec/raix/before_completion_spec.rb`, `ruby_llm_request` block, and `prompt_declarations.rb` are listed without explaining why they touch the tool-call contract, requiring the agent to infer."
+          "rationale": "Section headers imply roles (chat loop runs it, declaration DSL declares it, adapters transform it, MCP is external) but the answer never explicitly states WHY each site is bound to the contract \u2014 for instance, it doesn't explain that function_tool_adapter.rb is affected because it converts the declaration into the schema shape the model receives, or that transcript_adapter.rb matters because tool results must re-enter the conversation in a provider-expected format. The categorization substitutes for explanation."
         },
         "uncertainty": {
-          "score": 0.1,
-          "rationale": "No hedging at all: the answer does not flag that mixins are only exercised when included in a host class, that the MCP transport clients diverge from local dispatch in ways static reading can miss, or that fixtures and dynamic patterns may not appear in grep \u2014 exactly the blind spots the rubric asks to surface."
+          "score": 0.2,
+          "rationale": "The only implicit uncertainty hedge is the VCR cassettes entry (wire format fixtures), but the answer never flags that static reading misses mixin composition (tools only activate when ChatCompletion/FunctionDispatch are included in a host class), skips any warning about dynamic transport behavior in the SSE/stdio clients, and gives no cue about where to verify before committing a contract change."
         }
       },
-      "step_quality": 0.68,
+      "step_quality": 0.737,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1768,
-        "cache_creation_input_tokens": 17094,
+        "output_tokens": 1737,
+        "cache_creation_input_tokens": 18715,
         "cache_read_input_tokens": 16203
       }
     },
@@ -287,27 +290,27 @@
       "step": "Produce the edit map",
       "scores": {
         "map_quality": {
-          "score": 0.95,
-          "rationale": "The answer delivers a complete, file:line-anchored edit map across all five areas (chat loop, declaration/schema, adapters, external-tool path, prompt chaining) plus a structured JSON summary; the round_trip array and edit_map object together would let a teammate open the PR cold. The only gap is that multimodal_content_adapter.rb lacks specific line ranges, which is minor."
+          "score": 0.93,
+          "rationale": "All four areas are covered with concrete file:line ranges throughout \u2014 chat_completion.rb:91-97/160/180-187/195-218, function_dispatch.rb:46-130, function_tool_adapter.rb:6-57, the full MCP cluster, adapters, and a spec list with line-level detail (mcp_spec.rb:373-390, nil_content_spec.rb:85,130). The JSON edit_map block consolidates everything a teammate needs to open the PR; nothing significant is absent."
         },
         "specificity": {
-          "score": 0.95,
-          "rationale": "Every area cites exact files and line ranges \u2014 'function_dispatch.rb:46-107 (schema build :48-65; transcript writeback shape :80-101)', 'mcp.rb:70-162 (registration/proxy/transcript)', 'chat_completion.rb:91-97,160,180-187,195-218,297-313,382-385,424-439,349-372' \u2014 with nothing left as vague prose like 'the tool code'."
+          "score": 0.93,
+          "rationale": "Every entry uses full lib/raix/ paths and tight line windows; section labels (\"Tool-list selection/filtering\", \"proxy/transcript mirror\", \"arg coercion\") tie ranges to named constructs rather than vague descriptions, and even VCR cassette paths are specified."
         },
         "justification": {
-          "score": 0.8,
-          "rationale": "The structural labels ('Tool exposure & filtering', 'Dispatch contract', 'Declaration & schema conversion', 'join_dispatch via define_method proxy') explain what each section owns in the pipeline, and the round_trip array makes the flow causal; the one gap is that the WHY for keeping prompt_declarations.rb in sync ('keep chat_completion override/superclass-call working') is stated but the WHY for the adapter layer (provider-shape normalization) is only implied by structure, not stated."
+          "score": 0.7,
+          "rationale": "Inline labels (\"dispatch loop + auth guard\", \"generated method & transcript contract\", \"Registration\") explain what each range does, and the tool_call_roundtrip_order list shows pipeline ownership; however the answer never states WHY each file is in the map in terms of what contract it holds versus what it consumes, so the ownership rationale is inferrable but not explicit."
         },
         "uncertainty": {
-          "score": 0.25,
-          "rationale": "The only explicit hedge is the conditional 'if the wire shape of a call/result changes' guarding the RubyLLM bridge lines; the answer does not flag where it is unsure about the loop re-entry path, the exact schema field names that must match the provider wire format, the MCP transport contract, or missing fixtures \u2014 so the agent would act on this map without knowing where to verify first."
+          "score": 0.42,
+          "rationale": "Light conditional hedges appear (\"if the tool message shape changes\", \"if it touches the wire format\", \"if the call/return contract changes\") but the answer never explicitly flags where the agent should verify before committing \u2014 loop re-entry semantics, schema format differences across providers, and MCP transport path divergence are all presented with confidence rather than flagged as check-first zones."
         }
       },
-      "step_quality": 0.815,
+      "step_quality": 0.8075,
       "usage": {
         "input_tokens": 3,
-        "output_tokens": 1592,
-        "cache_creation_input_tokens": 18715,
+        "output_tokens": 1787,
+        "cache_creation_input_tokens": 20219,
         "cache_read_input_tokens": 16203
       }
     }
