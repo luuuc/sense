@@ -1,0 +1,535 @@
+{
+  "scenario": "Raix work session - extend the tool-calling pipeline",
+  "repo": "raix",
+  "adoption_score": 0.0,
+  "keyword_coverage": 0.5714,
+  "step_avg_score": 0.552,
+  "efficiency": 0.0,
+  "completeness": 0.4603,
+  "tool_fluency": 0.0,
+  "discoverability": 0.0,
+  "citation_grounding": {
+    "total": 0,
+    "grounded": 0,
+    "unresolved": 0,
+    "hallucinated": 0,
+    "rate": 0.0,
+    "examples": {
+      "grounded": [],
+      "unresolved": [],
+      "hallucinated": []
+    },
+    "details": []
+  },
+  "gold_recall": {
+    "total": 15,
+    "mentioned": 15,
+    "cited": 2,
+    "mention_recall": 1.0,
+    "cited_recall": 0.1333,
+    "groups": {
+      "core": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 2,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "tools": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      },
+      "transcript": {
+        "total": 3,
+        "mentioned": 3,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      },
+      "mcp": {
+        "total": 4,
+        "mentioned": 4,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      },
+      "context": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      },
+      "specs": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      }
+    },
+    "missed_mention": [],
+    "missed_cite": [
+      "tool-adapter",
+      "response-format",
+      "message-adapter",
+      "transcript-adapter",
+      "multimodal",
+      "mcp-entry",
+      "mcp-tool",
+      "mcp-sse",
+      "mcp-stdio",
+      "prompt-decl",
+      "completion-ctx",
+      "spec:chat",
+      "spec:dispatch"
+    ],
+    "details": [
+      {
+        "id": "chat-loop",
+        "group": "core",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "function-dispatch",
+        "group": "core",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "tool-adapter",
+        "group": "tools",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "response-format",
+        "group": "tools",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "message-adapter",
+        "group": "transcript",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "transcript-adapter",
+        "group": "transcript",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "multimodal",
+        "group": "transcript",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "mcp-entry",
+        "group": "mcp",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "mcp-tool",
+        "group": "mcp",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "mcp-sse",
+        "group": "mcp",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "mcp-stdio",
+        "group": "mcp",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "prompt-decl",
+        "group": "context",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "completion-ctx",
+        "group": "context",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "spec:chat",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "spec:dispatch",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": false,
+          "type": "word",
+          "value": "completion",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "tool",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 0,
+          "unique_refs": 0,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 4,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 2,
+      "score_required": 0.0,
+      "score_bonus": 0.25,
+      "combined_score": 0.1667,
+      "fairness_score": 0.25
+    },
+    {
+      "name": "Trace a tool-call round-trip through the chat loop",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "tool",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "transcript",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 0,
+          "unique_refs": 0,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 2,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 2,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.5,
+      "score_bonus": 0.5,
+      "combined_score": 0.5,
+      "fairness_score": 0.6
+    },
+    {
+      "name": "Map how functions are declared and exposed to the model",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "function",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "tool",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "5",
+          "unique_files": 0,
+          "unique_refs": 0,
+          "threshold": 5,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "function_dispatch.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 3,
+      "hits_bonus": 1,
+      "total_bonus": 3,
+      "fairness_hits_required": 2,
+      "fairness_total_required": 3,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.6667,
+      "score_bonus": 0.3333,
+      "combined_score": 0.5556,
+      "fairness_score": 0.7143
+    },
+    {
+      "name": "Map how the conversation is adapted before it is sent",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "adapter",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "message",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 0,
+          "unique_refs": 0,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 2,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 2,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.5,
+      "score_bonus": 0.5,
+      "combined_score": 0.5,
+      "fairness_score": 0.6
+    },
+    {
+      "name": "Map how external tools plug into the same dispatch",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "MCP",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "tool",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 0,
+          "unique_refs": 0,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 2,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 2,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.5,
+      "score_bonus": 0.5,
+      "combined_score": 0.5,
+      "fairness_score": 0.6
+    },
+    {
+      "name": "Find every site that depends on the tool-call contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "tool",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "5",
+          "unique_files": 0,
+          "unique_refs": 0,
+          "threshold": 5,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "spec",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 2,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 2,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.5,
+      "score_bonus": 0.5,
+      "combined_score": 0.5,
+      "fairness_score": 0.6
+    },
+    {
+      "name": "Produce the edit map",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "5",
+          "unique_files": 0,
+          "unique_refs": 0,
+          "threshold": 5,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "spec",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "adapter",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 2,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 0.0,
+      "score_bonus": 1.0,
+      "combined_score": 0.5,
+      "fairness_score": 0.5
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0, post-MCP misses: 0 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 35,
+    "grep_count": 4,
+    "read_count": 29,
+    "mcp_count": 0,
+    "token_input_uncached": 65952,
+    "token_output": 12261,
+    "token_cache_read": 324096,
+    "token_cache_write": 0,
+    "token_total_billed": 78213,
+    "token_total_all": 402309,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 78213,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 24001,
+    "audit_chars": 236548,
+    "overhead": null
+  }
+}
