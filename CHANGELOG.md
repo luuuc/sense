@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.1] - 2026-06-23
+
+### Bug Fixes
+
+- de-noise and re-rank sense_conventions output
 ## [1.11.0] - 2026-06-22
 
 ### Features
