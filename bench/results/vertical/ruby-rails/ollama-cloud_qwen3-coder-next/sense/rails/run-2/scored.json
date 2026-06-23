@@ -1,0 +1,787 @@
+{
+  "scenario": "Rails work session - audit the query Relation contract before a rework",
+  "repo": "rails",
+  "adoption_score": 0.6087,
+  "keyword_coverage": 1.0,
+  "step_avg_score": 1.0,
+  "efficiency": 0.0,
+  "completeness": 0.9167,
+  "tool_fluency": 0.3478,
+  "discoverability": 1.0,
+  "citation_grounding": {
+    "total": 40,
+    "grounded": 39,
+    "unresolved": 1,
+    "hallucinated": 0,
+    "rate": 0.975,
+    "examples": {
+      "grounded": [
+        "activerecord/lib/active_record/relation.rb:5 (line 5 in activerecord/lib/active_record/relation.rb (file has 1539 lines))",
+        "activerecord/lib/active_record/relation/finder_methods.rb:6 (line 6 in activerecord/lib/active_record/relation/finder_methods.rb (file has 690 lines))",
+        "activerecord/lib/active_record/relation/calculations.rb:7 (line 7 in activerecord/lib/active_record/relation/calculations.rb (file has 695 lines))",
+        "activerecord/lib/active_record/relation/spawn_methods.rb:8 (line 8 in activerecord/lib/active_record/relation/spawn_methods.rb (file has 78 lines))",
+        "activerecord/lib/active_record/relation/query_methods.rb:9 (line 9 in activerecord/lib/active_record/relation/query_methods.rb (file has 2383 lines))"
+      ],
+      "unresolved": [
+        "mysql_adapter.rb:559 (file not found at mysql_adapter.rb)"
+      ],
+      "hallucinated": []
+    },
+    "details": [
+      {
+        "file": "activerecord/lib/active_record/relation.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in activerecord/lib/active_record/relation.rb (file has 1539 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/relation/finder_methods.rb",
+        "locator": "6",
+        "status": "grounded",
+        "reason": "line 6 in activerecord/lib/active_record/relation/finder_methods.rb (file has 690 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/relation/calculations.rb",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in activerecord/lib/active_record/relation/calculations.rb (file has 695 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/relation/spawn_methods.rb",
+        "locator": "8",
+        "status": "grounded",
+        "reason": "line 8 in activerecord/lib/active_record/relation/spawn_methods.rb (file has 78 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/relation/query_methods.rb",
+        "locator": "9",
+        "status": "grounded",
+        "reason": "line 9 in activerecord/lib/active_record/relation/query_methods.rb (file has 2383 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/relation/delegation.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in activerecord/lib/active_record/relation/delegation.rb (file has 154 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/relation.rb",
+        "locator": "78",
+        "status": "grounded",
+        "reason": "line 78 in activerecord/lib/active_record/relation.rb (file has 1539 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/relation/query_methods.rb",
+        "locator": "1677",
+        "status": "grounded",
+        "reason": "line 1677 in activerecord/lib/active_record/relation/query_methods.rb (file has 2383 lines)"
+      },
+      {
+        "file": "merger.rb",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in merger.rb (file has 191 lines) [via activerecord/lib/active_record/relation/merger.rb]"
+      },
+      {
+        "file": "where_clause.rb",
+        "locator": "26",
+        "status": "grounded",
+        "reason": "line 26 in where_clause.rb (file has 219 lines) [via activerecord/lib/active_record/relation/where_clause.rb]"
+      },
+      {
+        "file": "predicate_builder.rb",
+        "locator": "18",
+        "status": "grounded",
+        "reason": "line 18 in predicate_builder.rb (file has 191 lines) [via activerecord/lib/active_record/relation/predicate_builder.rb]"
+      },
+      {
+        "file": "association_relation.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in association_relation.rb (file has 51 lines) [via activerecord/lib/active_record/association_relation.rb]"
+      },
+      {
+        "file": "collection_proxy.rb",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in collection_proxy.rb (file has 1185 lines) [via activerecord/lib/active_record/associations/collection_proxy.rb]"
+      },
+      {
+        "file": "disable_joins_association_relation.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in disable_joins_association_relation.rb (file has 43 lines) [via activerecord/lib/active_record/disable_joins_association_relation.rb]"
+      },
+      {
+        "file": "database_statements.rb",
+        "locator": "802",
+        "status": "grounded",
+        "reason": "line 802 in database_statements.rb (file has 817 lines) [via activerecord/lib/active_record/connection_adapters/abstract/database_statements.rb]"
+      },
+      {
+        "file": "sanitization.rb",
+        "locator": "213",
+        "status": "grounded",
+        "reason": "line 213 in sanitization.rb (file has 256 lines) [via activerecord/lib/active_record/sanitization.rb]"
+      },
+      {
+        "file": "mysql_adapter.rb",
+        "locator": "559",
+        "status": "unresolved",
+        "reason": "file not found at mysql_adapter.rb"
+      },
+      {
+        "file": "sqlite3_adapter.rb",
+        "locator": "470",
+        "status": "grounded",
+        "reason": "line 470 in sqlite3_adapter.rb (file has 906 lines) [via activerecord/lib/active_record/connection_adapters/sqlite3_adapter.rb]"
+      },
+      {
+        "file": "extended_deterministic_queries.rb",
+        "locator": "24",
+        "status": "grounded",
+        "reason": "line 24 in extended_deterministic_queries.rb (file has 159 lines) [via activerecord/lib/active_record/encryption/extended_deterministic_queries.rb]"
+      },
+      {
+        "file": "extended_deterministic_queries.rb",
+        "locator": "98",
+        "status": "grounded",
+        "reason": "line 98 in extended_deterministic_queries.rb (file has 159 lines) [via activerecord/lib/active_record/encryption/extended_deterministic_queries.rb]"
+      },
+      {
+        "file": "extended_deterministic_queries.rb",
+        "locator": "106",
+        "status": "grounded",
+        "reason": "line 106 in extended_deterministic_queries.rb (file has 159 lines) [via activerecord/lib/active_record/encryption/extended_deterministic_queries.rb]"
+      },
+      {
+        "file": "signed_id.rb",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in signed_id.rb (file has 166 lines) [via activerecord/lib/active_record/signed_id.rb]"
+      },
+      {
+        "file": "scoping/named.rb",
+        "locator": "192",
+        "status": "grounded",
+        "reason": "line 192 in scoping/named.rb (file has 202 lines) [via activerecord/lib/active_record/scoping/named.rb]"
+      },
+      {
+        "file": "scoping/default.rb",
+        "locator": "50",
+        "status": "grounded",
+        "reason": "line 50 in scoping/default.rb (file has 205 lines) [via activerecord/lib/active_record/scoping/default.rb]"
+      },
+      {
+        "file": "scoping/default.rb",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in scoping/default.rb (file has 205 lines) [via activerecord/lib/active_record/scoping/default.rb]"
+      },
+      {
+        "file": "validations/uniqueness.rb",
+        "locator": "116",
+        "status": "grounded",
+        "reason": "line 116 in validations/uniqueness.rb (file has 295 lines) [via activerecord/lib/active_record/validations/uniqueness.rb]"
+      },
+      {
+        "file": "enumerable.rb",
+        "locator": "161",
+        "status": "grounded",
+        "reason": "line 161 in enumerable.rb (file has 279 lines) [via activesupport/lib/active_support/core_ext/enumerable.rb]"
+      },
+      {
+        "file": "collection_renderer.rb",
+        "locator": "95",
+        "status": "grounded",
+        "reason": "line 95 in collection_renderer.rb (file has 204 lines) [via actionview/lib/action_view/renderer/collection_renderer.rb]"
+      },
+      {
+        "file": "query_command.rb",
+        "locator": "172",
+        "status": "grounded",
+        "reason": "line 172 in query_command.rb (file has 296 lines) [via railties/lib/rails/commands/query/query_command.rb]"
+      },
+      {
+        "file": "mime_responds.rb",
+        "locator": "307",
+        "status": "grounded",
+        "reason": "line 307 in mime_responds.rb (file has 337 lines) [via actionpack/lib/action_controller/metal/mime_responds.rb]"
+      },
+      {
+        "file": "route.rb",
+        "locator": "65",
+        "status": "grounded",
+        "reason": "line 65 in route.rb (file has 203 lines) [via actionpack/lib/action_dispatch/journey/route.rb]"
+      },
+      {
+        "file": "remote_ip.rb",
+        "locator": "198",
+        "status": "grounded",
+        "reason": "line 198 in remote_ip.rb (file has 214 lines) [via actionpack/lib/action_dispatch/middleware/remote_ip.rb]"
+      },
+      {
+        "file": "inspector.rb",
+        "locator": "208",
+        "status": "grounded",
+        "reason": "line 208 in inspector.rb (file has 374 lines) [via actionpack/lib/action_dispatch/routing/inspector.rb]"
+      },
+      {
+        "file": "tag_helper.rb",
+        "locator": "1509",
+        "status": "grounded",
+        "reason": "line 1509 in tag_helper.rb (file has 1797 lines) [via actionview/lib/action_view/helpers/tag_helper.rb]"
+      },
+      {
+        "file": "activerecord/lib/active_record/association_relation.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in activerecord/lib/active_record/association_relation.rb (file has 51 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/associations/collection_proxy.rb",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in activerecord/lib/active_record/associations/collection_proxy.rb (file has 1185 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/disable_joins_association_relation.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in activerecord/lib/active_record/disable_joins_association_relation.rb (file has 43 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/associations/association_scope.rb",
+        "locator": "8",
+        "status": "grounded",
+        "reason": "line 8 in activerecord/lib/active_record/associations/association_scope.rb (file has 176 lines)"
+      },
+      {
+        "file": "activerecord/lib/active_record/associations/preloader/association.rb",
+        "locator": "294",
+        "status": "grounded",
+        "reason": "line 294 in activerecord/lib/active_record/associations/preloader/association.rb (file has 316 lines)"
+      },
+      {
+        "file": "relation.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in relation.rb (file has 1539 lines) [via activerecord/lib/active_record/relation.rb]"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 18,
+    "mentioned": 14,
+    "cited": 14,
+    "mention_recall": 0.7778,
+    "cited_recall": 0.7778,
+    "groups": {
+      "contract": {
+        "total": 5,
+        "mentioned": 5,
+        "cited": 5,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "context": {
+        "total": 7,
+        "mentioned": 6,
+        "cited": 6,
+        "mention_recall": 0.8571,
+        "cited_recall": 0.8571
+      },
+      "dependents": {
+        "total": 6,
+        "mentioned": 3,
+        "cited": 3,
+        "mention_recall": 0.5,
+        "cited_recall": 0.5
+      }
+    },
+    "missed_mention": [
+      "ctx:integration",
+      "dep:join-dependency",
+      "dep:connection-handling",
+      "dep:from-clause"
+    ],
+    "missed_cite": [
+      "ctx:integration",
+      "dep:join-dependency",
+      "dep:connection-handling",
+      "dep:from-clause"
+    ],
+    "details": [
+      {
+        "id": "relation-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "query-methods",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "finder-methods",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "spawn-methods",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "delegation",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:sanitization",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:integration",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:encryption-queries",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:signed-id",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:scoping-named",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:enumerable-coreext",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:query-command",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "dep:join-dependency",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:connection-handling",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:where-clause",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "dep:predicate-builder",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "dep:from-clause",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:preloader-assoc",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "ActiveRecord",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Relation",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 35,
+          "unique_refs": 40,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 3,
+      "total_bonus": 4,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 0.75,
+      "combined_score": 0.8333,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the Relation contract and what it is built on",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "query",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 35,
+          "unique_refs": 40,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "relation.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 3,
+      "total_bonus": 4,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 0.75,
+      "combined_score": 0.8333,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how a query is built up and executed",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "spawn",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 35,
+          "unique_refs": 40,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 2,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Audit every dependent of the Relation contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 35,
+          "unique_refs": 40,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how relation behavior is reused for associations",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "association",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 35,
+          "unique_refs": 40,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 3,
+      "total_bonus": 3,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 35,
+          "unique_refs": 40,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 35,
+          "unique_refs": 40,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "test",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [
+      "Read(rails)",
+      "Glob(**/relation.rb)",
+      "Glob(**/query.rb)",
+      "Glob(**/relation/**/*.rb)",
+      "Read(relation.rb)",
+      "Glob(**/query*.rb)",
+      "Read(relation.rb)",
+      "Glob(**/relation/*.rb)",
+      "Read(query_methods.rb)",
+      "Read(finder_methods.rb)",
+      "Read(calculations.rb)"
+    ],
+    "post_mcp_verification_reads": [
+      "Read(spawn_methods.rb)",
+      "Read(delegation.rb)",
+      "Read(association.rb)",
+      "Read(association.rb)",
+      "Read(association_relation.rb)",
+      "Read(collection_proxy.rb)",
+      "Read(disable_joins_association_relation.rb)",
+      "Read(calculations.rb)",
+      "Read(association_relation.rb)",
+      "Read(disable_joins_association_relation.rb)",
+      "Read(collection_proxy.rb)",
+      "Read(collection_proxy.rb)",
+      "Read(query_cache.rb)",
+      "Read(predicate_builder.rb)",
+      "Read(predicate_builder.rb)",
+      "Read(signed_id.rb)",
+      "Read(extended_deterministic_queries.rb)",
+      "Read(association.rb)",
+      "Read(association_scope.rb)",
+      "Read(association.rb)",
+      "Read(join_dependency.rb)",
+      "Read(query_command.rb)",
+      "Read(enumerable.rb)",
+      "Read(where_clause.rb)",
+      "Read(database_statements.rb)",
+      "Read(sqlstatements.rb)",
+      "Read(sanitization.rb)",
+      "Read(merger.rb)"
+    ],
+    "post_mcp_misses": [
+      "Glob(**/associations/*.rb)",
+      "Glob(**/connection_adapters/*.rb)",
+      "Glob(*.rb)",
+      "Glob(**/association*.rb)",
+      "Glob(*.rb)",
+      "Glob(*.rb)",
+      "Glob(**/connection_adapters/abstract/*.rb)",
+      "Grep(Relation)",
+      "Glob(**/connection_adapters/*adapter.rb)",
+      "Glob(**/connection_adapters/*.rb)"
+    ],
+    "has_mcp_tools": true,
+    "detail": "pre-MCP bypasses: 11, post-MCP verification reads: 28, post-MCP misses: 10 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 64,
+    "grep_count": 15,
+    "read_count": 34,
+    "mcp_count": 8,
+    "token_input_uncached": 2343977,
+    "token_output": 24501,
+    "token_cache_read": 0,
+    "token_cache_write": 0,
+    "token_total_billed": 2368478,
+    "token_total_all": 2368478,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 2368478,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 10295,
+    "audit_chars": 456401,
+    "overhead": null
+  }
+}

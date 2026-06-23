@@ -1,0 +1,434 @@
+{
+  "scenario": "Forem work session - audit the Article contract before a teardown rework",
+  "repo": "forem",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "forem.rubric.yaml"
+  },
+  "scenario_quality": 0.0067,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 1,
+    "related": 1,
+    "contradicted": 0,
+    "covered_recall": 0.0435,
+    "related_recall": 0.0435,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "c:reactable",
+      "c:taggable",
+      "c:liquid-embeddable",
+      "c:subscription-src",
+      "a:articles-ctrl",
+      "a:creator",
+      "d:admin-tools",
+      "d:moderations",
+      "d:tag-adjustments",
+      "d:video-states",
+      "d:feed-tag",
+      "d:feed-event",
+      "d:tag-hotness",
+      "d:suggest-prominent",
+      "d:trend-detector",
+      "d:award-streak",
+      "d:welcome-gen",
+      "d:edge-cache",
+      "d:liquid-embed-extr",
+      "d:notifiable-action",
+      "d:audit-unpublish",
+      "d:interest-embed"
+    ],
+    "missed_related": [
+      "c:reactable",
+      "c:taggable",
+      "c:liquid-embeddable",
+      "c:subscription-src",
+      "a:articles-ctrl",
+      "a:creator",
+      "d:admin-tools",
+      "d:moderations",
+      "d:tag-adjustments",
+      "d:video-states",
+      "d:feed-tag",
+      "d:feed-event",
+      "d:tag-hotness",
+      "d:suggest-prominent",
+      "d:trend-detector",
+      "d:award-streak",
+      "d:welcome-gen",
+      "d:edge-cache",
+      "d:liquid-embed-extr",
+      "d:notifiable-action",
+      "d:audit-unpublish",
+      "d:interest-embed"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "article-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:reactable",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "c:taggable",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "c:liquid-embeddable",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "c:subscription-src",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "a:articles-ctrl",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "a:creator",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-tools",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:moderations",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:tag-adjustments",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:video-states",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:feed-tag",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:feed-event",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:tag-hotness",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:suggest-prominent",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:trend-detector",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:award-streak",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:welcome-gen",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:edge-cache",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:liquid-embed-extr",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:notifiable-action",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:audit-unpublish",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:interest-embed",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer is almost entirely process narration ('Let me continue...') with no file paths, no structural map, and no entry points. The only substantive content is a JSON stub that names the project (Forem/dev.to) and calls Article 'the core content model' \u2014 an agent still needs to explore from scratch."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Zero concrete paths are provided: no app/models/article.rb, no app/models/concerns/, no app/services/articles/, no app/workers/. The JSON says 'Rails application' and 'Preact-first' with nothing to act on."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The answer asserts Article is the central content model but never explains why it is the hub \u2014 no mention of concerns pulling in shared behavior, no associations listed, no architectural reasoning beyond restating the step prompt."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "No uncertainty is flagged, but since the answer makes almost no claims, there is nothing to be uncertain about; this leaves the consuming agent with no guidance on what to verify before acting."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "The answer echoes the step prompt's phrase 'comments, reactions, tags and feeds attach to' without naming a single association, concern, worker route, or connecting path \u2014 a text search can produce the same empty characterization."
+        }
+      },
+      "step_quality": 0.04,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1424,
+        "cache_creation_input_tokens": 19475,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the Article contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer is entirely narration ('Let me continue reading...', 'Now I'll continue auditing...') with no contract map produced; the only substantive output is a JSON stub that names the Article model as 'the core content model' but lists no concerns, associations, or file:line anchors an agent could act on."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Not a single file path or line number is cited; no concern names (Reactable, Taggable, etc.) or association names appear anywhere in the answer text."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "The answer offers no explanation of why the contract is shaped as it is \u2014 no mention of shared concerns, association semantics, or what a contract change must preserve."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "With no claims made, there is nothing to flag uncertainty about; the answer is effectively empty so this criterion cannot be satisfied."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No connecting relationships are stated between any concern or association and the Article model; the answer names no binding mechanism whatsoever."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 831,
+        "cache_creation_input_tokens": 19450,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how an article and its attached data are handled on change",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer contains no trace of what fans out when an article is created, updated, or destroyed \u2014 no callbacks, no services, no workers, no caches, no feeds, no file:line anywhere. The agent cannot follow any path to change article handling safely."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Not a single concrete effect is named: no cache buster, no feed-counter update, no mention/notification path, no search indexer. The final JSON only names the project and its purpose, not any change-handling component."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No explanation is provided for why any effect is inline vs async or how the architecture is shaped. The answer contains only scaffolding prose ('Let me continue...') and a skeleton JSON with zero substantive findings."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No findings exist to flag uncertainty about. The absence of any discovered effects means there is nothing to qualify or hedge."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No chain is assembled at all. The answer does not connect an article change to any callback, service, worker, or cache via any path or relationship, direct or indirect."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1096,
+        "cache_creation_input_tokens": 19455,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Audit every dependent of the Article contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer contains zero actual findings \u2014 only narration of intent ('Let me continue auditing\u2026') plus a three-field JSON stub with no file:line citations, no dependents grouped by area, and no coverage of any of the eight audit areas (request handling, workers, feeds, notifications, caching, analytics, moderation, onboarding). An agent reading this would face a complete re-exploration from scratch."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Not a single file:line appears in the returned answer; the only concrete text is the stub JSON naming the project and its purpose, which is orientation-level, not audit-level."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No dependent is listed, so no reason why any dependent is affected can be given; the answer is entirely process narration."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer does not flag any limitations, missed paths, or concern/association-reached dependents that need manual verification \u2014 it simply returns nothing of substance."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "With no dependents named, no connecting relationship (association, concern, derive-from-article path, worker route) can be stated; the answer is a stub and scores the minimum."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1005,
+        "cache_creation_input_tokens": 19565,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how article identity and visibility are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer contains no map of guards whatsoever \u2014 only a narration of tool calls made and a high-level JSON stub describing the project at a category level; no file:line for any published/visibility check appears."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Zero concrete paths, method names, or file:line citations; the agent described its search process but delivered none of the results to the answer text."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No explanation of why background/service work must re-confirm article state is present; the answer is structurally empty of reasoning."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No uncertainty flags appear because there is no content to flag uncertainty about; the answer is empty of findings."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No guard-to-dependent paths are stated; no connecting relationships between any check and the effect it protects exist in the answer text."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 828,
+        "cache_creation_input_tokens": 19443,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer is entirely procedural narration ('Let me continue...', 'Now let me complete...') followed by a JSON stub containing only project meta-information; zero dependents are enumerated, no areas are covered, and no risk ranking exists."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "No file:line reference appears anywhere in the answer; the only concrete output is a project name and a one-sentence description of the Article model's role."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "With no dependents listed, there is nothing to justify; the answer explains neither why any dependent is high-risk nor why effects are grouped as they are."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No uncertainty flags are raised because no findings are produced; the narration implies work was done but no results surface."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No connecting relationship is stated for any dependent; the answer names no paths from the contract change to any downstream file or symbol."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 899,
+        "cache_creation_input_tokens": 19467,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.02,
+          "rationale": "The answer produces no map at all \u2014 only a chain of 'Let me continue...' narration stubs and a skeleton JSON with project name and directory labels. No model file, no concern file, no dependent, no spec is enumerated with file:line, so the agent cannot act on it."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Zero concrete paths or line numbers appear in the output; 'app/javascript, app/assets' is the only path-like string and it names directories, not files or symbols."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No file is placed in the map, so there is nothing to justify. The answer contains no explanations of why any piece belongs to the change."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No content was produced to flag uncertainty about; the answer is a stub and the 0.0 wall_time confirms the run did not complete meaningful work before returning."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No dependent is named and no connecting relationship is stated anywhere in the answer; the agent would have to explore the entire codebase from scratch."
+        }
+      },
+      "step_quality": 0.007,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 785,
+        "cache_creation_input_tokens": 19445,
+        "cache_read_input_tokens": 16203
+      }
+    }
+  ]
+}

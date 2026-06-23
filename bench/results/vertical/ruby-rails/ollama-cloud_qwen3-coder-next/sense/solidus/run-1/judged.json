@@ -1,0 +1,380 @@
+{
+  "scenario": "Solidus work session - audit the Order contract before a teardown rework",
+  "repo": "solidus",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "solidus.rubric.yaml"
+  },
+  "scenario_quality": 0.4969,
+  "relationship_audit": {
+    "total": 19,
+    "covered": 12,
+    "related": 12,
+    "contradicted": 0,
+    "covered_recall": 0.6316,
+    "related_recall": 0.6316,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "d:adjustment-src",
+      "d:legacy-promo",
+      "d:legacy-rule",
+      "d:legacy-minqty",
+      "d:legacy-product",
+      "d:cancellations",
+      "d:admin-payments"
+    ],
+    "missed_related": [
+      "d:adjustment-src",
+      "d:legacy-promo",
+      "d:legacy-rule",
+      "d:legacy-minqty",
+      "d:legacy-product",
+      "d:cancellations",
+      "d:admin-payments"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "order-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:payments",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:display-money",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:orders-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:order-updater",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:adjustment-src",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:stock-coord",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-promo",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-rule",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-minqty",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-product",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:solidus-benefit",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:solidus-promo",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:checkouts-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:returns-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:shipments-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:cancellations",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-payments",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-lineitems",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.8,
+          "rationale": "The answer names Solidus as a multi-gem platform, lists all six gems (core/api/admin/backend/promotions/legacy_promotions), places Spree::Order at core/app/models/spree/order.rb:21, and enumerates the major associations (line_items, shipments, adjustments, payments, return_authorizations, reimbursements) plus shared pieces (Payments concern, DisplayMoney, state machine). An agent can start with targeted lookups rather than fresh exploration, though the orientation is embedded mid-answer after several tool-call narration lines."
+        },
+        "specificity": {
+          "score": 0.82,
+          "rationale": "Concrete file:line citations are present for the model (order.rb:21), the Payments concern (order/payments.rb:5), DisplayMoney (concerns/spree/display_money.rb:4), and the state machine (core/lib/spree/core/state_machines.rb:52); gem names are exact and not vague ('the model layer')."
+        },
+        "justification": {
+          "score": 0.35,
+          "rationale": "The answer labels Order 'the central domain object representing customer carts and completed purchases' but never explains WHY functionality is split across gems, WHY Order is the hub of the purchase flow, or WHY behavior is modularized into concerns \u2014 it names pieces without stating design rationale."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "No uncertainty is flagged anywhere; the answer reads as fully confident about gem boundaries and module connections despite the non-trivial multi-gem layout, which leaves an agent without signals about which connections need verification."
+        },
+        "relationship": {
+          "score": 0.6,
+          "rationale": "The has_many associations are named (stating the connecting mechanism for line_items, shipments, payments), and Spree::Order::Payments is identified as an included concern; however, the polymorphic 'adjustable' route for adjustments is not stated, promotions are not shown to act on Order through adjustments, and behavior being split across gems via includes/concerns is only partially assembled rather than explicitly connected."
+        }
+      },
+      "step_quality": 0.6365,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2189,
+        "cache_creation_input_tokens": 25947,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the Order contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer identifies Spree::Order::Payments at core/app/models/spree/order/payments.rb:5, Spree::DisplayMoney at core/app/models/concerns/spree/display_money.rb:4, the state machine at core/lib/spree/core/state_machines.rb:52, and the major has_many associations \u2014 so the core contract pieces are present with file:line. However, the contract content is buried inside a sprawling 7-step dump, the 'what a change must preserve' angle is implicit at best, and association line numbers within order.rb itself are not given."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "The Payments concern and DisplayMoney are named by concrete file:line, the state machine class name is given, and the JSON summary echoes them. What's missing: line numbers for where each `has_many` is declared inside order.rb, and no mention of other included concerns beyond Payments and a vague 'Metadata'."
+        },
+        "justification": {
+          "score": 0.22,
+          "rationale": "The answer labels each piece and describes what it does ('process_payments!', 'money display methods') but never explains WHY the contract is decomposed this way \u2014 why Payments is a separate concern, why DisplayMoney is a shared module rather than inline, or why the state machine is configurable. It lists, it does not justify."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No part of the contract is flagged as unconfirmed; the answer asserts all pieces with equal certainty, including the 'Metadata' concern whose location is never given and whose existence is stated without verification."
+        },
+        "relationship": {
+          "score": 0.48,
+          "rationale": "Has_many and belongs_to relations are stated clearly for associations. For concerns, the answer says 'modules included in core/app/models/spree/order.rb:28' but never shows the actual `include` call or the line where DisplayMoney is pulled in; the state machine is described as a config key, not as a `state_machines` DSL call. Binding mechanism for each piece is stated at a coarse level but not verified with the include/extend/mixin line."
+        }
+      },
+      "step_quality": 0.491,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2724,
+        "cache_creation_input_tokens": 26138,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how an order is built and recalculated",
+      "scores": {
+        "map_quality": {
+          "score": 0.5,
+          "rationale": "The OrderUpdater internal method sequence is traced with file:line (order_updater.rb:19-32) and the state machine progression is listed, but how a cart becomes an order through checkout is not traced with file:line, and the fan-out from update_totals and update_shipments into tax adjusters, promotion adjusters, and stock is not followed with any depth."
+        },
+        "specificity": {
+          "score": 0.55,
+          "rationale": "Individual OrderUpdater calls are named precisely (recalculate_line_item_prices at :21, update_totals at :24, persist_totals at :30), but the downstream fan-out \u2014 what update_totals actually calls, where Spree::Tax::OrderAdjuster is invoked in the chain, how the stock coordinator is reached \u2014 has no file:line specificity."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "The answer lists recalculation steps in sequence but never explains WHY recalculation is centralized in OrderUpdater (e.g., to enforce a consistent ordering of totals before state transitions can be evaluated). No architectural rationale for the design is offered."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged for any layer; the answer presents every step as confirmed even where the fan-out into adjustments, tax, and stock was not opened, so the agent cannot tell which parts were verified vs. inferred."
+        },
+        "relationship": {
+          "score": 0.4,
+          "rationale": "The answer assembles the updater's internal method calls as an ordered numbered chain (steps 1-8), but the chain stops at the updater boundary \u2014 it does not continue into what update_totals delegates to for adjustments, how the tax adjuster is wired in, or how shipment state feeds back into stock \u2014 leaving the change -> updater -> totals/adjustments/shipments/stock path incomplete."
+        }
+      },
+      "step_quality": 0.3975,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2344,
+        "cache_creation_input_tokens": 25915,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Audit every dependent of the Order contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer covers all six gems and the key non-obvious dependents called out in the rubric (exchange.rb at #55, simple_coordinator at #42-43, benefit.rb at #69, legacy promo actions at #60-66), giving a 93-item numbered list with file:line across every area. However, spree/adjustment.rb and spree/line_item.rb appear only in the high-risk section rather than the main enumeration, promotion rule classes (Spree::Promotion::Rules::*) are absent entirely, and the blast_radius JSON cites 126 direct callers versus the 93 named, leaving a visible gap."
+        },
+        "specificity": {
+          "score": 0.48,
+          "rationale": "Most numbered items carry a file:line pair and a one-phrase description (e.g., 'core/app/models/spree/payment.rb:16 \u2014 belongs_to :order, touch: true'), which is the required format. But the Tests and Specs section collapses into glob patterns like 'core/spec/models/spree/order_*_spec.rb', which the prompt explicitly forbids ('do not collapse a set into a summary \u2014 an unlisted dependent counts as missed'), and spree/adjustment.rb and spree/line_item.rb are never enumerated individually despite being first-class associations."
+        },
+        "justification": {
+          "score": 0.38,
+          "rationale": "The grouping by area (payments, shipments, stock, etc.) provides structural framing, and each numbered entry has a one-phrase function note. However, the answer never explains WHY a given area is affected in business-logic terms \u2014 for instance, why payment.rb must push state back to order.payment_state, or why fulfilment_changer.rb touches order.recalculate only after a desired-shipment reassignment \u2014 so the agent gets what, not why."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer does not flag what a static pass can miss: dependents reached through polymorphic associations (adjustable), concerns, or gems not in the local repo. The JSON notes field says only 'This audit includes all direct dependencies found via Sense graph analysis and file reads,' which presents the output as complete rather than acknowledging the boundary of static reachability."
+        },
+        "relationship": {
+          "score": 0.42,
+          "rationale": "Direct `belongs_to :order` entries are correctly named as associations (payment.rb:16, shipment.rb:9, inventory_unit.rb:16). For the non-obvious dependents the rubric highlights, the paths are partially present: exchange.rb states the 'reimbursement.order' derive route (#55), and benefit.rb names the SQL join at #69. But stock/simple_coordinator.rb (#42-43) is described only as 'Ships with order' / 'Builds packages with order' with no stated path, fulfilment_changer.rb gives no 'shipment \u2192 order' chain, and adjustment.rb's polymorphic-adjustable route to Order is never stated at all."
+        }
+      },
+      "step_quality": 0.474,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3636,
+        "cache_creation_input_tokens": 26268,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how order state and completeness are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.35,
+          "rationale": "The eleven-item guard list covers some Order model predicate methods (completed?, allow_cancel?) and two shipment transition guards with file:line, but misses the areas the rubric centres: no payment-processing guards (how payment/processing.rb checks order state before capture/auth), no stock guards (fulfilment_changer.rb:149 checks order.completed?), and no state-machine transition callbacks that enforce order lifecycle before mutation. The recalculation guard (`if order.complete?` at order_updater.rb:26) is mentioned in Step 3 but not surfaced here as a completeness guard."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "The cited entries have concrete file:line (order.rb:251/297/479, shipment.rb:47/56/204, promotions/promotion.rb:69), but several listed items (outstanding_balance :597, available_payment_methods :432, Order#shipping :314) are not state guards and dilute the list; whole categories (payment processing, stock) get no file:line at all."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The answer lists guards but provides no explanation for WHY mutating a completed order is dangerous (financial integrity, inventory over-allocation, audit-trail corruption, double-charges); the 'WHY' criterion is essentially unaddressed."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer flags no gaps: it does not note that payment processing guards were unconfirmed, that stock coordinator state checks were not fully traced, or that some guards may be implicit in the state machine's event callbacks rather than explicit predicate calls."
+        },
+        "relationship": {
+          "score": 0.2,
+          "rationale": "The guards are listed as isolated method names rather than protective paths; for example, shipment.rb:56 is noted to call order.can_ship? but the answer does not trace that the state machine fires this guard as a before-transition callback, nor does it show the path by which any dependent service triggers the guard before mutating the order."
+        }
+      },
+      "step_quality": 0.27,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2198,
+        "cache_creation_input_tokens": 25904,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "The answer enumerates 93 dependents across all gems and areas with file:line, produces a HIGH RISK DEPENDENTS ranked list (15 entries), and names HIGH-RISK METHODS with file:line \u2014 the agent can start targeted reviews. The blast-radius section is buried after a very long audit body, making it somewhat harder to extract, and a few areas (importer, fulfilment_changer) surface mid-audit but are absent from the ranked list."
+        },
+        "specificity": {
+          "score": 0.72,
+          "rationale": "The high-risk list cites concrete file:line for every entry (e.g., 'core/app/models/spree/payment.rb:16', 'promotions/app/models/solidus_promotions/promotion.rb:82') with a one-phrase reason. Risk reasons are brief ('breaks association if order changes') rather than mechanism-level, so the agent still needs a targeted lookup to confirm impact depth."
+        },
+        "justification": {
+          "score": 0.5,
+          "rationale": "Some justification appears \u2014 'called by shipments, promotions, reimbursements' for Order#completed?, 'joins(:order) on adjustments' for benefit guards \u2014 but the ranking rationale is thin: the answer does not explain why payment/shipment outrank promotion or API controllers, nor why polymorphic-adjustable adjustment.rb scores HIGH over, say, the order_cancellations service."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The notes claim completeness ('all direct dependencies found via Sense graph analysis') rather than flagging gaps; there is no acknowledgment of what static analysis misses (dynamic dispatch, extensions outside the indexed gems, concern-reached callers the graph may not surface), which leaves the agent unguarded against false completeness."
+        },
+        "relationship": {
+          "score": 0.6,
+          "rationale": "Direct-association dependents carry their relationship label ('belongs_to :order', 'polymorphic adjustable'), and a few indirect reaches are spelled out ('queries Spree::Order.joins(:all_adjustments)', 'joins(:order) on adjustments'). Non-obvious paths \u2014 how FulfilmentChanger reaches the recalculation flow, how the exchange/reimbursement chain propagates back to Order, how the stock coordinator is wired in \u2014 are named in the audit body but their connecting route is absent from the blast-radius ranked section, so the agent sees endpoints, not chains."
+        }
+      },
+      "step_quality": 0.6215,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1977,
+        "cache_creation_input_tokens": 26160,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer produces a grouped, area/gem-keyed map with 90+ numbered dependents at file:line, covers core/api/backend/admin/promotions/legacy_promotions, and lists specs. Weak spots: the 'Files to edit' section uses broad line ranges ('Lines 21-891') rather than insertion points, and the specs section falls back to glob patterns like 'core/spec/models/spree/order_*_spec.rb' instead of concrete filenames \u2014 a teammate could not land the change from the spec list alone."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "Dependent entries throughout Steps 4-6 are concrete (payment.rb:16, shipment.rb:9, order_updater.rb:19), but the final Step 7 'Files to edit' section lists only line ranges and the spec section is entirely glob-based with no file:line, which undercuts actionability at the moment it matters most."
+        },
+        "justification": {
+          "score": 0.52,
+          "rationale": "The numbered dependents section pairs each entry with a brief why (e.g., 'belongs_to :order', 'OrderMutex.lock relies on order id', 'queries Spree::Order.joins(:all_adjustments)'), but the final edit map and spec list carry almost no justification for why each file is in the map or what behavior each spec must cover."
+        },
+        "uncertainty": {
+          "score": 0.18,
+          "rationale": "The answer never explicitly flags uncertainty \u2014 no 'could not confirm', no 'possibly missed', no acknowledgment that other-gem or concern-reached dependents may be incomplete; the blast_radius numbers in the JSON are reported without qualification about static-analysis limits."
+        },
+        "relationship": {
+          "score": 0.55,
+          "rationale": "The dependent inventory (Steps 4-6) consistently names the relation (belongs_to :order, delegate :currency to :order, polymorphic adjustable, joins(:order)), which is the answer's strongest dimension; but the final change map section omits the connecting path for each at-risk file, so the chain 'Order contract change \u2192 relationship \u2192 file to touch' is not assembled explicitly where it is needed most."
+        }
+      },
+      "step_quality": 0.588,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1941,
+        "cache_creation_input_tokens": 26135,
+        "cache_read_input_tokens": 16203
+      }
+    }
+  ]
+}

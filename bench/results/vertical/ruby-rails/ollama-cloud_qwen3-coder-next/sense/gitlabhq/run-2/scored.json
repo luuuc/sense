@@ -1,0 +1,2583 @@
+{
+  "scenario": "GitLab work session - audit the MergeRequest contract before a teardown rework",
+  "repo": "gitlabhq",
+  "adoption_score": 0.58,
+  "keyword_coverage": 1.0,
+  "step_avg_score": 0.9286,
+  "efficiency": 0.0,
+  "completeness": 0.9643,
+  "tool_fluency": 0.3,
+  "discoverability": 1.0,
+  "citation_grounding": {
+    "total": 337,
+    "grounded": 284,
+    "unresolved": 47,
+    "hallucinated": 6,
+    "rate": 0.8427,
+    "examples": {
+      "grounded": [
+        "app/models/merge_request.rb:3 (line 3 in app/models/merge_request.rb (file has 3239 lines))",
+        "app/models/merge_requests/merge_data.rb:7 (line 7 in app/models/merge_requests/merge_data.rb (file has 92 lines))",
+        "app/models/merge_requests/merge_data.rb:8 (line 8 in app/models/merge_requests/merge_data.rb (file has 92 lines))",
+        "app/models/merge_requests/merge_data.rb:9 (line 9 in app/models/merge_requests/merge_data.rb (file has 92 lines))",
+        "app/models/merge_request.rb:203 (line 203 in app/models/merge_request.rb (file has 3239 lines))"
+      ],
+      "unresolved": [
+        "app/workers/merge_requests/update_head_pipeline_for_merge_request_worker.rb:12 (file not found at app/workers/merge_requests/update_head_pipeline_for_merge_request_worker.rb)",
+        "app/assets/javascripts/notes.js:23 (file not found at app/assets/javascripts/notes.js)",
+        "app/services/merge_requests/cleanup_ref_worker.rb:26 (file not found at app/services/merge_requests/cleanup_ref_worker.rb)",
+        "app/services/merge_requests/refresh/notify_about_push_worker.rb:15 (file not found at app/services/merge_requests/refresh/notify_about_push_worker.rb)",
+        "app/services/merge_requests/merge_data.rb:4 (file not found at app/services/merge_requests/merge_data.rb)"
+      ],
+      "hallucinated": [
+        "app/policies/merge_request_policy.rb:57 (line 57 out of range (file only 56 lines))",
+        "app/policies/merge_request_policy.rb:63 (line 63 out of range (file only 56 lines))",
+        "app/graphql/types/permission_types/merge_request.rb:41 (line 41 out of range (file only 35 lines))",
+        "app/graphql/types/permission_types/merge_request.rb:47 (line 47 out of range (file only 35 lines))",
+        "app/graphql/types/permission_types/merge_request.rb:53 (line 53 out of range (file only 35 lines))"
+      ]
+    },
+    "details": [
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_requests/merge_data.rb",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in app/models/merge_requests/merge_data.rb (file has 92 lines)"
+      },
+      {
+        "file": "app/models/merge_requests/merge_data.rb",
+        "locator": "8",
+        "status": "grounded",
+        "reason": "line 8 in app/models/merge_requests/merge_data.rb (file has 92 lines)"
+      },
+      {
+        "file": "app/models/merge_requests/merge_data.rb",
+        "locator": "9",
+        "status": "grounded",
+        "reason": "line 9 in app/models/merge_requests/merge_data.rb (file has 92 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "203",
+        "status": "grounded",
+        "reason": "line 203 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "255",
+        "status": "grounded",
+        "reason": "line 255 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests_controller.rb",
+        "locator": "19",
+        "status": "grounded",
+        "reason": "line 19 in app/controllers/projects/merge_requests_controller.rb (file has 771 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests_controller.rb",
+        "locator": "114",
+        "status": "grounded",
+        "reason": "line 114 in app/controllers/projects/merge_requests_controller.rb (file has 771 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "164",
+        "status": "grounded",
+        "reason": "line 164 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "165",
+        "status": "grounded",
+        "reason": "line 165 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "166",
+        "status": "grounded",
+        "reason": "line 166 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "167",
+        "status": "grounded",
+        "reason": "line 167 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "168",
+        "status": "grounded",
+        "reason": "line 168 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "169",
+        "status": "grounded",
+        "reason": "line 169 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "170",
+        "status": "grounded",
+        "reason": "line 170 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "171",
+        "status": "grounded",
+        "reason": "line 171 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "224",
+        "status": "grounded",
+        "reason": "line 224 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "228",
+        "status": "grounded",
+        "reason": "line 228 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "232",
+        "status": "grounded",
+        "reason": "line 232 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "237",
+        "status": "grounded",
+        "reason": "line 237 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "290",
+        "status": "grounded",
+        "reason": "line 290 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "298",
+        "status": "grounded",
+        "reason": "line 298 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "308",
+        "status": "grounded",
+        "reason": "line 308 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/workers/merge_requests/update_head_pipeline_for_merge_request_worker.rb",
+        "locator": "12",
+        "status": "unresolved",
+        "reason": "file not found at app/workers/merge_requests/update_head_pipeline_for_merge_request_worker.rb"
+      },
+      {
+        "file": "app/workers/auto_merge_process_worker.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/workers/auto_merge_process_worker.rb (file has 70 lines)"
+      },
+      {
+        "file": "app/workers/merge_requests/cleanup_ref_worker.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/workers/merge_requests/cleanup_ref_worker.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/workers/merge_requests/refresh/notify_about_push_worker.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/workers/merge_requests/refresh/notify_about_push_worker.rb (file has 39 lines)"
+      },
+      {
+        "file": "app/workers/jira_connect/sync_merge_request_worker.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/workers/jira_connect/sync_merge_request_worker.rb (file has 26 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "6",
+        "status": "grounded",
+        "reason": "line 6 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "154",
+        "status": "grounded",
+        "reason": "line 154 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "134",
+        "status": "grounded",
+        "reason": "line 134 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/assets/javascripts/notes.js",
+        "locator": "23",
+        "status": "unresolved",
+        "reason": "file not found at app/assets/javascripts/notes.js"
+      },
+      {
+        "file": "app/models/event.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/event.rb (file has 563 lines)"
+      },
+      {
+        "file": "app/models/event.rb",
+        "locator": "260",
+        "status": "grounded",
+        "reason": "line 260 in app/models/event.rb (file has 563 lines)"
+      },
+      {
+        "file": "app/models/event.rb",
+        "locator": "94",
+        "status": "grounded",
+        "reason": "line 94 in app/models/event.rb (file has 563 lines)"
+      },
+      {
+        "file": "app/services/notification_service.rb",
+        "locator": "1",
+        "status": "grounded",
+        "reason": "line 1 in app/services/notification_service.rb (file has 1129 lines)"
+      },
+      {
+        "file": "app/models/ci/pipeline.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/models/ci/pipeline.rb (file has 1948 lines)"
+      },
+      {
+        "file": "app/models/ci/pipeline_creation/requests.rb",
+        "locator": "104",
+        "status": "grounded",
+        "reason": "line 104 in app/models/ci/pipeline_creation/requests.rb (file has 140 lines)"
+      },
+      {
+        "file": "app/models/merge_request_diff.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_diff.rb (file has 1139 lines)"
+      },
+      {
+        "file": "app/models/merge_request_diff_commit.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_diff_commit.rb (file has 307 lines)"
+      },
+      {
+        "file": "app/models/merge_request_context_commit.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_context_commit.rb (file has 50 lines)"
+      },
+      {
+        "file": "app/models/merge_request_context_commit_diff_file.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_context_commit_diff_file.rb (file has 20 lines)"
+      },
+      {
+        "file": "app/models/merge_requests/generated_ref_commit.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/models/merge_requests/generated_ref_commit.rb (file has 40 lines)"
+      },
+      {
+        "file": "app/models/merge_requests/merge_schedule.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/models/merge_requests/merge_schedule.rb (file has 17 lines)"
+      },
+      {
+        "file": "app/models/merge_requests/merge_data.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/models/merge_requests/merge_data.rb (file has 92 lines)"
+      },
+      {
+        "file": "app/models/merge_request/approval_metrics.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request/approval_metrics.rb (file has 24 lines)"
+      },
+      {
+        "file": "app/models/merge_request_assignee.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_assignee.rb (file has 18 lines)"
+      },
+      {
+        "file": "app/models/merge_request_reviewer.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_reviewer.rb (file has 14 lines)"
+      },
+      {
+        "file": "app/models/merge_request_user_mention.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_user_mention.rb (file has 7 lines)"
+      },
+      {
+        "file": "app/models/merge_requests_closing_issues.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_requests_closing_issues.rb (file has 70 lines)"
+      },
+      {
+        "file": "app/models/deployment_merge_request.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/deployment_merge_request.rb (file has 37 lines)"
+      },
+      {
+        "file": "app/models/draft_note.rb",
+        "locator": "2",
+        "status": "grounded",
+        "reason": "line 2 in app/models/draft_note.rb (file has 165 lines)"
+      },
+      {
+        "file": "app/models/review.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/review.rb (file has 36 lines)"
+      },
+      {
+        "file": "app/models/environment.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/environment.rb (file has 652 lines)"
+      },
+      {
+        "file": "app/models/resource_events/merge_request_assignment_event.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/models/resource_events/merge_request_assignment_event.rb (file has 19 lines)"
+      },
+      {
+        "file": "app/models/merge_request/commits_metadata.rb",
+        "locator": "159",
+        "status": "grounded",
+        "reason": "line 159 in app/models/merge_request/commits_metadata.rb (file has 173 lines)"
+      },
+      {
+        "file": "app/models/merge_request/metrics.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request/metrics.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/base_service.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/services/merge_requests/base_service.rb (file has 376 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/merge_service.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/services/merge_requests/merge_service.rb (file has 216 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/merge_base_service.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/services/merge_requests/merge_base_service.rb (file has 43 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/merge_strategies/from_source_branch.rb",
+        "locator": "184",
+        "status": "grounded",
+        "reason": "line 184 in app/services/merge_requests/merge_strategies/from_source_branch.rb (file has 191 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/mergeability_check_service.rb",
+        "locator": "13",
+        "status": "grounded",
+        "reason": "line 13 in app/services/merge_requests/mergeability_check_service.rb (file has 186 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/mergeability/detailed_merge_status_service.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/services/merge_requests/mergeability/detailed_merge_status_service.rb (file has 86 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/cleanup_ref_worker.rb",
+        "locator": "26",
+        "status": "unresolved",
+        "reason": "file not found at app/services/merge_requests/cleanup_ref_worker.rb"
+      },
+      {
+        "file": "app/services/merge_requests/refresh_service.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/services/merge_requests/refresh_service.rb (file has 421 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/refresh/notify_about_push_worker.rb",
+        "locator": "15",
+        "status": "unresolved",
+        "reason": "file not found at app/services/merge_requests/refresh/notify_about_push_worker.rb"
+      },
+      {
+        "file": "app/services/merge_requests/unstick_locked_merge_requests_service.rb",
+        "locator": "115",
+        "status": "grounded",
+        "reason": "line 115 in app/services/merge_requests/unstick_locked_merge_requests_service.rb (file has 175 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/merge_data.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at app/services/merge_requests/merge_data.rb"
+      },
+      {
+        "file": "app/services/auto_merge/base_service.rb",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in app/services/auto_merge/base_service.rb (file has 137 lines)"
+      },
+      {
+        "file": "app/services/auto_merge/enable_service.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at app/services/auto_merge/enable_service.rb"
+      },
+      {
+        "file": "app/services/auto_merge/merge_service.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at app/services/auto_merge/merge_service.rb"
+      },
+      {
+        "file": "app/services/auto_merge/process_worker.rb",
+        "locator": "12",
+        "status": "unresolved",
+        "reason": "file not found at app/services/auto_merge/process_worker.rb"
+      },
+      {
+        "file": "app/services/issuable/base_service.rb",
+        "locator": "404",
+        "status": "unresolved",
+        "reason": "file not found at app/services/issuable/base_service.rb"
+      },
+      {
+        "file": "app/services/issuable/common_system_notes_service.rb",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in app/services/issuable/common_system_notes_service.rb (file has 127 lines)"
+      },
+      {
+        "file": "app/services/issuable/callbacks/milestone.rb",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in app/services/issuable/callbacks/milestone.rb (file has 81 lines)"
+      },
+      {
+        "file": "app/services/issues/close_service.rb",
+        "locator": "54",
+        "status": "grounded",
+        "reason": "line 54 in app/services/issues/close_service.rb (file has 161 lines)"
+      },
+      {
+        "file": "app/services/award_emojis/add_service.rb",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in app/services/award_emojis/add_service.rb (file has 54 lines)"
+      },
+      {
+        "file": "app/services/notes/resolve_service.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/services/notes/resolve_service.rb (file has 16 lines)"
+      },
+      {
+        "file": "app/services/projects/open_merge_requests_count_service.rb",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in app/services/projects/open_merge_requests_count_service.rb (file has 15 lines)"
+      },
+      {
+        "file": "app/services/milestones/promote_service.rb",
+        "locator": "63",
+        "status": "grounded",
+        "reason": "line 63 in app/services/milestones/promote_service.rb (file has 96 lines)"
+      },
+      {
+        "file": "app/services/resource_events/change_labels_service.rb",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in app/services/resource_events/change_labels_service.rb (file has 73 lines)"
+      },
+      {
+        "file": "app/services/timelogs/create_service.rb",
+        "locator": "16",
+        "status": "grounded",
+        "reason": "line 16 in app/services/timelogs/create_service.rb (file has 83 lines)"
+      },
+      {
+        "file": "app/services/todos/destroy/entity_leave_service.rb",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in app/services/todos/destroy/entity_leave_service.rb (file has 153 lines)"
+      },
+      {
+        "file": "app/services/users/migrate_records_to_ghost_user_service.rb",
+        "locator": "86",
+        "status": "grounded",
+        "reason": "line 86 in app/services/users/migrate_records_to_ghost_user_service.rb (file has 145 lines)"
+      },
+      {
+        "file": "app/services/ci/create_downstream_pipeline_service.rb",
+        "locator": "142",
+        "status": "grounded",
+        "reason": "line 142 in app/services/ci/create_downstream_pipeline_service.rb (file has 214 lines)"
+      },
+      {
+        "file": "app/services/test_hooks/system_service.rb",
+        "locator": "22",
+        "status": "grounded",
+        "reason": "line 22 in app/services/test_hooks/system_service.rb (file has 30 lines)"
+      },
+      {
+        "file": "app/services/mcp/tools/search_service.rb",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in app/services/mcp/tools/search_service.rb (file has 183 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/add_context_service.rb",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in app/services/merge_requests/add_context_service.rb (file has 115 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/assign_issues_service.rb",
+        "locator": "27",
+        "status": "grounded",
+        "reason": "line 27 in app/services/merge_requests/assign_issues_service.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/workers/integrations/group_mention_worker.rb",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in app/workers/integrations/group_mention_worker.rb (file has 42 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests_controller.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/controllers/projects/merge_requests_controller.rb (file has 771 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests/application_controller.rb",
+        "locator": "1",
+        "status": "grounded",
+        "reason": "line 1 in app/controllers/projects/merge_requests/application_controller.rb (file has 139 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests/mergeability_check_controller.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at app/controllers/projects/merge_requests/mergeability_check_controller.rb"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests/metadata_controller.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at app/controllers/projects/merge_requests/metadata_controller.rb"
+      },
+      {
+        "file": "app/controllers/concerns/issuable_actions.rb",
+        "locator": "150",
+        "status": "grounded",
+        "reason": "line 150 in app/controllers/concerns/issuable_actions.rb (file has 304 lines)"
+      },
+      {
+        "file": "app/controllers/concerns/notes_actions.rb",
+        "locator": "230",
+        "status": "grounded",
+        "reason": "line 230 in app/controllers/concerns/notes_actions.rb (file has 361 lines)"
+      },
+      {
+        "file": "app/controllers/projects/compare_controller.rb",
+        "locator": "234",
+        "status": "grounded",
+        "reason": "line 234 in app/controllers/projects/compare_controller.rb (file has 254 lines)"
+      },
+      {
+        "file": "app/controllers/admin/dashboard_controller.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/controllers/admin/dashboard_controller.rb (file has 29 lines)"
+      },
+      {
+        "file": "app/controllers/activity_pub/projects/application_controller.rb",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in app/controllers/activity_pub/projects/application_controller.rb (file has 32 lines)"
+      },
+      {
+        "file": "app/controllers/banzai/uploads_controller.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/controllers/banzai/uploads_controller.rb (file has 54 lines)"
+      },
+      {
+        "file": "app/controllers/sent_notifications_controller.rb",
+        "locator": "84",
+        "status": "grounded",
+        "reason": "line 84 in app/controllers/sent_notifications_controller.rb (file has 98 lines)"
+      },
+      {
+        "file": "app/graphql/resolvers/merge_requests/issue_related_resolver.rb",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in app/graphql/resolvers/merge_requests/issue_related_resolver.rb (file has 27 lines)"
+      },
+      {
+        "file": "app/graphql/resolvers/concerns/merge_requests/look_ahead_preloads.rb",
+        "locator": "17",
+        "status": "grounded",
+        "reason": "line 17 in app/graphql/resolvers/concerns/merge_requests/look_ahead_preloads.rb (file has 55 lines)"
+      },
+      {
+        "file": "app/graphql/resolvers/concerns/resolves_merge_requests.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/graphql/resolvers/concerns/resolves_merge_requests.rb (file has 127 lines)"
+      },
+      {
+        "file": "app/graphql/resolvers/users/recently_viewed_items_resolver.rb",
+        "locator": "44",
+        "status": "grounded",
+        "reason": "line 44 in app/graphql/resolvers/users/recently_viewed_items_resolver.rb (file has 63 lines)"
+      },
+      {
+        "file": "app/graphql/mutations/award_emojis/base.rb",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in app/graphql/mutations/award_emojis/base.rb (file has 40 lines)"
+      },
+      {
+        "file": "app/graphql/types/issuable_type.rb",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in app/graphql/types/issuable_type.rb (file has 25 lines)"
+      },
+      {
+        "file": "app/graphql/types/notes/noteable_interface.rb",
+        "locator": "14",
+        "status": "grounded",
+        "reason": "line 14 in app/graphql/types/notes/noteable_interface.rb (file has 42 lines)"
+      },
+      {
+        "file": "app/graphql/types/merge_request_state_enum.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in app/graphql/types/merge_request_state_enum.rb (file has 11 lines)"
+      },
+      {
+        "file": "app/graphql/types/merge_requests/mergeability_check_identifier_enum.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/graphql/types/merge_requests/mergeability_check_identifier_enum.rb (file has 18 lines)"
+      },
+      {
+        "file": "app/graphql/types/users/event_target_type.rb",
+        "locator": "14",
+        "status": "grounded",
+        "reason": "line 14 in app/graphql/types/users/event_target_type.rb (file has 40 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/graphql/types/permission_types/merge_request.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/graphql/subscriptions/ci/pipeline_creation_requests_updated.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/graphql/subscriptions/ci/pipeline_creation_requests_updated.rb (file has 19 lines)"
+      },
+      {
+        "file": "app/graphql/merge_requests/base_mutation.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at app/graphql/merge_requests/base_mutation.rb"
+      },
+      {
+        "file": "app/graphql/merge_requests/merge_mutation.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at app/graphql/merge_requests/merge_mutation.rb"
+      },
+      {
+        "file": "app/graphql/merge_requests/close_mutation.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at app/graphql/merge_requests/close_mutation.rb"
+      },
+      {
+        "file": "app/graphql/merge_requests/rebase_mutation.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at app/graphql/merge_requests/rebase_mutation.rb"
+      },
+      {
+        "file": "app/serializers/analytics_merge_request_entity.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/serializers/analytics_merge_request_entity.rb (file has 11 lines)"
+      },
+      {
+        "file": "app/serializers/merge_request_entity.rb",
+        "locator": "5",
+        "status": "unresolved",
+        "reason": "file not found at app/serializers/merge_request_entity.rb"
+      },
+      {
+        "file": "app/serializers/merge_request_basic_entity.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/serializers/merge_request_basic_entity.rb (file has 17 lines)"
+      },
+      {
+        "file": "app/serializers/merge_request_metrics_entity.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/serializers/merge_request_metrics_entity.rb (file has 12 lines)"
+      },
+      {
+        "file": "lib/api/merge_requests.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in lib/api/merge_requests.rb (file has 1034 lines)"
+      },
+      {
+        "file": "lib/api/merge_request_diffs.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in lib/api/merge_request_diffs.rb (file has 60 lines)"
+      },
+      {
+        "file": "lib/api/merge_request_approval_rules.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at lib/api/merge_request_approval_rules.rb"
+      },
+      {
+        "file": "lib/api/merge_request_approval_settings.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at lib/api/merge_request_approval_settings.rb"
+      },
+      {
+        "file": "lib/api/merge_request_mergeability_checks.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at lib/api/merge_request_mergeability_checks.rb"
+      },
+      {
+        "file": "lib/api/merge_request_reviews.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at lib/api/merge_request_reviews.rb"
+      },
+      {
+        "file": "lib/api/merge_request_approval_rule_groups.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at lib/api/merge_request_approval_rule_groups.rb"
+      },
+      {
+        "file": "lib/api/helpers/merge_requests_helpers.rb",
+        "locator": "157",
+        "status": "grounded",
+        "reason": "line 157 in lib/api/helpers/merge_requests_helpers.rb (file has 172 lines)"
+      },
+      {
+        "file": "lib/api/helpers/discussions_helpers.rb",
+        "locator": "6",
+        "status": "grounded",
+        "reason": "line 6 in lib/api/helpers/discussions_helpers.rb (file has 20 lines)"
+      },
+      {
+        "file": "lib/banzai/filter/references/commit_reference_filter.rb",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in lib/banzai/filter/references/commit_reference_filter.rb (file has 100 lines)"
+      },
+      {
+        "file": "lib/banzai/filter/references/merge_request_reference_filter.rb",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in lib/banzai/filter/references/merge_request_reference_filter.rb (file has 106 lines)"
+      },
+      {
+        "file": "lib/banzai/reference_parser/merge_request_parser.rb",
+        "locator": "21",
+        "status": "grounded",
+        "reason": "line 21 in lib/banzai/reference_parser/merge_request_parser.rb (file has 57 lines)"
+      },
+      {
+        "file": "lib/banzai/upload_controller.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at lib/banzai/upload_controller.rb"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/base_query_builder.rb",
+        "locator": "6",
+        "status": "grounded",
+        "reason": "line 6 in lib/gitlab/analytics/cycle_analytics/base_query_builder.rb (file has 89 lines)"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/aggregated/base_query_builder.rb",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in lib/gitlab/analytics/cycle_analytics/aggregated/base_query_builder.rb (file has 127 lines)"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_start.rb",
+        "locator": "16",
+        "status": "grounded",
+        "reason": "line 16 in lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_start.rb (file has 64 lines)"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_end.rb",
+        "locator": "16",
+        "status": "unresolved",
+        "reason": "file not found at lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_end.rb"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_duration.rb",
+        "locator": "16",
+        "status": "unresolved",
+        "reason": "file not found at lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_duration.rb"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_rework.rb",
+        "locator": "16",
+        "status": "unresolved",
+        "reason": "file not found at lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_rework.rb"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_deployment.rb",
+        "locator": "16",
+        "status": "unresolved",
+        "reason": "file not found at lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_deployment.rb"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_release.rb",
+        "locator": "16",
+        "status": "unresolved",
+        "reason": "file not found at lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_release.rb"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_monitoring.rb",
+        "locator": "16",
+        "status": "unresolved",
+        "reason": "file not found at lib/gitlab/analytics/cycle_analytics/stage_events/code_stage_monitoring.rb"
+      },
+      {
+        "file": "lib/gitlab/cycle_analytics/metrics_tables.rb",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in lib/gitlab/cycle_analytics/metrics_tables.rb (file has 51 lines)"
+      },
+      {
+        "file": "lib/gitlab/issuable/namespace_getter.rb",
+        "locator": "16",
+        "status": "grounded",
+        "reason": "line 16 in lib/gitlab/issuable/namespace_getter.rb (file has 40 lines)"
+      },
+      {
+        "file": "lib/gitlab/git/ref_resolver.rb",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in lib/gitlab/git/ref_resolver.rb (file has 69 lines)"
+      },
+      {
+        "file": "lib/gitlab/quick_actions/issue_and_merge_request_actions.rb",
+        "locator": "8",
+        "status": "grounded",
+        "reason": "line 8 in lib/gitlab/quick_actions/issue_and_merge_request_actions.rb (file has 363 lines)"
+      },
+      {
+        "file": "lib/gitlab/data_builder/issuable.rb",
+        "locator": "64",
+        "status": "grounded",
+        "reason": "line 64 in lib/gitlab/data_builder/issuable.rb (file has 90 lines)"
+      },
+      {
+        "file": "lib/gitlab/url_builder.rb",
+        "locator": "18",
+        "status": "grounded",
+        "reason": "line 18 in lib/gitlab/url_builder.rb (file has 171 lines)"
+      },
+      {
+        "file": "lib/gitlab/import/merge_request_helpers.rb",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in lib/gitlab/import/merge_request_helpers.rb (file has 137 lines)"
+      },
+      {
+        "file": "lib/gitlab/import_export/json/streaming_serializer.rb",
+        "locator": "304",
+        "status": "grounded",
+        "reason": "line 304 in lib/gitlab/import_export/json/streaming_serializer.rb (file has 335 lines)"
+      },
+      {
+        "file": "lib/gitlab/import_export/project/object_builder.rb",
+        "locator": "180",
+        "status": "grounded",
+        "reason": "line 180 in lib/gitlab/import_export/project/object_builder.rb (file has 248 lines)"
+      },
+      {
+        "file": "lib/gitlab/github_import/importer/diff_note_importer.rb",
+        "locator": "120",
+        "status": "grounded",
+        "reason": "line 120 in lib/gitlab/github_import/importer/diff_note_importer.rb (file has 144 lines)"
+      },
+      {
+        "file": "lib/gitlab/github_import/importer/events/base_importer.rb",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in lib/gitlab/github_import/importer/events/base_importer.rb (file has 66 lines)"
+      },
+      {
+        "file": "lib/gitlab/legacy_github_import/importer.rb",
+        "locator": "197",
+        "status": "grounded",
+        "reason": "line 197 in lib/gitlab/legacy_github_import/importer.rb (file has 482 lines)"
+      },
+      {
+        "file": "lib/gitlab/bitbucket_import/importers/pull_request_importer.rb",
+        "locator": "18",
+        "status": "grounded",
+        "reason": "line 18 in lib/gitlab/bitbucket_import/importers/pull_request_importer.rb (file has 131 lines)"
+      },
+      {
+        "file": "lib/gitlab/bitbucket_server_import/importers/pull_request_importer.rb",
+        "locator": "22",
+        "status": "grounded",
+        "reason": "line 22 in lib/gitlab/bitbucket_server_import/importers/pull_request_importer.rb (file has 120 lines)"
+      },
+      {
+        "file": "lib/gitlab/issuable/clone/clone_issue_service.rb",
+        "locator": "45",
+        "status": "unresolved",
+        "reason": "file not found at lib/gitlab/issuable/clone/clone_issue_service.rb"
+      },
+      {
+        "file": "lib/import/placeholder_references/alias_resolver.rb",
+        "locator": "27",
+        "status": "grounded",
+        "reason": "line 27 in lib/import/placeholder_references/alias_resolver.rb (file has 292 lines)"
+      },
+      {
+        "file": "app/helpers/application_helper.rb",
+        "locator": "501",
+        "status": "grounded",
+        "reason": "line 501 in app/helpers/application_helper.rb (file has 537 lines)"
+      },
+      {
+        "file": "app/helpers/emails_helper.rb",
+        "locator": "105",
+        "status": "grounded",
+        "reason": "line 105 in app/helpers/emails_helper.rb (file has 722 lines)"
+      },
+      {
+        "file": "app/helpers/events_helper.rb",
+        "locator": "145",
+        "status": "grounded",
+        "reason": "line 145 in app/helpers/events_helper.rb (file has 417 lines)"
+      },
+      {
+        "file": "app/helpers/issuables_helper.rb",
+        "locator": "48",
+        "status": "grounded",
+        "reason": "line 48 in app/helpers/issuables_helper.rb (file has 351 lines)"
+      },
+      {
+        "file": "app/helpers/notes_helper.rb",
+        "locator": "172",
+        "status": "grounded",
+        "reason": "line 172 in app/helpers/notes_helper.rb (file has 207 lines)"
+      },
+      {
+        "file": "app/helpers/projects_helper.rb",
+        "locator": "167",
+        "status": "grounded",
+        "reason": "line 167 in app/helpers/projects_helper.rb (file has 1028 lines)"
+      },
+      {
+        "file": "app/helpers/merge_requests_helper.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/helpers/merge_requests_helper.rb (file has 685 lines)"
+      },
+      {
+        "file": "app/mailers/emails/merge_requests.rb",
+        "locator": "206",
+        "status": "grounded",
+        "reason": "line 206 in app/mailers/emails/merge_requests.rb (file has 228 lines)"
+      },
+      {
+        "file": "app/mailers/emails/merge_requests.rb",
+        "locator": "134",
+        "status": "grounded",
+        "reason": "line 134 in app/mailers/emails/merge_requests.rb (file has 228 lines)"
+      },
+      {
+        "file": "app/mailers/previews/notify_preview.rb",
+        "locator": "191",
+        "status": "grounded",
+        "reason": "line 191 in app/mailers/previews/notify_preview.rb (file has 712 lines)"
+      },
+      {
+        "file": "app/finders/merge_requests_finder.rb",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in app/finders/merge_requests_finder.rb (file has 533 lines)"
+      },
+      {
+        "file": "app/finders/merge_requests_finder/params.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/finders/merge_requests_finder/params.rb (file has 74 lines)"
+      },
+      {
+        "file": "app/finders/merge_requests/oldest_per_commit_finder.rb",
+        "locator": "55",
+        "status": "grounded",
+        "reason": "line 55 in app/finders/merge_requests/oldest_per_commit_finder.rb (file has 86 lines)"
+      },
+      {
+        "file": "app/finders/merge_requests/stack_finder.rb",
+        "locator": "104",
+        "status": "grounded",
+        "reason": "line 104 in app/finders/merge_requests/stack_finder.rb (file has 162 lines)"
+      },
+      {
+        "file": "app/finders/merge_request/metrics_finder.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/finders/merge_request/metrics_finder.rb (file has 63 lines)"
+      },
+      {
+        "file": "lib/event_filter.rb",
+        "locator": "62",
+        "status": "grounded",
+        "reason": "line 62 in lib/event_filter.rb (file has 228 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "9",
+        "status": "grounded",
+        "reason": "line 9 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "542",
+        "status": "grounded",
+        "reason": "line 542 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/noteable.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/noteable.rb (file has 250 lines)"
+      },
+      {
+        "file": "app/models/concerns/referable.rb",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in app/models/concerns/referable.rb (file has 171 lines)"
+      },
+      {
+        "file": "app/models/concerns/approvable.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/approvable.rb (file has 80 lines)"
+      },
+      {
+        "file": "app/models/concerns/todoable.rb",
+        "locator": "9",
+        "status": "grounded",
+        "reason": "line 9 in app/models/concerns/todoable.rb (file has 10 lines)"
+      },
+      {
+        "file": "app/models/concerns/spammable.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/spammable.rb (file has 159 lines)"
+      },
+      {
+        "file": "app/models/concerns/label_eventable.rb",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in app/models/concerns/label_eventable.rb (file has 16 lines)"
+      },
+      {
+        "file": "app/models/concerns/milestone_eventable.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/milestone_eventable.rb (file has 9 lines)"
+      },
+      {
+        "file": "app/models/concerns/state_eventable.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/state_eventable.rb (file has 9 lines)"
+      },
+      {
+        "file": "app/models/concerns/sha_attribute.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/sha_attribute.rb (file has 75 lines)"
+      },
+      {
+        "file": "app/models/concerns/merge_request_resource_event.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/merge_request_resource_event.rb (file has 11 lines)"
+      },
+      {
+        "file": "app/models/integrations/jira.rb",
+        "locator": "364",
+        "status": "grounded",
+        "reason": "line 364 in app/models/integrations/jira.rb (file has 889 lines)"
+      },
+      {
+        "file": "app/models/integrations/base/hangouts_chat.rb",
+        "locator": "90",
+        "status": "unresolved",
+        "reason": "file not found at app/models/integrations/base/hangouts_chat.rb"
+      },
+      {
+        "file": "app/models/integrations/push_data_validations.rb",
+        "locator": "39",
+        "status": "unresolved",
+        "reason": "file not found at app/models/integrations/push_data_validations.rb"
+      },
+      {
+        "file": "app/models/integrations/chat_message/merge_message.rb",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in app/models/integrations/chat_message/merge_message.rb (file has 83 lines)"
+      },
+      {
+        "file": "app/models/integrations/project_test_data.rb",
+        "locator": "37",
+        "status": "unresolved",
+        "reason": "file not found at app/models/integrations/project_test_data.rb"
+      },
+      {
+        "file": "app/models/users/merge_request_interaction.rb",
+        "locator": "20",
+        "status": "grounded",
+        "reason": "line 20 in app/models/users/merge_request_interaction.rb (file has 46 lines)"
+      },
+      {
+        "file": "app/models/users/merge_request_interaction.rb",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in app/models/users/merge_request_interaction.rb (file has 46 lines)"
+      },
+      {
+        "file": "ee/app/models/merge_request.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request.rb"
+      },
+      {
+        "file": "ee/app/models/concerns/approvable.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/concerns/approvable.rb"
+      },
+      {
+        "file": "ee/app/models/concerns/visible_approvable.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/concerns/visible_approvable.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_rule.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_rule.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_rule_group.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_rule_group.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_setting.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_setting.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_state.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_state.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_rule_moved_event.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_rule_moved_event.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_rule_removed_event.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_rule_removed_event.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_state_event.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_state_event.rb"
+      },
+      {
+        "file": "ee/app/models/merge_request/approval_settings.rb",
+        "locator": "4",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/merge_request/approval_settings.rb"
+      },
+      {
+        "file": "ee/app/models/concerns/merge_request_resource_event.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at ee/app/models/concerns/merge_request_resource_event.rb"
+      },
+      {
+        "file": "spec/models/merge_request_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/models/merge_request_spec.rb (file has 10076 lines)"
+      },
+      {
+        "file": "spec/models/merge_request_diff_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/models/merge_request_diff_spec.rb (file has 2407 lines)"
+      },
+      {
+        "file": "spec/models/merge_requests_closing_issues_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/models/merge_requests_closing_issues_spec.rb (file has 157 lines)"
+      },
+      {
+        "file": "spec/models/resource_milestone_event_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/models/resource_milestone_event_spec.rb (file has 134 lines)"
+      },
+      {
+        "file": "spec/models/resource_state_event_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/models/resource_state_event_spec.rb (file has 103 lines)"
+      },
+      {
+        "file": "spec/serializers/base_discussion_entity_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/serializers/base_discussion_entity_spec.rb (file has 179 lines)"
+      },
+      {
+        "file": "spec/serializers/note_entity_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/serializers/note_entity_spec.rb (file has 51 lines)"
+      },
+      {
+        "file": "spec/controllers/projects/merge_requests_controller_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/controllers/projects/merge_requests_controller_spec.rb (file has 2482 lines)"
+      },
+      {
+        "file": "spec/graphql/resolvers/merge_requests_spec.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at spec/graphql/resolvers/merge_requests_spec.rb"
+      },
+      {
+        "file": "spec/graphql/types/merge_request_state_enum_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/graphql/types/merge_request_state_enum_spec.rb (file has 13 lines)"
+      },
+      {
+        "file": "spec/graphql/types/merge_requests/mergeability_check_identifier_enum_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/graphql/types/merge_requests/mergeability_check_identifier_enum_spec.rb (file has 13 lines)"
+      },
+      {
+        "file": "spec/graphql/subscriptions/ci/pipeline_creation_requests_updated_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/graphql/subscriptions/ci/pipeline_creation_requests_updated_spec.rb (file has 99 lines)"
+      },
+      {
+        "file": "spec/services/merge_requests/base_service_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/services/merge_requests/base_service_spec.rb (file has 226 lines)"
+      },
+      {
+        "file": "spec/services/merge_requests/merge_service_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/services/merge_requests/merge_service_spec.rb (file has 964 lines)"
+      },
+      {
+        "file": "spec/lib/gitlab/analytics/cycle_analytics/aggregated/base_query_builder_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/lib/gitlab/analytics/cycle_analytics/aggregated/base_query_builder_spec.rb (file has 157 lines)"
+      },
+      {
+        "file": "spec/lib/gitlab/analytics/cycle_analytics/base_query_builder_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/lib/gitlab/analytics/cycle_analytics/base_query_builder_spec.rb (file has 95 lines)"
+      },
+      {
+        "file": "spec/lib/import/placeholder_references/alias_resolver_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/lib/import/placeholder_references/alias_resolver_spec.rb (file has 372 lines)"
+      },
+      {
+        "file": "spec/models/analytics/cycle_analytics/merge_request_stage_event_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/models/analytics/cycle_analytics/merge_request_stage_event_spec.rb (file has 20 lines)"
+      },
+      {
+        "file": "spec/models/event_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/models/event_spec.rb (file has 1716 lines)"
+      },
+      {
+        "file": "spec/requests/api/merge_requests_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/requests/api/merge_requests_spec.rb (file has 5054 lines)"
+      },
+      {
+        "file": "spec/requests/api/resource_milestone_events_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/requests/api/resource_milestone_events_spec.rb (file has 27 lines)"
+      },
+      {
+        "file": "spec/lib/banzai/filter/references/merge_request_reference_filter_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/lib/banzai/filter/references/merge_request_reference_filter_spec.rb (file has 389 lines)"
+      },
+      {
+        "file": "spec/requests/admin/dashboard_controller_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/requests/admin/dashboard_controller_spec.rb (file has 66 lines)"
+      },
+      {
+        "file": "spec/routing/admin_routing_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/routing/admin_routing_spec.rb (file has 232 lines)"
+      },
+      {
+        "file": "spec/graphql/types/permission_types/merge_request_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/graphql/types/permission_types/merge_request_spec.rb (file has 16 lines)"
+      },
+      {
+        "file": "spec/requests/api/statistics_spec.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in spec/requests/api/statistics_spec.rb (file has 99 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "167",
+        "status": "grounded",
+        "reason": "line 167 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "172",
+        "status": "grounded",
+        "reason": "line 172 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "178",
+        "status": "grounded",
+        "reason": "line 178 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "185",
+        "status": "grounded",
+        "reason": "line 185 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "191",
+        "status": "grounded",
+        "reason": "line 191 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "2040",
+        "status": "grounded",
+        "reason": "line 2040 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "410",
+        "status": "grounded",
+        "reason": "line 410 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "371",
+        "status": "grounded",
+        "reason": "line 371 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "377",
+        "status": "grounded",
+        "reason": "line 377 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "383",
+        "status": "grounded",
+        "reason": "line 383 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "389",
+        "status": "grounded",
+        "reason": "line 389 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "395",
+        "status": "grounded",
+        "reason": "line 395 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issiable.rb",
+        "locator": "401",
+        "status": "unresolved",
+        "reason": "file not found at app/models/concerns/issiable.rb"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "407",
+        "status": "grounded",
+        "reason": "line 407 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "413",
+        "status": "grounded",
+        "reason": "line 413 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "419",
+        "status": "grounded",
+        "reason": "line 419 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "425",
+        "status": "grounded",
+        "reason": "line 425 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "431",
+        "status": "grounded",
+        "reason": "line 431 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "437",
+        "status": "grounded",
+        "reason": "line 437 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "443",
+        "status": "grounded",
+        "reason": "line 443 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "449",
+        "status": "grounded",
+        "reason": "line 449 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "455",
+        "status": "grounded",
+        "reason": "line 455 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "461",
+        "status": "grounded",
+        "reason": "line 461 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "467",
+        "status": "grounded",
+        "reason": "line 467 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "473",
+        "status": "grounded",
+        "reason": "line 473 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "479",
+        "status": "grounded",
+        "reason": "line 479 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "485",
+        "status": "grounded",
+        "reason": "line 485 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "491",
+        "status": "grounded",
+        "reason": "line 491 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "497",
+        "status": "grounded",
+        "reason": "line 497 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "13",
+        "status": "grounded",
+        "reason": "line 13 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "19",
+        "status": "grounded",
+        "reason": "line 19 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "55",
+        "status": "grounded",
+        "reason": "line 55 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "9",
+        "status": "grounded",
+        "reason": "line 9 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "21",
+        "status": "grounded",
+        "reason": "line 21 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "27",
+        "status": "grounded",
+        "reason": "line 27 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "57",
+        "status": "hallucinated",
+        "reason": "line 57 out of range (file only 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "63",
+        "status": "hallucinated",
+        "reason": "line 63 out of range (file only 56 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in app/graphql/types/permission_types/merge_request.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "17",
+        "status": "grounded",
+        "reason": "line 17 in app/graphql/types/permission_types/merge_request.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "23",
+        "status": "grounded",
+        "reason": "line 23 in app/graphql/types/permission_types/merge_request.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in app/graphql/types/permission_types/merge_request.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in app/graphql/types/permission_types/merge_request.rb (file has 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "41",
+        "status": "hallucinated",
+        "reason": "line 41 out of range (file only 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "47",
+        "status": "hallucinated",
+        "reason": "line 47 out of range (file only 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "53",
+        "status": "hallucinated",
+        "reason": "line 53 out of range (file only 35 lines)"
+      },
+      {
+        "file": "app/graphql/types/permission_types/merge_request.rb",
+        "locator": "59",
+        "status": "hallucinated",
+        "reason": "line 59 out of range (file only 35 lines)"
+      },
+      {
+        "file": "app/models/concerns/noteable.rb",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in app/models/concerns/noteable.rb (file has 250 lines)"
+      },
+      {
+        "file": "app/models/concerns/noteable.rb",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in app/models/concerns/noteable.rb (file has 250 lines)"
+      },
+      {
+        "file": "app/models/concerns/noteable.rb",
+        "locator": "47",
+        "status": "grounded",
+        "reason": "line 47 in app/models/concerns/noteable.rb (file has 250 lines)"
+      },
+      {
+        "file": "app/models/concerns/noteable.rb",
+        "locator": "53",
+        "status": "grounded",
+        "reason": "line 53 in app/models/concerns/noteable.rb (file has 250 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "201",
+        "status": "grounded",
+        "reason": "line 201 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "207",
+        "status": "grounded",
+        "reason": "line 207 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "213",
+        "status": "grounded",
+        "reason": "line 213 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/merge_service.rb",
+        "locator": "117",
+        "status": "grounded",
+        "reason": "line 117 in app/services/merge_requests/merge_service.rb (file has 216 lines)"
+      },
+      {
+        "file": "app/workers/merge_requests/commit_keep_around_worker.rb",
+        "locator": "3",
+        "status": "unresolved",
+        "reason": "file not found at app/workers/merge_requests/commit_keep_around_worker.rb"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_requests/merge_data.rb",
+        "locator": "27",
+        "status": "grounded",
+        "reason": "line 27 in app/models/merge_requests/merge_data.rb (file has 92 lines)"
+      },
+      {
+        "file": "app/models/concerns/noteable.rb",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in app/models/concerns/noteable.rb (file has 250 lines)"
+      },
+      {
+        "file": "app/models/concerns/referable.rb",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in app/models/concerns/referable.rb (file has 171 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "44",
+        "status": "grounded",
+        "reason": "line 44 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "56",
+        "status": "grounded",
+        "reason": "line 56 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "58",
+        "status": "grounded",
+        "reason": "line 58 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "73",
+        "status": "grounded",
+        "reason": "line 73 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "77",
+        "status": "grounded",
+        "reason": "line 77 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "78",
+        "status": "grounded",
+        "reason": "line 78 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "80",
+        "status": "grounded",
+        "reason": "line 80 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "108",
+        "status": "grounded",
+        "reason": "line 108 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "110",
+        "status": "grounded",
+        "reason": "line 110 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "115",
+        "status": "grounded",
+        "reason": "line 115 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "120",
+        "status": "grounded",
+        "reason": "line 120 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "127",
+        "status": "grounded",
+        "reason": "line 127 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "131",
+        "status": "grounded",
+        "reason": "line 131 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "133",
+        "status": "grounded",
+        "reason": "line 133 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "135",
+        "status": "grounded",
+        "reason": "line 135 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "137",
+        "status": "grounded",
+        "reason": "line 137 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "139",
+        "status": "grounded",
+        "reason": "line 139 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "145",
+        "status": "grounded",
+        "reason": "line 145 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "146",
+        "status": "grounded",
+        "reason": "line 146 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "148",
+        "status": "grounded",
+        "reason": "line 148 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "149",
+        "status": "grounded",
+        "reason": "line 149 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "758",
+        "status": "grounded",
+        "reason": "line 758 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "764",
+        "status": "grounded",
+        "reason": "line 764 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "770",
+        "status": "grounded",
+        "reason": "line 770 in app/models/merge_request.rb (file has 3239 lines)"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 23,
+    "mentioned": 17,
+    "cited": 17,
+    "mention_recall": 0.7391,
+    "cited_recall": 0.7391,
+    "groups": {
+      "contract": {
+        "total": 4,
+        "mentioned": 3,
+        "cited": 3,
+        "mention_recall": 0.75,
+        "cited_recall": 0.75
+      },
+      "write-path": {
+        "total": 2,
+        "mentioned": 1,
+        "cited": 1,
+        "mention_recall": 0.5,
+        "cited_recall": 0.5
+      },
+      "dependents": {
+        "total": 16,
+        "mentioned": 12,
+        "cited": 12,
+        "mention_recall": 0.75,
+        "cited_recall": 0.75
+      },
+      "specs": {
+        "total": 1,
+        "mentioned": 1,
+        "cited": 1,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      }
+    },
+    "missed_mention": [
+      "c:mentionable",
+      "a:mr-create-svc",
+      "d:issuable-destroy",
+      "d:discussion-ent",
+      "d:github-xref",
+      "d:api-discussions"
+    ],
+    "missed_cite": [
+      "c:mentionable",
+      "a:mr-create-svc",
+      "d:issuable-destroy",
+      "d:discussion-ent",
+      "d:github-xref",
+      "d:api-discussions"
+    ],
+    "details": [
+      {
+        "id": "mr-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:issuable",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:noteable",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:mentionable",
+        "group": "contract",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "a:mr-ctrl",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "a:mr-create-svc",
+        "group": "write-path",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:notes-resolve",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:milestone-prom",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:issuable-destroy",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:ghost-user",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:timelog",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:auto-merge",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:event",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:ci-pipeline",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:jira",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:gql-issuable",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:discussion-ent",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:url-builder",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:cycle-analytics",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:streaming-ser",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:github-xref",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:api-discussions",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "spec:mr",
+        "group": "specs",
+        "mentioned": true,
+        "cited": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "MergeRequest",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 207,
+          "unique_refs": 337,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 3,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the MergeRequest contract and what it is built on",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "concern",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 207,
+          "unique_refs": 337,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "merge_request.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 3,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how a merge request is created and updated",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "service",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 207,
+          "unique_refs": 337,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 2,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Audit every dependent of the MergeRequest contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 207,
+          "unique_refs": 337,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how merge request visibility and permissions are guarded",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 207,
+          "unique_refs": 337,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 2,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 0.5
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 207,
+          "unique_refs": 337,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 207,
+          "unique_refs": 337,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "spec",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [
+      "Read(README.md)",
+      "Glob(**/merge_request*.rb)"
+    ],
+    "post_mcp_verification_reads": [
+      "Read(merge_request.rb)",
+      "Read(merge_request.rb)",
+      "Read(merge_data.rb)",
+      "Read(merge_request.rb)",
+      "Read(issuable.rb)",
+      "Read(noteable.rb)",
+      "Read(referable.rb)",
+      "Read(approvable.rb)"
+    ],
+    "post_mcp_misses": [
+      "Glob(app/models/merge_request*.rb)",
+      "Glob(app/models/metadata/*.rb)",
+      "Glob(ee/app/models/**/merge_request*.rb)",
+      "Glob(lib/gitlab/merge_request*.rb)",
+      "Glob(*.rb)",
+      "Glob(*.rb)",
+      "Glob(*.rb)",
+      "Glob(**/merge_request*.rb)",
+      "Glob(**/merge_requests/*.rb)",
+      "Glob(**/merge_request*.rb)",
+      "Glob(*.rb)",
+      "Glob(*.rb)",
+      "Glob(*.rb)",
+      "Glob(**/api/merge_requests.rb)",
+      "Glob(**/resolvers/merge_requests/*.rb)",
+      "Glob(**/merge_request*.rb)",
+      "Glob(**/*.rb)",
+      "Glob(*merge*.rb)",
+      "Glob(**/merge_request*_spec.rb)",
+      "Glob(*merge*.rb)"
+    ],
+    "has_mcp_tools": true,
+    "detail": "pre-MCP bypasses: 2, post-MCP verification reads: 8, post-MCP misses: 20 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 40,
+    "grep_count": 21,
+    "read_count": 9,
+    "mcp_count": 9,
+    "token_input_uncached": 551676,
+    "token_output": 17127,
+    "token_cache_read": 0,
+    "token_cache_write": 0,
+    "token_total_billed": 568803,
+    "token_total_all": 568803,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 568803,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 60373,
+    "audit_chars": 237133,
+    "overhead": null
+  }
+}
