@@ -111,6 +111,78 @@ def _gold_basenames(gold):
     return {sp: bn for sp, bn in paths if counts.get(bn, 0) == 1}
 
 
+# --- Path-compaction oracle ------------------------------------------------
+# Agents routinely shorten a path in their final write-up — they have the full
+# `lib/llm/providers/google/request_adapter.rb` from a tool result but type
+# `google/request_adapter.rb`. The literal-substring matcher then scores that a
+# MISS even though it unambiguously names one real file. The oracle re-credits
+# such a compaction ONLY when two independent checks both pass, so it can never
+# credit a path the agent did not actually have:
+#   Oracle 2 (repo-tree): the gold pattern resolves to exactly ONE real repo
+#     file, and the compacted form is a >=2-segment, repo-unambiguous SUFFIX of
+#     that real path. Grounds "is this the right file" against the actual tree.
+#   Oracle 1 (transcript): that real path appears somewhere in the SAME run's
+#     transcript (a tool result / the agent's own text). Proves the agent held
+#     the path and merely shortened it; a fabricated path cannot pass.
+# Both arms are scored with the SAME repo tree, so this stays arm-blind. The
+# matcher can only ever RAISE recall, and never to a bare ambiguous basename
+# (the >=2-segment floor keeps a generic "request_adapter.rb" mention out).
+
+
+def _resolve_real(gold_pattern, repo_files):
+    """The single real repo path a gold pattern points to, or None.
+
+    Accepts only a clean segment-aligned suffix match (the gold pattern is the
+    tail of exactly one real path), so an ambiguous or absent pattern grounds
+    to nothing and the oracle stays off. `gold_pattern` is lower-cased.
+    """
+    hits = [f for f in (str(x).lower() for x in repo_files)
+            if f == gold_pattern or f.endswith("/" + gold_pattern)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _min_unique_suffix(real_path, repo_files):
+    """Shortest >=2-segment tail of `real_path` that exactly one repo file ends
+    with (segment-aligned), or None. This is the most-compacted form the agent
+    could write that still names this file unambiguously in the real tree.
+    """
+    segs = [s for s in real_path.split("/") if s]
+    files = [str(f).lower() for f in repo_files]
+    for k in range(2, len(segs) + 1):
+        suf = "/".join(segs[-k:])
+        cnt = sum(1 for f in files if f == suf or f.endswith("/" + suf))
+        if cnt == 1:
+            return suf
+    return None
+
+
+def _oracle_match(file_pat, hay, repo_files, transcript_text):
+    """(mentioned, cited) credit for an agent's path compaction; (False, False)
+    unless the gold pattern grounds to one real file (Oracle 2), that real path
+    is in the run transcript (Oracle 1), and a >=2-segment repo-unambiguous
+    suffix of it appears boundary-anchored in the answer. `cited` additionally
+    needs a line pin on that suffix. `hay`/`transcript_text` are lower-cased.
+    """
+    real = _resolve_real(file_pat, repo_files)
+    if not real or real not in transcript_text:
+        return (False, False)
+    suf = _min_unique_suffix(real, repo_files)
+    if not suf:
+        return (False, False)
+    # Boundary before the first segment: a path separator/space/quote/start is
+    # fine, but a word char/./- means it is part of a longer name (so
+    # "mygoogle/request_adapter.rb" does not match "google/request_adapter.rb").
+    anchor = r"(?<![\w.\-])" + re.escape(suf)
+    if not re.search(anchor, hay):
+        return (False, False)
+    cited = bool(
+        re.search(anchor + r":\d+", hay)
+        or re.search(anchor + r"\s*\(line\s+\d+\)", hay)
+        or re.search(anchor + r'[^\n{}]{0,%d}?"line"\s*:\s*\d+' % _LINE_FIELD_WINDOW, hay)
+    )
+    return (True, cited)
+
+
 def _gold_file_targets(gold):
     """[(id, group, [lower-cased file-like patterns])] for every gold item that
     has at least one file-like `match`. Symbol-only targets (e.g. update_score)
@@ -219,10 +291,15 @@ def score_gold_f1(claimed_files, gold):
     }
 
 
-def score_gold_recall(answer_text, gold):
+def score_gold_recall(answer_text, gold, repo_files=None, transcript_text=None):
     if not gold:
         return None
     hay = (answer_text or "").lower()
+    # Path-compaction oracle inputs (both required, else the oracle is off and
+    # behaviour is byte-identical to the literal matcher — production callers
+    # pass neither today).
+    tx = transcript_text.lower() if transcript_text else None
+    oracle_on = bool(repo_files) and tx is not None
     unique_basenames = _gold_basenames(gold)
     details, groups = [], {}
     men_total = cit_total = 0
@@ -236,6 +313,11 @@ def score_gold_recall(answer_text, gold):
         file_pats = [str(p).lower() for p in pats if _is_file_like(str(p))]
         if file_pats:
             cited = any(_cited(p, hay, unique_basenames.get(p)) for p in file_pats)
+            if oracle_on:
+                for p in file_pats:
+                    om, oc = _oracle_match(p, hay, repo_files, tx)
+                    mentioned = mentioned or om
+                    cited = cited or oc
         else:
             cited = mentioned  # pure symbol target: mention is the best we can verify
         # cited ⇒ mentioned. A target pinned only by its (unambiguous) basename

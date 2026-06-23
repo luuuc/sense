@@ -542,6 +542,23 @@ def estimate_cost(usage):
     ) / 1_000_000
 
 
+def _repo_file_list(checkout):
+    """Repo-relative file paths under a checkout, for the gold path-compaction
+    oracle (gold.py). Prunes VCS/index/vendor dirs. Returns [] if the checkout
+    is missing so the caller leaves the oracle off. A broader file set than the
+    code-only .sense index can only make a suffix MORE ambiguous (turning a
+    credit off), never manufacture one, so walking the tree stays sound.
+    """
+    if not checkout or not os.path.isdir(checkout):
+        return []
+    out = []
+    for root, dirs, files in os.walk(checkout):
+        dirs[:] = [d for d in dirs if d not in (".git", ".sense", "node_modules", ".bundle")]
+        for fn in files:
+            out.append(os.path.relpath(os.path.join(root, fn), checkout))
+    return out
+
+
 def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=None,
                      overhead=None):
     """Score a transcript against a scenario.
@@ -673,7 +690,22 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     # Measures coverage against a fixed per-scenario denominator, unlike
     # citation_grounding's grounded/emitted rate. None when no gold declared.
     from gold import score_gold_recall
-    gold_recall = score_gold_recall(answer_text, scenario.get("gold"))
+    # Path-compaction oracle inputs: the real repo file tree (from repo_checkout)
+    # and the raw transcript. Both gate a credit, so an agent that shortened a
+    # path it genuinely held (full path in the transcript) is re-credited, while
+    # a fabricated path is not. When repo_checkout is absent the oracle is off
+    # and gold_recall is byte-identical to the literal matcher. See gold.py.
+    gold_repo_files = _repo_file_list(repo_checkout) if repo_checkout else None
+    gold_transcript = None
+    if gold_repo_files:
+        try:
+            with open(transcript_path, encoding="utf-8", errors="ignore") as fh:
+                gold_transcript = fh.read()
+        except OSError:
+            gold_repo_files = None
+    gold_recall = score_gold_recall(answer_text, scenario.get("gold"),
+                                    repo_files=gold_repo_files,
+                                    transcript_text=gold_transcript)
     # NOTE: gold_f1 was DROPPED (2026-06-19). Its precision punished Sense for
     # citing real dependents that the curated discriminator gold deliberately
     # omits (gitlabhq P=0.14 at R=0.91), so it under-credited Sense's core
