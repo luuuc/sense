@@ -104,15 +104,15 @@ func TestCategoryOrderAllValues(t *testing.T) {
 		want int
 	}{
 		{CategoryInheritance, 0},
-		{CategoryNaming, 1},
-		{CategoryStructure, 2},
+		{CategoryFramework, 1},
+		{CategoryDesignPattern, 2},
 		{CategoryComposition, 3},
-		{CategoryTesting, 4},
-		{CategoryDesignPattern, 5},
-		{CategoryFramework, 6},
-		{CategoryArchitecture, 7},
-		{CategoryKeyTypes, 8},
-		{Category("unknown"), 8}, // default branch
+		{CategoryKeyTypes, 4},
+		{CategoryNaming, 5},
+		{CategoryArchitecture, 6},
+		{CategoryStructure, 7},
+		{CategoryTesting, 8},
+		{Category("unknown"), 9}, // default branch
 	}
 	for _, tt := range tests {
 		got := categoryOrder(tt.cat)

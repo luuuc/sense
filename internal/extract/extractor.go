@@ -151,6 +151,35 @@ const (
 	PrefixRubyCore = "ruby-core:"
 )
 
+// syntheticPrefixes is the canonical set of reserved qualified-name prefixes for
+// the synthetic symbols the extractors emit for cross-language and framework
+// resolution (turbo channels/frames, importmap entries, view partials, i18n
+// keys, route helpers, ruby-core shims). They are plumbing, not project
+// declarations, so query-side consumers (search, dead-code, conventions, the
+// resolver's cross-language gate) exclude or special-case them. It is the single
+// source of truth, kept unexported and reached only through IsSyntheticQualified
+// so no caller can mutate the set.
+var syntheticPrefixes = []string{
+	PrefixTurboChannel,
+	PrefixTurboFrame,
+	PrefixImportmap,
+	PrefixPartial,
+	PrefixI18n,
+	PrefixRoute,
+	PrefixRubyCore,
+}
+
+// IsSyntheticQualified reports whether a fully-qualified name belongs to a
+// synthetic symbol (one carrying a reserved synthetic prefix).
+func IsSyntheticQualified(qualified string) bool {
+	for _, p := range syntheticPrefixes {
+		if strings.HasPrefix(qualified, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // RubyCoreStruct and RubyCoreData are the qualified names of the synthetic
 // base symbols a Ruby value object inherits from. They live here (not in the
 // ruby package) so the dead package can key its value-object query on the

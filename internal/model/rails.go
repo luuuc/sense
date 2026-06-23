@@ -31,3 +31,22 @@ var RailsCallbackNames = map[string]bool{
 	"after_commit":   true,
 	"after_rollback": true,
 }
+
+// FrameworkBaseClasses is the set of well-known Rails framework base classes a
+// generated app inherits from by default. A class extending one of these is
+// following the framework, not expressing the project's own architecture, so
+// convention ranking treats them as the least informative inheritance targets —
+// the caller already knows them from Rails itself. Keyed by both the bare name
+// and the fully-qualified form the extractor may emit.
+var FrameworkBaseClasses = map[string]bool{
+	"ApplicationRecord":      true,
+	"ApplicationController":  true,
+	"ApplicationJob":         true,
+	"ApplicationMailer":      true,
+	"ApplicationMailbox":     true,
+	"ActiveRecord::Base":     true,
+	"ActionController::Base": true,
+	"ActionController::API":  true,
+	"ActionMailer::Base":     true,
+	"ActiveJob::Base":        true,
+}

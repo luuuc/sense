@@ -43,6 +43,15 @@ type Convention struct {
 	Strength    float64
 	Examples    []Example
 	KeySymbol   string
+	// Significance is an ordering-only weight (not shown to the caller) that
+	// ranks a convention's informativeness within its category, ahead of raw
+	// prevalence. It lets a project-specific sub-architecture (a namespaced base
+	// like Payment::BaseProviderStrategy, or a per-client Error taxonomy) outrank
+	// a generic framework base (ApplicationRecord) the caller already knows, so
+	// the non-obvious conventions survive the response's token budget. Set by the
+	// per-language refiners (see refineRubySignificance); zero for conventions a
+	// refiner does not touch, leaving prevalence the sole tiebreak.
+	Significance float64
 }
 
 type Options struct {
@@ -60,6 +69,14 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	if err != nil {
 		return nil, 0, err
 	}
+	// Drop synthetic cross-language/framework symbols (i18n keys, route helpers,
+	// turbo channels, importmap entries, ruby-core shims). These are plumbing the
+	// extractor emits for cross-language resolution, not declarations the project
+	// wrote; on a Rails app they outnumber real symbols and would otherwise
+	// dominate the naming/structure conventions. Conventions drops the full
+	// synthetic set (the resolver's cross-language gate uses the same set; search
+	// and dead-code drop only the ruby-core/route subset that reaches them).
+	symbols = dropSyntheticSymbols(symbols)
 	if len(symbols) == 0 {
 		return []Convention{}, 0, nil
 	}
@@ -93,6 +110,7 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	conventions = append(conventions, detectKeyTypes(symbols, edges, filePathByID, conventions)...)
 
 	enrichEdgeCounts(conventions, symbols, edges, filePathByID)
+	refineRubySignificance(conventions)
 
 	sort.Slice(conventions, func(i, j int) bool {
 		return conventionLess(conventions[i], conventions[j])
@@ -108,6 +126,9 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 func conventionLess(a, b Convention) bool {
 	if a.Category != b.Category {
 		return categoryOrder(a.Category) < categoryOrder(b.Category)
+	}
+	if a.Significance != b.Significance {
+		return a.Significance > b.Significance
 	}
 	if a.Strength != b.Strength {
 		return a.Strength > b.Strength
