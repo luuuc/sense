@@ -178,7 +178,11 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // All direct callers of auth.Verify are collapsed (count == directTier1), so
 // the seen_elsewhere note now uses the "all N … see that response" phrasing
 // instead of "only new callers are listed" — digest moved.
-const oracleGolden = "62793f531d39e5a80e6c8a1189b5a713d9970dc57595324dcc1f522af1d1e0f5"
+// Conventions category ordering was re-ranked by how much a category reveals the
+// project's own architecture (inheritance, framework, design-pattern, composition
+// lead; naming/structure/testing trail), so the fixture's key_types line now
+// precedes its structure line — digest moved.
+const oracleGolden = "60c3c73e13d7e50bcfa45a5f00e8e9239ebda0f8b4f0997954400d5949a3eb50"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))

@@ -773,24 +773,10 @@ func isTestBaseName(path string) bool {
 // channels/frames, importmap entries, i18n keys, route helpers, ruby-core
 // shims). A target carrying one of these is a designed cross-language link, not
 // a same-name coincidence, so the exact-path language gate must not touch it.
-var syntheticTargetPrefixes = []string{
-	extract.PrefixTurboChannel,
-	extract.PrefixTurboFrame,
-	extract.PrefixImportmap,
-	extract.PrefixPartial,
-	extract.PrefixI18n,
-	extract.PrefixRoute,
-	extract.PrefixRubyCore,
-}
-
-// isSyntheticTarget reports whether a target name is one of the synthetic
-// cross-language/framework qualified names that resolve by exact match and are
-// exempt from the cross-language gate.
+//
+// isSyntheticTarget reports whether a target name is one of these synthetic
+// qualified names. The prefix set is owned by the extract package (the single
+// source of truth shared with search, dead-code, and conventions).
 func isSyntheticTarget(target string) bool {
-	for _, p := range syntheticTargetPrefixes {
-		if strings.HasPrefix(target, p) {
-			return true
-		}
-	}
-	return false
+	return extract.IsSyntheticQualified(target)
 }

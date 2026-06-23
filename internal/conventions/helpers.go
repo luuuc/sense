@@ -4,7 +4,28 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/luuuc/sense/internal/extract"
 )
+
+// dropSyntheticSymbols removes the synthetic cross-language/framework symbols
+// (i18n keys, route helpers, turbo channels, importmap entries, ruby-core
+// shims) the extractors emit for resolution. They are plumbing, not project
+// declarations, keyed on the qualified-name prefixes owned by the extract
+// package. It drops the full synthetic set via extract.IsSyntheticQualified;
+// search and dead-code drop only the narrower subset that reaches their output.
+// It returns a new slice rather than filtering in place, leaving the caller's
+// input untouched.
+func dropSyntheticSymbols(symbols []symbolRow) []symbolRow {
+	out := make([]symbolRow, 0, len(symbols))
+	for _, s := range symbols {
+		if extract.IsSyntheticQualified(s.qualified) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
 
 func indexSymbols(symbols []symbolRow) map[int64]symbolRow {
 	m := make(map[int64]symbolRow, len(symbols))
@@ -66,28 +87,34 @@ func baseLabel(name, qualified string, ambiguous map[string]bool) string {
 	return name
 }
 
+// categoryOrder ranks categories by how much they reveal a project's own
+// architecture versus generic, framework-default structure the caller already
+// knows. Inheritance, framework idioms, design patterns, and composition carry
+// the project's character and lead; naming/architecture-layers/structure are
+// progressively more generic and trail, so they yield first to the response's
+// token budget. This order is part of the tool's contract.
 func categoryOrder(c Category) int {
 	switch c {
 	case CategoryInheritance:
 		return 0
-	case CategoryNaming:
+	case CategoryFramework:
 		return 1
-	case CategoryStructure:
+	case CategoryDesignPattern:
 		return 2
 	case CategoryComposition:
 		return 3
-	case CategoryTesting:
-		return 4
-	case CategoryDesignPattern:
-		return 5
-	case CategoryFramework:
-		return 6
-	case CategoryArchitecture:
-		return 7
 	case CategoryKeyTypes:
+		return 4
+	case CategoryNaming:
+		return 5
+	case CategoryArchitecture:
+		return 6
+	case CategoryStructure:
+		return 7
+	case CategoryTesting:
 		return 8
 	}
-	return 8
+	return 9
 }
 
 func hasMatchingExample(examples []Example, domain string) bool {

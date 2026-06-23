@@ -132,3 +132,26 @@ func TestLanguageTier(t *testing.T) {
 		})
 	}
 }
+
+func TestIsSyntheticQualified(t *testing.T) {
+	synthetic := []string{
+		PrefixI18n + "users.show.title",
+		PrefixRoute + "orders_path",
+		PrefixTurboChannel + "messages",
+		PrefixTurboFrame + "modal",
+		PrefixImportmap + "stimulus",
+		PrefixPartial + "users/profile",
+		PrefixRubyCore + "Struct",
+	}
+	for _, q := range synthetic {
+		if !IsSyntheticQualified(q) {
+			t.Errorf("IsSyntheticQualified(%q) = false, want true", q)
+		}
+	}
+	plain := []string{"Order", "Payment::BaseProviderStrategy", "users.show.title", ""}
+	for _, q := range plain {
+		if IsSyntheticQualified(q) {
+			t.Errorf("IsSyntheticQualified(%q) = true, want false", q)
+		}
+	}
+}

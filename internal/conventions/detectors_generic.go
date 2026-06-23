@@ -114,6 +114,7 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 			Total:       total,
 			Strength:    safeStrength(g.count, total),
 			Examples:    g.examples,
+			KeySymbol:   g.targetQualified,
 		})
 	}
 	return out
@@ -366,6 +367,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 			Total:       total,
 			Strength:    safeStrength(g.count, total),
 			Examples:    g.examples,
+			KeySymbol:   g.targetQualified,
 		})
 	}
 	if len(serializerExamples) >= minInstances {
