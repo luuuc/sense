@@ -42,7 +42,7 @@ SKIP_BIG="${SKIP_BIG:-0}"
 # forem(18k) lobsters(1.8k) mastodon(18k) ruby_llm(2.0k) chatwoot(14k) llm.rb(2.2k)
 # redmine(13k) solidus(9k); then gitlabhq(178k) last.
 # Keep in sync with rescan-all.sh (which uses the same sizes, smallest-first, for indexing).
-WINORDER=(discourse raix rails langchainrb forem lobsters mastodon ruby_llm chatwoot llm.rb redmine solidus gitlabhq)
+WINORDER=(discourse raix rails langchainrb forem mastodon ruby_llm chatwoot llm.rb redmine solidus lobsters gitlabhq)
 # The cost outliers held back by SKIP_BIG=1 (only when a metered cap forces it): 178k + the framework.
 BIG="gitlabhq rails"
 
