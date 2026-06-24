@@ -34,6 +34,11 @@ the path but pinned the line a different way, and so manufactured fake
   3. `path` ... `"line": N`        — the JSON-object form, where the line is a
                                      sibling field within a small same-object
                                      window (e.g. {"file": "...rb", "line": 5}).
+                                     The line value may be a bare or quoted
+                                     number ("line": 5 or "line": "5") — some
+                                     models stringify it — or a plural array
+                                     ("lines": [46, 64, 73]) when the model pins
+                                     several exact lines for one file.
   4. `<basename>:N`                — a short basename + line, e.g.
                                      `benefit.rb:260`, ONLY when that basename is
                                      unambiguous among the gold file paths (no two
@@ -79,7 +84,7 @@ def _cited(pattern, hay, basename=None):
     #    {"file": "...benefit.rb", "line": 260}. The [^\n{}] class keeps the
     #    match from crossing a newline or an object boundary, so it cannot bind
     #    a path to a *different* object's line field.
-    if re.search(esc + r'[^\n{}]{0,%d}?"line"\s*:\s*\d+' % _LINE_FIELD_WINDOW, hay):
+    if re.search(esc + r'[^\n{}]{0,%d}?"lines?"\s*:\s*\[?\s*"?\d+' % _LINE_FIELD_WINDOW, hay):
         return True
     # 4. unambiguous basename + line, e.g. "benefit.rb:260" when the full path
     #    was named but the line pinned via the basename. The (?<!\w) guard stops
