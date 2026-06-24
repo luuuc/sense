@@ -27,6 +27,13 @@ source "$BENCH_DIR/lib/throttle-pacing.sh"
 REPO="${1:?usage: runs-variance.sh <repo>}"
 MODELS="${MODELS:-claude-opus-4-8}"
 RUNS="${RUNS:-2}"   # RUNS=2 is the campaign cost cap for all vertical benches (×3 costs too much)
+# Breadth-first append knobs (metered per_run=1 arms). START_RUN shifts run
+# numbering so a later pass files run-2 without redoing run-1; KEEP_RUNS=1 skips
+# the per-repo wipe so the new run is ADDED beside existing run dirs. Defaults
+# (START_RUN=1, KEEP_RUNS=0) reproduce the exact prior behavior byte-for-byte.
+START_RUN="${START_RUN:-1}"
+KEEP_RUNS="${KEEP_RUNS:-0}"
+LAST_RUN=$((START_RUN + RUNS - 1))
 # Per-repo run-spread report, across models. Lives in the tracked bench tree (the
 # vertical base, not a model root) alongside the per-model reports + matrix.
 OUT="$RESULTS_DIR/variance/$REPO.md"
@@ -55,7 +62,7 @@ for m in $MODELS; do
   echo "[run ] $REPO / $m  x$RUNS  start $(date +%H:%M:%S)"
   # Re-resolve RESULTS_DIR to this model's own root so models never overwrite.
   unset RESULTS_DIR; export BENCH_MODEL="$m"; source "$BENCH_DIR/lib/bench-paths.sh"
-  rm -rf "$RESULTS_DIR/baseline/$REPO" "$RESULTS_DIR/sense/$REPO"
+  [ "$KEEP_RUNS" = 1 ] || rm -rf "$RESULTS_DIR/baseline/$REPO" "$RESULTS_DIR/sense/$REPO"
   ok=1
   # Dispatch by model id (mirrors sweep-rails). bench-sense-local takes --runs and
   # writes run-N itself; the cloud/codex runners are single-run, so we invoke them
@@ -71,8 +78,8 @@ for m in $MODELS; do
   if [ "$per_run" = 0 ]; then
     "${runner[@]}" || ok=0
   else
-    for k in $(seq 1 "$RUNS"); do
-      echo "[run ] $REPO / $m  run $k/$RUNS"
+    for k in $(seq "$START_RUN" "$LAST_RUN"); do
+      echo "[run ] $REPO / $m  run $k/$LAST_RUN"
       if ! "${runner[@]}"; then ok=0; break; fi
       for arm in baseline sense; do
         rd="$RESULTS_DIR/$arm/$REPO"
@@ -86,7 +93,7 @@ for m in $MODELS; do
       # cooldown. Then space the next run. The opus path never reaches here.
       cls="$(pace_session_classify "$REPO" "$RESULTS_DIR" "$k")"
       pace_note_session "$cls"
-      [ "$k" -lt "$RUNS" ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between runs ($REPO run $k of $RUNS)"
+      [ "$k" -lt "$LAST_RUN" ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between runs ($REPO run $k of $LAST_RUN)"
     done
   fi
   if [ "$ok" = 1 ]; then
