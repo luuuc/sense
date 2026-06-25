@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.3] - 2026-06-25
+
+### Bug Fixes
+
+- steer agents to cite from Sense refs instead of re-reading files
 ## [1.11.2] - 2026-06-25
 
 ### Bug Fixes
