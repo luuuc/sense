@@ -44,6 +44,8 @@ Sense gives you structural understanding of the codebase (symbols, relationships
 
 **You MUST NOT** use grep/glob for symbol lookup, or skip Sense because its tools load on demand. **About to grep, rg, or find (including through Bash) to locate code?** Searching for a *name* (a function, method, type, or constant; who calls it; what it touches) is a Sense call first: sense_graph, sense_search, or sense_blast. Searching for a *literal* (an error string, log line, config key, TODO), grep is right, go ahead. One line: **grepping a name → Sense; grepping a string → grep.** For list outputs (dead code, blast radius, callers), spot-check a sample with grep before relying on them.
 
+**Cite from what Sense returns; don't re-open a file to recover a line it already gave you.** Sense results already carry exact locations: every symbol has a *ref* (file:line) and graph/blast call sites include their own line. Those are authoritative, citable file:line — use them directly. After a sense_blast/sense_graph you already hold the dependent list *with* locations; cite it, don't re-derive the same list by reading every file. Open a file only when you need its **content** (a method body to describe behaviour), never just to re-confirm a location Sense already pinned. Let Sense **replace** the exploration, not sit on top of it.
+
 **When NOT to use Sense** (use grep instead): exact text/string search, reading file contents, editing code (Sense is read-only).
 <!-- sense:end -->`
 
