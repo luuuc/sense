@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.2] - 2026-06-25
+
+### Bug Fixes
+
+- nudge toward Sense on cd-prefixed and quoted greps
 ## [1.11.1] - 2026-06-23
 
 ### Bug Fixes
