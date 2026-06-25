@@ -854,7 +854,10 @@ func TestGuidanceMarkdownContent(t *testing.T) {
 		}
 	}
 	if !strings.Contains(guidanceMarkdown, "MUST NOT") {
-		t.Error("guidanceMarkdown must include MUST NOT rules")
+		t.Error("guidanceMarkdown must include the MUST NOT rule")
+	}
+	if !strings.Contains(guidanceMarkdown, "grepping a name") {
+		t.Error("guidanceMarkdown must include the name-vs-string grep routing rule")
 	}
 	if strings.Contains(guidanceMarkdown, "FIRST action in every conversation") {
 		t.Error("guidanceMarkdown must not include cold-start protocol (now handled by SessionStart hook)")

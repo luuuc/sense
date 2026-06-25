@@ -42,7 +42,7 @@ Sense gives you structural understanding of the codebase (symbols, relationships
 | What patterns does this project follow? | sense_conventions |
 | Index health, what's indexed | sense_status |
 
-**You MUST NOT** use grep/glob for symbol lookup, or skip Sense because its tools load on demand. For list outputs (dead code, blast radius, callers), spot-check a sample with grep before relying on them.
+**You MUST NOT** use grep/glob for symbol lookup, or skip Sense because its tools load on demand. **About to grep, rg, or find (including through Bash) to locate code?** Searching for a *name* (a function, method, type, or constant; who calls it; what it touches) is a Sense call first: sense_graph, sense_search, or sense_blast. Searching for a *literal* (an error string, log line, config key, TODO), grep is right, go ahead. One line: **grepping a name → Sense; grepping a string → grep.** For list outputs (dead code, blast radius, callers), spot-check a sample with grep before relying on them.
 
 **When NOT to use Sense** (use grep instead): exact text/string search, reading file contents, editing code (Sense is read-only).
 <!-- sense:end -->`

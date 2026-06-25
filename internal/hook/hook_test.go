@@ -467,11 +467,164 @@ func TestExtractBashPattern(t *testing.T) {
 		{"grep -rn UserService . && echo done", "UserService"},
 		{"grep -rn UserService ; echo done", "UserService"},
 		{"grep -rn UserService . || true", "UserService"},
+		// A search behind a cd prefix (the dominant real-world shape) is found.
+		{"cd /repo && grep -rn UserService .", "UserService"},
+		{"cd /repo ; grep -rn UserService .", "UserService"},
+		{"cd /a/b || true && grep UserService", "UserService"},
+		// Quoted multi-word patterns survive intact.
+		{`grep -rn "func Open" internal`, "func Open"},
+		{"cd /x && grep -rn 'func Open' internal", "func Open"},
+		// A grep that only filters piped output is not a code search.
+		{"cat foo.go | grep UserService", ""},
+		{"git status | grep '^??'", ""},
+		{"ls | grep -i foo", ""},
+		// Path-qualified search binaries are recognised by basename.
+		{"/usr/bin/grep -rn UserService .", "UserService"},
+		{"egrep -rn UserService .", "UserService"},
+		{"fgrep UserService .", "UserService"},
+		// A value-taking flag with no following value must not over-consume.
+		{"grep --include", ""},
+		// A single & (background) acts as a statement boundary.
+		{"echo a & grep UserService", "UserService"},
 	}
 	for _, tc := range cases {
 		if got := extractBashPattern(tc.cmd); got != tc.want {
 			t.Errorf("extractBashPattern(%q) = %q, want %q", tc.cmd, got, tc.want)
 		}
+	}
+}
+
+func TestSymbolFromPattern(t *testing.T) {
+	cases := []struct {
+		pattern string
+		want    string
+	}{
+		{"UserService", "UserService"},
+		{"Spree::Order", "Spree::Order"},
+		{"func Open", "Open"},
+		{"def perform", "perform"},
+		{"class User", "User"},
+		{"type Adapter", "Adapter"},
+		{"module Billing", "Billing"},
+		{"func Open(", "Open"},
+		{"the model file", ""}, // multi-word literal, not a definition form
+		{"a b c", ""},
+		{"", ""},
+		{"   ", ""},
+	}
+	for _, tc := range cases {
+		if got := symbolFromPattern(tc.pattern); got != tc.want {
+			t.Errorf("symbolFromPattern(%q) = %q, want %q", tc.pattern, got, tc.want)
+		}
+	}
+}
+
+func TestShellTokens(t *testing.T) {
+	// Quoted multi-word stays one word; operators are split out and flagged.
+	toks := shellTokens(`cd /x && grep -rn "func Open" . | head`)
+	var got []string
+	for _, tk := range toks {
+		if tk.op {
+			got = append(got, "op:"+tk.val)
+		} else {
+			got = append(got, tk.val)
+		}
+	}
+	want := []string{"cd", "/x", "op:&&", "grep", "-rn", "func Open", ".", "op:|", "head"}
+	if len(got) != len(want) {
+		t.Fatalf("shellTokens tokens = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("token[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Single quotes are literal; double-quote escapes are unwrapped.
+	if tk := shellTokens(`grep 'a;b'`); len(tk) != 2 || tk[1].val != "a;b" {
+		t.Errorf("single-quoted literal not preserved: %+v", tk)
+	}
+	if tk := shellTokens(`echo "a\"b"`); len(tk) != 2 || tk[1].val != `a"b` {
+		t.Errorf("escaped double-quote not unwrapped: %+v", tk)
+	}
+	// An unterminated quote extends to end-of-input instead of panicking.
+	if tk := shellTokens(`grep "foo`); len(tk) != 2 || tk[1].val != "foo" {
+		t.Errorf("unterminated quote not tolerated: %+v", tk)
+	}
+}
+
+func TestPreToolUseBashMalformedCommand(t *testing.T) {
+	dir := indexedDir(t)
+	// Malformed or adversarial shell must degrade to valid JSON output, never
+	// panic and never block the command. This hook runs on every Bash call, so
+	// "be invisible when unsure" is the contract.
+	cmds := []string{
+		`grep -rn "func Open`, // unterminated double quote
+		`grep -rn 'sym`,       // unterminated single quote
+		`grep foo\`,           // lone trailing backslash
+		`cd /x && grep "a\`,   // trailing backslash inside a quote
+		`;; && | grep`,        // operator soup, no real command
+		`grep`,                // search binary, no arguments
+	}
+	for _, cmd := range cmds {
+		payload, err := json.Marshal(map[string]any{
+			"tool_name":  "Bash",
+			"tool_input": map[string]any{"command": cmd},
+		})
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		var buf bytes.Buffer
+		Run("pre-tool-use", dir, bytes.NewReader(payload), &buf)
+		if buf.Len() == 0 {
+			t.Errorf("command %q produced no output", cmd)
+			continue
+		}
+		var v map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &v); err != nil {
+			t.Errorf("command %q produced invalid JSON %q: %v", cmd, buf.String(), err)
+		}
+	}
+}
+
+func TestPreToolUseBashCdPrefixNudges(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"cd /tmp && grep -rn UserService ."}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp nudgeResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.AdditionalContext == "" || !strings.Contains(resp.AdditionalContext, "sense_graph") {
+		t.Errorf("cd-prefixed grep of known symbol should nudge, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseBashQuotedDefNudges(t *testing.T) {
+	dir := indexedDir(t)
+	input := `{"tool_name":"Bash","tool_input":{"command":"grep -rn \"func UserService\" ."}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	var resp nudgeResponse
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if resp.AdditionalContext == "" || !strings.Contains(resp.AdditionalContext, "UserService") {
+		t.Errorf("quoted def-form grep should nudge for the declared symbol, got %q", buf.String())
+	}
+}
+
+func TestPreToolUseBashPipeFilterNoOp(t *testing.T) {
+	dir := indexedDir(t)
+	// grep here filters git's output; it is not a code search, so no nudge.
+	input := `{"tool_name":"Bash","tool_input":{"command":"git status | grep UserService"}}`
+	var buf bytes.Buffer
+	Run("pre-tool-use", dir, strings.NewReader(input), &buf)
+
+	if buf.String() != "{}\n" {
+		t.Errorf("pipe-filter grep should be no-op, got %q", buf.String())
 	}
 }
 

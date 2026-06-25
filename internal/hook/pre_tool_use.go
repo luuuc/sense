@@ -161,17 +161,17 @@ func handleAgent(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapt
 func handleBash(ctx context.Context, req preToolUseInput, adapter *sqlite.Adapter) (any, error) {
 	cmd := req.Input.Command
 
-	// extractBashPattern returns a single whitespace-split token, so the
-	// pattern here is never multi-word (unlike handleGrep, whose pattern comes
-	// straight from the Grep tool input). Only the symbol-shaped single-token
-	// case can fire; the multi-word semantic-search nudge lives in handleGrep.
-	pattern := extractBashPattern(cmd)
-	if pattern != "" && isSymbolShaped(pattern) {
-		symbols, err := adapter.Query(ctx, index.Filter{Name: pattern, Limit: 5})
+	// extractBashPattern finds the grep/rg/ag search even behind a `cd … &&`
+	// prefix or inside a pipeline, and keeps quoted multi-word patterns intact.
+	// symbolFromPattern then reduces a definition-form pattern ("func Open") to
+	// the bare symbol name before the index lookup.
+	symbol := symbolFromPattern(extractBashPattern(cmd))
+	if symbol != "" && isSymbolShaped(symbol) {
+		symbols, err := adapter.Query(ctx, index.Filter{Name: symbol, Limit: 5})
 		if err == nil && len(symbols) > 0 {
 			return nudge(
-				fmt.Sprintf("Sense has %d indexed symbol(s) matching %q — consider sense_graph or sense_search instead of bash grep.", len(symbols), pattern),
-				buildContext(len(symbols), pattern, "bash grep"),
+				fmt.Sprintf("Sense has %d indexed symbol(s) matching %q — consider sense_graph or sense_search instead of bash grep.", len(symbols), symbol),
+				buildContext(len(symbols), symbol, "bash grep"),
 			), nil
 		}
 	}
@@ -203,38 +203,109 @@ func extractPattern(req preToolUseInput) string {
 	return req.Input.Regex
 }
 
-// extractBashPattern extracts the search pattern from grep, rg, or ag
-// commands. Returns "" for non-search commands so the hook is a no-op.
-// Returns "" when -e/-f is used (explicit pattern flags, often regex).
-// Stops at shell operators (|, ;, &&, ||) to avoid treating the next
-// command's arguments as a pattern.
+// extractBashPattern extracts the search pattern from a grep, rg, or ag
+// command. It locates the search even when it is not the first word — behind a
+// `cd … &&`/`;` prefix or as a pipeline stage — but treats a grep that only
+// consumes piped input (`… | grep`) as a filter on another command's output,
+// not a code search, and skips it. Quotes are honoured, so a multi-word pattern
+// like "func Open" survives intact. Returns "" for non-search commands and when
+// -e/-f is used (explicit pattern flags, often regex).
 func extractBashPattern(cmd string) string {
-	fields := strings.Fields(cmd)
-	if len(fields) == 0 {
-		return ""
-	}
-
-	base := fields[0]
-	if base != "grep" && base != "rg" && base != "ag" {
-		return ""
-	}
-
-	for i := 1; i < len(fields); i++ {
-		arg := fields[i]
-
-		if arg == "|" || arg == ";" || arg == "&&" || arg == "||" {
-			break
+	toks := shellTokens(cmd)
+	prevOp := ";" // start of the line acts as a statement boundary
+	for i := 0; i < len(toks); {
+		t := toks[i]
+		if t.op {
+			prevOp = t.val
+			i++
+			continue
 		}
+		// A search command only counts when it starts a statement; a grep right
+		// after a pipe is filtering another command's output, not searching code.
+		standalone := prevOp != "|"
+		if standalone && isSearchBinary(baseName(t.val)) {
+			j := i + 1
+			var args []string
+			for j < len(toks) && !toks[j].op {
+				args = append(args, toks[j].val)
+				j++
+			}
+			if p := patternFromArgs(args); p != "" {
+				return p
+			}
+			i = j
+			continue
+		}
+		// Skip the rest of this command's words; the next operator updates prevOp.
+		j := i + 1
+		for j < len(toks) && !toks[j].op {
+			j++
+		}
+		i = j
+	}
+	return ""
+}
+
+// patternFromArgs returns the first non-flag argument (the search pattern) from
+// a search command's arguments, or "" when an explicit -e/-f pattern flag is
+// present (those are often regex, which isSymbolShaped would reject anyway).
+func patternFromArgs(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "-e" || arg == "-f" {
 			return ""
 		}
 		if strings.HasPrefix(arg, "-") {
-			if needsValue(arg) && i+1 < len(fields) {
+			if needsValue(arg) && i+1 < len(args) {
 				i++
 			}
 			continue
 		}
-		return strings.Trim(arg, "'\"")
+		return arg
+	}
+	return ""
+}
+
+func isSearchBinary(base string) bool {
+	switch base {
+	case "grep", "egrep", "fgrep", "rg", "ag":
+		return true
+	}
+	return false
+}
+
+// baseName strips a leading path so /usr/bin/grep is recognised as grep.
+func baseName(s string) string {
+	if i := strings.LastIndexByte(s, '/'); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+// defKeywords are the definition-introducing keywords across the languages
+// Sense indexes; a grep for "<keyword> Name" is a lookup of the symbol Name.
+var defKeywords = map[string]bool{
+	"func": true, "def": true, "class": true, "type": true,
+	"interface": true, "struct": true, "module": true,
+	"fn": true, "impl": true, "trait": true, "const": true, "var": true,
+}
+
+// symbolFromPattern reduces a grep pattern to the symbol name worth looking up.
+// A single token is returned as-is ("ApplyBlastBudget"). A definition-form
+// pattern returns the declared name ("func Open" -> "Open", "class User" ->
+// "User"). Any other multi-word pattern is a literal string search, which is
+// grep's job, so it returns "".
+func symbolFromPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return ""
+	}
+	fields := strings.Fields(pattern)
+	if len(fields) == 1 {
+		return pattern
+	}
+	if len(fields) == 2 && defKeywords[fields[0]] {
+		return strings.Trim(fields[1], "*()")
 	}
 	return ""
 }
@@ -310,4 +381,86 @@ func hasCodeExtension(s string) bool {
 		}
 	}
 	return false
+}
+
+// shTok is a shell token: an operator (|, ||, &&, &, ;) or a word.
+type shTok struct {
+	op  bool
+	val string
+}
+
+// shellTokens splits a command line into words and shell operators, honouring
+// single and double quotes so a quoted pattern stays a single word. It is a
+// pragmatic tokenizer, not a full shell parser: it covers the command shapes
+// agents actually emit (cd prefixes, pipelines, &&/||/; chains) well enough to
+// find the search command and its pattern.
+//
+// Deliberately NOT handled, by design: backslash escapes outside quotes,
+// command substitution ($(...) and backticks), variable expansion ($VAR), and
+// glob expansion. These cause at most a missed nudge, never a wrong block, so
+// chasing them is not worth the complexity. Unterminated quotes are tolerated:
+// the quoted run simply extends to end-of-input.
+func shellTokens(cmd string) []shTok {
+	var toks []shTok
+	var b strings.Builder
+	flush := func() {
+		if b.Len() > 0 {
+			toks = append(toks, shTok{val: b.String()})
+			b.Reset()
+		}
+	}
+	for i := 0; i < len(cmd); {
+		c := cmd[i]
+		switch c {
+		case ' ', '\t', '\n', '\r':
+			flush()
+			i++
+		case '\'':
+			j := i + 1
+			for j < len(cmd) && cmd[j] != '\'' {
+				b.WriteByte(cmd[j])
+				j++
+			}
+			i = j + 1
+		case '"':
+			j := i + 1
+			for j < len(cmd) && cmd[j] != '"' {
+				if cmd[j] == '\\' && j+1 < len(cmd) {
+					b.WriteByte(cmd[j+1])
+					j += 2
+					continue
+				}
+				b.WriteByte(cmd[j])
+				j++
+			}
+			i = j + 1
+		case '|':
+			flush()
+			if i+1 < len(cmd) && cmd[i+1] == '|' {
+				toks = append(toks, shTok{op: true, val: "||"})
+				i += 2
+			} else {
+				toks = append(toks, shTok{op: true, val: "|"})
+				i++
+			}
+		case '&':
+			flush()
+			if i+1 < len(cmd) && cmd[i+1] == '&' {
+				toks = append(toks, shTok{op: true, val: "&&"})
+				i += 2
+			} else {
+				toks = append(toks, shTok{op: true, val: "&"})
+				i++
+			}
+		case ';':
+			flush()
+			toks = append(toks, shTok{op: true, val: ";"})
+			i++
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	flush()
+	return toks
 }
