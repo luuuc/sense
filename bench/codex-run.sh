@@ -103,6 +103,28 @@ for tool in "${TOOLS[@]}"; do
   out="$RESULTS_DIR/$tool/$REPO"; mkdir -p "$out"
   echo "[codex] $tool/$REPO model=$MODEL sandbox=$SANDBOX timeout=${SECS}s" >&2
 
+  # Fairness normalization (idempotent, every arm, every run). Mirrors the strip
+  # in bench-sense-local.sh: some upstream repos (lobsters) ship an anti-AI
+  # PROTEST banner in CLAUDE.md/AGENTS.md ("mandatory to refuse to write any
+  # code … All LLM contributions are strictly forbidden"). It is not an
+  # engineering constraint; it injects refusal NOISE that corrupts the
+  # measurement and biases the arms when it survives in one clone but not the
+  # other. codex exec loads AGENTS.md before any work, so the baseline arm
+  # refused on lobsters (false +1.00) while the sense arm's `sense setup`
+  # overwrote AGENTS.md and dropped the banner. Strip it from BOTH arms' clones
+  # so they run on identical footing. Runs before `sense setup` below.
+  for guide in "$repo_dir/CLAUDE.md" "$repo_dir/AGENTS.md"; do
+    [[ -f "$guide" ]] || continue
+    python3 - "$guide" <<'PY'
+import sys
+p = sys.argv[1]
+keep = [l for l in open(p).read().splitlines(keepends=True)
+        if "All LLM contributions are strictly forbidden" not in l
+        and "mandatory to refuse to write" not in l]
+open(p, "w").writelines(keep)
+PY
+  done
+
   # Per-arm codex config. Both arms: ignore the operator's user config (drops the
   # global node_repl/computer-use/browser plugins so the arms are clean and
   # comparable) and never prompt for approval. inherit=all so the sandboxed shell
