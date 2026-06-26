@@ -8,6 +8,9 @@ checking everything else the maintain workflow needs:
   STRUCTURE  — frontmatter parses; required keys present; teardowns have Blocks A-J.
   REFERENCES — every local markdown link resolves; no links to removed files.
   SYNC       — every pack appears in the README board (and vice-versa).
+  SKELETON   — _skeleton.md's embedded board (headline counts, mean Δ, anti-fab
+               list, per-repo cited/deps/sense-only/verdict cells) matches the
+               canonical scoreboard regenerated from disk (scoreboard.build).
   DISCIPLINE — (warn) no em-dashes in body prose; flag mentions of removed files.
 
 Exit non-zero if any FAIL finding is emitted (WARN/INFO do not fail the gate).
@@ -74,6 +77,123 @@ def _md_links(text):
         if not target or target.startswith(("http://", "https://", "mailto:")):
             continue
         yield target
+
+
+# --- _skeleton.md embedded-board validation -------------------------------
+# _skeleton.md is a hand-authored fact pack that ALSO embeds a copy of the
+# campaign scoreboard (headline counts + the per-repo table). Nothing else
+# regenerates or checks that copy, so it drifts silently. We re-derive the
+# canonical board from disk (scoreboard.build) and diff the skeleton's embedded
+# numbers against it, FAILing on any mismatch. The skeleton's prose stays
+# hand-written; only its board cells are gated.
+
+def _canon_board(results_root):
+    """Canonical board from disk via scoreboard.build (None if unavailable)."""
+    import scoreboard as sb  # local: bench/lib is on sys.path for script + tests
+    rows, wins, ties, losses, _eff, mean_d, _judges = sb.build(results_root)
+    repos = {}
+    for repo, b, s, _d, verdict, antifab, _e in rows:
+        dd = (s["deps"] - b["deps"]) if (
+            b["deps"] is not None and s["deps"] is not None) else None
+        repos[repo] = {"cited_b": b["cited"], "cited_s": s["cited"], "dd": dd,
+                       "sense_only": s["sense_only"], "verdict": verdict,
+                       "antifab": antifab}
+    return {"repos": repos, "wins": wins, "ties": ties, "losses": losses,
+            "mean_d": mean_d, "n": len(rows),
+            "antifab": [r for r, v in repos.items() if v["antifab"]]}
+
+
+def skeleton_board_findings(articles_dir, results_root, canon=None):
+    """Diff _skeleton.md's embedded board against the canonical scoreboard.
+
+    `canon` may be injected (tests); otherwise it is regenerated from disk.
+    Missing skeleton / no on-disk data / un-importable board are WARN (the gate
+    is not failed by an absent input); a real number mismatch is FAIL.
+    """
+    out = []
+    path = os.path.join(articles_dir, "_skeleton.md")
+    if not os.path.exists(path):
+        return [(WARN, "skeleton", "_skeleton.md not found; embedded board unchecked")]
+    if canon is None:
+        try:
+            canon = _canon_board(results_root)
+        except Exception as e:  # board not regenerable here -> don't fail the gate
+            return [(WARN, "skeleton", f"could not regenerate board to check _skeleton.md: {e}")]
+    if not canon["repos"]:
+        return [(WARN, "skeleton", "no board data on disk; _skeleton.md board unchecked")]
+    text = open(path).read()
+
+    # headline: N wins / M ties / K losses
+    m = re.search(r"\*\*(\d+)\s+wins?\s*/\s*(\d+)\s+ties?\s*/\s*(\d+)\s+loss(?:es)?\*\*", text)
+    if not m:
+        out.append((FAIL, "skeleton", "embedded board headline (N wins / M ties / K losses) not found"))
+    else:
+        w, t, l = (int(x) for x in m.groups())
+        if (w, t, l) != (canon["wins"], canon["ties"], canon["losses"]):
+            out.append((FAIL, "skeleton",
+                        f"_skeleton.md headline {w}w/{t}t/{l}l != board "
+                        f"{canon['wins']}w/{canon['ties']}t/{canon['losses']}l"))
+
+    # mean cited Δ
+    mm = re.search(r"[Mm]ean cited Δ[^*]*\*\*([+-]?\d+\.\d+)\*\*", text)
+    if not mm:
+        out.append((FAIL, "skeleton", "embedded board mean cited Δ not found"))
+    elif abs(float(mm.group(1)) - canon["mean_d"]) > 0.002:
+        out.append((FAIL, "skeleton",
+                    f"_skeleton.md mean cited Δ {mm.group(1)} != board {canon['mean_d']:+.3f}"))
+
+    # anti-fabrication (⚑) repo list
+    seg = re.search(r"anti-fabrication\*\*\s+wins\b.*?:\s*\*\*([^*]+)\*\*", text, re.S)
+    if seg:
+        present = {r for r in canon["repos"] if re.search(rf"\b{re.escape(r)}\b", seg.group(1))}
+        if present != set(canon["antifab"]):
+            out.append((FAIL, "skeleton",
+                        f"_skeleton.md anti-fab list {sorted(present)} != board {sorted(canon['antifab'])}"))
+    elif canon["antifab"]:
+        out.append((FAIL, "skeleton", "embedded board anti-fabrication win list not found"))
+
+    # per-repo rows
+    seen = set()
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s.startswith("|"):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if len(cells) < 9:
+            continue
+        repo = cells[0].replace("🔸", "").strip()
+        if repo not in canon["repos"]:
+            continue
+        seen.add(repo)
+        c = canon["repos"][repo]
+        nums = re.findall(r"-?\d+\.\d+", cells[1])
+        if len(nums) >= 2:
+            cb, cs = float(nums[0]), float(nums[1])
+            if abs(cb - c["cited_b"]) > 0.01 or abs(cs - c["cited_s"]) > 0.01:
+                out.append((FAIL, "skeleton",
+                            f"_skeleton.md {repo} cited {cb:.2f}→{cs:.2f} != board "
+                            f"{c['cited_b']:.2f}→{c['cited_s']:.2f}"))
+        else:
+            out.append((FAIL, "skeleton", f"_skeleton.md {repo}: cannot parse cited cell '{cells[1]}'"))
+        dnums = re.findall(r"-?\d+\.\d+", cells[2])
+        if c["dd"] is None:
+            if dnums:
+                out.append((FAIL, "skeleton",
+                            f"_skeleton.md {repo} deps-delta '{cells[2]}' but board has none (—)"))
+        elif not dnums or abs(float(dnums[0]) - c["dd"]) > 0.01:
+            out.append((FAIL, "skeleton",
+                        f"_skeleton.md {repo} deps-delta '{cells[2]}' != board {c['dd']:+.2f}"))
+        if cells[3] != str(c["sense_only"]):
+            out.append((FAIL, "skeleton",
+                        f"_skeleton.md {repo} sense-only {cells[3]} != board {c['sense_only']}"))
+        vm = re.search(r"\b(WIN|TIE|LOSS)\b", cells[8])
+        if not vm or vm.group(1) != c["verdict"]:
+            out.append((FAIL, "skeleton",
+                        f"_skeleton.md {repo} verdict '{cells[8]}' != board {c['verdict']}"))
+    missing = [r for r in canon["repos"] if r not in seen]
+    if missing:
+        out.append((FAIL, "skeleton", f"_skeleton.md board missing rows for: {','.join(sorted(missing))}"))
+    return out
 
 
 def audit(articles_dir=DEFAULT_ARTICLES, results_root=DEFAULT_RESULTS):
@@ -165,6 +285,9 @@ def audit(articles_dir=DEFAULT_ARTICLES, results_root=DEFAULT_RESULTS):
         if bad:
             out.append((WARN, "em-dash",
                         f"{os.path.basename(path)}: {len(bad)} prose line(s) with an em-dash"))
+
+    # --- _skeleton.md embedded board vs canonical scoreboard ---
+    out += skeleton_board_findings(articles_dir, results_root)
 
     return out
 

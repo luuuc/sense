@@ -6,8 +6,9 @@
 #      teardown's claimed headline numbers from its `data:` bench root and
 #      prints FRESH / OUTDATED. Args ($@, e.g. --tol 0.02) pass through here.
 #   2. structural + referential audit (lib/article_audit.py) — coverage (every
-#      benched repo has one pack), Block A-I structure, frontmatter keys, broken
-#      local links, README board sync, and an em-dash WARN. FAILs fail the gate.
+#      benched repo has one pack), Block A-J structure, frontmatter keys, broken
+#      local links, README board sync, _skeleton.md's embedded board vs the
+#      canonical scoreboard, and an em-dash WARN. FAILs fail the gate.
 #
 # Run after any re-bench / re-judge / re-scan so a draft never ships stale or
 # structurally-broken. Numbers + structure only; the prose stays the author's.

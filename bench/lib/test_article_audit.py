@@ -69,3 +69,85 @@ def test_clean_set_passes(tmp_path):
             "axes": "{}", "stats": "{}"}, FULL_BODY)
     findings = aa.audit(str(arts), _results(tmp_path, ["foo"]))
     assert [f for f in findings if f[0] == aa.FAIL] == []
+
+
+# --- _skeleton.md embedded-board validation ---
+
+# canonical board (as scoreboard.build would return it) for the fixtures below
+_CANON = {
+    "repos": {
+        "mastodon": {"cited_b": 0.28, "cited_s": 0.83, "dd": 0.72,
+                     "sense_only": 12, "verdict": "WIN", "antifab": False},
+        "discourse": {"cited_b": 0.35, "cited_s": 0.75, "dd": 0.56,
+                      "sense_only": 10, "verdict": "WIN", "antifab": True},
+        "ruby_llm": {"cited_b": 0.76, "cited_s": 0.80, "dd": None,
+                     "sense_only": 0, "verdict": "WIN", "antifab": False},
+    },
+    "wins": 3, "ties": 0, "losses": 0, "mean_d": 0.470, "n": 3,
+    "antifab": ["discourse"],
+}
+
+_SKEL_OK = (
+    "**3 wins / 0 ties / 0 losses** across 3 repos on `cited_recall`. "
+    "Mean cited Δ (sense − baseline): **+0.470**. One **anti-fabrication** "
+    "wins (⚑ — baseline asserts a wrong relation): **discourse**.\n\n"
+    "| repo | cited recall b→s (Δ) | deps-delta | sense-only | B | related | grnd | contra | verdict |\n"
+    "|---|---|---|---|---|---|---|---|---|\n"
+    "| mastodon | 0.28→0.83 (+0.55) | +0.72 | 12 | x | x | x | x | **WIN** |\n"
+    "| discourse | 0.35→0.75 (+0.40) | +0.56 | 10 | x | x | x | x | **WIN ⚑** |\n"
+    "| ruby_llm 🔸 | 0.76→0.80 (+0.04) | — | 0 | x | x | x | x | **WIN** |\n"
+)
+
+
+def _skel(d, text):
+    open(os.path.join(d, "_skeleton.md"), "w").write(text)
+
+
+def _skel_fails(tmp_path, text):
+    arts = tmp_path / "articles"
+    arts.mkdir()
+    _skel(str(arts), text)
+    findings = aa.skeleton_board_findings(str(arts), "", canon=_CANON)
+    return [m for lv, c, m in findings if lv == aa.FAIL]
+
+
+def test_skeleton_matching_board_passes(tmp_path):
+    assert _skel_fails(tmp_path, _SKEL_OK) == []
+
+
+def test_skeleton_headline_drift_fails(tmp_path):
+    bad = _SKEL_OK.replace("**3 wins / 0 ties", "**4 wins / 0 ties")
+    fails = _skel_fails(tmp_path, bad)
+    assert any("headline" in m for m in fails)
+
+
+def test_skeleton_mean_delta_drift_fails(tmp_path):
+    bad = _SKEL_OK.replace("**+0.470**", "**+0.310**")
+    fails = _skel_fails(tmp_path, bad)
+    assert any("mean cited" in m for m in fails)
+
+
+def test_skeleton_row_cell_drift_fails(tmp_path):
+    bad = _SKEL_OK.replace("| 12 |", "| 9 |")  # mastodon sense-only 12 -> 9
+    fails = _skel_fails(tmp_path, bad)
+    assert any("mastodon" in m and "sense-only" in m for m in fails)
+
+
+def test_skeleton_verdict_drift_fails(tmp_path):
+    bad = _SKEL_OK.replace("| **WIN ⚑** |", "| **TIE** |")  # discourse WIN -> TIE
+    fails = _skel_fails(tmp_path, bad)
+    assert any("discourse" in m and "verdict" in m for m in fails)
+
+
+def test_skeleton_missing_row_fails(tmp_path):
+    bad = "\n".join(l for l in _SKEL_OK.splitlines() if not l.startswith("| ruby_llm"))
+    fails = _skel_fails(tmp_path, bad)
+    assert any("missing rows" in m and "ruby_llm" in m for m in fails)
+
+
+def test_skeleton_absent_is_warn_not_fail(tmp_path):
+    arts = tmp_path / "articles"
+    arts.mkdir()  # no _skeleton.md written
+    findings = aa.skeleton_board_findings(str(arts), "", canon=_CANON)
+    assert [f for f in findings if f[0] == aa.FAIL] == []
+    assert any(c == "skeleton" and lv == aa.WARN for lv, c, _ in findings)
