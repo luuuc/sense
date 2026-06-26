@@ -1,0 +1,566 @@
+{
+  "scenario": "Mastodon work session - audit the Status contract before a teardown rework",
+  "repo": "mastodon",
+  "adoption_score": 0.08,
+  "keyword_coverage": 0.6111,
+  "step_avg_score": 0.5119,
+  "efficiency": 0.0,
+  "completeness": 0.3976,
+  "tool_fluency": 0.0,
+  "discoverability": 0.2,
+  "citation_grounding": {
+    "total": 4,
+    "grounded": 4,
+    "unresolved": 0,
+    "hallucinated": 0,
+    "rate": 1.0,
+    "examples": {
+      "grounded": [
+        "app/models/status.rb:34 (line 34 in app/models/status.rb (file has 502 lines))",
+        "app/lib/activitypub/activity/create.rb:63 (line 63 in app/lib/activitypub/activity/create.rb (file has 492 lines))",
+        "app/lib/activitypub/activity/announce.rb:18 (line 18 in app/lib/activitypub/activity/announce.rb (file has 88 lines))",
+        "app/models/concerns/status/visibility.rb:31 (line 31 in app/models/concerns/status/visibility.rb (file has 47 lines))"
+      ],
+      "unresolved": [],
+      "hallucinated": []
+    },
+    "details": [
+      {
+        "file": "app/models/status.rb",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in app/models/status.rb (file has 502 lines)"
+      },
+      {
+        "file": "app/lib/activitypub/activity/create.rb",
+        "locator": "63",
+        "status": "grounded",
+        "reason": "line 63 in app/lib/activitypub/activity/create.rb (file has 492 lines)"
+      },
+      {
+        "file": "app/lib/activitypub/activity/announce.rb",
+        "locator": "18",
+        "status": "grounded",
+        "reason": "line 18 in app/lib/activitypub/activity/announce.rb (file has 88 lines)"
+      },
+      {
+        "file": "app/models/concerns/status/visibility.rb",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in app/models/concerns/status/visibility.rb (file has 47 lines)"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 23,
+    "mentioned": 4,
+    "cited": 3,
+    "mention_recall": 0.1739,
+    "cited_recall": 0.1304,
+    "groups": {
+      "contract": {
+        "total": 3,
+        "mentioned": 2,
+        "cited": 2,
+        "mention_recall": 0.6667,
+        "cited_recall": 0.6667
+      },
+      "write-path": {
+        "total": 2,
+        "mentioned": 1,
+        "cited": 0,
+        "mention_recall": 0.5,
+        "cited_recall": 0.0
+      },
+      "dependents": {
+        "total": 16,
+        "mentioned": 1,
+        "cited": 1,
+        "mention_recall": 0.0625,
+        "cited_recall": 0.0625
+      },
+      "specs": {
+        "total": 2,
+        "mentioned": 0,
+        "cited": 0,
+        "mention_recall": 0.0,
+        "cited_recall": 0.0
+      }
+    },
+    "missed_mention": [
+      "c:threading",
+      "a:statuses-ctrl",
+      "d:feed-manager",
+      "d:feed-redis",
+      "d:link-feed",
+      "d:process-links",
+      "d:permalink",
+      "d:account-warning",
+      "d:moderation-act",
+      "d:report-service",
+      "d:account-merge",
+      "d:backup",
+      "d:annual-report",
+      "d:email-dist",
+      "d:user-cleanup",
+      "d:unfilter",
+      "d:media-attach",
+      "spec:status",
+      "spec:post-svc"
+    ],
+    "missed_cite": [
+      "c:threading",
+      "a:statuses-ctrl",
+      "a:post-service",
+      "d:feed-manager",
+      "d:feed-redis",
+      "d:link-feed",
+      "d:process-links",
+      "d:permalink",
+      "d:account-warning",
+      "d:moderation-act",
+      "d:report-service",
+      "d:account-merge",
+      "d:backup",
+      "d:annual-report",
+      "d:email-dist",
+      "d:user-cleanup",
+      "d:unfilter",
+      "d:media-attach",
+      "spec:status",
+      "spec:post-svc"
+    ],
+    "details": [
+      {
+        "id": "status-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:visibility",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:threading",
+        "group": "contract",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "a:statuses-ctrl",
+        "group": "write-path",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "a:post-service",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "d:feed-manager",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:feed-redis",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:link-feed",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:ap-announce",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:process-links",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:permalink",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:account-warning",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:moderation-act",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:report-service",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:account-merge",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:backup",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:annual-report",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:email-dist",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:user-cleanup",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:unfilter",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:media-attach",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "spec:status",
+        "group": "specs",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "spec:post-svc",
+        "group": "specs",
+        "mentioned": false,
+        "cited": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Status",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 4,
+          "unique_refs": 4,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.3333,
+      "combined_score": 0.6,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the Status contract and what it is built on",
+      "checks": [
+        {
+          "hit": false,
+          "type": "word",
+          "value": "concern",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 4,
+          "unique_refs": 4,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "status.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 0.3333,
+      "combined_score": 0.6,
+      "fairness_score": 0.75
+    },
+    {
+      "name": "Trace how a status is created and distributed",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "feed",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 4,
+          "unique_refs": 4,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Audit every dependent of the Status contract",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 4,
+          "unique_refs": 4,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 0.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.0,
+      "fairness_score": 0.0
+    },
+    {
+      "name": "Trace how status identity and visibility are guarded",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 4,
+          "unique_refs": 4,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.5,
+      "fairness_score": 0.5
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 4,
+          "unique_refs": 4,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 0.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.0,
+      "fairness_score": 0.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 4,
+          "unique_refs": 4,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "spec",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.0,
+      "score_bonus": 1.0,
+      "combined_score": 0.3333,
+      "fairness_score": 0.3333
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0, post-MCP misses: 0 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 29,
+    "grep_count": 10,
+    "read_count": 7,
+    "mcp_count": 0,
+    "token_input_uncached": 1010046,
+    "token_output": 9878,
+    "token_cache_read": 0,
+    "token_cache_write": 0,
+    "token_total_billed": 1019924,
+    "token_total_all": 1019924,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 1019924,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 3595,
+    "audit_chars": 192551,
+    "overhead": null
+  }
+}

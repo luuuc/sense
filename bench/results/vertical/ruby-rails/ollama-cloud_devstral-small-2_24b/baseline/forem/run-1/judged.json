@@ -1,0 +1,424 @@
+{
+  "scenario": "Forem work session - audit the Article contract before a teardown rework",
+  "repo": "forem",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "forem.rubric.yaml"
+  },
+  "scenario_quality": 0.1818,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 6,
+    "related": 6,
+    "contradicted": 0,
+    "covered_recall": 0.2609,
+    "related_recall": 0.2609,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "a:articles-ctrl",
+      "a:creator",
+      "d:admin-tools",
+      "d:moderations",
+      "d:tag-adjustments",
+      "d:video-states",
+      "d:feed-tag",
+      "d:tag-hotness",
+      "d:suggest-prominent",
+      "d:trend-detector",
+      "d:award-streak",
+      "d:welcome-gen",
+      "d:edge-cache",
+      "d:liquid-embed-extr",
+      "d:notifiable-action",
+      "d:audit-unpublish",
+      "d:interest-embed"
+    ],
+    "missed_related": [
+      "a:articles-ctrl",
+      "a:creator",
+      "d:admin-tools",
+      "d:moderations",
+      "d:tag-adjustments",
+      "d:video-states",
+      "d:feed-tag",
+      "d:tag-hotness",
+      "d:suggest-prominent",
+      "d:trend-detector",
+      "d:award-streak",
+      "d:welcome-gen",
+      "d:edge-cache",
+      "d:liquid-embed-extr",
+      "d:notifiable-action",
+      "d:audit-unpublish",
+      "d:interest-embed"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "article-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:reactable",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:taggable",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:liquid-embeddable",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:subscription-src",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:articles-ctrl",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "a:creator",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-tools",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:moderations",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:tag-adjustments",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:video-states",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:feed-tag",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:feed-event",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:tag-hotness",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:suggest-prominent",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:trend-detector",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:award-streak",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:welcome-gen",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:edge-cache",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:liquid-embed-extr",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:notifiable-action",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:audit-unpublish",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:interest-embed",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.6,
+          "rationale": "The answer correctly names Forem/dev.to, locates Article at app/models/article.rb, and gives an exhaustive internal breakdown of concerns, associations, and callbacks with line numbers. However, it says only 'models, controllers, services, and workers' with no paths for app/services/articles/, app/workers/, app/queries/, lib/, or app/models/concerns/, so the agent still needs to explore where effects fan out across the codebase."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "Line-level specificity inside article.rb is strong (e.g., 'has_many :comments, as: :commentable ... (app/models/article.rb:171)'). The concern files themselves are never pathed (no app/models/concerns/reactable.rb, taggable.rb, etc.), and the broader directories (services, workers, queries) are named without paths."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The answer lists every piece but never explains WHY the architecture is shaped this way \u2014 no mention of why behavior is shared through concerns so multiple models can reuse it, or why Article is the hub other records attach to. It is a pure enumeration."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No uncertainty is flagged anywhere \u2014 the answer presents line numbers and associations as definitive with zero caveats about what was not opened or confirmed, leaving the agent to trust the dump blindly."
+        },
+        "relationship": {
+          "score": 0.5,
+          "rationale": "Polymorphic and named associations are stated explicitly (e.g., 'as: :commentable', 'as: :mentionable', 'through: :trend_memberships'), which is the right level of connecting detail for the direct associations. However, the answer says nothing about how workers, caches, feeds, or services connect outward from Article, which is the harder half of the orientation."
+        }
+      },
+      "step_quality": 0.455,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2280,
+        "cache_creation_input_tokens": 21722,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Map the Article contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer provides a dense, line-numbered inventory of concerns (article.rb:2-10), every association with exact AR syntax and line, callbacks, enums, scopes, and validations \u2014 enough for targeted follow-up. It stops short of telling the agent what a change must preserve and omits the concern implementation files themselves, so the agent still needs to open those."
+        },
+        "specificity": {
+          "score": 0.5,
+          "rationale": "Concern includes are pinned to article.rb:2-10 and associations to article.rb:44-234, but the rubric asks for concern files by path (app/models/concerns/reactable.rb, taggable.rb, liquid_embeddable.rb) \u2014 none of those paths appear, leaving the agent one lookup short per shared piece."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "The answer lists every piece but never explains why the contract is shaped this way \u2014 e.g. why Reactable/Taggable exist as concerns (so other models reuse the behavior) or why comments/reactions hang off polymorphic associations rather than direct foreign keys. 'Extends its functionality' is the only nod to intent."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No caveats anywhere: the answer presents all 30+ associations and all nine concerns as fully confirmed with no note about which concern files were not opened or which behaviors were inferred rather than read."
+        },
+        "relationship": {
+          "score": 0.5,
+          "rationale": "Associations carry strong relationship detail \u2014 the exact AR declarations including `as: :commentable`, `through: :trend_memberships`, `class_name:`, and `inverse_of:` make the connection mechanism explicit. Concerns are bare include lines with no statement of what behavior each one supplies to Article, which is the weaker half of the contract."
+        }
+      },
+      "step_quality": 0.4845,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2018,
+        "cache_creation_input_tokens": 21697,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace how an article and its attached data are handled on change",
+      "scores": {
+        "map_quality": {
+          "score": 0.15,
+          "rationale": "The answer names callback groups with line ranges (app/models/article.rb:315-320 'busting cache', :334-346 'enqueuing embedding generation') but never traces the actual fan-out: no cache-buster service, no feed-counter worker, no mention path, no search indexer are named or followed; the agent still needs a full exploration to know what runs and in what order."
+        },
+        "specificity": {
+          "score": 0.15,
+          "rationale": "File:line citations exist only for the callback definitions inside article.rb; nothing downstream is named concretely \u2014 'busting cache' and 'generating social images' appear as vague labels with no service class, worker name, or file path beyond the model itself."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The answer does not explain why any effect is deferred asynchronously; 'enqueuing' appears once in the after_commit description with no rationale about request latency or decoupling."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No flags are raised about async paths left untraced, callbacks not opened, or workers not followed; the answer presents the callback line ranges as if they constitute a complete picture."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "No connected chain is assembled; the answer is a structural dump of associations, concerns, and callback line-range labels with no 'article change \u2192 callback \u2192 service/worker \u2192 cache/feed/notification' path written out."
+        }
+      },
+      "step_quality": 0.1,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2057,
+        "cache_creation_input_tokens": 21702,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Audit every dependent of the Article contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.07,
+          "rationale": "The answer maps Article's own internal structure (its concerns, associations, callbacks, enums, scopes) rather than the scattered external dependents the step requires. Not a single controller, worker, feed service, cache buster, notification path, or onboarding service is enumerated; the agent is left with no coverage of the dependent set at all."
+        },
+        "specificity": {
+          "score": 0.08,
+          "rationale": "Every file:line cited points to app/models/article.rb itself, not to any external dependent. Files like app/services/broadcasts/welcome_notification/generator.rb, app/workers/, or app/services/edge_cache/ are entirely absent."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The answer explains Article's own callbacks in terms of what they do ('busting cache, generating social images') but never explains why any external dependent is affected by a contract change. No grouping by area, no reasoning about impact."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "There is no acknowledgment that concern-reached or derive-from-article dependents could be missed by a static pass, nor any flag about incomplete coverage of the dependent set."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "The has_many and belongs_to lines name Article's own associations (comments as: :commentable, mentions as: :mentionable) but no path from Article outward to any controller, worker, feed counter, or onboarding service is stated."
+        }
+      },
+      "step_quality": 0.058,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1671,
+        "cache_creation_input_tokens": 21812,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace how article identity and visibility are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.04,
+          "rationale": "The answer maps the Article model's static structure (concerns, associations, callbacks at broad line ranges) but never surfaces a single existence/published/visibility guard in any background worker, feed path, mention service, cache buster, or social-image generator. An agent reading this has no starting point for the guard question and must re-explore the entire codebase from scratch."
+        },
+        "specificity": {
+          "score": 0.03,
+          "rationale": "File:line citations exist (e.g., app/models/article.rb:295-307 for 'before_validation callbacks') but they reference structural zones, not guard implementations. No `published?`, `visible?`, or existence check in any service or worker is named with a concrete file:line."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "There is no explanation of why background or service code must re-confirm article state (the article may have been unpublished or destroyed between enqueue and execution). The answer lists model callbacks without addressing the async-gap rationale at all."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No flags are raised about services that might assume an article is still published without checking, or about guard gaps that the agent should verify. The answer contains no uncertainty signals of any kind relevant to this step."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No guard is connected to any downstream dependent it protects. The answer names no guard at all, let alone a path from a visibility check to the feed, mention, cache, or social-image effect it gates."
+        }
+      },
+      "step_quality": 0.02,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1281,
+        "cache_creation_input_tokens": 21690,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.1,
+          "rationale": "The answer describes the Article model's own internals (associations, callbacks, concerns with file:line) but never assesses the blast radius \u2014 no external dependents are named, no risk ranking exists, and no grouping by area (workers, feeds, notifications, caching, moderation, onboarding) is attempted. An agent reading this still faces a complete exploration from scratch."
+        },
+        "specificity": {
+          "score": 0.1,
+          "rationale": "File:line references exist for Article's own definition (e.g. 'has_many :comments \u2026 app/models/article.rb:171') but zero external dependent files \u2014 no app/services/, app/workers/, app/controllers/ paths \u2014 are named as at-risk, which is the entirety of what the step requires."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No dependent is labeled high or low risk, and no explanation of WHY anything would break is given; the answer only enumerates what the model contains, not what would fail downstream if the contract changed."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No uncertain or indirect dependents are flagged; the answer makes no attempt to identify any dependents at all, so there is nothing to caveat."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "The listed associations (has_many :mentions, has_many :comments, etc.) implicitly hint at connected models, but no path from 'contract change \u2192 downstream effect' is ever assembled; the answer stops at the Article boundary and never expresses a propagation route."
+        }
+      },
+      "step_quality": 0.065,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1887,
+        "cache_creation_input_tokens": 21714,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer is a structural inventory of article.rb's existing content (concerns at lines 2-10, associations at lines 44-234, callbacks at lines 295-346) \u2014 not a change + verification map. It names zero dependents to review, zero specs/fixtures to update or add, and identifies nothing to edit beyond the model's own current structure; a teammate could not land any change from this."
+        },
+        "specificity": {
+          "score": 0.2,
+          "rationale": "The answer is concrete about article.rb's own internals (e.g., `has_many :mentions, as: :mentionable \u2026 dependent: :delete_all` at line 170), but cites no spec files, no concern files to edit, no service or worker paths \u2014 the exact files Step 7 asks for are entirely absent."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "There is no stated change, so no explanation of why any file is in the map or what a contract edit does to it; the answer explains the existing structure, not why each piece is implicated by a future edit."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "No uncertainty is flagged about concern semantics, indirect dependents, or fixtures; the answer presents the current model state as though it fully answers a forward-looking change map question."
+        },
+        "relationship": {
+          "score": 0.1,
+          "rationale": "Association types and polymorphic patterns are named (e.g., `as: :mentionable`, `as: :commentable`) but none are connected to a chain running from a contract change through a dependent to a verifying spec; the relationship between the listed content and any proposed edit is never stated."
+        }
+      },
+      "step_quality": 0.09,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1766,
+        "cache_creation_input_tokens": 21692,
+        "cache_read_input_tokens": 15192
+      }
+    }
+  ]
+}

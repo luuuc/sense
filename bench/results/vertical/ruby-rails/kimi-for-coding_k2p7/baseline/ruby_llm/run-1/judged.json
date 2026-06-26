@@ -1,0 +1,370 @@
+{
+  "scenario": "RubyLLM work session - add support for a new LLM service",
+  "repo": "ruby_llm",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "ruby_llm.rubric.yaml"
+  },
+  "scenario_quality": 0.5748,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 19,
+    "related": 19,
+    "contradicted": 0,
+    "covered_recall": 0.8261,
+    "related_recall": 0.8261,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "Model::Info",
+      "aliases",
+      "model_registry",
+      "chat_error_spec"
+    ],
+    "missed_related": [
+      "Model::Info",
+      "aliases",
+      "model_registry",
+      "chat_error_spec"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "register-table",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Provider-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Models#resolve",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Model::Info",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "Protocol-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ChatCompletions",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:deepseek",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:gpustack",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:mistral",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:ollama",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:openrouter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:perplexity",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:xai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:azure",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Configuration",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Error-hierarchy",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ErrorMiddleware",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "parse_error",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "aliases",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "models.json",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "model_registry",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "models_to_test",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "chat_error_spec",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "All rubric-required files are present (provider.rb, providers/, protocol.rb, protocols/, configuration.rb, error.rb/error_middleware.rb) plus useful extras (models.rb, models.json, spec/support/models_to_test.rb); the agent has clear entry points. However, no concrete provider filenames (e.g. providers/openai.rb) and no class names are given, requiring at least a directory listing before the agent can act."
+        },
+        "specificity": {
+          "score": 0.5,
+          "rationale": "Paths are concrete at the file/directory level (lib/ruby_llm/provider.rb, lib/ruby_llm/protocols/chat_completions/), but the rubric asks for providers/openai.rb-level examples and class names tied to files; none appear, and protocols are named as directories not .rb files, so the agent still needs a targeted ls before it knows what to open."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "Only one architectural hint is given ('the dialect a new integration will likely use' for chat_completions/); there is no explanation of why integrations subclass a base, why wire protocols are a separate shared layer, or why a registry exists, so the agent cannot infer design intent without re-reading the files."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged anywhere \u2014 how the protocol layer connects to integrations, what methods a new integration must implement, and how the registry is populated are all presented as implicit facts, leaving the agent no signal about where to verify before acting."
+        }
+      },
+      "step_quality": 0.458,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1700,
+        "cache_creation_input_tokens": 18435,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace a request to its concrete service integration",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer provides an ordered 12-step trace with file:line from RubyLLM.chat down to Protocol#complete, which is useful. However, the rubric's critical registry methods (Provider.resolve / Provider.providers in provider.rb) are absent, and step 5 'Provider class lookup \u2014 models.rb:134' leaves the agent needing to open that file to discover provider_class; the answer doesn't name it."
+        },
+        "specificity": {
+          "score": 0.48,
+          "rationale": "Models.resolve at models.rb:132 and resolve_protocol at provider.rb:210 are correctly named, but the decisive lookup step is described only as 'Provider class lookup' rather than naming provider_class or Model::Info#provider_class exactly; Provider.resolve / Provider.providers are not cited at all despite the rubric calling them out by name."
+        },
+        "justification": {
+          "score": 0.08,
+          "rationale": "The answer is a pure numbered list with no explanation of WHY the architecture uses a registry (so adding an integration means registering, not editing the router); there is no 'because' or 'so that' anywhere in the response."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "The answer flags nothing: no mention that the registry is populated at load time, no note about slug-based lookup, no caveat about which parts are dynamic vs. static; the agent would have no signal about where to verify before acting."
+        }
+      },
+      "step_quality": 0.396,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1667,
+        "cache_creation_input_tokens": 18410,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the shared API-dialect layer and its customizations",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The answer enumerates all 9 integrations (OpenAI, XAI, DeepSeek, Mistral, Ollama, OpenRouter, Perplexity, Azure, GPUStack) with file:line and concrete customization points per integration, and breaks down the shared ChatCompletions module family (chat.rb, streaming.rb, tools.rb, etc.); the one gap is that Protocol in protocol.rb (the base the shared dialect itself builds on) is not mentioned, which the rubric calls out explicitly."
+        },
+        "specificity": {
+          "score": 0.82,
+          "rationale": "Most entries are concrete with line numbers (xai/chat.rb:9:14, deepseek/chat.rb:10:14, openai.rb:15, gpustack.rb:8, protocols/chat_completions/chat.rb:216), and override points are named (removes stream_options, maps :required to 'any', wraps input in array); OpenRouter and Perplexity are only resolved to directory paths without specific file:line, which leaves those override points slightly underspecified."
+        },
+        "justification": {
+          "score": 0.22,
+          "rationale": "The answer lists what each provider overrides but never explains WHY the architecture uses a shared protocol base with per-service subclasses (i.e., one implementation for OpenAI-compatible wire format, minimal diff via subclass for each diverging service); the structural rationale the rubric asks for is absent."
+        },
+        "uncertainty": {
+          "score": 0.12,
+          "rationale": "No uncertainty is flagged anywhere \u2014 every customization is stated with equal confidence, including the less-confirmed OpenRouter and Perplexity entries where only directory paths were found; the agent has no signal about which points to verify before copying a pattern."
+        }
+      },
+      "step_quality": 0.607,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1761,
+        "cache_creation_input_tokens": 18956,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Find how an integration declares and validates its settings",
+      "scores": {
+        "map_quality": {
+          "score": 0.87,
+          "rationale": "All three areas are covered with file:line: declaration (configuration_options/configuration_requirements at openai.rb:32/42), registration (register_provider_options at provider.rb:176 and configuration.rb:25), and validation (ensure_configured! at provider.rb:237, configured? at provider.rb:159). Azure override sites are also given, so an agent could add settings for a new integration from this alone."
+        },
+        "specificity": {
+          "score": 0.88,
+          "rationale": "Every method is named exactly \u2014 configuration_options, configuration_requirements, register_provider_options, configured?, ensure_configured! \u2014 each with a concrete file:line; nothing is left as 'the config system'."
+        },
+        "justification": {
+          "score": 0.22,
+          "rationale": "The answer labels each method and groups them into declaration/registration/validation paths but never explains WHY settings are declared per-integration and funneled into a shared Configuration object (e.g., to decouple credential ownership from validation logic); it lists, it does not explain."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer notes Azure's overrides as 'optional' but does not flag that env-based defaults, lazy config loading, or other integrations that might also override configured? could differ \u2014 the agent gets no signal to verify these patterns before copying them."
+        }
+      },
+      "step_quality": 0.642,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1380,
+        "cache_creation_input_tokens": 18394,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how HTTP failures become typed errors",
+      "scores": {
+        "map_quality": {
+          "score": 0.88,
+          "rationale": "The answer covers the full path \u2014 Connection registers middleware (connection.rb:117), ErrorMiddleware#call invokes parse_error (error_middleware.rb:14/41), base Provider#parse_error (provider.rb:104), override sites (Bedrock:24, OpenRouter:27, Perplexity:26), status-code mapping (error_middleware.rb:44 with each code listed), Error subclass family (error.rb:42), and streaming re-entry (streaming.rb:125). An agent could wire a new integration's error handling from this alone with only small targeted lookups."
+        },
+        "specificity": {
+          "score": 0.82,
+          "rationale": "Error subclasses are named exactly (ContextLengthExceededError, RateLimitError, ServiceUnavailableError, etc.), every cite includes file:line, and override sites name three concrete providers. The base method appears as 'Base provider error extraction' rather than the exact form Provider#parse_error, a minor labeling gap."
+        },
+        "justification": {
+          "score": 0.25,
+          "rationale": "The answer lists pieces well but never explains WHY classification lives in shared middleware (so each integration avoids duplicating HTTP-to-error mapping) or WHY parse_error is overridable (because each provider's error body JSON structure differs). The override list implies the reason but does not state it."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer does not flag when the base Provider#parse_error is insufficient (i.e., when the new service's error body format diverges from the default), nor does it prompt the agent to inspect the override examples before deciding whether to implement one \u2014 the agent could ship without a parse_error override and silently get generic error messages."
+        }
+      },
+      "step_quality": 0.637,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1439,
+        "cache_creation_input_tokens": 18570,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Find every site that must change to add a new integration",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "Covers the key fan-out sites \u2014 `lib/ruby_llm.rb:104-116` for Provider.register, `lib/ruby_llm/models.json`, `spec/support/models_to_test.rb`, and the models.rb lookup tables \u2014 but omits configuration.rb / `Configuration.register_provider_options` entirely, meaning an agent following this list would ship an integration whose API-key requirements are never validated; aliases and the model alias catalog are also unmentioned."
+        },
+        "specificity": {
+          "score": 0.82,
+          "rationale": "Nearly every entry carries a concrete file:line (`lib/ruby_llm.rb:104-116`, `spec/ruby_llm/provider_spec.rb:6-83`, `lib/ruby_llm/models.rb:26-40`); the answer avoids vague phrases like 'wire it in' and names exact blocks, which is strong."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The answer is a bare list with no WHY for any site \u2014 it never explains that `Provider.register` is the load-time discovery hook, that models.json is the catalog the resolver reads at runtime, or that models_to_test.rb controls the test matrix fan-out; an agent gets no architectural rationale to reason from."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "No uncertainty is flagged anywhere \u2014 no mention of VCR fixtures that must be generated, rake tasks that regenerate models.json, load-order constraints, or the possibility that static reading missed a site; the agent would have no signal to verify before opening the PR."
+        }
+      },
+      "step_quality": 0.485,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1986,
+        "cache_creation_input_tokens": 18473,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Produce the edit map",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The map covers all major areas: new provider files, lib/ruby_llm.rb:18 and :104-116 for registration, models.rb:11-22 and :26-40 for the catalog, models.json, spec/support/models_to_test.rb, provider_spec.rb with line ranges, .env.example, and VCR cassettes. The JSON section reinforces with the full routing path at file:line. The one gap is that shared dialect files (protocols/chat_completions.rb and its modules) are named in the architecture block but not addressed as potential edit sites \u2014 an agent copying a pattern from, say, deepseek.rb would need to know whether to modify or only inherit those files."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Insertion points are concrete throughout: lib/ruby_llm.rb:18 (inflection), :104-116 (register block), models.rb:11-22 (MODELS_DEV_PROVIDER_MAP), :26-40 (PROVIDER_PREFERENCE), provider_spec.rb:6-83 and :86-120, error middleware lines in the JSON. The routing path in the JSON gives file:line for every hop from the public API to Protocol#complete."
+        },
+        "justification": {
+          "score": 0.68,
+          "rationale": "The JSON \"purpose\" fields name what each file contains (\"MODELS_DEV_PROVIDER_MAP and PROVIDER_PREFERENCE\", \"inflection and provider registration\") but mostly stop at naming rather than explaining the causal dependency \u2014 e.g., why PROVIDER_PREFERENCE must be updated, or what breaks if models.json is not refreshed. The routing path section in prior steps carries more WHY than this map does; here it is implicit."
+        },
+        "uncertainty": {
+          "score": 0.65,
+          "rationale": "\"Only if\" qualifiers on chat.rb, models.rb, media.rb, embeddings.rb, and capabilities.rb correctly flag optional files, and VCR cassettes are noted as generated at runtime. However, the answer does not flag where verification is needed before committing \u2014 e.g., it does not warn that models.json may be regenerated by a rake task (so hand-editing could be overwritten), or that load-order dependencies in lib/ruby_llm.rb:104-116 may matter, or that the exact protocol overrides depend on the new service's wire format."
+        }
+      },
+      "step_quality": 0.7985,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1922,
+        "cache_creation_input_tokens": 20563,
+        "cache_read_input_tokens": 16203
+      }
+    }
+  ]
+}

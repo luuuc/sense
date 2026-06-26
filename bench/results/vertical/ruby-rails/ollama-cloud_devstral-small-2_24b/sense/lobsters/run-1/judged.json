@@ -1,0 +1,342 @@
+{
+  "scenario": "Lobsters work session - audit the Story contract before a teardown rework",
+  "repo": "lobsters",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "lobsters.rubric.yaml"
+  },
+  "scenario_quality": 0.3566,
+  "relationship_audit": {
+    "total": 14,
+    "covered": 12,
+    "related": 10,
+    "contradicted": 0,
+    "covered_recall": 0.8571,
+    "related_recall": 0.7143,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "d:users-helper",
+      "d:markdowner"
+    ],
+    "missed_related": [
+      "d:link",
+      "d:user-canflag",
+      "d:users-helper",
+      "d:markdowner"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "story-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:token",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:stories-ctrl",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:comment",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:link",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:search",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:stats",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:user-canflag",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:vote-target",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:users-helper",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:inbox-mbox",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:markdowner",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:mod-flagged",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:mod-mails",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "Correctly identifies Lobsters as a link aggregation platform and places Story at app/models/story.rb:3 with Token concern and all association files with file:line; however, no explicit directory-level overview of the Rails app structure (app/models, app/controllers, app/helpers, app/mailboxes, lib/extras) is given, and lib/extras is absent entirely \u2014 the agent must infer structure from scattered paths rather than a stated layout."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Nearly every claim carries a file:line reference (app/models/concerns/token.rb:1, app/models/vote.rb:3, app/controllers/stories_controller.rb:21, etc.); no vague phrases like 'the model layer' appear."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The project_overview offers one thin sentence ('Story model represents user-submitted content') but never explains WHY Story is the structural center, why Token is extracted as a concern, or what architectural decision shaped this layout; the rest is a flat structured list."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "Zero uncertainty flagged across the entire answer; every path and line number is stated with identical confidence, leaving the agent no signal about which connections were inferred vs. confirmed."
+        },
+        "relationship": {
+          "score": 0.35,
+          "rationale": "The answer groups items under 'associations' and 'shared_behaviors.token', which is one step above a flat file list, but never names the actual relationship type \u2014 no has_many :comments, no polymorphic :voteable, no 'include Token supplies short-token identity'; the connecting mechanism is implied by the grouping key, not stated."
+        }
+      },
+      "step_quality": 0.542,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2692,
+        "cache_creation_input_tokens": 34269,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Map the Story contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer gives file:line for the model (app/models/story.rb:3) and Token concern (app/models/concerns/token.rb:1) and lists 15 associated model files, giving an agent a workable starting set. However, the actual contract shape \u2014 which associations are declared in story.rb, what Token adds, what a change must preserve \u2014 is not mapped; the agent still needs to read story.rb to find the `has_many :comments`, `has_many :votes`, `belongs_to :user` etc. lines."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "File paths are concrete and carry line numbers. But the contract pieces themselves (the specific `include Token` line, the `has_many`/`belongs_to` declarations, what attributes Token contributes) are not named \u2014 the agent gets file endpoints, not the declarations inside them."
+        },
+        "justification": {
+          "score": 0.12,
+          "rationale": "The answer lists the contract pieces but offers no explanation of WHY Story uses Token, WHY these 15 models hang off it, or what architectural invariant a change must preserve; there is no reasoning, only enumeration."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "Nothing in the answer is flagged as uncertain or unconfirmed despite producing a comprehensive enumeration at zero wall-time; the agent cannot tell which pieces were verified versus inferred."
+        },
+        "relationship": {
+          "score": 0.22,
+          "rationale": "The 15 associated models are grouped under the label \"associations\" but no individual relationship type is stated \u2014 the answer never says `Story has_many :comments`, `Story belongs_to :user`, `Vote polymorphically targets Story`, or what Token supplies; it is a file list dressed as a relation map, scoring low on this criterion."
+        }
+      },
+      "step_quality": 0.419,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2171,
+        "cache_creation_input_tokens": 19059,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace how a story is created and ranked",
+      "scores": {
+        "map_quality": {
+          "score": 0.38,
+          "rationale": "The answer names the controller create entry point and the hotness/score methods with file:line, but both URL/link handling and markdown rendering are entirely absent from the trace \u2014 the two intermediate layers the rubric explicitly requires. An agent following this map would miss the URL deduplication and markdowner layers entirely."
+        },
+        "specificity": {
+          "score": 0.42,
+          "rationale": "What is named is concrete (StoriesController#create:21, Story#calculated_hotness:550, Story#update_score_and_recalculate!:693), but the markdowner (extras/markdowner.rb) and any link/URL handler are never cited at all, leaving half the required pieces unnamed."
+        },
+        "justification": {
+          "score": 0.08,
+          "rationale": "The answer lists the hotness and score methods but gives no explanation of why the ranking is computed that way (algorithm rationale, trigger conditions, or what inputs feed the hotness formula). It is a bare file list."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer presents the chain without flagging that URL handling and markdown rendering steps were not found or are uncertain; a silent omission of two required layers is worse than a flagged gap."
+        },
+        "relationship": {
+          "score": 0.28,
+          "rationale": "An ordered list is present (controller \u2192 before_save \u2192 after_create \u2192 job \u2192 image), but the chain breaks at the controller: the submission\u2192URL/markdown\u2192score path the rubric requires is not assembled because the URL and markdown layers are missing. The ranking section lists methods without connecting how score triggers hotness recalculation."
+        }
+      },
+      "step_quality": 0.29,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1558,
+        "cache_creation_input_tokens": 19043,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Audit every dependent of the Story contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.42,
+          "rationale": "The answer covers five of the six required areas with file:line entries (search, stats, vote/flag, inbound email, moderation), but the content-and-rendering bucket is reduced to controllers and views \u2014 extras/markdowner.rb (the markdown re-renderer) and the link URL handler are entirely absent, and nothing from lib/extras appears anywhere, leaving a named gap the rubric treats as the heart of that bucket."
+        },
+        "specificity": {
+          "score": 0.5,
+          "rationale": "Files that are listed carry concrete file:line and a method-name phrase, which is the right format; but the omission of markdowner.rb and the link/URL handler means the agent would need to rediscover those files from scratch, not from a small targeted lookup."
+        },
+        "justification": {
+          "score": 0.28,
+          "rationale": "Grouping by area gives implicit structure but the answer never explains WHY a given dependent is affected \u2014 Vote#target is listed with no mention of the polymorphic relation, InboxMailbox#parent is listed with no mention of token-based story resolution, and stats.rb entries have no explanation of what Story data they derive."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer contains no acknowledgment of what a static-analysis pass can miss (concern-reached or derive-reached dependents), no flags about indirect paths, and no caveats about coverage gaps \u2014 the agent would act with false completeness confidence."
+        },
+        "relationship": {
+          "score": 0.18,
+          "rationale": "Entries name a file and a method but almost never state the connecting relationship: Vote#target is not identified as a polymorphic association, InboxMailbox#parent does not name the token-resolution path, stats.rb does not name the Story.count/query it runs, and the entirely absent markdowner.rb has no relationship stated at all \u2014 this is a file list with parenthetical labels, not a relationship map."
+        }
+      },
+      "step_quality": 0.335,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2294,
+        "cache_creation_input_tokens": 19162,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace how story identity and visibility are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.25,
+          "rationale": "The answer surfaces four entries under 'story_identity_and_visibility_guards' (StoryFinder#find_story/:20, Story#can_be_seen_by_user?, StoriesController#show:166) but never traces how those guards actually apply inside the search, stats, inbound-email, or moderation paths the prompt names \u2014 the four target areas are listed elsewhere as dependents with no guard trace attached to any of them."
+        },
+        "specificity": {
+          "score": 0.3,
+          "rationale": "File:line citations are present for the four named guard sites, but the answer gives no description of what each guard checks (e.g. what predicate can_be_seen_by_user? evaluates, or what find_story! raises on a missing/merged/hidden story), leaving the agent unable to judge whether the existing guard is sufficient for a contract change."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "There is no explanation of why work must re-confirm story state (deleted between enqueue and execution, hidden by moderator, etc.); the guards are listed as bare method names with no motivation, forcing the agent to read the source to understand the invariant."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer flags no uncertainty about which paths lack a guard (e.g. whether search or stats re-confirm visibility before indexing/caching, or whether the mailbox resolves a deleted story gracefully), so the agent would act as if all paths are guarded."
+        },
+        "relationship": {
+          "score": 0.1,
+          "rationale": "No connecting path is drawn between any guard and any dependent: the answer does not state that StoryFinder is included by StoriesController (via concern), nor that the mailbox, search, or stats paths reach a guard at all, making the guard section a disconnected island rather than a chain."
+        }
+      },
+      "step_quality": 0.1925,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1473,
+        "cache_creation_input_tokens": 19050,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.6,
+          "rationale": "The answer covers all six rubric areas (rendering, search, stats, voting/flagging, email, moderation) with file:line and partitions into high/moderate tiers, giving the agent a usable starting list. However, the 'shared_pieces_to_edit' section conflates all associated models as edits-needed rather than dependents-at-risk, adding noise that would send the agent on unnecessary reviews."
+        },
+        "specificity": {
+          "score": 0.35,
+          "rationale": "Files and line numbers are consistently cited (e.g., 'app/models/vote.rb:185', 'app/mailboxes/inbox_mailbox.rb:34'), but no concrete reason is stated per dependent for its tier placement \u2014 'StoriesController#show' is 'high risk' with zero explanation of what aspect of the contract change would break it."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "The answer assigns high/moderate labels but provides no reasoning for any individual placement; WHY Vote#target is higher risk than InboxMailbox#parent, or why stats is high but helpers are moderate, is entirely absent."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer makes no acknowledgment of dependents that a static pass might miss (concern-pulled behavior, polymorphic dispatch, derive-reached paths), nor does it flag any line it could not confirm \u2014 leaving the agent with false confidence in the completeness of the list."
+        },
+        "relationship": {
+          "score": 0.15,
+          "rationale": "Every dependent in the blast radius section is listed as a bare file:line with no connecting relationship \u2014 Vote#target appears with no mention of the polymorphic votable association, InboxMailbox#parent with no explanation of how it resolves to a Story, and Search with no stated query path; this is indistinguishable from a text-search output."
+        }
+      },
+      "step_quality": 0.3425,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1748,
+        "cache_creation_input_tokens": 19076,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.5,
+          "rationale": "The answer groups dependents by area with file:line and lists models_to_edit, specs, and fixtures, giving an agent a reasonable starting structure. However, it conflates 'shared_pieces_to_edit' with all 15 associated models (user.rb, domain.rb, comment.rb, etc.) \u2014 those are dependents to review, not necessarily files to edit \u2014 and it omits key pieces like extras/markdowner.rb and the link-URL handler that belong in a complete map."
+        },
+        "specificity": {
+          "score": 0.6,
+          "rationale": "File paths and line numbers are present throughout the dependents and model sections; the specs (spec/models/story_spec.rb, etc.) are named correctly but carry no line numbers and no guidance on which behaviors to add or update, leaving an agent to re-open each spec file from scratch."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The answer labels groups (content_and_rendering, search, etc.) and marks some dependents high/moderate risk, but never explains WHY a given file is at that risk level \u2014 no phrase like 'Vote reaches Story through the polymorphic votable association, so a contract change breaks target resolution' appears anywhere."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty flags exist anywhere in the answer; every file and line number is presented with equal confidence, including concern- and association-reached dependents that a static pass cannot fully confirm."
+        },
+        "relationship": {
+          "score": 0.2,
+          "rationale": "Grouping by area (voting_and_flagging, inbound_email) implies a loose category but never names the connecting relationship for any dependent \u2014 no 'belongs_to :story', no 'polymorphic votable', no 'InboxMailbox resolves reply via story short_id', no concern that wires behavior in \u2014 so an agent cannot reconstruct the chain from the contract change to each file."
+        }
+      },
+      "step_quality": 0.375,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1688,
+        "cache_creation_input_tokens": 19054,
+        "cache_read_input_tokens": 15192
+      }
+    }
+  ]
+}

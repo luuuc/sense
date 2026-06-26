@@ -1,0 +1,587 @@
+{
+  "scenario": "Discourse work session - audit the Upload contract before a teardown rework",
+  "repo": "discourse",
+  "adoption_score": 0.24,
+  "keyword_coverage": 0.9444,
+  "step_avg_score": 0.8929,
+  "efficiency": 0.0,
+  "completeness": 0.6595,
+  "tool_fluency": 0.0,
+  "discoverability": 0.6,
+  "citation_grounding": {
+    "total": 12,
+    "grounded": 12,
+    "unresolved": 0,
+    "hallucinated": 0,
+    "rate": 1.0,
+    "examples": {
+      "grounded": [
+        "app/models/upload.rb:5 (line 5 in app/models/upload.rb (file has 736 lines))",
+        "lib/discourse.rb:958 (line 958 in lib/discourse.rb (file has 1337 lines))",
+        "app/models/concerns/has_url.rb:3 (line 3 in app/models/concerns/has_url.rb (file has 74 lines))",
+        "app/models/concerns/has_post_upload_references.rb:3 (line 3 in app/models/concerns/has_post_upload_references.rb (file has 148 lines))",
+        "app/models/upload_reference.rb:3 (line 3 in app/models/upload_reference.rb (file has 66 lines))"
+      ],
+      "unresolved": [],
+      "hallucinated": []
+    },
+    "details": [
+      {
+        "file": "app/models/upload.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/models/upload.rb (file has 736 lines)"
+      },
+      {
+        "file": "lib/discourse.rb",
+        "locator": "958",
+        "status": "grounded",
+        "reason": "line 958 in lib/discourse.rb (file has 1337 lines)"
+      },
+      {
+        "file": "app/models/concerns/has_url.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/has_url.rb (file has 74 lines)"
+      },
+      {
+        "file": "app/models/concerns/has_post_upload_references.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/has_post_upload_references.rb (file has 148 lines)"
+      },
+      {
+        "file": "app/models/upload_reference.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/upload_reference.rb (file has 66 lines)"
+      },
+      {
+        "file": "lib/file_store/base_store.rb",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in lib/file_store/base_store.rb (file has 236 lines)"
+      },
+      {
+        "file": "app/models/optimized_image.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/models/optimized_image.rb (file has 398 lines)"
+      },
+      {
+        "file": "app/models/optimized_video.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/models/optimized_video.rb (file has 82 lines)"
+      },
+      {
+        "file": "lib/file_store/local_store.rb",
+        "locator": "6",
+        "status": "grounded",
+        "reason": "line 6 in lib/file_store/local_store.rb (file has 152 lines)"
+      },
+      {
+        "file": "lib/file_store/s3_store.rb",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in lib/file_store/s3_store.rb (file has 567 lines)"
+      },
+      {
+        "file": "lib/upload_security.rb",
+        "locator": "27",
+        "status": "grounded",
+        "reason": "line 27 in lib/upload_security.rb (file has 198 lines)"
+      },
+      {
+        "file": "lib/validators/upload_validator.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in lib/validators/upload_validator.rb (file has 230 lines)"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 24,
+    "mentioned": 23,
+    "cited": 20,
+    "mention_recall": 0.9583,
+    "cited_recall": 0.8333,
+    "groups": {
+      "contract": {
+        "total": 3,
+        "mentioned": 3,
+        "cited": 3,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "write-path": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 2,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "dependents": {
+        "total": 16,
+        "mentioned": 15,
+        "cited": 15,
+        "mention_recall": 0.9375,
+        "cited_recall": 0.9375
+      },
+      "specs": {
+        "total": 3,
+        "mentioned": 3,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      }
+    },
+    "missed_mention": [
+      "d:user-merger"
+    ],
+    "missed_cite": [
+      "d:user-merger",
+      "spec:upload",
+      "spec:cooked",
+      "spec:uploads-req"
+    ],
+    "details": [
+      {
+        "id": "upload-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:has-url",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "optimized-image",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "a:uploads-ctrl",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "a:upload-creator",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:cooked-post",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:pretty-text",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:topic-link",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:s3-store",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:s3-inventory",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:hotlinked",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:convert-video",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:email-styles",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:backup-creator",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:site-icon",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:app-helper",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:metadata-ctrl",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:user-profile",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:user-merger",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:plugin-instance",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:site-setting-ext",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "spec:upload",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "spec:cooked",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "spec:uploads-req",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Upload",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 12,
+          "unique_refs": 12,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.3333,
+      "combined_score": 0.6,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the Upload contract and what it is built on",
+      "checks": [
+        {
+          "hit": false,
+          "type": "word",
+          "value": "concern",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 12,
+          "unique_refs": 12,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "upload.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 0.3333,
+      "combined_score": 0.6,
+      "fairness_score": 0.75
+    },
+    {
+      "name": "Trace how an upload is created and processed",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "store",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 12,
+          "unique_refs": 12,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Audit every dependent of the Upload contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 12,
+          "unique_refs": 12,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.5,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how upload identity and storage location are guarded",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 12,
+          "unique_refs": 12,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.5,
+      "fairness_score": 0.5
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 12,
+          "unique_refs": 12,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 12,
+          "unique_refs": 12,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "spec",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0, post-MCP misses: 0 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 167,
+    "grep_count": 31,
+    "read_count": 136,
+    "mcp_count": 0,
+    "token_input_uncached": 206354,
+    "token_output": 34068,
+    "token_cache_read": 10449408,
+    "token_cache_write": 0,
+    "token_total_billed": 240422,
+    "token_total_all": 10689830,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 240422,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 41017,
+    "audit_chars": 692767,
+    "overhead": null
+  }
+}

@@ -1,0 +1,489 @@
+{
+  "scenario": "Redmine work session - audit the Issue contract before a teardown rework",
+  "repo": "redmine",
+  "adoption_score": 0.06,
+  "keyword_coverage": 0.375,
+  "step_avg_score": 0.3095,
+  "efficiency": 0.0,
+  "completeness": 0.2333,
+  "tool_fluency": 0.0,
+  "discoverability": 0.15,
+  "citation_grounding": {
+    "total": 3,
+    "grounded": 2,
+    "unresolved": 1,
+    "hallucinated": 0,
+    "rate": 0.6667,
+    "examples": {
+      "grounded": [
+        "issues_controller.rb:431 (line 431 in issues_controller.rb (file has 749 lines) [via app/controllers/issues_controller.rb])",
+        "webhook.rb:116 (line 116 in webhook.rb (file has 178 lines) [via app/models/webhook.rb])"
+      ],
+      "unresolved": [
+        "Mailer.rb:108 (file not found at Mailer.rb)"
+      ],
+      "hallucinated": []
+    },
+    "details": [
+      {
+        "file": "issues_controller.rb",
+        "locator": "431",
+        "status": "grounded",
+        "reason": "line 431 in issues_controller.rb (file has 749 lines) [via app/controllers/issues_controller.rb]"
+      },
+      {
+        "file": "Mailer.rb",
+        "locator": "108",
+        "status": "unresolved",
+        "reason": "file not found at Mailer.rb"
+      },
+      {
+        "file": "webhook.rb",
+        "locator": "116",
+        "status": "grounded",
+        "reason": "line 116 in webhook.rb (file has 178 lines) [via app/models/webhook.rb]"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 18,
+    "mentioned": 17,
+    "cited": 15,
+    "mention_recall": 0.9444,
+    "cited_recall": 0.8333,
+    "groups": {
+      "contract": {
+        "total": 1,
+        "mentioned": 1,
+        "cited": 1,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "write-path": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 2,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "dependents": {
+        "total": 13,
+        "mentioned": 12,
+        "cited": 12,
+        "mention_recall": 0.9231,
+        "cited_recall": 0.9231
+      },
+      "specs": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      }
+    },
+    "missed_mention": [
+      "d:my-helper"
+    ],
+    "missed_cite": [
+      "d:my-helper",
+      "spec:issue",
+      "spec:issues-ctrl"
+    ],
+    "details": [
+      {
+        "id": "issue-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "a:issues-ctrl",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "a:issues-helper",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:time-entry",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:changeset",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:journal",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:issue-relation",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:project",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:mail-handler",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:reports-ctrl",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:queries-helper",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:context-menus",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:auto-completes",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:gantt",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:calendar",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:my-helper",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "spec:issue",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      },
+      {
+        "id": "spec:issues-ctrl",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Issue",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 3,
+          "unique_refs": 3,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.3333,
+      "combined_score": 0.6,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the Issue contract and what it is built on",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 3,
+          "unique_refs": 3,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "issue.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 3,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.0,
+      "score_bonus": 0.3333,
+      "combined_score": 0.2,
+      "fairness_score": 0.3333
+    },
+    {
+      "name": "Trace how an issue and its attached data are handled on change",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 3,
+          "unique_refs": 3,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 0.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.0,
+      "fairness_score": 0.0
+    },
+    {
+      "name": "Audit every dependent of the Issue contract",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 3,
+          "unique_refs": 3,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 0.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.0,
+      "fairness_score": 0.0
+    },
+    {
+      "name": "Trace how issue identity and visibility are guarded",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 3,
+          "unique_refs": 3,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.5,
+      "fairness_score": 0.5
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 3,
+          "unique_refs": 3,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 0.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.0,
+      "fairness_score": 0.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": false,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 3,
+          "unique_refs": 3,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "test",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 0.0,
+      "score_bonus": 1.0,
+      "combined_score": 0.3333,
+      "fairness_score": 0.3333
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0, post-MCP misses: 0 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 109,
+    "grep_count": 29,
+    "read_count": 59,
+    "mcp_count": 0,
+    "token_input_uncached": 178044,
+    "token_output": 30519,
+    "token_cache_read": 5018112,
+    "token_cache_write": 0,
+    "token_total_billed": 208563,
+    "token_total_all": 5226675,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 208563,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 40968,
+    "audit_chars": 655300,
+    "overhead": null
+  }
+}

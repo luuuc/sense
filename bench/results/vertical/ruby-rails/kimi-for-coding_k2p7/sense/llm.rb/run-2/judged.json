@@ -1,0 +1,392 @@
+{
+  "scenario": "llm.rb work session - add support for a new LLM provider",
+  "repo": "llm.rb",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "llm.rb.rubric.yaml"
+  },
+  "scenario_quality": 0.6355,
+  "relationship_audit": {
+    "total": 27,
+    "covered": 24,
+    "related": 24,
+    "contradicted": 0,
+    "covered_recall": 0.8889,
+    "related_recall": 0.8889,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "spec:provider",
+      "spec:openai-chat",
+      "spec:openai-stream"
+    ],
+    "missed_related": [
+      "spec:provider",
+      "spec:openai-chat",
+      "spec:openai-stream"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "factory",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "provider-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "prov:openai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "prov:anthropic",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "prov:google",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "prov:ollama",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "prov:bedrock",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "prov:deepseek",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "req:openai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "req:anthropic",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "req:google",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "req:ollama",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "resp:openai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "resp:anthropic",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "resp:google",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "resp:ollama",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "stream:openai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "stream:anthropic",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "stream:google",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "stream:ollama",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "err:openai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "err:anthropic",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "err:google",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "err:ollama",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "spec:provider",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "spec:openai-chat",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "spec:openai-stream",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.92,
+          "rationale": "The answer names every required landmark: factory methods at lib/llm.rb:112-181, the base at lib/llm/provider.rb:8, the providers/<name>.rb + providers/<name>/ subdir pattern, how a caller obtains a provider (LLM.<name>(...) factories), plus LLM::Context and LLM::Registry with file:line. An agent can pick any entry point and proceed with only small, targeted lookups."
+        },
+        "specificity": {
+          "score": 0.85,
+          "rationale": "Line numbers are given for every major file (lib/llm.rb:112-181, lib/llm/provider.rb:8, lib/llm/context.rb:193, lib/llm/registry.rb:18) and component names are listed explicitly (request_adapter, response_adapter, stream_parser, error_handler, images, audio, files, models); the only gap is the <name> placeholder rather than naming at least one concrete provider file (e.g., providers/openai.rb)."
+        },
+        "justification": {
+          "score": 0.25,
+          "rationale": "The answer lists the component names but never explains WHY each provider has both a top-level class and a subdirectory of small components \u2014 the design rationale (provider APIs differ in request shape, response shape, streaming chunk format, and error bodies, so each concern is isolated) is absent; the agent is told what exists, not why the structure is shaped that way."
+        },
+        "uncertainty": {
+          "score": 0.55,
+          "rationale": "The answer is uniformly confident with specific line numbers, which is appropriate given the depth of inspection; however, it flags no uncertainty at all (e.g., whether all providers implement every endpoint class, or what LLM::Context's exact role is versus Provider#complete), leaving the agent no signal about where to double-check before acting."
+        }
+      },
+      "step_quality": 0.713,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1850,
+        "cache_creation_input_tokens": 18856,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace a chat call from the entry point to request and response handling",
+      "scores": {
+        "map_quality": {
+          "score": 0.55,
+          "rationale": "The chain from lib/llm.rb:152 factory through provider.rb:103, context.rb, and openai.rb:73 is traceable with file:line, and ResponseAdapter is named at openai.rb:78. However, the rubric's key pieces \u2014 a per-provider request_adapter file (lib/llm/providers/openai/request_adapter.rb) building the outgoing request \u2014 are absent; request building is folded inside OpenAI#complete with no component file cited, so the agent still needs to discover that structure before implementing a new provider."
+        },
+        "specificity": {
+          "score": 0.5,
+          "rationale": "LLM.openai, Provider#chat, and ResponseAdapter.adapt are named with file:line, which is good. The request_adapter component is not cited by file path at all, and ResponseAdapter is pointed to as a line inside openai.rb rather than its own lib/llm/providers/openai/response_adapter.rb file, leaving the agent short of the per-provider component file layout the rubric requires."
+        },
+        "justification": {
+          "score": 0.3,
+          "rationale": "The answer is nearly a pure ordered list; it notes ResponseAdapter 'extends LLM::Response with provider-specific accessors' and that Bedrock adds SigV4 signing, but never explains WHY request building and response parsing are separate per-provider components (each API has a distinct request shape and response envelope), which is the reasoning an agent needs to know what to create for a new provider."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "The answer flags that talk 'routes to complete or respond depending on mode' and notes Bedrock's SigV4 divergence, which are useful signals. It does not flag the streaming vs buffered path divergence, does not acknowledge that line numbers may be approximate, and does not flag uncertainty about whether a request_adapter subfile exists under providers/openai/ \u2014 the agent may act on the omission as if it confirmed absence."
+        }
+      },
+      "step_quality": 0.465,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1841,
+        "cache_creation_input_tokens": 19038,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the provider family and its base contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer enumerates the base at lib/llm/provider.rb:8 with per-method line numbers, lists all concrete providers including the thin OpenAI-inheritors (DeepSeek, XAI, ZAI, LlamaCpp), and correctly identifies the inheritance fan-out. However, `chat` and `respond` are absent from the required-method list despite the rubric naming them, and provider files themselves (lib/llm/providers/openai.rb, etc.) are never cited with line numbers, forcing the agent to locate each file before it can act."
+        },
+        "specificity": {
+          "score": 0.58,
+          "rationale": "Base-class methods are cited with concrete line numbers (e.g., `complete` at provider.rb:94, `embed` at provider.rb:70) and the completion contract class is placed at lib/llm/contract/completion.rb:7; but the table of providers gives only prose descriptions of customizations with no file:line for where each override actually lives, so the agent still needs a lookup pass per provider."
+        },
+        "justification": {
+          "score": 0.38,
+          "rationale": "The answer shows THAT DeepSeek, XAI, and ZAI inherit from OpenAI rather than Provider but never states WHY \u2014 the OpenAI-compatible API shape means request/response components can be reused as-is; the agent must infer this, which risks misapplying the pattern for a non-OpenAI-compatible new provider."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No uncertainty is flagged anywhere \u2014 the answer presents the contract as complete despite omitting `chat` and `respond` from the required-method list, and does not note which DeepSeek components are inherited wholesale vs. newly authored, leaving the agent to act on a silently incomplete picture."
+        }
+      },
+      "step_quality": 0.5315,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2041,
+        "cache_creation_input_tokens": 19252,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the per-provider component families",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "The answer maps all four core families (RequestAdapter, ResponseAdapter, StreamParser, ErrorHandler) plus endpoint classes with per-provider breakdowns, notes reuse (DeepSeek reuses OpenAI's response/stream/error, XAI/ZAI/LlamaCpp inherit OpenAI), and flags Bedrock's deviation (stream_decoder). An agent could create most pieces without re-exploring the codebase, though line references are minimal (mostly ':6') and some providers are grouped without individual full paths."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "Files are named by pattern (lib/llm/providers/<name>/request_adapter.rb) and specific sub-files are listed per provider (e.g. request_adapter/completion.rb, response_adapter/enumerable.rb), but XAI/ZAI/LlamaCpp are bundled without separate file entries and the template notation forces the agent to substitute rather than copy an exact path."
+        },
+        "justification": {
+          "score": 0.45,
+          "rationale": "The table's Purpose column states what each component does ('Convert LLM::Message list to provider request payload') but does not explain WHY they must be per-provider \u2014 the answer never says that each API has its own request and response shape; it only lists and labels, stopping short of the architectural reasoning."
+        },
+        "uncertainty": {
+          "score": 0.35,
+          "rationale": "The answer implicitly flags some variation (Bedrock's stream_decoder, DeepSeek's reuse, XAI's added images.rb) but never explicitly says 'could not confirm' or 'verify before copying'; an agent following this map won't know which per-provider components are safe to copy verbatim versus which need inspection."
+        }
+      },
+      "step_quality": 0.605,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1915,
+        "cache_creation_input_tokens": 19410,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the streaming and error-handling paths",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The answer maps both the shared machinery (transport/execution.rb:51, transport/stream_decoder.rb:10) and per-provider stream_parser/error_handler pairs with file:line across all major providers, including Bedrock's StreamDecoder replacement and the OpenAI-reuse group (DeepSeek/XAI/ZAI/LlamaCpp). An agent could create a new provider's stream_parser.rb and error_handler.rb with only a few targeted reads; it falls just short of 1.0 because the error_handler per-provider coverage is less uniform (Anthropic/Ollama are noted as 'status-based only' without file:line)."
+        },
+        "specificity": {
+          "score": 0.88,
+          "rationale": "File:line citations are concrete throughout: `lib/llm/providers/openai/stream_parser.rb:6`, `lib/llm/providers/anthropic/stream_parser.rb:6`, `lib/llm/providers/openai/error_handler.rb:6`, `lib/llm/error.rb:6`, `transport/execution.rb:31/51`; per-parser semantics (choices[].delta, message_start/content_block_*, candidates[].content.parts) are also named. Anthropic and Ollama error_handler file:line are absent, which a new-provider agent would need."
+        },
+        "justification": {
+          "score": 0.68,
+          "rationale": "The WHY is shown implicitly \u2014 listing distinct chunk field paths (choices[].delta vs message_start vs candidates[].content.parts vs message.content) demonstrates differing wire formats, and 'AWS Event Stream events' for Bedrock makes the per-provider necessity tangible. However, the answer never explicitly states that per-provider components exist because each API serializes chunks and errors differently, so the agent has to infer the architecture rather than read it."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "The answer flags two concrete differences: Bedrock's stream_decoder replacement and the OpenAI-reuse group (DeepSeek/XAI/ZAI/LlamaCpp inherit rather than define a parser), which is useful. It does not flag what it could not confirm \u2014 e.g., whether ZAI and LlamaCpp actually exist as providers, whether Anthropic/Ollama have a separate error_handler.rb at all, or which providers may lack a stream_parser file \u2014 so the agent could act on a gap without knowing to verify."
+        }
+      },
+      "step_quality": 0.771,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1753,
+        "cache_creation_input_tokens": 19357,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Find every site that must change to add a new provider",
+      "scores": {
+        "map_quality": {
+          "score": 0.76,
+          "rationale": "All major sites are named with full paths: factory at `lib/llm.rb:181`, provider class, all component files (`request_adapter`, `response_adapter`, `stream_parser`, `error_handler`), endpoint classes, `data/newprovider.json`, `spec/setup.rb:28-38`, and per-component specs \u2014 an agent could open the PR from this list. Minor gaps: no mention of the base class (`LLM::Provider` in `lib/llm/provider.rb`) as the inheritance target with its contract methods, and the factory line is approximated ('around')."
+        },
+        "specificity": {
+          "score": 0.78,
+          "rationale": "Paths are concrete throughout \u2014 `lib/llm/providers/newprovider/request_adapter.rb`, `lib/llm/providers/newprovider/stream_parser.rb`, `spec/setup.rb:28-38` \u2014 rather than vague layer references. The one soft point is 'around line 181' for the factory, which is softer than an exact line."
+        },
+        "justification": {
+          "score": 0.36,
+          "rationale": "The answer is predominantly a numbered list; the conditionals ('if not inheriting OpenAI', 'if streaming differs', 'if supported') constitute lightweight reasoning but do not explain WHY request and response adapters are separate per-provider components (differing API shapes in both directions), WHY the stream parser is per-provider (different chunk formats), or WHY the error handler is per-provider (different HTTP error bodies mapped to shared typed errors)."
+        },
+        "uncertainty": {
+          "score": 0.56,
+          "rationale": "Three uncertainty flags are explicit (OpenAI-component reuse, streaming divergence, endpoint optionality) and the factory line is hedged with 'around', which is appropriate. The answer does not flag what static reading cannot confirm \u2014 e.g., which VCR cassette fixtures or factory registration conventions exist that the agent should check before copying a pattern."
+        }
+      },
+      "step_quality": 0.655,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2437,
+        "cache_creation_input_tokens": 19006,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Produce the edit map",
+      "scores": {
+        "map_quality": {
+          "score": 0.92,
+          "rationale": "The table plus the JSON `edit_map` give a complete, file:line-anchored PR checklist: factory at `lib/llm.rb:181`, provider class, all four component families, `data/newprovider.json`, `spec/setup.rb:28-38`, and five spec files, with optional capability endpoints broken out separately. A teammate could open the PR from the `create`/`modify` lists alone."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Every entry carries a concrete path and, where a line is knowable, a line number (`lib/llm.rb:181`, `spec/setup.rb:28-38`, component files at `:6`); the `sites_to_change` array repeats those coordinates with short change descriptions, leaving no 'the adapter file' vagueness."
+        },
+        "justification": {
+          "score": 0.35,
+          "rationale": "Change descriptions are functional labels ('Create SSE/JSON stream parser', 'Create error handler class') rather than explanations of why each file is a separate artifact; the answer does not articulate that per-provider components exist because API request/response/error shapes differ, or why the factory and registry are distinct modification sites."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "The answer flags endpoint files as `optional_create_by_capability` but does not flag the larger uncertainties an agent needs to verify: whether the new provider is OpenAI-compatible (making most components inheritable rather than new), what the actual streaming chunk format looks like, or whether VCR cassettes/fixtures must be recorded before specs can pass."
+        }
+      },
+      "step_quality": 0.708,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1667,
+        "cache_creation_input_tokens": 22670,
+        "cache_read_input_tokens": 16203
+      }
+    }
+  ]
+}

@@ -1,0 +1,382 @@
+{
+  "scenario": "Solidus work session - audit the Order contract before a teardown rework",
+  "repo": "solidus",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "solidus.rubric.yaml"
+  },
+  "scenario_quality": 0.1407,
+  "relationship_audit": {
+    "total": 19,
+    "covered": 11,
+    "related": 11,
+    "contradicted": 0,
+    "covered_recall": 0.5789,
+    "related_recall": 0.5789,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "a:orders-api",
+      "d:legacy-minqty",
+      "d:legacy-product",
+      "d:returns-api",
+      "d:shipments-api",
+      "d:cancellations",
+      "d:admin-payments",
+      "d:admin-lineitems"
+    ],
+    "missed_related": [
+      "a:orders-api",
+      "d:legacy-minqty",
+      "d:legacy-product",
+      "d:returns-api",
+      "d:shipments-api",
+      "d:cancellations",
+      "d:admin-payments",
+      "d:admin-lineitems"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "order-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:payments",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:display-money",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:orders-api",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "a:order-updater",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:adjustment-src",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:stock-coord",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-promo",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-rule",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-minqty",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-product",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:solidus-benefit",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:solidus-promo",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:checkouts-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:returns-api",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:shipments-api",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:cancellations",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-payments",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-lineitems",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.25,
+          "rationale": "The answer correctly names Solidus as a multi-gem Rails platform and identifies Spree::Order as the central model, but provides zero file paths (no core/app/models/spree/order.rb, no gem directory layout) \u2014 the agent still needs a full directory exploration to locate anything. The shared pieces the order is 'built on' (concerns, modules, mixins) are entirely absent."
+        },
+        "specificity": {
+          "score": 0.1,
+          "rationale": "Every location is expressed as a vague label ('core component', 'Backend services and logic') with no concrete paths or line references; 'Spree::Order' is the only precise token in the entire answer."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "No explanation of why Order is the hub of the purchase flow, why functionality is split across gems, or what design principle drives the multi-gem layout \u2014 the answer only names pieces without any 'why'."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No uncertainty is flagged anywhere, despite the answer omitting shared concerns, the gem directory structure, and all file paths \u2014 calibration is absent rather than calibrated."
+        },
+        "relationship": {
+          "score": 0.15,
+          "rationale": "The answer says line items, payments, etc. 'attach to' Spree::Order but names no associations (has_many :line_items, etc.), no concerns or mixins, and no connecting path for promotions \u2014 the connecting relationships the criterion requires are entirely missing."
+        }
+      },
+      "step_quality": 0.1675,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1408,
+        "cache_creation_input_tokens": 19040,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Map the Order contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.4,
+          "rationale": "The model is located at core/app/models/spree/order.rb:21, and the concerns (Spree::Order::Payments, Spree::DisplayMoney) plus a broad association list are present, but no file:line is given for the concern files themselves \u2014 the agent still needs to hunt those. 'What a change must preserve' is never addressed."
+        },
+        "specificity": {
+          "score": 0.3,
+          "rationale": "Concern names are concrete (Spree::Order::Payments, Spree::DisplayMoney) which is better than vague prose, but neither the concern files nor any association has a file path or line number, so the agent cannot jump directly to each piece."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The only explanation offered is 'central model representing a customer's cart and purchase'; there is no account of WHY concerns are extracted, WHY associations are structured this way, or what invariants the contract enforces."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No uncertainty is flagged anywhere \u2014 the answer presents the list as complete and confirmed without acknowledging gaps or unverified pieces."
+        },
+        "relationship": {
+          "score": 0.15,
+          "rationale": "Concerns and associations are listed by name only; no binding mechanism is stated (no 'included via include', no has_many/belongs_to/through/polymorphic for any association), so the list could equally have been produced by a text search and gives the agent no path information."
+        }
+      },
+      "step_quality": 0.245,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1603,
+        "cache_creation_input_tokens": 19099,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace how an order is built and recalculated",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer contains zero file:line references and no actual trace of the cart-to-order flow or recalculation fan-out; it is entirely composed of unfulfilled intentions ('Let's look at\u2026') with no findings delivered."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "The only named artifact is 'Spree::OrderUpdater' with no file, no line, and no description of what it does; nothing concrete enough for an agent to act on."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No explanation of why recalculation is centralized or how the fan-out is structured is present anywhere in the answer."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer expresses no calibrated uncertainty about any recalculation step; the 'let's look' phrasing signals incomplete work, not epistemic flagging."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No chain of any kind is assembled; there is no statement connecting any two pieces of the recalculation flow, let alone the full change \u2192 updater \u2192 totals/adjustments/shipments/stock path."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1007,
+        "cache_creation_input_tokens": 18964,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Audit every dependent of the Order contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer contains only a section heading and the sentence 'Let's find all dependents of the Order model.' \u2014 no dependents are listed, no grouping by area or gem, no file:line citations whatsoever."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "No concrete file paths, no symbols, no line numbers appear in the answer; the agent would have to perform the entire audit from scratch."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No dependent is named, so no explanation of why any dependent is affected or how it reaches Order is possible."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer is empty of content; it cannot flag any uncertainty about static-analysis gaps, concern/association indirection, or cross-gem reach."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No dependents are identified, so no connecting relationships (association, concern, polymorphic route, multi-hop path) are stated; the criterion cannot be satisfied at all."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 701,
+        "cache_creation_input_tokens": 19013,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace how order state and completeness are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer contains only three stub sentences announcing intent to look at the state machine, with zero file:line references, no guard descriptions, and no actual content about how state is checked before mutations."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "No guards are named, no files are cited, no line numbers appear anywhere in the answer."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No explanation of why mutating a completed order is dangerous or why guards exist; the answer never reached substantive content."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer produced no findings at all, so there is nothing to flag uncertainty about; absence of content is not calibrated uncertainty."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No connecting paths between guards and dependents are stated; the answer is entirely empty of structural content."
+        }
+      },
+      "step_quality": 0.0,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 658,
+        "cache_creation_input_tokens": 18902,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer names six areas and cites '126 direct callers' but provides zero file:line references, no specific dependents, and no risk ranking; an agent cannot act on this without a full fresh exploration of the codebase."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Every area descriptor is maximally vague ('Controllers, components, and helpers'); not a single file path, class name, or line number appears anywhere in the answer."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "The answer offers no explanation of why any dependent is at risk; it merely restates the area labels with no rationale for risk level or grouping logic."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "There is no acknowledgment of what a static caller scan misses (concern-pulled behavior, polymorphic associations, cross-gem indirect paths); the answer presents its thin list as if complete."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No connecting relationship is stated for any dependent; there is no path from the Order contract change to any specific file, making the 'blast radius' label entirely unsupported."
+        }
+      },
+      "step_quality": 0.0175,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 971,
+        "cache_creation_input_tokens": 18988,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "The map covers all major areas \u2014 model, concerns, dependents grouped by gem (core/legacy_promotions/promotions/api/backend/admin), specs, and a high-risk section \u2014 with file:line throughout. Notable gaps: the main `core/spec/models/spree/order_spec.rb` is absent, admin specs are missing from the specs section, and the associations block is a bare name-list with no file anchors."
+        },
+        "specificity": {
+          "score": 0.75,
+          "rationale": "File paths are concrete and multi-gem (e.g. `legacy_promotions/app/models/spree/promotion/benefit.rb:341`, `promotions/app/models/solidus_promotions/conditions/nth_order.rb:26`), giving the agent real insertion points. Several spec entries carry only `:5`/`:6` stubs that look arbitrary rather than locating a real describe block, and the associations list offers no file anchor at all."
+        },
+        "justification": {
+          "score": 0.45,
+          "rationale": "Every entry carries a `usage` one-liner, but they explain what the file does ('Raises for adjustments for completed orders', 'Builds packages') not WHY it must change when the Order contract changes \u2014 e.g. no statement that benefit.rb guards on `order.complete?` and would break if that predicate moves. The agent gets WHAT without the contract-dependency rationale."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No uncertainty is flagged anywhere \u2014 no note about other gems not analyzed, dynamic dispatch paths that may reach Order indirectly, or fields/concerns the static pass could not confirm. The `high_risk_dependents` block implicitly prioritizes but does not acknowledge what might be missing."
+        },
+        "relationship": {
+          "score": 0.3,
+          "rationale": "Usage fields are functional summaries, not explicit connecting relationships: `inventory_unit.rb` says 'Associates with order' without naming `belongs_to :order`; `adjustment_source.rb` says 'Removes adjustments from incomplete orders' without naming the concern-inclusion path; `simple_coordinator.rb` says 'Builds packages' without stating it receives an Order argument. A text search can produce this file list; the chain from each file to the changed contract element is consistently absent."
+        }
+      },
+      "step_quality": 0.555,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1970,
+        "cache_creation_input_tokens": 22454,
+        "cache_read_input_tokens": 15192
+      }
+    }
+  ]
+}

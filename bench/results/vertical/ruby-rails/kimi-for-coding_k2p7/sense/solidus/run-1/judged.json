@@ -1,0 +1,372 @@
+{
+  "scenario": "Solidus work session - audit the Order contract before a teardown rework",
+  "repo": "solidus",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "solidus.rubric.yaml"
+  },
+  "scenario_quality": 0.6274,
+  "relationship_audit": {
+    "total": 19,
+    "covered": 19,
+    "related": 12,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 0.6316,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [
+      "d:legacy-promo",
+      "d:legacy-rule",
+      "d:legacy-minqty",
+      "d:legacy-product",
+      "d:solidus-promo",
+      "d:returns-api",
+      "d:admin-lineitems"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "order-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:payments",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:display-money",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:orders-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:order-updater",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:adjustment-src",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:stock-coord",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-promo",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-rule",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-minqty",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:legacy-product",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:solidus-benefit",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:solidus-promo",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:checkouts-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:returns-api",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:shipments-api",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:cancellations",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-payments",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:admin-lineitems",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer correctly identifies Solidus as a multi-gem Rails e-commerce platform, lists all major gem directories with one-line descriptions, and pins the central model at `core/app/models/spree/order.rb:21` with `Spree::Base` as its parent. However, the prompt explicitly asks for 'the shared pieces it is built on' and the answer omits the concerns/modules Order includes (payments, money display, etc.), so the next agent still needs a targeted lookup to find those."
+        },
+        "specificity": {
+          "score": 0.75,
+          "rationale": "File paths are concrete with line numbers (`core/app/models/spree/order.rb:21`, `core/app/models/spree/base.rb:3`) and gem directories are clearly named. Missing: specific concern file paths, association names, or any gem extension-point files that the agent would need next."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The answer names pieces without explaining WHY the architecture is shaped this way \u2014 no mention of Order being the hub of the purchase lifecycle, nor why functionality is split across separate gems (optional extensions, upgrade isolation). The structural listing stands alone with no motivating rationale."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "No uncertainty is flagged anywhere \u2014 the answer reads as fully confident, but the inter-gem wiring (how api/backend/admin/promotions extend core behavior) is non-trivial and worth noting as 'verify by reading each gem's engine.rb or initializers'. Omitting any caveat overstates confidence."
+        },
+        "relationship": {
+          "score": 0.25,
+          "rationale": "The only relationship statement is 'all hang off it', which names endpoints without connecting paths. There is no mention of has_many associations, included concerns/modules, how promotions act on Order (through adjustments vs. direct callbacks), or how the new vs. legacy promotions gem wires in \u2014 a text search could produce the same file list."
+        }
+      },
+      "step_quality": 0.512,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2059,
+        "cache_creation_input_tokens": 18812,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Map the Order contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "Covers concerns (Payments, DisplayMoney, state machine), the full association graph with line refs, and the critical delegation chain (recalculator \u2192 OrderUpdater, contents/shipping/cancellations configurable classes) with file:line \u2014 an agent could start editing with only targeted follow-ups. Metadata concern is listed without a file:line, a minor gap."
+        },
+        "specificity": {
+          "score": 0.82,
+          "rationale": "Most pieces are concrete: `core/app/models/spree/order/payments.rb:5`, `core/lib/spree/app_configuration.rb:392/437`, `core/app/models/spree/in_memory_order_updater.rb:6`. Metadata concern is named but has no file path, leaving one piece unlocated."
+        },
+        "justification": {
+          "score": 0.5,
+          "rationale": "The 'teammate must know' paragraph explains WHY the totals-delegation pattern matters (Order doesn't compute totals itself), but the answer doesn't explain WHY the concerns are split the way they are (e.g., why Payments is a separate concern vs inline), leaving the structural rationale thin."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No uncertainty is flagged anywhere; Metadata is listed without a file:line and without noting it couldn't be confirmed, and there is no acknowledgment of what parts of the contract might be incomplete or spread across other gems."
+        },
+        "relationship": {
+          "score": 0.68,
+          "rationale": "Association relationships are well-stated by Rails type (belongs_to, has_many, has_many through adjustable). Concerns are labeled 'concern' but the `include` binding is only implied, not stated, and the state machine's binding mechanism (class_methods include vs extend) is not explicit; configurable delegates show the `delegate :recalculate, to: :recalculator` path clearly."
+        }
+      },
+      "step_quality": 0.6875,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1784,
+        "cache_creation_input_tokens": 19287,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how an order is built and recalculated",
+      "scores": {
+        "map_quality": {
+          "score": 0.8,
+          "rationale": "The answer traces all four layers \u2014 cart creation (order.rb:24), item addition through SimpleOrderContents and OrderInventory, recalculation fan-out through InMemoryOrderUpdater with sub-step ordering, and checkout state-machine progression \u2014 with concrete file:line at each layer; the one gap is that recalculation triggered by payment or shipment state changes (rather than item mutations) is not traced separately."
+        },
+        "specificity": {
+          "score": 0.78,
+          "rationale": "Method names and line numbers are given throughout (e.g., in_memory_order_updater.rb:26, order.rb:510-511, class_methods.rb:95-101); file paths omit the full gem-relative prefix (core/app/models/spree/) but are otherwise unambiguous, and every recalculation sub-step is named rather than summarised."
+        },
+        "justification": {
+          "score": 0.18,
+          "rationale": "The answer narrates WHAT each layer does in order but never explains WHY recalculation is centralised in InMemoryOrderUpdater, why promotions/tax are delegated to configurable adjuster classes, or why persist_totals is deferred to the end of the chain."
+        },
+        "uncertainty": {
+          "score": 0.25,
+          "rationale": "The answer implicitly defers on the promotions and tax adjuster internals by naming the config keys rather than opening them, but never explicitly flags those as uninspected or flags any part of the chain as uncertain."
+        },
+        "relationship": {
+          "score": 0.8,
+          "rationale": "The answer assembles recalculation as an explicit ordered chain (order.recalculate \u2192 InMemoryOrderUpdater#recalculate \u2192 update_totals \u2192 update_adjustment_total \u2192 update_promotions/update_tax_adjustments \u2192 persist_totals) and separately chains item-addition through contents \u2192 line_item callbacks \u2192 OrderInventory \u2192 shipment coordinator, rather than presenting a flat file list."
+        }
+      },
+      "step_quality": 0.648,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1981,
+        "cache_creation_input_tokens": 19211,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Audit every dependent of the Order contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.93,
+          "rationale": "The answer enumerates dependents across every area the rubric names: core domain (LineItem/Shipment/Payment/Adjustment/InventoryUnit/Exchange/AdjustmentSource), stock (SimpleCoordinator/Package/InventoryUnitBuilder/Estimator), both legacy and new promotions gems (SpreeOrderPatch, OrderContents, Promotion::Rules::*, OrderUpdaterPatch, SolidusPromotions::Benefit/Conditions::*/OrderAdjuster), checkout/returns/cancellations, and the api/backend/admin surface with mailers and test support. The only coverage gap is that Promotion::Rules::* and SolidusPromotions::Conditions::* are collapsed into wildcards rather than listed individually."
+        },
+        "specificity": {
+          "score": 0.78,
+          "rationale": "The vast majority of entries carry file:line and a one-phrase description (e.g., `Spree::Stock::SimpleCoordinator` at `core/app/models/spree/stock/simple_coordinator.rb:57`), but a handful lack line numbers (ReturnItem, CustomerReturn, mailers, ReimbursementType::ReimbursementHelpers) and the promotion rules/conditions/benefits sub-classes are swept under wildcards without individual file:line citations."
+        },
+        "justification": {
+          "score": 0.52,
+          "rationale": "The grouping by area/gem communicates architectural intent implicitly, and the one-phrase descriptions convey what each dependent does with order, but the answer never explains WHY the architecture is shaped this way \u2014 why functionality is split across the legacy/promotions gems, or why the stock coordinator is a separate service rather than a model method. The area headings substitute for explanation rather than providing it."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer contains no disclaimer about what a static pass can miss \u2014 no mention of dynamic dispatch paths, runtime-resolved class names (e.g., `order_recalculator_class`), potential dependents in third-party extensions, or indirect routes that text search can name but not connect. An agent acting on this list has no signal about where to be cautious."
+        },
+        "relationship": {
+          "score": 0.62,
+          "rationale": "Association-based relationships are stated well (`belongs_to :order`, `has_one :order, through: :shipment`, `has_many :orders, through: :inventory_units`), and patch/concern mechanisms are noted for SpreeOrderPatch and AdjustmentSource. However, for the non-obvious service-injection cases the rubric highlights \u2014 Stock::SimpleCoordinator (receives order as constructor arg, not via association), Exchange (reaches order through ReturnAuthorization), SolidusPromotions::Benefit (passed order as argument in an eligibility check) \u2014 the answer describes behavior rather than the connecting path, which is exactly what a text search also returns."
+        }
+      },
+      "step_quality": 0.6935,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3698,
+        "cache_creation_input_tokens": 23643,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Trace how order state and completeness are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "The answer covers guards across all four requested areas (payments, shipments, stock/inventory, promotions) with file:line throughout, and includes order-level guards like `Order#create_proposed_shipments` raising if `completed?` and `Order#finalize` locking adjustments. The state machine itself \u2014 checkout transition guards and the `state_machine` definition \u2014 is not traced, leaving a gap the agent would need to fill with a targeted lookup."
+        },
+        "specificity": {
+          "score": 0.85,
+          "rationale": "Nearly every guard is named by method and file:line (e.g., `OrderInventory#add_to_shipment` at `core/app/models/spree/order_inventory.rb:85`, `Shipment#can_transition_from_pending_to_ready?` at `:55`), giving the agent concrete anchors; the promotions entry collapses two gems into one line without file:line, which is the only notable gap."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The answer lists what each guard checks but never explains WHY mutating a completed order is dangerous (financial integrity, audit trail, locked adjustments, inventory accuracy); an agent acting on this answer has no reasoning to apply to novel cases or gaps."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged: the answer does not note whether any area lacks an explicit guard, whether the state machine has implicit guards not listed, or whether guards in the api/backend/admin gems were checked."
+        },
+        "relationship": {
+          "score": 0.4,
+          "rationale": "Each entry names a guard and its condition but does not state the protection chain \u2014 e.g., `Payment#update_order` checks `completed?` but the answer does not say this prevents re-totaling a locked order or triggering a duplicate state push; the guards are listed in parallel isolation rather than as paths from mutation trigger to protected invariant."
+        }
+      },
+      "step_quality": 0.5375,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1546,
+        "cache_creation_input_tokens": 19270,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.55,
+          "rationale": "The answer covers the right areas (core models, service objects, promotion patches across both gems, tax/stock/returns stacks, API/admin surface, mailers) and provides a three-tier risk ranking, which is useful structure. However, file:line citations appear on only two items (`core/app/models/spree/order.rb:21`, `core/app/models/spree/in_memory_order_updater.rb:6`) while everything else is symbol-only, forcing the agent to locate files before it can act."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "Symbol names are concrete and specific (`SolidusLegacyPromotions::SpreeOrderPatch`, `Spree::Stock::SimpleCoordinator`, etc.) but the absence of file paths on ~90% of entries means the agent cannot navigate directly to any of them; risk reasons are present but compressed to one phrase per group rather than per file."
+        },
+        "justification": {
+          "score": 0.6,
+          "rationale": "High-risk justifications are present and correct: `belongs_to :order` with dependent destruction for associated models, direct total reads/writes for the updater, patching the order directly for promotion patches. Medium and lower tiers are less justified \u2014 'behaviorally dependent but less likely to break silently' names the verdict without explaining why indirect reach makes breakage less likely."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer never flags where it is uncertain or which dependents it could not confirm statically (e.g., gem-level indirect callers, concern-reached paths, mailer event subscriptions in non-core gems); the 'lower risk but must be re-verified' bucket reads as a ranked tier, not an honesty signal about confidence."
+        },
+        "relationship": {
+          "score": 0.48,
+          "rationale": "`belongs_to :order` is stated for the five core associated models and 'directly reads/writes' for the updater, which is good; but promotion patches are listed without naming the mixin or patch mechanism, the stock coordinator's relationship (builds packages from order line items via the coordinator concern) is absent, and the tax/returns/mailer dependents in the medium tier name no connecting path at all \u2014 correct endpoints with largely missing routes."
+        }
+      },
+      "step_quality": 0.4885,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1890,
+        "cache_creation_input_tokens": 19151,
+        "cache_read_input_tokens": 16203
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.92,
+          "rationale": "The answer delivers a complete, actionable map: files to edit with file:line (e.g., `core/app/models/spree/order.rb:21`, `in_memory_order_updater.rb:6`), dependents grouped by six gem areas with file:line per entry, a full spec list, factory list, and three new-spec recommendations \u2014 the JSON change_verification_map gives the agent a ready-to-execute checklist with only small targeted follow-ups needed."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Insertion points are named concretely throughout: `empty! (order.rb:461)`, `finalize (order.rb:758)`, `after_cancel (order.rb:846)`, state guards like `core/app/models/spree/line_item.rb:136`, spec paths down to `legacy_promotions/spec/models/spree/promotion_handler/coupon_spec.rb` \u2014 no hand-waving like 'edit the model layer'."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Every dependent entry carries a `usage` field explaining WHY it is in the map (e.g., 'saves trigger order.recalculate', 'prepends associations and recalculate hooks'); blast_radius entries carry a `reason`; new-spec entries list the behaviors they cover \u2014 justification is systematic rather than incidental."
+        },
+        "uncertainty": {
+          "score": 0.25,
+          "rationale": "The answer presents the entire map as definitive with no explicit uncertainty flags \u2014 it never notes which file paths could not be confirmed, which gem surface might have changed, or where a static pass may have missed indirect dependents; contrast with prior steps that did flag gaps."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Most dependents state the connecting relationship explicitly: 'belongs_to order; callbacks depend on order state' for LineItem, 'prepends order_promotions associations' for SpreeOrderPatch, 'saves trigger order.recalculate' for Payment \u2014 the chain from Order contract change to each file is named, not merely implied by co-location."
+        }
+      },
+      "step_quality": 0.8245,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1675,
+        "cache_creation_input_tokens": 29170,
+        "cache_read_input_tokens": 16203
+      }
+    }
+  ]
+}

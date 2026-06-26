@@ -1,0 +1,388 @@
+{
+  "scenario": "RubyLLM work session - add support for a new LLM service",
+  "repo": "ruby_llm",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "ruby_llm.rubric.yaml"
+  },
+  "scenario_quality": 0.3492,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 10,
+    "related": 10,
+    "contradicted": 0,
+    "covered_recall": 0.4348,
+    "related_recall": 0.4348,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "Model::Info",
+      "Protocol-base",
+      "custom:deepseek",
+      "custom:gpustack",
+      "custom:mistral",
+      "custom:ollama",
+      "custom:openrouter",
+      "custom:perplexity",
+      "custom:xai",
+      "aliases",
+      "models.json",
+      "model_registry",
+      "chat_error_spec"
+    ],
+    "missed_related": [
+      "Model::Info",
+      "Protocol-base",
+      "custom:deepseek",
+      "custom:gpustack",
+      "custom:mistral",
+      "custom:ollama",
+      "custom:openrouter",
+      "custom:perplexity",
+      "custom:xai",
+      "aliases",
+      "models.json",
+      "model_registry",
+      "chat_error_spec"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "register-table",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Provider-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Models#resolve",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Model::Info",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "Protocol-base",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ChatCompletions",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "custom:deepseek",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "custom:gpustack",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "custom:mistral",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "custom:ollama",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "custom:openrouter",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "custom:perplexity",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "custom:xai",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "custom:azure",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Configuration",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "Error-hierarchy",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ErrorMiddleware",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "parse_error",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "aliases",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "models.json",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "model_registry",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "models_to_test",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "chat_error_spec",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.6,
+          "rationale": "Hits every required area (provider.rb, providers/, protocols/, configuration.rb, error.rb, models.rb) so the agent knows where to look, but omits lib/ruby_llm/protocol.rb (the base wire-protocol class) and names no concrete files inside providers/ or protocols/, leaving the agent to do a directory listing before it can act."
+        },
+        "specificity": {
+          "score": 0.4,
+          "rationale": "Directory-level paths are accurate, but the answer never names a concrete provider file (e.g. providers/openai.rb), a concrete protocol file (e.g. protocols/chat_completions.rb), or any class names, so 'the base class all providers inherit from' is not tied to an actual Ruby class."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The answer lists structural pieces with no explanation of WHY integrations subclass a base or why wire protocols live in a separate shared layer; it is a pure naming exercise with no architectural reasoning."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged anywhere \u2014 the answer reads as complete and definitive despite missing file-level detail that would matter for a new integration, so the agent would proceed without knowing what it still needs to verify."
+        }
+      },
+      "step_quality": 0.365,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1476,
+        "cache_creation_input_tokens": 18807,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace a request to its concrete service integration",
+      "scores": {
+        "map_quality": {
+          "score": 0.2,
+          "rationale": "The answer traces protocol resolution (resolve_protocol \u2192 default_protocol) but entirely omits the two registry hops the rubric requires: Provider.resolve / Provider.providers in provider.rb and Models#resolve / Model::Info#provider_class. An agent following this trace would still need to rediscover how the concrete provider object is actually selected."
+        },
+        "specificity": {
+          "score": 0.2,
+          "rationale": "The exact methods the rubric names (Provider.resolve, Models#resolve, provider_class) are absent; the answer cites resolve_protocol and default_protocol which are protocol-routing methods, not the provider-registry lookup methods. The one file:line given for provider registration (openai.rb:7-8) is not the lookup site."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "The answer says providers 'register their supported protocols' but never explains WHY lookup is registry-based (so a new integration is discovered by registering, not by editing a router). No reasoning about the design intent is offered."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No flags about dynamic behavior: the registry being populated at load time, slug-based lookup, or any part of the path the agent should verify before relying on it."
+        }
+      },
+      "step_quality": 0.175,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1169,
+        "cache_creation_input_tokens": 18798,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Map the shared API-dialect layer and its customizations",
+      "scores": {
+        "map_quality": {
+          "score": 0.15,
+          "rationale": "The answer names only three providers (Azure, VertexAI, OpenAI) and completely omits the six core OpenAI-dialect subclassers the rubric requires (DeepSeek, GPUStack, Mistral, Ollama, OpenRouter, XAI); the agent would need fresh codebase exploration to find the actual customization fan-out. The base Protocol layer (protocol.rb) is also absent, and VertexAI is likely mis-classified (it routes to gemini/anthropic protocols, not ChatCompletions subclasses)."
+        },
+        "specificity": {
+          "score": 0.2,
+          "rationale": "The three entries that are present carry concrete file:line citations (e.g. `lib/ruby_llm/providers/azure/chat_completions.rb:8`), but providers/deepseek.rb, providers/openrouter.rb, providers/xai.rb, providers/ollama.rb, providers/mistral.rb, and providers/gpu_stack.rb are entirely absent, leaving the most discriminating override points unnamed."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "The answer lists four customization axes (endpoint URL, auth headers, protocol selection, payload formatting) but never explains WHY the dialect is a shared base with per-service subclasses \u2014 the 'one base for OpenAI-compatible APIs, per-service tweaks via subclass' reasoning that would let the agent choose the right inheritance pattern is missing."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer presents its three-provider list with no caveat that other customizers may exist; an agent acting on it would silently miss six integrations without any prompt to verify, making this the worst possible posture for an incomplete answer."
+        }
+      },
+      "step_quality": 0.155,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1540,
+        "cache_creation_input_tokens": 18816,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Find how an integration declares and validates its settings",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer covers all four areas (declaration, registration, validation, configuration class) with file:line, letting an agent pick up the work immediately. However, the rubric asks for `configured?` but the answer names `ensure_configured!` instead, leaving a small gap the agent would need to resolve."
+        },
+        "specificity": {
+          "score": 0.68,
+          "rationale": "Methods are named concretely \u2014 configuration_options, configuration_requirements, register_provider_options, ensure_configured! \u2014 with file:line throughout. The expected `configured?` method from the rubric is absent, replaced by `ensure_configured!`, which is a different check."
+        },
+        "justification": {
+          "score": 0.08,
+          "rationale": "The answer only lists WHERE each method lives; it never explains WHY settings are declared per-integration and registered into a shared Configuration object (separation of concerns, provider-specific accessors, etc.). Pure enumeration with no architectural reasoning."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "No flags raised about env-based defaults, optional vs required settings, or which parts of the configuration the agent should verify before copying a pattern. The answer presents the map as complete without caveats."
+        }
+      },
+      "step_quality": 0.486,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1136,
+        "cache_creation_input_tokens": 18781,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Trace how HTTP failures become typed errors",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "The answer hits all four required anchors: ErrorMiddleware.parse_error at error_middleware.rb:41-71, the Error subclass family at error.rb:44-104, the base Provider#parse_error at provider.rb:104-124, and a concrete override example (VertexAI at providers/vertexai.rb:47). An agent could wire error handling with only targeted follow-ups to see the full status-code mapping and the complete subclass list."
+        },
+        "specificity": {
+          "score": 0.68,
+          "rationale": "Methods are named exactly (ErrorMiddleware.parse_error, parse_error) with file:line throughout, and two subclasses are named (BadRequestError, UnauthorizedError), but the rubric's discriminating subclasses (ContextLengthExceededError, ServerError) are hidden behind 'etc.' \u2014 the agent still needs one targeted read of error.rb to enumerate the full family."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The answer is a numbered list with no explanation of WHY classification is split between a shared Faraday middleware (status-code tier) and a per-provider parse_error (body-parsing tier), nor why the two-layer design exists \u2014 an agent copying the pattern without that reasoning could omit the override when it matters."
+        },
+        "uncertainty": {
+          "score": 0.22,
+          "rationale": "The answer names VertexAI as an override example but does not flag that other integrations may also override parse_error, nor does it warn the agent to check whether the new service's error body differs before relying on the default \u2014 leaving the agent potentially unaware it needs a custom parse_error."
+        }
+      },
+      "step_quality": 0.543,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1426,
+        "cache_creation_input_tokens": 18764,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Find every site that must change to add a new integration",
+      "scores": {
+        "map_quality": {
+          "score": 0.42,
+          "rationale": "Covers the registration table (lib/ruby_llm.rb:104-116) and test matrix (spec/support/models_to_test.rb:10-24) with file:line, but misses models.json entirely (the rubric's explicit catalog file), omits the registry consumers (Models#resolve, provider_class), and treats aliases as non-existent; the agent would need meaningful re-exploration to find these disjoint sites."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "Three sites carry concrete file:line (lib/ruby_llm.rb, lib/ruby_llm/models.rb, spec/support/models_to_test.rb), but models.json is absent, and registry-consumer methods (Models#resolve, provider_class) are never named, so the agent still has named-method gaps before it can act."
+        },
+        "justification": {
+          "score": 0.18,
+          "rationale": "Nearly all entries are bare list items with no WHY; the single architectural note ('Configuration registration: Handled automatically by Provider.register()') gestures at load-time wiring but doesn't explain why catalog lookup, registry consumers, and test matrix are each separate concerns."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "Zero acknowledgment of what static reading can miss \u2014 no mention of rake tasks that regenerate models.json, VCR fixtures, or load-order dependencies \u2014 so the agent has no signal to verify before committing."
+        }
+      },
+      "step_quality": 0.324,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1665,
+        "cache_creation_input_tokens": 18874,
+        "cache_read_input_tokens": 15192
+      }
+    },
+    {
+      "step": "Produce the edit map",
+      "scores": {
+        "map_quality": {
+          "score": 0.42,
+          "rationale": "The map covers the registry (lib/ruby_llm.rb:104-116), the provider class, models.rb, and the test matrix (spec/support/models_to_test.rb), but omits models.json entirely (the model/alias catalog the rubric explicitly names) and never lists configuration.rb as a file to modify for settings registration; VCR fixtures are also absent. An agent working from this map would still need to discover those areas before opening the PR."
+        },
+        "specificity": {
+          "score": 0.52,
+          "rationale": "File:line citations exist for the registry edit (lib/ruby_llm.rb:104-116), models.rb (11-22), and models_to_test.rb (10-24), and the customization_points section references concrete paths like lib/ruby_llm/providers/vertexai.rb:15-17; but models.json has no entry at all, the configuration.rb registration site is missing, and the 'change' descriptions for chat_spec.rb are vague bullet lists rather than actionable insertion points."
+        },
+        "justification": {
+          "score": 0.38,
+          "rationale": "Each created file has a 'purpose' field and each modification has a 'change' field, but these describe WHAT, not WHY: the answer never explains that lib/ruby_llm.rb is a load-time registration table, that models.rb is a catalog-lookup alias map, or that spec/support/models_to_test.rb drives the integration test matrix \u2014 the architectural rationale the rubric asks for is absent."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The customization_points section implies some choices are optional, but the answer never explicitly flags what the agent should verify before committing (which protocol methods the new service actually needs to override, whether VCR fixtures must be generated, load-order dependencies); everything is presented with uniform confidence."
+        }
+      },
+      "step_quality": 0.3965,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1948,
+        "cache_creation_input_tokens": 19466,
+        "cache_read_input_tokens": 15192
+      }
+    }
+  ]
+}
