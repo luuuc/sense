@@ -2,13 +2,15 @@
 # vertical-loop.sh — the mechanical per-repo loop of the vertical bench (manifesto
 # §8, bootstrap-runbook §6), with the two human gates kept load-bearing.
 #
-# It chains the FREE/mechanical steps and STOPS at the steps a human owns. What it
-# automates vs hands off is the line auto-improvement-endgame draws: Loop A (the
-# product-gap detectors) and the run mechanics are automated; Loop B (the scenario
-# and the tie diagnosis) stays human-anchored. The MODEL drafts the first scenario
-# (using scenario-crafting.md + manifesto §4) and the human REVIEWS — that draft
-# step is the scout gate; the script cannot author a scenario, so it prints the
-# gate and waits for <repo>.yaml + <repo>.rubric.yaml to exist.
+# It chains the FREE/mechanical steps and PAUSES where someone must act. The line
+# auto-improvement-endgame draws: Loop A (the product-gap detectors) and the run
+# mechanics are automated; Loop B (the scenario + the tie diagnosis) is DRAFTED and
+# tuned by the AI agent running this loop, and the human REVIEWS it adversarially,
+# asynchronously (anomalies / inconsistencies). The human is the integrity anchor,
+# not the author. The script cannot write a scenario itself, so at the scout pause it
+# hands control back to the AI agent to author <repo>.yaml + <repo>.rubric.yaml +
+# gold, then resumes once those exist. The only true HUMAN decision is the cost
+# confirm before the paid sweep (--yes).
 #
 # Phases (a state file resumes at the next one; re-run to advance):
 #   index      ensure-index.sh                                    [auto]
@@ -98,9 +100,9 @@ yaml_field() { grep -E "^$1:" "$YAML" 2>/dev/null | head -1 | sed -E "s/^$1:[[:s
 
 gate() { # message... — record we're parked at the current phase and stop
   echo ""
-  echo "==================== HUMAN GATE ===================="
+  echo "==================== PAUSE — ACTION NEEDED ===================="
   printf '%s\n' "$@"
-  echo "==================================================="
+  echo "=============================================================="
   echo "Re-run: bash bench/drivers/vertical-loop.sh $REPO   (resumes at this phase)"
   exit 0
 }
@@ -122,13 +124,15 @@ do_scout() {
   local fh="$FILE_HINT"; [ -z "$fh" ] && fh="$(yaml_field contract_file)"
   if [ -n "$sym" ]; then
     local fflag=(); [ -n "$fh" ] && fflag=(--file "$fh")
-    python3 "$LIB/seam_hunt.py" "$CLONE" "$sym" --conf 0.7 --propose "${fflag[@]}" 2>&1 || true
+    # ${arr[@]+...} guards the empty-array case under `set -u` on bash 3.2 (macOS).
+    python3 "$LIB/seam_hunt.py" "$CLONE" "$sym" --conf 0.7 --propose ${fflag[@]+"${fflag[@]}"} 2>&1 || true
   else
     echo "  (no --symbol given and no scenario yet; pick the central abstraction from"
     echo "   repos.md, then: vertical-loop.sh $REPO --symbol <Sym> [--file <path>])"
   fi
   gate \
-    "DRAFT the scenario (Loop B — the model drafts, the human reviews):" \
+    "AI AUTHORING STEP (Loop B) — the agent running this loop DRAFTS + tunes these now;" \
+    "the human reviews adversarially, async (anomalies / inconsistencies), not as the author:" \
     "  - $YAML            (7 neutral steps, audit step forces per-dep file:line)" \
     "  - $RUBRIC   (matching rubric)" \
     "  - gold: + contract_symbol:/contract_file: in the yaml (curate the candidate above)" \
