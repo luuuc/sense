@@ -1,0 +1,250 @@
+name: Rails work session - audit the query Relation contract before a rework
+repo: rails
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for.
+#
+# Rails is the FRAMEWORK (51k symbols, 4014 files). This is a CHANGE-IMPACT ticket
+# bounded to its LARGEST subsystem: ActiveRecord's query layer (activerecord/lib =
+# 401 .rb files). The central object is the lazy query relation that every finder,
+# scope and association returns and carries a query as it is built up
+# (ActiveRecord::Relation). The recurring real task it mirrors: a maintainer about
+# to rework how relations are built/merged/executed must first audit EVERY place
+# that depends on the Relation contract before touching it. The must-find answer is
+# the scattered dependent set: the query-stack modules built on Relation PLUS the
+# call sites spread across the rest of activerecord/lib (connection role/shard
+# execution, SQL sanitization's relation-inlining, the collection cache key,
+# encrypted deterministic queries, signed-id relation finders, eager-load join
+# constraints, named-scope definition) AND across OTHER gems (the Enumerable
+# core-ext that mirrors a relation method in ActiveSupport, the `rails` query
+# command renderer in Railties). MOST of these reach Relation WITHOUT writing its
+# fully-qualified name: the fully-qualified `ActiveRecord::Relation` appears in only
+# ~13 of activerecord/lib's 401 files, so a text search for the class misses the
+# dependents that reach it by the short name, by building a relation, or by a
+# case/`===` type test, while the bare word `relation` is too noisy to grep across
+# the query layer and the gem is far too large to read whole. A structural impact
+# query returns the resolved dependent set in one shot; reconstructing it by hand
+# means reading hundreds of files or grepping a token that either misses or drowns.
+description: 'You are a maintainer about to rework how the lazy query object that
+  every finder, scope and association returns is built up, merged and executed.
+  Before touching that contract, you need a complete audit of what depends on it
+  today, so the rework does not silently break a dependent. Work through the tasks
+  below one at a time; each builds on what you learned in the previous one. Keep
+  every answer concrete with file:line so the next step (and a teammate opening the
+  PR) can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the object you are about to
+    rework sit, the lazy query value that a finder or scope or association returns
+    and that accumulates a query as it is chained, along with the shared pieces it
+    is built on? Hand the next agent a map so they can act with small, targeted
+    lookups, not a fresh exploration of the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: ActiveRecord
+    required: true
+  - type: word
+    value: Relation
+    required: false
+    description: Reached the query relation object, not just the model base class
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the Relation contract and what it is built on
+  prompt: "Task: map the contract of the object you are about to change. What does it
+    expose and what shared behavior is mixed into it (the query-building, finder,
+    calculation, spawning and delegation modules that make up its query interface),
+    and what does a teammate need to know about that contract before changing it?
+    Give file:line for the relation object and each shared piece.
+    "
+  checks:
+  - type: word
+    value: query
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: relation.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how a query is built up and executed
+  prompt: "Task: trace how a query relation is created and run. Start from where a
+    finder or scope hands back a relation, follow how chaining spawns a new relation
+    and merges conditions, and end where the accumulated query is turned into SQL
+    and executed. Give file:line for each layer and the order they run.
+    "
+  checks:
+  - type: word
+    value: spawn
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Relation contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase
+    that depends on the query relation object, so the rework cannot silently break
+    one. Be exhaustive and group them by area (the query-building/finder/calculation
+    modules that make up its interface; and — do not stop at the query directory —
+    the call sites elsewhere that build, type-check, execute or extend a relation:
+    connection role/shard execution, SQL bind-variable handling, collection cache
+    keys, encrypted-query rewriting, signed-id finders, eager-load join
+    construction, named-scope definition; and the OTHER gems that build on it, such
+    as a core-extension that mirrors a relation method and the command-line query
+    renderer). Many depend on it WITHOUT naming the class, reaching it by the short
+    name, by building a relation, or by a `===`/case type test, so a search for the
+    class name will miss them and the bare word is too noisy to grep across the
+    query layer. For each dependent give file:line and one phrase on how it uses the
+    relation. A missed dependent is a regression shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered cross-file/cross-gem dependent set, not just the query dir
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how relation behavior is reused for associations
+  prompt: "Task: an association's collection behaves like a relation. Trace how the
+    association collection reuses the relation query interface (what it subclasses or
+    delegates to) and where association queries are built. Give file:line throughout.
+    "
+  checks:
+  - type: word
+    value: association
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Relation contract (how a relation is
+    spawned, merged and executed). Assess the full blast radius: which dependents
+    are at risk, which are most likely to break, and what must be re-verified after
+    the change, across every area you found including the scattered call sites and
+    the other gems. Be complete and use file:line; rank by risk. A missed high-risk
+    dependent is the one that pages someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered cross-file/cross-gem dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the relation
+    object and shared query modules you will edit, every dependent that must be
+    reviewed or touched grouped by area (including the scattered call sites and the
+    cross-gem dependents), and the tests or fixtures that must be updated or added.
+    Use file:line throughout, so a teammate could land the change from your map
+    alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: test
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold is the must-find audit of every dependent of ActiveRecord::Relation (the lazy
+# query object every finder/scope/association returns), in the 401-file activerecord/lib.
+# THREE groups, by how a frontier baseline reaches each (the framework is the most
+# MEMORIZED Ruby codebase, so the lever here is memorization, not just grep):
+#   - `contract` (5, non-discriminator): the relation object + the query/finder/spawn/
+#     delegation modules that are its interface, in the ls-able relation/ subdir. Both
+#     arms get these 5/5.
+#   - `context` (7, non-discriminator): dependents that reach Relation through its
+#     well-known PUBLIC surface (a `=== Relation` type-test, collection_cache_key, the
+#     signed-id finders, named scopes, the Enumerable#pick mirror, the rails query
+#     renderer). A trained model RECITES these from weights, so both arms get them 7/7 —
+#     they do NOT separate. Kept as honest context.
+#   - `dependents` (6, THE DISCRIMINATOR): the obscure query-COMPILATION internals a
+#     relation is built from (where_clause algebra, predicate_builder, from_clause,
+#     eager-load join_dependency, connection role/shard execution, the association
+#     preloader). These are NOT in any model's training as "Relation dependents", the
+#     FQN appears in only ~13 of 401 files (name-search misses them), and the gem is far
+#     too large to read whole. `sense_blast ActiveRecord::Relation --file relation.rb`
+#     returns them in one call; the baseline floors at 1-2/6. Verified on the ×3
+#     transcripts (sense 6/6,4/6,5/6 vs baseline 2/6,2/6,1/6 = +0.56).
+# All targets are file-path matched so both mention (on the map?) and cited (pinned to
+# path:line?) score. pergroup.py measures the `dependents` delta — the headline.
+gold:
+  # Each target carries `relation`: the TRUE way it reaches the Relation contract,
+  # verified from rails source. `relation` is the reference the reference-aware
+  # relationship audit (lib/relationship_audit.py) scores an answer against — it is
+  # NEVER rendered to the agent (only name/prompt are; see header). It lets the judge
+  # mark, per dependent, both covered (named?) and related (correct relation stated?),
+  # so a confident-but-incomplete answer can no longer read as complete.
+  # the contract itself + the query-interface modules a change must reckon with (all
+  # in the ls-able relation/ subdir; both arms reach these — non-discriminator anchor)
+  - {id: relation-model,    group: contract,   match: [active_record/relation.rb], relation: "the ActiveRecord::Relation object itself — the contract under change"}
+  - {id: query-methods,     group: contract,   match: [relation/query_methods.rb], relation: "QueryMethods builds the where/joins/select clauses mixed into Relation"}
+  - {id: finder-methods,    group: contract,   match: [relation/finder_methods.rb], relation: "FinderMethods (find/first/last/exists?) runs against the Relation"}
+  - {id: spawn-methods,     group: contract,   match: [relation/spawn_methods.rb], relation: "SpawnMethods#spawn/merge clone a Relation when it is chained"}
+  - {id: delegation,        group: contract,   match: [relation/delegation.rb], relation: "Delegation generates the class-specific Relation methods and delegates to the model class"}
+  # NON-DISCRIMINATOR context: dependents that reach Relation through its well-known
+  # PUBLIC surface (a `=== Relation` test, collection_cache_key, signed-id finders,
+  # named scopes, the Enumerable#pick mirror, the rails query renderer). A frontier
+  # model has these memorized from training, so BOTH arms cite them — they do not
+  # separate. Kept as honest context, not as the discriminator.
+  - {id: ctx:sanitization,  group: context,   match: [active_record/sanitization.rb], relation: "replace_bind_variable case-tests `ActiveRecord::Relation === value` to inline a relation's SQL as a bind value"}
+  - {id: ctx:integration,   group: context,   match: [active_record/integration.rb], relation: "collection_cache_key computes a cache key/version over a Relation (`all`)"}
+  - {id: ctx:encryption-queries, group: context, match: [encryption/extended_deterministic_queries.rb], relation: "intercepts Relation query building to rewrite where-values for encrypted deterministic columns"}
+  - {id: ctx:signed-id,     group: context,   match: [active_record/signed_id.rb], relation: "RelationMethods extends Relation with find_signed / find_signed! finders"}
+  - {id: ctx:scoping-named, group: context,   match: [scoping/named.rb], relation: "named scopes are class methods that return a Relation"}
+  - {id: ctx:enumerable-coreext, group: context, match: [core_ext/enumerable.rb], relation: "CROSS-GEM (ActiveSupport): Enumerable#pick mirrors Relation#pick"}
+  - {id: ctx:query-command, group: context,   match: [commands/query/query_command.rb], relation: "CROSS-GEM (Railties): the rails query command renders a Relation result as a table"}
+  # THE DISCRIMINATOR (`dependents`): the obscure query-COMPILATION internals a
+  # relation is built from — the where-algebra, the predicate builder, the from-clause,
+  # the eager-load join construction, the connection role/shard execution, the
+  # preloader's relation-building. These are NOT part of ActiveRecord's documented
+  # public API, so a frontier model does not recall them and a hand audit (auditing
+  # from memory, or grepping a name that appears in ~13 of 401 files) misses them;
+  # `sense_blast` on the Relation object returns them as resolved dependents. Verified
+  # on the ×3 transcripts: sense cites these, the baseline does not.
+  - {id: dep:join-dependency, group: dependents, match: [associations/join_dependency.rb], relation: "make_constraints builds the join constraints a Relation compiles for eager-loading/joins — reaches Relation by building it, FQN absent"}
+  - {id: dep:connection-handling, group: dependents, match: [active_record/connection_handling.rb], relation: "with_role_and_shard executes a relation's queries under a selected connection role/shard — FQN nearly absent"}
+  - {id: dep:where-clause,  group: dependents, match: [relation/where_clause.rb], relation: "WhereClause is the where-condition algebra a Relation accumulates and merges (and/or/invert/except)"}
+  - {id: dep:predicate-builder, group: dependents, match: [relation/predicate_builder.rb], relation: "PredicateBuilder turns a where(...) argument into the predicate nodes a Relation compiles"}
+  - {id: dep:from-clause,   group: dependents, match: [relation/from_clause.rb], relation: "FromClause is the FROM source a Relation carries and merges when chained"}
+  - {id: dep:preloader-assoc, group: dependents, match: [associations/preloader/association.rb], relation: "the association preloader builds a Relation to eager-load an association's records"}

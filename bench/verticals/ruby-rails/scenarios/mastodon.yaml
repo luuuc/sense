@@ -1,0 +1,213 @@
+name: Mastodon work session - audit the Status contract before a teardown rework
+repo: mastodon
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL, it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM (re-authored 2026-06-16; prior serialize_payload/Payloadable
+# version kept as mastodon.payloadable.*.bak). That version TIED on Opus 4.8: the
+# trigger->NamedService->serialize_payload chain is two-hop-greppable (every node
+# is a named class).
+#
+# Status is Mastodon's CENTRAL content model. `sense_blast Status` resolves 42
+# NON-OBVIOUS direct callers across 19 DISJOINT directories, HETEROGENEOUS in how
+# each touches a status: the feed manager clears it from home/list feeds, the
+# permalink redirector resolves it, account warnings and moderation actions
+# reference it, account merging re-points it, a feed hydrates it from redis, the
+# backup service exports favourite statuses, the process-links service extracts
+# its links, the report service forwards it, the email-distribution and
+# user-cleanup workers act on it, the unfilter-notifications worker scans it, the
+# annual-reports presenter aggregates it, the AP Announce activity wraps it. No
+# single grep or `ls` covers them, `Status`/`status` is noise across the whole
+# app, and the non-obvious dependents (feed_manager, permalink_redirector,
+# backup_service, annual_reports_presenter) are ones a hand audit never thinks to
+# search for. A structural blast returns the resolved set in one call.
+description: 'You are a maintainer about to rework how a Status and everything
+  attached to it behaves when it is changed or torn down (how a status is stored,
+  referenced, and cleaned up). Before touching the model, you need a complete audit
+  of what depends on the Status contract today, so the rework does not silently break
+  a dependent. Work through the tasks below one at a time; each builds on what you
+  learned in the previous one. Keep every answer concrete with file:line so the next
+  step (and a teammate opening the PR) can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the central content model sit,
+    the thing users post that feeds, notifications, federation and moderation all
+    revolve around, along with the shared pieces it is built on? Hand the next agent a
+    map so they can act with small, targeted lookups, not a fresh exploration of the
+    codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: Status
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the Status contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concerns it includes, the
+    associations other records hang off it through), and what does a teammate need to
+    know about that contract before changing it? Give file:line for the model and each
+    shared piece.
+    "
+  checks:
+  - type: word
+    value: concern
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: status.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how a status is created and distributed
+  prompt: "Task: trace how a status is created and what runs around it. Start from
+    where a status is posted and follow it through persistence and the distribution
+    that fans out (feeds, notifications, federation). Give file:line for each layer and
+    note which run inline versus asynchronously.
+    "
+  checks:
+  - type: word
+    value: feed
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Status contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase that
+    depends on the Status model, so the rework cannot silently break one. Be
+    exhaustive and group them by area (feeds and timelines, federation, notifications,
+    moderation, account lifecycle, import/export and backup, and background
+    maintenance). Many depend on it indirectly or in non-obvious ways, a shared
+    concern, an association, a service that derives something from a status rather than
+    naming the class plainly, so a surface text search both misses some and drowns the
+    rest in unrelated matches. List EVERY dependent individually with its own file:line
+    and one phrase on how it uses the status, do not collapse a set into a summary like
+    \"various services and workers\" - an unlisted dependent counts as missed. A missed
+    dependent is a regression shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered dependent set across disjoint areas
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how status identity and visibility are guarded
+  prompt: "Task: when work runs against a status across services (feeds, federation,
+    moderation, backups), how does the code confirm it is operating on a real, current,
+    visible status before acting? Trace where those guards and visibility checks live
+    and what they check. Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Status contract (how it stores, is made
+    visible, and tears down its attached data). Assess the full blast radius: which
+    dependents are at risk, which are most likely to break, and what must be
+    re-verified after the change, across every area you found. Be complete and use
+    file:line; rank by risk. A missed high-risk dependent is the one that pages
+    someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the specs/fixtures that must be updated or added to cover the
+    behavior. Use file:line throughout, so a teammate could land the change from your
+    map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold = the SCATTERED, HETEROGENEOUS dependent set of the Status model plus the
+# contract pieces. Discriminator = the `dependents` group, 16 NON-OBVIOUS DIRECT
+# callers across lib/models/services/workers/presenters (feed manager, permalink
+# redirector, moderation, account merge, redis feed, backup, link extraction,
+# reports, email, cleanup, notifications, annual reports, AP announce), each
+# touching a status a different way. Every one is retrievable by `sense_blast
+# Status` at the agent's DEFAULT settings, and a hand grep/read audit of a noisy
+# token cannot assemble the set. Obvious status-named controllers/services are
+# light `write-path` anchors. All paths file-path matched so both mention and
+# cited score.
+gold:
+  # contract
+  - {id: status-model,     group: contract,   match: [app/models/status.rb], relation: "the Status model itself - the contract under change"}
+  - {id: c:visibility,     group: contract,   match: [concerns/status/visibility.rb], relation: "Status::Visibility concern; visibility scoping the contract must preserve"}
+  - {id: c:threading,      group: contract,   match: [concerns/status/threading_concern.rb], relation: "Status::ThreadingConcern; reply-thread behavior other code relies on"}
+  # write-path anchors (grep-easy, NOT the discriminator)
+  - {id: a:statuses-ctrl,  group: write-path, match: [controllers/api/v1/statuses_controller.rb], relation: "creates/destroys statuses over the API"}
+  - {id: a:post-service,   group: write-path, match: [services/post_status_service.rb], relation: "PostStatusService builds and persists a status"}
+  # THE discriminator: 16 NON-OBVIOUS DIRECT dependents across disjoint areas
+  # -- feeds / timelines
+  - {id: d:feed-manager,   group: dependents, match: [app/lib/feed_manager.rb], relation: "FeedManager#clear_from_home removes a status from home/list feeds"}
+  - {id: d:feed-redis,     group: dependents, match: [app/models/feed.rb], relation: "Feed#from_redis hydrates Status records from cached feed ids"}
+  - {id: d:link-feed,      group: dependents, match: [app/models/link_feed.rb], relation: "LinkFeed attaches statuses to a preview-card link feed"}
+  # -- federation
+  - {id: d:ap-announce,    group: dependents, match: [activitypub/activity/announce.rb], relation: "ActivityPub::Activity::Announce wraps/boosts a status"}
+  - {id: d:process-links,  group: dependents, match: [services/process_links_service.rb], relation: "ProcessLinksService extracts links from a status body"}
+  - {id: d:permalink,      group: dependents, match: [app/lib/permalink_redirector.rb], relation: "PermalinkRedirector#object resolves a permalink to a status"}
+  # -- moderation
+  - {id: d:account-warning,group: dependents, match: [app/models/account_warning.rb], relation: "AccountWarning#statuses references the statuses a warning is about"}
+  - {id: d:moderation-act, group: dependents, match: [admin/moderation_action.rb], relation: "Admin::ModerationAction#statuses references statuses acted on"}
+  - {id: d:report-service, group: dependents, match: [services/report_service.rb], relation: "ReportService#forward_to_replied_to! forwards a report about a status"}
+  # -- account lifecycle / import-export / backup
+  - {id: d:account-merge,  group: dependents, match: [concerns/account/merging.rb], relation: "Account::Merging#merge_with! re-points statuses on account merge"}
+  - {id: d:backup,         group: dependents, match: [services/backup_service.rb], relation: "BackupService#favourite_statuses exports a user's favourited statuses"}
+  - {id: d:annual-report,  group: dependents, match: [annual_reports_presenter.rb], relation: "AnnualReportsPresenter#statuses aggregates a user's statuses for the year report"}
+  # -- background maintenance / notifications / mail
+  - {id: d:email-dist,     group: dependents, match: [workers/email_distribution_worker.rb], relation: "EmailDistributionWorker distributes email about a status"}
+  - {id: d:user-cleanup,   group: dependents, match: [scheduler/user_cleanup_scheduler.rb], relation: "Scheduler::UserCleanupScheduler#clean_discarded_statuses! prunes discarded statuses"}
+  - {id: d:unfilter,       group: dependents, match: [workers/unfilter_notifications_worker.rb], relation: "UnfilterNotificationsWorker scans statuses with private mentions"}
+  - {id: d:media-attach,   group: dependents, match: [app/models/media_attachment.rb], relation: "MediaAttachment belongs to a status"}
+  # specs
+  - {id: spec:status,      group: specs,      match: [models/status_spec.rb]}
+  - {id: spec:post-svc,    group: specs,      match: [services/post_status_service_spec.rb]}

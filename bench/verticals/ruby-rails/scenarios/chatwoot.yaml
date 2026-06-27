@@ -1,0 +1,211 @@
+name: Chatwoot work session - audit the Inbox contract before a teardown rework
+repo: chatwoot
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for.
+#
+# This is a CHANGE-IMPACT ticket, not an add-by-copying ticket. The recurring
+# real task it mirrors: a maintainer about to change how an Inbox (and all the
+# data attached to it) is torn down has to first audit EVERY place that depends
+# on the Inbox model before touching it. The must-find answer is the scattered
+# dependent set, callers spread across controllers, jobs, model concerns,
+# provider services, lib integrations and the enterprise overlay, most of them
+# reaching Inbox through an association or a shared concern, not by listing one
+# directory. The headline is whether the agent can assemble that fan-out
+# completely and cheaply: a structural query returns the resolved dependent set
+# in one shot, whereas reconstructing it by hand means grepping a very common
+# token (inbox appears across the whole messaging app) and reading to filter
+# signal from noise.
+description: 'You are a maintainer about to rework how an Inbox and everything
+  attached to it is handled when it (or its account) is torn down. Before touching
+  the model, you need a complete audit of what depends on the Inbox contract today,
+  so the rework does not silently break a dependent. Work through the tasks below
+  one at a time; each builds on what you learned in the previous one. Keep every
+  answer concrete with file:line so the next step (and a teammate opening the PR)
+  can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the model you are about to
+    rework sit, the thing an external messaging channel hangs off and that
+    conversations and contacts are attached to, along with the shared pieces it is
+    built on? Hand the next agent a map so they can act with small, targeted
+    lookups, not a fresh exploration of the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: Inbox
+    required: true
+  - type: word
+    value: Channel
+    required: false
+    description: Reached the channel the inbox hangs off, not just the inbox
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the Inbox contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concerns it includes, the
+    associations other records hang off it through), and what does a teammate need
+    to know about that contract before changing it? Give file:line for the model and
+    each shared piece.
+    "
+  checks:
+  - type: word
+    value: concern
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: inbox.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how an inbox and its attached data are torn down
+  prompt: "Task: trace what happens to an inbox and everything attached to it when
+    it is destroyed. Start from where a destroy is triggered and follow it through
+    the heavy cleanup of its associated records. Give file:line for each layer and
+    the order they run, and note which associated records are cleaned up
+    asynchronously versus inline.
+    "
+  checks:
+  - type: word
+    value: DeleteObject
+    required: false
+    description: Found the async heavy-association cleanup
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Inbox contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase
+    that depends on the Inbox model, so the rework cannot silently break one. Be
+    exhaustive and group them by area (request handling, background work, shared
+    model behavior, provider-specific services, library/integration code, and any
+    paid-tier overlay). Many depend on it indirectly, through an association or a
+    shared concern rather than by naming the class, so a surface text search will
+    miss some and drown the rest in unrelated matches. For each dependent give
+    file:line and one phrase on how it uses the inbox. A missed dependent is a
+    regression shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered dependent set across disjoint areas
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how inbox availability and identity are guarded
+  prompt: "Task: when work runs against an inbox in the background (assignment,
+    fetching, periodic maintenance), how does the code confirm it is operating on a
+    real, current inbox before acting? Trace where those guards live and what they
+    check. Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Inbox contract (how teardown and a
+    couple of its associations behave). Assess the full blast radius: which
+    dependents are at risk, which are most likely to break, and what must be
+    re-verified after the change, across every area you found. Be complete and use
+    file:line; rank by risk. A missed high-risk dependent is the one that pages
+    someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the specs/fixtures that must be updated or added to cover
+    the teardown behavior. Use file:line throughout, so a teammate could land the
+    change from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold is the must-find audit: the scattered dependent set of the Inbox model plus
+# the contract pieces a teammate must know before changing it. The discriminator is
+# NOT an enumerable directory, it is the fan-out of resolved dependents spread
+# across controllers, background jobs, model concerns, provider services, lib
+# integrations and the enterprise overlay, most reaching Inbox through an
+# association or a shared concern. A structural impact query returns this set
+# directly; reconstructing it by hand means grepping a token (`inbox`) that appears
+# across the entire messaging app and reading to filter. Pure seeder/test-data
+# inbox builders (all in one lib/seeders dir, an `ls` away) are deliberately
+# EXCLUDED, they are the enumerable half grep does well. All targets are file-path
+# matched so both mention (is it on the map?) and cited (pinned to path:line?) score.
+gold:
+  # Each target carries `relation`: the TRUE way it reaches the Inbox contract,
+  # verified from chatwoot source. `relation` is the reference the reference-aware
+  # relationship audit (lib/relationship_audit.py) scores an answer against — it
+  # is NEVER rendered to the agent (only name/prompt are; see header). It lets the
+  # judge mark, per dependent, both covered (named?) and related (correct relation
+  # stated?), so a confident-but-incomplete answer can no longer read as complete.
+  # the contract itself + the shared pieces a change must reckon with
+  - {id: inbox-model,          group: contract,   match: [app/models/inbox.rb], relation: "the Inbox model itself — the contract under change"}
+  - {id: cache-keys-concern,   group: contract,   match: [models/concerns/cache_keys.rb], relation: "concern included into Inbox that supplies its cache keys"}
+  - {id: channelable-concern,  group: contract,   match: [models/concerns/channelable.rb], relation: "each channel class includes Channelable, which declares `has_one :inbox, as: :channel, dependent: :destroy_async` (the polymorphic inverse)"}
+  - {id: contact-inbox,        group: contract,   match: [models/contact_inbox.rb], relation: "join record with `belongs_to :inbox`"}
+  - {id: enterprise-inbox,     group: contract,   match: [enterprise/app/models/enterprise/inbox.rb], relation: "EE overlay that reopens the Inbox class"}
+  # the teardown path the rework centers on
+  - {id: delete-object-job,    group: teardown,   match: [app/jobs/delete_object_job.rb], relation: "names Inbox in its heavy_associations map and drives the async teardown of associated records"}
+  # scattered dependents reached through associations / concerns (the grep-noisy fan-out)
+  - {id: dep:accounts-ctrl,    group: dependents, match: [api/v1/accounts_controller.rb], relation: "reads inbox cache keys / lists inboxes per account"}
+  - {id: dep:dashboard-ctrl,   group: dependents, match: [super_admin/dashboard_controller.rb], relation: "metrics read `Inbox.count`"}
+  - {id: dep:widget-tests,     group: dependents, match: [widget_tests_controller.rb], relation: "reads the inbox to drive widget tests"}
+  - {id: dep:assignment-job,   group: dependents, match: [auto_assignment/assignment_job.rb], relation: "coalesced and run per inbox (`enqueue_for_inbox(inbox_id)`)"}
+  - {id: dep:imap-fetch-job,   group: dependents, match: [inboxes/fetch_imap_email_inboxes_job.rb], relation: "polls IMAP per inbox/channel"}
+  - {id: dep:stale-notif-job,  group: dependents, match: [migration/remove_stale_notifications_job.rb], relation: "removes stale notifications tied to the inbox"}
+  - {id: dep:assignee-handler, group: dependents, match: [concerns/assignee_activity_message_handler.rb], relation: "case-dispatches on `when Inbox` to build activity messages"}
+  - {id: dep:twitter-webhook,  group: dependents, match: [twitter/webhook_subscribe_service.rb], relation: "`Inbox.find(inbox_id)` then `delegate :channel, to: :inbox`"}
+  - {id: dep:whatsapp-create,  group: dependents, match: [whatsapp/channel_creation_service.rb], relation: "creates the Inbox for a new channel (`create_inbox(channel)`)"}
+  - {id: dep:chatwoot-hub,     group: dependents, match: [lib/chatwoot_hub.rb], relation: "telemetry `fetch_count(Inbox)`"}
+  - {id: dep:slack-unfurl,     group: dependents, match: [integrations/slack/link_unfurl_formatter.rb], relation: "reads the inbox to format a Slack link unfurl"}

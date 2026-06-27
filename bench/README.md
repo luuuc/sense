@@ -59,8 +59,9 @@ against human judgment.
 bench/
 ├── scenarios/                # One YAML + rubric YAML per repo
 │   └── held-out/             # Frozen scenarios + gold grades + lockfile-pinned transcripts
-├── locked/                   # locked.yaml (what the loop can't touch) + held-out.lock
-├── lib/
+├── verticals/                # Per-vertical benches, each fully self-contained
+│   └── ruby-rails/           #   repos.txt + scenarios/ + results/<model>/
+├── lib/                      # Shared engine (vertical-agnostic); bench-paths.sh resolves roots
 │   ├── scorer.py             # Per-step check evaluation, efficiency, ceilings
 │   ├── fairness.py           # Combined fairness formula (the source of truth)
 │   ├── grounding.py          # file:line citation extraction + verification
@@ -80,14 +81,27 @@ bench/
 │   ├── variance.py           # Judge-variance baseline tool
 │   ├── scenario.py           # Parse/validate scenario YAML
 │   └── load-env.sh           # .env → ANTHROPIC_API_KEY mapping
-├── bench.sh                  # One-shot wrapper: run → score → judge → report (md + json)
-├── run.sh                    # Runner: tool × scenario → transcript.json
-├── score.sh                  # Batch score all transcripts
-├── judge.sh                  # Run LLM judge over all scored.json
-├── report.sh                 # Comparison report (terminal / md / json)
-├── freeze-heldout.sh         # One-time held-out transcript freezer
-├── improvement-loop/         # Convergence-aware self-tuning loop (see below)
-└── results/                  # Scored output + report.md
+├── score.sh                  # Batch score all transcripts (shared engine)
+├── judge.sh                  # Run LLM judge over all scored.json (shared engine)
+├── report.sh                 # Comparison report — terminal / md / json (shared engine)
+├── drivers/                  # Vertical-campaign drivers (run ANY vertical)
+│   ├── sweep.sh              #   model sweep: each repo × model, both arms
+│   ├── sweep-breadth.sh      #   breadth-first metered sweep (+ sweep-resume.sh)
+│   ├── runs-variance.sh      #   ×N variance runner
+│   ├── session-run.sh        #   multi-turn ("work session") bench
+│   ├── report-matrix.sh      #   cross-model matrix → verticals/<name>/results/report.md
+│   ├── rescan-all.sh         #   (re)index a vertical's repos
+│   ├── codex-run.sh          #   GPT-5.x via Codex CLI (+ opencode-run.sh for cloud models)
+│   ├── bench-sense-local.sh  #   local sense-vs-baseline runner (gitignored)
+│   └── check-articles.sh     #   article freshness + structure gate
+├── global/                   # Original cross-competitor DOCKER bench (dormant)
+│   ├── bench.sh              #   one-shot: run → score → judge → report
+│   ├── run.sh                #   per-tool docker runner
+│   ├── build.sh              #   build bench-* images (+ build-prescan.sh)
+│   ├── freeze-heldout.sh     #   one-time held-out transcript freezer
+│   ├── docker/               #   per-tool images (sense, serena, gitnexus, probe, baseline)
+│   └── locked/               #   locked.yaml + held-out.lock (held-out fairness pins)
+└── results/                  # GLOBAL bench scored output + report.md
 ```
 
 ## Usage
@@ -96,19 +110,20 @@ bench/
 
 ```bash
 source bench/.venv/bin/activate
-bash bench/bench.sh        # run + score + judge + report (md + json)
+bash bench/global/bench.sh    # run + score + judge + report (md + json)
 ```
 
 Total ~$8-19 and ~20 min for a fresh full run. With no flags: all
 6 scenarios × both tools = 12 sessions. Forwards `--tool` / `--repo`
 filters to the run/score/judge stages.
 
-Under the hood, `bench.sh` chains four idempotent scripts you can
-also invoke individually:
+Under the hood, `global/bench.sh` chains four idempotent scripts you
+can also invoke individually (`score.sh`/`judge.sh`/`report.sh` are the
+shared engine at the bench root; `run.sh` is the global docker runner):
 
 | Script | Cost | Time | What |
 |---|---|---|---|
-| `run.sh` | ~$5-13 | ~15 min | Runs Claude sessions, writes `transcript.json` |
+| `global/run.sh` | ~$5-13 | ~15 min | Runs Claude sessions, writes `transcript.json` |
 | `score.sh` | free | seconds | Computes `keyword_coverage`, `citation_grounding`, `efficiency`, `adoption_score` → `scored.json` |
 | `judge.sh` | ~$3-6 | ~3 min | Opus 4.7 judges each step against the rubric → `judged.json` |
 | `report.sh --md` / `--json` | free | seconds | Combines into `results/report.{md,json}` |
@@ -122,9 +137,9 @@ re-score against changed scenarios without burning a session, skip
 ```bash
 source bench/.venv/bin/activate
 
-bash bench/run.sh --dry-run                  # See what would execute
-bash bench/run.sh --tool sense --repo flask  # Single scenario
-bash bench/run.sh                             # All scenarios, all tools
+bash bench/global/run.sh --dry-run                  # See what would execute
+bash bench/global/run.sh --tool sense --repo flask  # Single scenario
+bash bench/global/run.sh                             # All scenarios, all tools
 ```
 
 Per-session budgets and timeouts are derived per repo from
@@ -161,88 +176,6 @@ bash bench/report.sh                         # Terminal table
 bash bench/report.sh --md                    # Markdown → results/report.md
 bash bench/report.sh --json                  # JSON → results/report.json
 ```
-
-### 5. Improvement loop (optional, expensive)
-
-The loop refines scenarios within bounded scope, stops when it has
-converged or hit a budget, and never edits orchestration code, judge
-prompts, or held-out gold grades. Boundaries are enforced by
-[`locked/locked.yaml`](./locked/locked.yaml).
-
-**What an iteration does:**
-
-1. Held-out integrity gate — refuses to start if any held-out file's
-   SHA256 in `locked/held-out.lock` has drifted.
-2. Cost predict-halt — if cumulative + estimated next-iter cost
-   exceeds `--max-cost-usd`, halt cleanly.
-3. **Phase 1** — re-run scenarios → score → judge → analyze transcripts.
-4. **Reviewer** — Claude reads all 12 transcripts side-by-side, writes
-   `improvements.json` with evidence-cited check edits.
-5. **Phase 2** — `lock_check.py validate-improvements` strips any
-   modification targeting a locked entry, then applies what's left.
-6. **Phase 3** — re-score the touched scenarios; rollback on regression.
-7. **Phase 4** — score-auditor + scenario-auditor + watchdog;
-   re-judge the held-out set against the current rubric.
-8. Convergence eval (4 criteria) → `delta.md` + `bench-readiness.md`.
-
-**Halt conditions:** all 4 convergence criteria pass for 2 consecutive
-iters / cost ceiling hit / max iters / watchdog suspect 2× in a row /
-held-out lockfile mismatch (panic) / SIGINT.
-
-**Cost:** ~$15-22/iter on the full 6-repo bench (sessions $5-13 +
-judge $3-6 + audit $6-7). The default `--max-cost-usd 10` is
-intentionally conservative — a full iter won't fit, so the loop
-halts at the predict-check before spending. To actually run, raise
-the ceiling above your iteration budget (rule of thumb:
-`ceiling ≥ first_iter_prior + N · 22`). `loop-N/cost.json` records
-actuals.
-
-```bash
-# Default: 10 iters, $10 ceiling — halts before iter 1 on a full bench (intentional opt-in)
-bash bench/improvement-loop/improve-loop.sh
-
-# One full-bench iter (~$22)
-bash bench/improvement-loop/improve-loop.sh --max-cost-usd 25 --iterations 1
-
-# Two iters
-bash bench/improvement-loop/improve-loop.sh --max-cost-usd 50 --iterations 2
-
-# Subset run (cheap, ~$11/iter)
-bash bench/improvement-loop/improve-loop.sh --repo flask,gin,axum --max-cost-usd 15 --first-iter-prior 11
-
-# Dry run
-bash bench/improvement-loop/improve-loop.sh --dry-run
-```
-
-**Per-iteration outputs** under `improvement-loop/results/loop-N-iter-M/`:
-
-| File | What |
-|---|---|
-| `analysis-notes.md` | Reviewer's per-repo qualitative read |
-| `improvements.json` | Proposed check edits |
-| `improvements.cleaned.json` | After `lock_check` strips locked-entry targets |
-| `improved-scenarios/` | Resulting scenario YAMLs |
-| `backups/` | Pre-iter scenario YAMLs (rollback source) |
-| `regression.json` | Phase 3 regression detection result |
-| `audit-scoring.{tool}.{repo}.json` | Per-step audit of the score-auditor's grades |
-| `audit-scenarios.{repo}.json` | Scenario-auditor proposals |
-| `audit-watchdog.json` | Anti-Goodhart verdict |
-| `validation/held-out-scored.json` | Re-judged held-out scores |
-| `convergence.json` | 4-criteria pass/fail with distance summary |
-| `delta.md` | Human-readable iteration summary (always print this) |
-| `meta-report.md` | Higher-level narrative across phases |
-
-**Loop-level outputs** under `improvement-loop/results/loop-N/`:
-
-| File | What |
-|---|---|
-| `cost.json` | Per-iter + cumulative spend (public API pricing) |
-| `iteration-history.jsonl` | One line per iter: outcome + improvements + post-scores |
-| `baseline-snapshot.json` | Watchdog reference for delta detection |
-
-**Final output** at `results/bench-readiness.md`: one-page verdict
-(READY / NOT READY / PANIC / INDETERMINATE) with halt reason and
-distance-from-convergence block.
 
 ## Scenario format
 

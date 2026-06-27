@@ -1,7 +1,7 @@
 # Shared env loader for the bench toolchain.
 #
-# Sourced from bench/run.sh, bench/judge.sh, bench/freeze-heldout.sh,
-# and bench/improvement-loop/improve-loop.sh. Maps BENCHMARK_ANTHROPIC_API_KEY
+# Sourced from bench/global/run.sh, bench/judge.sh, bench/global/freeze-heldout.sh.
+#. Maps BENCHMARK_ANTHROPIC_API_KEY
 # (the "this key is allowed to be billed" marker that lives in .env) onto
 # ANTHROPIC_API_KEY so child processes pick it up without further translation.
 #

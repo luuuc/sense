@@ -264,7 +264,7 @@ def main() -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     p_u = sub.add_parser("update", help="recompute cost.json after an iter")
-    p_u.add_argument("--loop-dir", required=True, help="bench/improvement-loop/results")
+    p_u.add_argument("--loop-dir", required=True, help="directory with per-iteration loop results")
     p_u.add_argument("--iter", type=int, required=True)
     p_u.add_argument(
         "--bench-results-dir",

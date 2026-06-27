@@ -204,7 +204,7 @@ def render(
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--loop-dir", required=True, help="bench/improvement-loop/results")
+    p.add_argument("--loop-dir", required=True, help="directory with per-iteration loop results")
     p.add_argument(
         "--halt-reason",
         required=True,

@@ -1,0 +1,213 @@
+name: Solidus work session - audit the Order contract before a teardown rework
+repo: solidus
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL, it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM (re-authored 2026-06-16; prior promotion-type version kept as
+# solidus.promotion.*.bak). The promotion conditions/benefits/calculators were
+# colocated families (`ls`-able) + a Spree:: config-string registry (resolver
+# gap), and tied.
+#
+# Spree::Order is Solidus's CENTRAL model and a baseline-hell contract spanning
+# the whole multi-gem codebase. `sense_blast Spree::Order` resolves 44 NON-OBVIOUS
+# direct callers across 12 DISJOINT directories AND multiple gems (core, api,
+# backend, admin, legacy_promotions, promotions). They are HETEROGENEOUS: a
+# payment updates its order, a shipment refreshes its rates against the order, the
+# stock coordinator builds packages for it, an exchange creates one, an
+# adjustment-source removes adjustments from incomplete orders, promotion rules
+# test it for applicability, returns/cancellation/checkout controllers load it.
+# No single grep or `ls` covers them, `Order`/`order` is noise across the whole
+# app, and the non-obvious dependents (adjustment_source, exchange, stock
+# coordinator, promotion eligibility) are ones a hand audit never thinks to search
+# for. A structural blast returns the resolved set in one call.
+description: 'You are a maintainer about to rework how a Spree::Order and everything
+  attached to it behaves when it is changed or torn down. Before touching the model,
+  you need a complete audit of what depends on the Order contract today, so the
+  rework does not silently break a dependent. Work through the tasks below one at a
+  time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is it organized (it is a multi-gem store), and where does the central
+    model that represents a customer's cart/purchase sit, the thing line items,
+    payments, shipments, adjustments and promotions all attach to, along with the
+    shared pieces it is built on? Hand the next agent a map so they can act with
+    small, targeted lookups, not a fresh exploration of the codebase. No Explore
+    agents.
+    "
+  checks:
+  - type: word
+    value: Order
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the Order contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concerns it includes, the
+    associations other records hang off it through), and what does a teammate need to
+    know about that contract before changing it? Give file:line for the model and each
+    shared piece.
+    "
+  checks:
+  - type: word
+    value: concern
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: order.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how an order is built and recalculated
+  prompt: "Task: trace how a cart becomes an order and how it is recalculated as items,
+    payments and shipments change. Start from where the order is built/updated and
+    follow the recalculation that fans out (totals, adjustments, shipments, stock).
+    Give file:line for each layer and the order they run.
+    "
+  checks:
+  - type: word
+    value: recalculate
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Order contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase that
+    depends on the Order model, so the rework cannot silently break one. Be exhaustive
+    and group them by area (core domain models, checkout and cart, payments and
+    shipments, stock and inventory, returns and cancellations, promotions and
+    adjustments, and the admin/API surface), and remember the codebase is split into
+    several gems. Many depend on it indirectly or in non-obvious ways, a shared
+    concern, an association, a service that derives something from an order rather than
+    naming the class plainly, so a surface text search both misses some and drowns the
+    rest in unrelated matches. List EVERY dependent individually with its own
+    file:line and one phrase on how it uses the order, do not collapse a set into a
+    summary like \"various controllers\" - an unlisted dependent counts as missed. A
+    missed dependent is a regression shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered dependent set across disjoint gems and areas
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how order state and completeness are guarded
+  prompt: "Task: across services and models (payments, shipments, stock, promotions),
+    how does the code confirm it is operating on an order in the right state (in
+    progress vs complete) before mutating it? Trace where those guards live and what
+    they check. Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Order contract (how it stores, recalculates
+    and tears down its attached data). Assess the full blast radius: which dependents
+    are at risk, which are most likely to break, and what must be re-verified after the
+    change, across every area and gem you found. Be complete and use file:line; rank by
+    risk. A missed high-risk dependent is the one that pages someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and shared
+    pieces you will edit, every dependent that must be reviewed or touched grouped by
+    area/gem, and the specs/fixtures that must be updated or added to cover the
+    behavior. Use file:line throughout, so a teammate could land the change from your
+    map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold = the SCATTERED, HETEROGENEOUS, MULTI-GEM dependent set of Spree::Order plus
+# the contract pieces. Discriminator = the `dependents` group, 16 NON-OBVIOUS DIRECT
+# callers across core models / promotions gems / api / backend / admin (payment,
+# shipment, exchange, inventory, stock coordinator, adjustment_source, promotion
+# eligibility, checkout/returns/cancellation controllers), each touching the order a
+# different way. Every one is retrievable by `sense_blast Spree::Order` at the agent's
+# DEFAULT settings, and a hand grep/read audit of a noisy token across several gems
+# cannot assemble the set. Obvious order-named controllers/updater are light
+# `write-path` anchors.
+gold:
+  # contract
+  - {id: order-model,      group: contract,   match: [core/app/models/spree/order.rb], relation: "the Spree::Order model itself - the contract under change"}
+  - {id: c:payments,       group: contract,   match: [core/app/models/spree/order/payments.rb], relation: "Spree::Order::Payments concern Order includes; payment behavior the contract exposes"}
+  - {id: c:display-money,  group: contract,   match: [concerns/spree/display_money.rb], relation: "Spree::DisplayMoney concern Order includes; money formatting"}
+  # write-path anchors (grep-easy, NOT the discriminator)
+  - {id: a:orders-api,     group: write-path, match: [api/app/controllers/spree/api/orders_controller.rb], relation: "creates/updates orders over the API"}
+  - {id: a:order-updater,  group: write-path, match: [core/app/models/spree/order_updater.rb], relation: "OrderUpdater recalculates an order's totals/state"}
+  # THE discriminator: NON-OBVIOUS DIRECT dependents across gems/areas. The 4
+  # greppable core models (payment/shipment/inventory_unit/exchange, all in
+  # core/app/models where a baseline greps `Order`) were REMOVED 2026-06-16 after
+  # they diluted the delta to +0.46: the baseline always got them (3/3 each). The
+  # discriminator is now dominated by the cross-gem promotion + applier deps and
+  # the api/backend/admin controllers, which the baseline does not grep (separate
+  # gem dirs it never thinks to search — it missed all four promotion-gem deps 3/3).
+  # -- core domain (the baseline-hard core deps only)
+  - {id: d:adjustment-src, group: dependents, match: [concerns/spree/adjustment_source.rb], relation: "Spree::AdjustmentSource#remove_adjustments_from_incomplete_orders removes a source's adjustments from incomplete orders", disambiguator: "verified @8d781ac742: the concern's one method does adjustments.joins(:order).merge(Spree::Order.incomplete).destroy_all — it DELETES a source's adjustments on incomplete orders. NOT a generic 'adjustments adjustable by order' association"}
+  - {id: d:stock-coord,    group: dependents, match: [stock/simple_coordinator.rb], relation: "Spree::Stock::SimpleCoordinator#build_packages builds shipment packages for an order"}
+  # -- promotions / adjustments (across two gems — the baseline misses these 3/3)
+  - {id: d:legacy-promo,   group: dependents, match: [legacy_promotions/app/models/spree/promotion.rb], relation: "Spree::Promotion#discounted_orders / #eligibility_excluded_orders query orders"}
+  - {id: d:legacy-rule,    group: dependents, match: [legacy_promotions/app/models/spree/promotion/rules/item_total.rb], relation: "Spree::Promotion::Rules::ItemTotal#applicable? tests the order against a rule"}
+  - {id: d:legacy-minqty,  group: dependents, match: [legacy_promotions/app/models/spree/promotion/rules/minimum_quantity.rb], relation: "Spree::Promotion::Rules::MinimumQuantity#applicable? tests the order's item quantity"}
+  - {id: d:legacy-product, group: dependents, match: [legacy_promotions/app/models/spree/promotion/rules/product.rb], relation: "Spree::Promotion::Rules::Product#applicable? tests the order's products against a rule"}
+  - {id: d:solidus-benefit,group: dependents, match: [promotions/app/models/solidus_promotions/benefit.rb], relation: "SolidusPromotions::Benefit guards adjustments for completed orders"}
+  - {id: d:solidus-promo,  group: dependents, match: [promotions/app/models/solidus_promotions/promotion.rb], relation: "SolidusPromotions::Promotion#delete_cart_connections detaches incomplete orders"}
+  # -- checkout / returns / cancellation (api + backend)
+  - {id: d:checkouts-api,  group: dependents, match: [api/app/controllers/spree/api/checkouts_controller.rb], relation: "drives an order through the checkout state machine"}
+  - {id: d:returns-api,    group: dependents, match: [api/app/controllers/spree/api/customer_returns_controller.rb], relation: "processes customer returns against an order"}
+  - {id: d:shipments-api,  group: dependents, match: [api/app/controllers/spree/api/shipments_controller.rb], relation: "ShipmentsController#find_order_on_create attaches a shipment to an order"}
+  - {id: d:cancellations,  group: dependents, match: [backend/app/controllers/spree/admin/cancellations_controller.rb], relation: "cancels an order from the admin backend"}
+  - {id: d:admin-payments, group: dependents, match: [backend/app/controllers/spree/admin/payments_controller.rb], relation: "manages an order's payments from the admin backend"}
+  - {id: d:admin-lineitems,group: dependents, match: [admin/app/controllers/solidus_admin/line_items_controller.rb], relation: "SolidusAdmin::LineItemsController#load_order edits an order's line items"}
+  # specs
+  - {id: spec:order,       group: specs,      match: [core/spec/models/spree/order_spec.rb]}

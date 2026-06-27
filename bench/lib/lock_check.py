@@ -3,11 +3,11 @@
 Two responsibilities:
 
 1. Validate that an `improvements.json` payload only targets tunables
-   permitted by `bench/locked/locked.yaml`. Drops any modification that
+   permitted by `bench/global/locked/locked.yaml`. Drops any modification that
    targets a locked entry, with a human-readable reason.
 
 2. Verify the held-out set's integrity by comparing every file's SHA256
-   against `bench/locked/held-out.lock`. Loop refuses to continue on
+   against `bench/global/locked/held-out.lock`. Loop refuses to continue on
    mismatch (panic-class failure — the bench's anchor has been disturbed).
 
 Both responsibilities are split into pure functions and a CLI:
@@ -35,7 +35,7 @@ import yaml
 
 BENCH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PROJECT_ROOT = os.path.abspath(os.path.join(BENCH_DIR, ".."))
-LOCKED_YAML = os.path.join(BENCH_DIR, "locked", "locked.yaml")
+LOCKED_YAML = os.path.join(BENCH_DIR, "global", "locked", "locked.yaml")
 
 
 # --- Loading ----------------------------------------------------------------

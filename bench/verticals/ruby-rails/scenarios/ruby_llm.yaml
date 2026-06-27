@@ -1,0 +1,228 @@
+name: RubyLLM work session - add support for a new LLM service
+repo: ruby_llm
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL — it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for. The recurring real task this
+# mirrors is "add a new provider" (e.g. PR #373 added xAI), which naturally walks
+# the registry, the shared protocol layer and its per-service customizations, the
+# settings layer, the error-classification stack, the model/alias registry, and
+# the test wiring. The headline is CUMULATIVE efficiency (tool calls, billed +
+# context tokens, time) at held accuracy: across these areas the baseline
+# re-derives structure each step while the map is queried once and reused.
+description: 'You are a maintainer about to add support for a new external LLM
+  service to this library, mirroring how the existing integrations are built.
+  Work through the tasks below one at a time; each builds on what you learned in
+  the previous one. Keep every answer concrete with file:line so the next step
+  (and a teammate opening the PR) can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where do the integrations with
+    external LLM services live along with the shared machinery they are built on?
+    Hand the next agent a map so they can act with small, targeted lookups, not a
+    fresh exploration. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: Provider
+    required: true
+  - type: word
+    value: protocol
+    required: false
+    description: Named the shared protocol layer, not just the services
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Trace a request to its concrete service integration
+  prompt: "Task: trace how a single request is routed to the concrete object that
+    talks to the chosen external service. Start from the public entry point and
+    follow it down to where the specific integration is looked up and selected.
+    Give file:line for each layer and the order they run.
+    "
+  checks:
+  - type: word
+    value: resolve
+    required: true
+    description: Found the registry lookup that selects the integration
+  - type: word
+    value: Provider
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the shared API-dialect layer and its customizations
+  prompt: "Task: a new integration will speak the same widely-shared API dialect
+    that several existing integrations already use, then tweak a few pieces. Map
+    the shared behavior such an integration inherits and, crucially, which
+    existing integrations customize that shared behavior and how each one differs.
+    Be complete with file:line; a missed customization point is a feature the new
+    integration silently won't support.
+    "
+  checks:
+  - type: word
+    value: ChatCompletions
+    required: true
+    description: Found the shared API-dialect base
+  - type: word
+    value: Protocol
+    required: true
+    description: Anchored on the protocol layer the dialects build on
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the shared base plus the per-service customizations
+  - type: contains
+    value: chat_completions.rb
+    required: false
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Find how an integration declares and validates its settings
+  prompt: "Task: each integration declares the settings it needs (credentials,
+    endpoints, options) and the library validates that those are present before
+    using it. Find where an integration declares its settings, where they are
+    registered, and where the library checks they are configured, with file:line.
+    "
+  checks:
+  - type: word
+    value: Configuration
+    required: true
+  - type: contains
+    value: configuration.rb
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how HTTP failures become typed errors
+  prompt: "Task: when the external service returns an HTTP error, the library turns
+    it into a typed error. Trace that classification path: where a raw HTTP
+    response becomes a typed error, the family of typed errors and how status
+    codes map to them, and where an individual integration can customize how its
+    errors are read. Give file:line throughout.
+    "
+  checks:
+  - type: word
+    value: parse_error
+    required: true
+  - type: word
+    value: ErrorMiddleware
+    required: true
+  - type: word
+    value: Error
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: error_middleware.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Find every site that must change to add a new integration
+  prompt: "Task: you will add the new integration. Find every place in the codebase
+    that must change for the library to recognize and route to it, including where
+    integrations are wired in, where the lookup table is consumed, and where the
+    catalog of known models and the test matrix list each integration. Be complete
+    and use file:line; a missed site means the new integration is invisible at
+    runtime or untested.
+    "
+  checks:
+  - type: word
+    value: Provider
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Reached the registration and catalog sites, not just the obvious file
+  - type: contains
+    value: ruby_llm.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the edit map
+  prompt: "Task: produce the complete edit map for adding the new integration:
+    which files to create and which to change across each area you explored
+    (routing/registry, the shared dialect and its customizations, settings, error
+    handling, the model catalog), and which specs and test fixtures to add. Use
+    file:line throughout, so a teammate could open the PR from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+  - type: contains
+    value: models.json
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold spans the areas the "add a provider" session walks. The discriminator is
+# the `protocol` group: a new integration inherits a shared API-dialect base that
+# is reopened across many files and SUBCLASSED by several existing integrations —
+# an inheritance/mixin fan-out grep cannot cleanly resolve (the relationship, not
+# the string, is what matters). The `registry` group is the other grep-hard seam
+# (the registry's consumers are scattered). All targets are file-path matched so
+# both mention (is it on the map?) and cited (pinned to path:line?) are scored.
+# The session headline is CUMULATIVE efficiency at held accuracy.
+gold:
+  # registry / discovery — where a new integration is wired in and consumed
+  - {id: register-table,   group: registry,       match: [lib/ruby_llm.rb], relation: "`RubyLLM` top-level module — registers providers and exposes the chat/embed entry points"}
+  - {id: Provider-base,    group: registry,       match: [lib/ruby_llm/provider.rb], relation: "abstract `RubyLLM::Provider` — knows host/auth/config and routes to a protocol per model/request (protocols live under RubyLLM::Protocols)"}
+  - {id: Models#resolve,   group: registry,       match: [lib/ruby_llm/models.rb], relation: "`RubyLLM::Models` — registry of available models and capabilities; resolves a model id to its provider/info"}
+  - {id: Model::Info,      group: registry,       match: [lib/ruby_llm/model/info.rb], relation: "`RubyLLM::Model::Info` — a model's capabilities, pricing, and metadata"}
+  # shared API-dialect layer + per-integration customizations (grep-invisible inheritance)
+  - {id: Protocol-base,    group: protocol,       match: [lib/ruby_llm/protocol.rb], relation: "abstract `RubyLLM::Protocol` base — the wire protocol a provider speaks; concrete protocols subclass it"}
+  - {id: ChatCompletions,  group: protocol,       match: [protocols/chat_completions.rb], relation: "`RubyLLM::Protocols::ChatCompletions` — the shared Chat Completions wire protocol that provider dialects subclass"}
+  - {id: custom:deepseek,  group: protocol,       match: [providers/deepseek.rb], relation: "`RubyLLM::Providers::DeepSeek < Provider` with a nested `ChatCompletions < Protocols::ChatCompletions` dialect"}
+  - {id: custom:gpustack,  group: protocol,       match: [providers/gpustack.rb], relation: "`RubyLLM::Providers::GPUStack < Provider` with its `ChatCompletions` protocol dialect"}
+  - {id: custom:mistral,   group: protocol,       match: [providers/mistral.rb], relation: "`RubyLLM::Providers::Mistral < Provider` with its `ChatCompletions` protocol dialect"}
+  - {id: custom:ollama,    group: protocol,       match: [providers/ollama.rb], relation: "`RubyLLM::Providers::Ollama < Provider` with its `ChatCompletions` protocol dialect"}
+  - {id: custom:openrouter,group: protocol,       match: [providers/openrouter.rb], relation: "`RubyLLM::Providers::OpenRouter < Provider` with its `ChatCompletions` protocol dialect"}
+  - {id: custom:perplexity,group: protocol,       match: [providers/perplexity.rb], relation: "`RubyLLM::Providers::Perplexity < Provider` with its `ChatCompletions` protocol dialect"}
+  - {id: custom:xai,       group: protocol,       match: [providers/xai.rb], relation: "`RubyLLM::Providers::XAI < Provider` with its `ChatCompletions` protocol dialect"}
+  - {id: custom:azure,     group: protocol,       match: [providers/azure/chat_completions.rb], relation: "`RubyLLM::Providers::Azure`'s `ChatCompletions` protocol dialect (Azure-specific request/response shaping)"}
+  # settings / configuration
+  - {id: Configuration,    group: configuration,  match: [lib/ruby_llm/configuration.rb], relation: "`RubyLLM::Configuration` — global config; `register_provider_options` lets providers add config keys"}
+  # error-classification stack
+  - {id: Error-hierarchy,  group: error-stack,    match: [lib/ruby_llm/error.rb], relation: "`RubyLLM::Error` hierarchy — wraps provider API errors into a consistent format with helpful messages"}
+  - {id: ErrorMiddleware,  group: error-stack,    match: [error_middleware.rb, ErrorMiddleware], relation: "`RubyLLM::ErrorMiddleware` Faraday middleware — intercepts responses and maps provider-specific API errors to RubyLLM errors"}
+  - {id: parse_error,      group: error-stack,    match: [parse_error], relation: "`RubyLLM::ErrorMiddleware.parse_error(provider:, response:)` maps a provider HTTP response to the right RubyLLM error subclass"}
+  # model / alias catalog
+  - {id: aliases,          group: model-registry, match: [aliases.json, aliases.rb], relation: "`aliases.json` — model alias table mapping friendly names to canonical model ids"}
+  - {id: models.json,      group: model-registry, match: [models.json], relation: "`models.json` — bundled model registry data (capabilities/pricing/context per model)"}
+  - {id: model_registry,   group: model-registry, match: [model_registry.rb], relation: "`RubyLLM::ModelRegistry` — loads and queries the bundled models.json + aliases.json"}
+  # test wiring
+  - {id: models_to_test,   group: specs,          match: [models_to_test.rb], relation: "spec support — the matrix of models the provider specs exercise"}
+  - {id: chat_error_spec,  group: specs,          match: [chat_error_spec.rb], relation: "chat error-handling spec (provider error mapping)"}

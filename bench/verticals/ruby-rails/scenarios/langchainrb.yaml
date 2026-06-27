@@ -1,0 +1,247 @@
+name: Langchainrb work session - add a new LLM provider with tool-calling support
+repo: langchainrb
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for. This is a SMALL gem, so it
+# goes DEEPER than "list the providers" (the RubyLLM lesson): adding a provider
+# that the Assistant can use for tool-calling spans a FOUR-WAY correspondence tied
+# only by provider name, an LLM client (lib/langchain/llm/X.rb), an Assistant
+# adapter that formats tool-calls (assistant/llm/adapters/X.rb), a message class
+# (assistant/messages/X_message.rb), and a response wrapper
+# (llm/response/X_response.rb), selected at runtime by Assistant::LLM::Adapter
+# .build's is_a? chain. Nothing but the provider-name convention links the four
+# files, so grep cannot assemble the set; the inheritance + correspondence is the
+# Sense win. The headline is CUMULATIVE efficiency (tool calls, billed + context
+# tokens, time) at held accuracy.
+description: 'You are a maintainer about to add support for a new external LLM
+  provider so the assistant can hold tool-calling conversations with it, mirroring
+  how the existing providers are integrated. Work through the tasks below one at a
+  time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where do the integrations with external
+    LLM providers and the assistant that holds tool-calling conversations with them
+    live, along with the shared machinery they are built on? Hand the next agent a
+    map so they can act with small, targeted lookups, not a fresh exploration of
+    the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: LLM
+    required: true
+  - type: word
+    value: Assistant
+    required: false
+    description: Reached the assistant/tool-calling layer, not just the raw clients
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Trace how the assistant talks to a provider for a tool-calling turn
+  prompt: "Task: trace how the assistant, given a configured provider, ends up
+    formatting a tool-calling request for that specific provider and reading its
+    tool-call results back. Start from the assistant and follow it down to where
+    the provider-specific integration is selected and used. Give file:line for each
+    layer and the order they run.
+    "
+  checks:
+  - type: word
+    value: Adapter
+    required: true
+    description: Found the provider-specific integration the assistant selects
+  - type: word
+    value: build
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the provider-integration family and its contract
+  prompt: "Task: a new provider will need an integration built on the same shared
+    base the existing ones use, then customize a few pieces. Map the shared contract
+    such an integration must implement, formatting a request, reading tool calls,
+    building messages, declaring provider quirks, and which existing integrations
+    customize it and how each differs. Be complete with file:line; a missed method
+    is behavior the new provider silently won't have.
+    "
+  checks:
+  - type: word
+    value: Adapter
+    required: true
+  - type: word
+    value: build_chat_params
+    required: false
+    description: Anchored on the request-formatting half of the contract
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the shared base plus the per-provider customizations
+  - type: contains
+    value: adapters/base.rb
+    required: false
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the per-provider message and response families
+  prompt: "Task: each provider also has its own way of representing a chat message
+    and its own way of wrapping the raw response it returns. Map the shared bases
+    for these two concerns and the per-provider implementations of each, and tie
+    each provider's message and response forms to its integration. Be complete with
+    file:line.
+    "
+  checks:
+  - type: word
+    value: Message
+    required: true
+  - type: word
+    value: Response
+    required: true
+    description: Mapped both per-provider concerns, not just one
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated both base+subclass families across providers
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the raw LLM client family and its contract
+  prompt: "Task: underneath the assistant, each provider has a plain client that
+    actually performs chat, completion, and embedding calls. Map the shared client
+    base and its contract and the existing per-provider clients, and how a client's
+    raw result becomes the wrapped response from the previous step. Be complete with
+    file:line.
+    "
+  checks:
+  - type: word
+    value: LLM
+    required: true
+  - type: word
+    value: chat
+    required: true
+    description: Anchored on a concrete client contract method
+  - type: response_richness
+    value: '5'
+    required: true
+    description: Enumerated the client base plus the per-provider clients
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Find every site that must change to add a new tool-calling provider
+  prompt: "Task: you will add the new provider. Find every place in the codebase
+    that must change for it to have a client, be selected for the assistant, format
+    and parse tool calls, represent its messages and responses, and be tested,
+    including where the selection happens. Be complete and use file:line; a missed
+    site means the new provider silently can't be used for tool-calling or is
+    untested.
+    "
+  checks:
+  - type: word
+    value: Adapter
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Reached all four per-provider concerns plus the selection and specs
+  - type: contains
+    value: spec
+    required: false
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the edit map
+  prompt: "Task: produce the complete edit map for adding the new provider: which
+    files to create and which to change across each area you explored (the client,
+    the assistant integration and where it is selected, the message form, the
+    response wrapper), and which specs to add. Use file:line throughout, so a
+    teammate could open the PR from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+  - type: contains
+    value: response
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold is the FOUR-WAY per-provider correspondence, the heart of the task: a new
+# provider needs an entry in EACH of four parallel hierarchies, llm/ (the client),
+# assistant/llm/adapters/ (tool-call formatting), assistant/messages/ (message
+# form), llm/response/ (response wrapper), plus an entry in the Adapter.build
+# is_a? dispatch. Nothing but the provider-name convention links the four files,
+# so completeness here is exactly what grep misses and Sense's inheritance graph
+# captures. The discriminator is whether the agent finds ALL FOUR files per
+# provider, not just llm/<provider>.rb. All targets are file-path matched so both
+# mention and cited are scored. Headline is CUMULATIVE efficiency at held accuracy.
+gold:
+  # Each target carries `relation` (the TRUE connection, from source; never shown to
+  # the agent) so the reference-aware relationship_audit can run. The fan-out is a
+  # 4-WAY per-provider correspondence (adapter + message + client + response), tied
+  # only by provider NAME and dispatched by Adapter.build's is_a? chain. sense_blast
+  # resolves each hierarchy (Adapters::Base -> 6 subclasses); the discriminator is
+  # whether the agent assembles all 4 families for every provider vs sampling. See 29-05.
+  #
+  # dispatch, the assistant selects a provider integration at runtime
+  - {id: adapter-build,    group: dispatch,  match: [assistant/llm/adapter.rb], relation: "Adapter.build resolves the LLM instance to its adapter via an is_a? chain"}
+  - {id: assistant,        group: dispatch,  match: [langchain/assistant.rb], relation: "Assistant drives the tool-calling loop and selects the adapter"}
+  # provider-integration (adapter) family, tool-call formatting contract (Adapters::Base subclasses)
+  - {id: adapter-base,     group: adapters,  match: [assistant/llm/adapters/base.rb], relation: "abstract adapter base; the tool-call/message formatting contract under change"}
+  - {id: adapter:openai,   group: adapters,  match: [assistant/llm/adapters/openai.rb], relation: "Adapters::Base subclass formatting tool calls/messages for OpenAI"}
+  - {id: adapter:anthropic,group: adapters,  match: [assistant/llm/adapters/anthropic.rb], relation: "Adapters::Base subclass for Anthropic"}
+  - {id: adapter:gemini,   group: adapters,  match: [assistant/llm/adapters/google_gemini.rb], relation: "Adapters::Base subclass for Google Gemini"}
+  - {id: adapter:mistral,  group: adapters,  match: [assistant/llm/adapters/mistralai.rb], relation: "Adapters::Base subclass for MistralAI"}
+  - {id: adapter:ollama,   group: adapters,  match: [assistant/llm/adapters/ollama.rb], relation: "Adapters::Base subclass for Ollama"}
+  # per-provider message form (Messages::Base subclasses, paired by name)
+  - {id: msg-base,         group: messages,  match: [assistant/messages/base.rb], relation: "abstract message base; per-provider message serialization contract"}
+  - {id: msg:openai,       group: messages,  match: [assistant/messages/openai_message.rb], relation: "Messages::Base subclass serializing messages for OpenAI (paired with the OpenAI adapter by name)"}
+  - {id: msg:anthropic,    group: messages,  match: [assistant/messages/anthropic_message.rb], relation: "Messages::Base subclass for Anthropic"}
+  - {id: msg:gemini,       group: messages,  match: [assistant/messages/google_gemini_message.rb], relation: "Messages::Base subclass for Google Gemini"}
+  - {id: msg:mistral,      group: messages,  match: [assistant/messages/mistralai_message.rb], relation: "Messages::Base subclass for MistralAI"}
+  - {id: msg:ollama,       group: messages,  match: [assistant/messages/ollama_message.rb], relation: "Messages::Base subclass for Ollama"}
+  # raw LLM client family (LLM::Base subclasses, paired by name)
+  - {id: llm-base,         group: clients,   match: [llm/base.rb], relation: "abstract LLM client base; the raw provider API contract"}
+  - {id: llm:openai,       group: clients,   match: [llm/openai.rb], relation: "LLM::Base subclass: the raw OpenAI API client (paired with the OpenAI adapter/message/response by name)"}
+  - {id: llm:anthropic,    group: clients,   match: [llm/anthropic.rb], relation: "LLM::Base subclass: raw Anthropic client"}
+  - {id: llm:gemini,       group: clients,   match: [llm/google_gemini.rb], relation: "LLM::Base subclass: raw Google Gemini client"}
+  - {id: llm:mistral,      group: clients,   match: [llm/mistralai.rb], relation: "LLM::Base subclass: raw MistralAI client"}
+  - {id: llm:ollama,       group: clients,   match: [llm/ollama.rb], relation: "LLM::Base subclass: raw Ollama client"}
+  # per-provider response wrapper (BaseResponse subclasses, paired by name)
+  - {id: resp-base,        group: responses, match: [llm/response/base_response.rb], relation: "abstract response base; per-provider response-parsing contract"}
+  - {id: resp:openai,      group: responses, match: [llm/response/openai_response.rb], relation: "BaseResponse subclass parsing OpenAI responses (paired by name)"}
+  - {id: resp:anthropic,   group: responses, match: [llm/response/anthropic_response.rb], relation: "BaseResponse subclass for Anthropic"}
+  - {id: resp:gemini,      group: responses, match: [llm/response/google_gemini_response.rb], relation: "BaseResponse subclass for Google Gemini"}
+  - {id: resp:mistral,     group: responses, match: [llm/response/mistralai_response.rb], relation: "BaseResponse subclass for MistralAI"}
+  - {id: resp:ollama,      group: responses, match: [llm/response/ollama_response.rb], relation: "BaseResponse subclass for Ollama"}
+  # test matrix, assistant + dispatch + a per-provider message spec
+  - {id: spec:assistant,   group: specs,     match: [assistant/assistant_spec.rb], relation: "spec covering the Assistant tool-calling loop"}
+  - {id: spec:adapter,     group: specs,     match: [assistant/llm/adapter_spec.rb], relation: "spec covering Adapter.build dispatch"}
+  - {id: spec:msg-openai,  group: specs,     match: [messages/openai_message_spec.rb]}

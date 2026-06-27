@@ -17,7 +17,7 @@ import sys
 
 repo, model = sys.argv[1], sys.argv[2]
 # RESULTS_DIR (exported by bench-paths.sh) points at the active bench's root;
-# for a vertical that is bench/results/vertical/<name>. Falls back to the global root.
+# for a vertical that is bench/verticals/<name>/results. Falls back to the global root.
 RES = os.environ.get("RESULTS_DIR") or "bench/results"
 
 

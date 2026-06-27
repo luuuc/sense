@@ -1,0 +1,211 @@
+name: Redmine work session - audit the Issue contract before a teardown rework
+repo: redmine
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM (re-authored 2026-06-19; prior shared-attached-record version kept
+# as redmine.attached-records.*.bak). The attached-record contracts (Attachment/
+# Watcher/CustomValue) are a READABLE target: the baseline tied Sense on them
+# (cited 0.86/0.86) because they are few and obviously named. Issue is Redmine's
+# CENTRAL model, the chatwoot-`Inbox` / forem-`Article` analogue, and the one
+# baseline-hell contract in the repo. `Issue` is referenced by ~50 files across
+# 10 DISJOINT directories (models, controllers, helpers, lib/redmine/...), and the
+# dependents are HETEROGENEOUS and NON-OBVIOUS: each touches Issue a different way
+# (time logged against it, an SCM changeset that auto-closes it on commit, the
+# journalized history trail, issue-to-issue relations, an inbound-email handler
+# that creates issues, a Gantt/calendar renderer, a my-page block, an autocomplete
+# endpoint, a cross-tracker report). No single grep pattern or `ls` covers them;
+# `grep -rl Issue app/` over-collects hundreds of noisy hits, and the non-obvious
+# dependents (changeset, journal, mail_handler, gantt, calendar, queries_helper,
+# context_menus) are ones a hand audit never thinks to search for. A structural
+# blast returns the resolved heterogeneous set in one call; reconstructing it by
+# hand means many disjoint greps and reads, and a session-loaded agent does it
+# incompletely. The headline is whether the agent assembles that fan-out
+# completely and cheaply.
+description: 'You are a maintainer about to rework how an Issue and everything
+  attached to it behaves when it is changed or torn down. Before touching the model,
+  you need a complete audit of what depends on the Issue contract today, so the
+  rework does not silently break a dependent. Work through the tasks below one at a
+  time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the central record everything
+    in the tracker revolves around sit, the thing people create, comment on, log
+    time against, link together and report on, along with the shared pieces it is
+    built on? Hand the next agent a map so they can act with small, targeted
+    lookups, not a fresh exploration of the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: Issue
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the Issue contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the plugin-style behaviors it
+    acts as, the associations other records hang off it through), and what does a
+    teammate need to know about that contract before changing it? Give file:line for
+    the model and each shared piece.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: issue.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how an issue and its attached data are handled on change
+  prompt: "Task: trace what happens around an issue when it is created, updated, or
+    destroyed, and everything attached to it. Start from where the change is
+    triggered and follow it through the effects that fan out (history/journals,
+    notifications, time entries, linked changesets, relations, parent/child
+    rollups). Give file:line for each layer and note which run inline versus
+    asynchronously.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Issue contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase
+    that depends on the Issue model, so the rework cannot silently break one. Be
+    exhaustive and group them by area (request handling, models and associations,
+    reporting and queries, scheduling and rendering, integrations, and
+    notifications). Many depend on it indirectly or in non-obvious ways, a shared
+    association, a helper, a service that derives something from an issue rather than
+    naming the class plainly, so a surface text search both misses some and drowns
+    the rest in unrelated matches. List EVERY dependent individually with its own
+    file:line and one phrase on how it uses the issue, do not collapse a set into a
+    summary like \"various models and controllers\" - an unlisted dependent counts
+    as missed. A missed dependent is a regression shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered dependent set across disjoint areas
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how issue identity and visibility are guarded
+  prompt: "Task: when work runs against an issue in the background or across
+    subsystems (reports, calendars, gantt, email, autocomplete), how does the code
+    confirm it is operating on a real, visible issue the actor is allowed to see
+    before acting? Trace where those guards live and what they check. Give file:line
+    throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Issue contract (how it stores and tears
+    down some of its attached data). Assess the full blast radius: which dependents
+    are at risk, which are most likely to break, and what must be re-verified after
+    the change, across every area you found. Be complete and use file:line; rank by
+    risk. A missed high-risk dependent is the one that pages someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the tests/fixtures that must be updated or added to cover
+    the behavior. Use file:line throughout, so a teammate could land the change from
+    your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: test
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold is the must-find audit: the SCATTERED, HETEROGENEOUS dependent set of the
+# Issue model plus the contract pieces a teammate must know before changing it.
+# The discriminator is the `dependents` group, non-obvious dependents in disjoint
+# dirs, each touching Issue a different way. `sense_blast Issue` returns this set
+# directly; reconstructing it by hand means grepping a token that recurs across the
+# whole app and reading every hit to filter. The obvious issue-named
+# controller/helper are the grep-easy half and are kept only as light write-path
+# anchors, not the discriminator. All path targets are file-path matched so both
+# mention and cited score. Every `relation` is verified against redmine source at
+# the pinned commit (PINNED_COMMITS.json) and is NEVER rendered to the agent.
+gold:
+  # the contract itself
+  - {id: issue-model,      group: contract,   match: [app/models/issue.rb], relation: "the Issue model itself - the contract under change"}
+  # obvious write-path anchors (grep-easy, NOT the discriminator)
+  - {id: a:issues-ctrl,    group: write-path, match: [app/controllers/issues_controller.rb], relation: "creates/updates/destroys issues"}
+  - {id: a:issues-helper,  group: write-path, match: [app/helpers/issues_helper.rb], relation: "renders issue views and helpers"}
+  # THE discriminator: scattered, heterogeneous, NON-OBVIOUS dependents. Each is a
+  # DIRECT dependent of Issue that `sense_blast Issue` surfaces, and the baseline
+  # mis-collects (greps the token, over-collects noise, misses the non-obvious).
+  # -- models / associations
+  - {id: d:time-entry,     group: dependents, match: [app/models/time_entry.rb], relation: "TimeEntry belongs_to :issue; time is logged against an issue"}
+  - {id: d:changeset,      group: dependents, match: [app/models/changeset.rb], relation: "Changeset has_and_belongs_to_many :issues; an SCM commit references and can auto-close issues via commit keywords"}
+  - {id: d:journal,        group: dependents, match: [app/models/journal.rb], relation: "Journal belongs_to the issue it journalizes (journalized_id) - the issue's history/audit trail"}
+  - {id: d:issue-relation, group: dependents, match: [app/models/issue_relation.rb], relation: "IssueRelation links issues (blocks/precedes/relates) via issue_from/issue_to"}
+  - {id: d:project,        group: dependents, match: [app/models/project.rb], relation: "Project has_many :issues, dependent: :destroy - destroying a project cascades to its issues"}
+  # -- integrations / inbound
+  - {id: d:mail-handler,   group: dependents, match: [app/models/mail_handler.rb], relation: "MailHandler creates and updates issues from inbound email"}
+  # -- reporting / queries
+  - {id: d:reports-ctrl,   group: dependents, match: [app/controllers/reports_controller.rb], relation: "ReportsController aggregates issues by tracker/status/assignee/priority"}
+  - {id: d:queries-helper, group: dependents, match: [app/helpers/queries_helper.rb], relation: "renders IssueQuery columns/filters in issue list views"}
+  - {id: d:context-menus,  group: dependents, match: [app/controllers/context_menus_controller.rb], relation: "ContextMenusController builds the issue bulk-edit context menu"}
+  - {id: d:auto-completes, group: dependents, match: [app/controllers/auto_completes_controller.rb], relation: "AutoCompletesController#issues powers issue autocomplete (parent / relations)"}
+  # -- scheduling / rendering
+  - {id: d:gantt,          group: dependents, match: [lib/redmine/helpers/gantt.rb], relation: "Redmine::Helpers::Gantt renders issues and their IssueRelation dependencies on a Gantt chart"}
+  - {id: d:calendar,       group: dependents, match: [lib/redmine/helpers/calendar.rb], relation: "Redmine::Helpers::Calendar places issues on a calendar by start/due date"}
+  - {id: d:my-helper,      group: dependents, match: [app/helpers/my_helper.rb], relation: "MyHelper my-page blocks query issues assigned to / reported by the user"}
+  # the test matrix
+  - {id: spec:issue,       group: specs,      match: [test/unit/issue_test.rb]}
+  - {id: spec:issues-ctrl, group: specs,      match: [test/functional/issues_controller_test.rb]}

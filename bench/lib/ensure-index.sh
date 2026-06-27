@@ -27,7 +27,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."                       # sense repo root (has go.mod)
 SENSE_REPO="$(pwd)"
-CLONES="${SENSE_CLONES:-/Users/luc/Developer/luuuc/oss/sense-benchmark/sense}"
+CLONES="${SENSE_CLONES:-$HOME/Developer/luuuc/oss/sense-benchmark/sense}"
 STATE="bench/index-state.json"
 SENSE_BIN="${SENSE_BIN:-$HOME/.local/bin/sense}"
 

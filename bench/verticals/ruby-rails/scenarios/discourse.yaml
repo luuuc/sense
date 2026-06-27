@@ -1,0 +1,228 @@
+name: Discourse work session - audit the Upload contract before a teardown rework
+repo: discourse
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM (re-authored 2026-06-16; prior posting-permission version kept as
+# discourse.permission.*.bak). The permission task centered on `can_create_post?`,
+# a single literal method whose callers NAME it (`grep can_create_post?` finds the
+# set) and whose composition lives inside one file (guardian.rb the baseline reads
+# whole). On Opus 4.8 the baseline reconstructed it completely and the scenario
+# TIED (sense 0.92 vs baseline 0.97). That is the lost shape.
+#
+# Upload is Discourse's CENTRAL media model and a baseline-hell contract: a
+# `sense_blast Upload` resolves 57 NON-OBVIOUS direct callers across 20 DISJOINT
+# directories, and they are HETEROGENEOUS, each touches an upload a different way
+# (the cooked-post processor sets a post's representative image_upload, the email styler
+# strips secure-image uploads, the backup creator bundles remote uploads, the
+# hotlinked-images job downloads images as uploads, the optimized-image model
+# builds variants, the user merger re-points uploads, the S3 inventory reconciles
+# them, the site-icon manager resolves icons, the plugin API registers uploads in
+# use, site settings hydrate upload-typed values). No single grep or `ls` covers
+# them, `Upload`/`upload` recurs across the whole app as noise, and the
+# non-obvious dependents (email styles, backup creator, s3 inventory, site setting
+# extension) are ones a hand audit never thinks to search for. A structural blast
+# returns the resolved set in one call; reconstructing it by hand means many
+# disjoint greps and reads, done incompletely under session load. The headline is
+# whether the agent assembles that fan-out completely and cheaply.
+description: 'You are a maintainer about to rework how an Upload and everything
+  attached to it behaves when it is changed or torn down (how uploads are stored,
+  referenced, and cleaned up). Before touching the model, you need a complete audit
+  of what depends on the Upload contract today, so the rework does not silently
+  break a dependent. Work through the tasks below one at a time; each builds on what
+  you learned in the previous one. Keep every answer concrete with file:line so the
+  next step (and a teammate opening the PR) can act without re-exploring the
+  codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the model that represents an
+    uploaded file sit, the thing posts, avatars, themes, emails and backups all
+    reference, along with the shared pieces it is built on? Hand the next agent a map
+    so they can act with small, targeted lookups, not a fresh exploration of the
+    codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: Upload
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the Upload contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concern it includes, the
+    associations other records hang off it through, the variant/derived records it
+    spawns), and what does a teammate need to know about that contract before
+    changing it? Give file:line for the model and each shared piece.
+    "
+  checks:
+  - type: word
+    value: concern
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: upload.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how an upload is created and processed
+  prompt: "Task: trace how a file becomes a stored Upload and what runs around it.
+    Start from where an upload is created and follow it through storage and the
+    processing that fans out (variants, post processing, remote storage). Give
+    file:line for each layer and note which run inline versus asynchronously.
+    "
+  checks:
+  - type: word
+    value: store
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Upload contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase
+    that depends on the Upload model, so the rework cannot silently break one. Be
+    exhaustive and group them by area (post rendering and cooking, storage and CDN,
+    background jobs, email, backup and restore, theming and site assets, user
+    profiles, and the plugin/site-setting surface). Many depend on it indirectly or
+    in non-obvious ways, a shared concern, an association, a service that derives a
+    URL or a path from an upload rather than naming the class plainly, so a surface
+    text search both misses some and drowns the rest in unrelated matches. List
+    EVERY dependent individually with its own file:line and one phrase on how it uses
+    the upload, do not collapse a set into a summary like \"various lib helpers\" -
+    an unlisted dependent counts as missed. A missed dependent is a regression
+    shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered dependent set across disjoint areas
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how upload identity and storage location are guarded
+  prompt: "Task: when work runs against an upload across services (post processing,
+    email rendering, backups, S3 reconciliation), how does the code confirm it is
+    operating on a real, current upload and resolve its storage location/URL before
+    acting? Trace where those guards and URL/path resolvers live and what they check.
+    Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Upload contract (how it stores, resolves
+    its URL, and tears down its derived data). Assess the full blast radius: which
+    dependents are at risk, which are most likely to break, and what must be
+    re-verified after the change, across every area you found. Be complete and use
+    file:line; rank by risk. A missed high-risk dependent is the one that pages
+    someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the specs/fixtures that must be updated or added to cover
+    the behavior. Use file:line throughout, so a teammate could land the change from
+    your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold is the must-find audit: the SCATTERED, HETEROGENEOUS dependent set of the
+# Upload model plus the contract pieces a teammate must know before changing it.
+# The discriminator is the `dependents` group, 16 NON-OBVIOUS DIRECT callers in
+# disjoint dirs (cooked-post processor, email styler, backup creator, hotlinked-
+# images job, optimized-image variants, user merger, s3 inventory, site-icon
+# manager, plugin API, site-setting hydration, ...), each touching Upload a
+# different way. Every one is retrievable by `sense_blast Upload` at the agent's
+# DEFAULT settings, and a hand grep/read audit of a noisy token cannot assemble
+# the set. Obvious upload-named controllers/creators are kept as light
+# `write-path` anchors, not the discriminator. All path targets are file-path
+# matched so both mention and cited score.
+gold:
+  # Each target carries `relation`: the TRUE way it reaches the Upload contract,
+  # verified via `sense_blast Upload` / `sense_graph`. NEVER rendered to the agent.
+  # the contract itself + the shared pieces a change must reckon with
+  - {id: upload-model,         group: contract,   match: [app/models/upload.rb], relation: "the Upload model itself - the contract under change"}
+  - {id: c:has-url,            group: contract,   match: [concerns/has_url.rb], relation: "HasUrl concern Upload includes; supplies URL resolution"}
+  - {id: optimized-image,      group: contract,   match: [app/models/optimized_image.rb], relation: "the variant/derived record an Upload spawns (OptimizedImage.create_for)"}
+  # obvious write-path anchors (grep-easy, NOT the discriminator)
+  - {id: a:uploads-ctrl,       group: write-path, match: [app/controllers/uploads_controller.rb], relation: "creates/serves uploads over HTTP"}
+  - {id: a:upload-creator,     group: write-path, match: [lib/upload_creator.rb], relation: "service that builds and persists an Upload from a file"}
+  # THE discriminator: 16 NON-OBVIOUS DIRECT dependents across disjoint areas
+  # -- post rendering / cooking
+  - {id: d:cooked-post,        group: dependents, match: [lib/cooked_post_processor.rb], relation: "CookedPostProcessor#update_post_image sets the post's (and topic's) representative image_upload_id from the post's uploads", disambiguator: "NOT a URL rewriter — verified vs source @d73e4484b4b: it calls @post.update_column(:image_upload_id, upload.id); secure/hotlinked URL rewriting lives in optimize_urls / PrettyText.strip_secure_uploads"}
+  - {id: d:pretty-text,        group: dependents, match: [lib/pretty_text.rb], relation: "PrettyText.strip_secure_uploads rewrites secure upload URLs when rendering"}
+  - {id: d:topic-link,         group: dependents, match: [app/models/topic_link.rb], relation: "TopicLink.ensure_entry_for records a link entry referencing an upload"}
+  # -- storage / CDN
+  - {id: d:s3-store,           group: dependents, match: [file_store/s3_store.rb], relation: "FileStore::S3Store serves an upload's CDN url and lists missing uploads"}
+  - {id: d:s3-inventory,       group: dependents, match: [lib/s3_inventory.rb], relation: "S3Inventory reconciles the S3 inventory against Upload records"}
+  # -- background jobs
+  - {id: d:hotlinked,          group: dependents, match: [pull_hotlinked_images.rb], relation: "Jobs::PullHotlinkedImages downloads hotlinked images into uploads"}
+  - {id: d:convert-video,      group: dependents, match: [regular/convert_video.rb], relation: "Jobs::ConvertVideo converts an uploaded video"}
+  # -- email
+  - {id: d:email-styles,       group: dependents, match: [lib/email/styles.rb], relation: "Email::Styles#stripped_secure_image_uploads strips secure image uploads from email"}
+  # -- backup / restore
+  - {id: d:backup-creator,     group: dependents, match: [backup_restore/creator.rb], relation: "BackupRestore::Creator bundles remote uploads into the backup archive"}
+  # -- theming / site assets
+  - {id: d:site-icon,          group: dependents, match: [lib/site_icon_manager.rb], relation: "SiteIconManager.resolve_original resolves site icons from uploads"}
+  - {id: d:app-helper,         group: dependents, match: [app/helpers/application_helper.rb], relation: "ApplicationHelper#build_splash_screen_image builds the splash screen from an upload"}
+  - {id: d:metadata-ctrl,      group: dependents, match: [app/controllers/metadata_controller.rb], relation: "MetadataController#default_manifest reads manifest icons from uploads"}
+  # -- user profiles / merge
+  - {id: d:user-profile,       group: dependents, match: [app/models/user_profile.rb], relation: "UserProfile references profile background/card uploads"}
+  - {id: d:user-merger,        group: dependents, match: [services/user_merger.rb], relation: "UserMerger#update_user_ids re-points a merged user's uploads"}
+  # -- plugin / site-setting surface
+  - {id: d:plugin-instance,    group: dependents, match: [lib/plugin/instance.rb], relation: "Plugin::Instance#register_upload_in_use lets plugins mark uploads as used"}
+  - {id: d:site-setting-ext,   group: dependents, match: [lib/site_setting_extension.rb], relation: "SiteSettingExtension#hydrate_uploads_in_objects hydrates upload-typed site settings"}
+  # the test matrix
+  - {id: spec:upload,          group: specs,      match: [models/upload_spec.rb]}
+  - {id: spec:cooked,          group: specs,      match: [lib/cooked_post_processor_spec.rb]}
+  - {id: spec:uploads-req,     group: specs,      match: [requests/uploads_controller_spec.rb]}

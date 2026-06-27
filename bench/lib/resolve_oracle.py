@@ -38,7 +38,7 @@ import yaml  # noqa: E402
 
 SENSE_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))  # oss/sense
 CLONES = os.path.join(os.path.dirname(SENSE_REPO), "sense-benchmark", "sense")     # per-repo clones + .sense
-SCEN = os.path.join(SENSE_REPO, "bench", "scenarios", "vertical")
+VERTICALS = os.path.join(SENSE_REPO, "bench", "verticals")  # verticals/<stack>/scenarios/
 SENSE_BIN = os.environ.get("SENSE_BIN", os.path.expanduser("~/.local/bin/sense"))
 
 ANCHOR_GROUPS = {"contract", "context", "surface", "teardown"}
@@ -73,7 +73,7 @@ def discover_contracts(stack):
     Django-ready). The rails-vintage CONTRACTS hand-table is the fallback for ruby-rails
     ONLY (its frozen yamls predate the field); other stacks rely on `contract_symbol:`."""
     out = dict(CONTRACTS) if stack == "ruby-rails" else {}
-    for f in glob.glob(os.path.join(SCEN, stack, "*.yaml")):
+    for f in glob.glob(os.path.join(VERTICALS, stack, "scenarios", "*.yaml")):
         if ".rubric" in os.path.basename(f):
             continue
         repo = os.path.basename(f)[:-5]
@@ -125,7 +125,7 @@ def harvest_files(obj):
 
 def discriminator_gold(stack, repo):
     """Expected files = the gold's discriminator group (largest non-anchor group)."""
-    f = os.path.join(SCEN, stack, f"{repo}.yaml")
+    f = os.path.join(VERTICALS, stack, "scenarios", f"{repo}.yaml")
     if not os.path.exists(f):
         return set(), "?"
     doc = yaml.safe_load(open(f))

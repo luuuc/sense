@@ -10,7 +10,7 @@ evaluator then compares those llm_quality numbers against the hand-graded
 The transcripts themselves are never re-run — that's the whole point of
 "held-out". Only re-scoring with the current rubric. Locked.yaml's
 held_out_lockfile gates this: if any held-out file has drifted, the
-caller (improve-loop.sh) refuses to run.
+caller refuses to run.
 
 Per-iteration cost: ~6 × judge call × $0.30 = ~$1.50.
 

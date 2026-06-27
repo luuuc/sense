@@ -40,8 +40,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import yaml  # noqa: E402
 
 SENSE_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))  # oss/sense
-RESULTS = os.path.join(SENSE_REPO, "bench", "results", "vertical")
-SCEN = os.path.join(SENSE_REPO, "bench", "scenarios", "vertical")
+VERTICALS = os.path.join(SENSE_REPO, "bench", "verticals")  # verticals/<stack>/{results,scenarios}/
 
 SENSE_TOOLS = ("sense_blast", "sense_graph", "sense_search")
 # A gold group is a "discriminator" (the headline) unless it is one of the
@@ -202,7 +201,7 @@ def _symbol_self_file(inp, txt):
 
 
 def load_gold(stack, repo):
-    f = os.path.join(SCEN, stack, f"{repo}.yaml")
+    f = os.path.join(VERTICALS, stack, "scenarios", f"{repo}.yaml")
     if not os.path.exists(f):
         return {}
     doc = yaml.safe_load(open(f))
@@ -223,12 +222,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stack", default="ruby-rails")
     ap.add_argument("--model", default="claude-opus-4-8",
-                    help="model dir under results/vertical/<stack>/, or 'all'")
+                    help="model dir under verticals/<stack>/results/, or 'all'")
     ap.add_argument("--repo", default="", help="comma-separated repo filter")
     ap.add_argument("--json", default="", help="write machine-readable dump here")
     args = ap.parse_args()
 
-    stack_dir = os.path.join(RESULTS, args.stack)
+    stack_dir = os.path.join(VERTICALS, args.stack, "results")
     if args.model == "all":
         model_dirs = [d for d in glob.glob(os.path.join(stack_dir, "*")) if os.path.isdir(d)]
     else:

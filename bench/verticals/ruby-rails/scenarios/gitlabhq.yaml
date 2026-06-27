@@ -1,0 +1,201 @@
+name: GitLab work session - audit the MergeRequest contract before a teardown rework
+repo: gitlabhq
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL, it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM: MergeRequest is GitLab's CENTRAL model in a 36k-file, 178k-symbol
+# monolith. `sense_blast MergeRequest` resolves 83 NON-OBVIOUS direct callers
+# across 50 DISJOINT directories (the richest fan-out in the campaign),
+# HETEROGENEOUS in how each touches an MR: GraphQL type resolvers, the event feed,
+# usage-trends analytics, CI pipeline relations, the Jira integration, discussion
+# serializers, note-resolve / milestone-promote / timelog / ghost-user-migration
+# services, the auto-merge worker, the API discussions layer, the URL builder,
+# cycle-analytics query builders, import/export streaming, GitHub/Bitbucket
+# importers, quick actions. No human or grep audit assembles that set in a monolith
+# this size; `MergeRequest` is one of the noisiest tokens in the repo, and the
+# non-obvious dependents are buried across services/workers/graphql/lib. A
+# structural blast returns the resolved set in one call.
+#
+# NOTE: MergeRequest is an ambiguous symbol (app/models + ee/ overlay); the agent
+# disambiguates via the sense_blast `file` parameter (shipped 2026-06-16).
+description: 'You are a maintainer about to rework how a MergeRequest and everything
+  attached to it behaves when it is changed or torn down. Before touching the model,
+  you need a complete audit of what depends on the MergeRequest contract today, so
+  the rework does not silently break a dependent. Work through the tasks below one at
+  a time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the MR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the (very large) code organized, and where does the central model
+    that represents a proposed code change sit, the thing much of the rest of the
+    system attaches to or reads, along with the shared pieces it is built on? Hand the
+    next agent a map so they can act with small, targeted lookups, not a fresh
+    exploration of the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: MergeRequest
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the MergeRequest contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concerns it includes, the
+    associations other records hang off it through), and what does a teammate need to
+    know about that contract before changing it? Give file:line for the model and each
+    shared piece.
+    "
+  checks:
+  - type: word
+    value: concern
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: merge_request.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how a merge request is created and updated
+  prompt: "Task: trace how a merge request is created and updated and what runs
+    around it. Start from where the change is triggered and follow it through the
+    effects that fan out (notes/discussions, events, notifications, related records).
+    Give file:line for each layer and note which run inline versus asynchronously.
+    "
+  checks:
+  - type: word
+    value: service
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the MergeRequest contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase that
+    depends on the MergeRequest model, so the rework cannot silently break one. Be
+    exhaustive and group them by area, covering models, services, workers, GraphQL,
+    serializers, the API layer, and the lib/ layer. Many depend on it indirectly or in
+    non-obvious ways, buried in a file that does not announce the dependency, so a
+    surface text search both misses some and drowns the rest in unrelated matches.
+    List EVERY dependent individually with its own file:line and one phrase on how it
+    uses the merge request, do not collapse a set into a summary like \"various
+    services\" - an unlisted dependent counts as missed. A missed dependent is a
+    regression shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered dependent set across disjoint areas
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how merge request visibility and permissions are guarded
+  prompt: "Task: when work runs against a merge request anywhere in the system, how
+    does the code confirm it is visible to the acting user and safe to act on before
+    proceeding? Trace where those guards and visibility checks live and what they
+    check. Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the MergeRequest contract (how it stores and
+    tears down some of its attached data). Assess the full blast radius: which
+    dependents are at risk, which are most likely to break, and what must be
+    re-verified after the change, across every area you found. Be complete and use
+    file:line; rank by risk. A missed high-risk dependent is the one that pages
+    someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the specs/fixtures that must be updated or added to cover the
+    behavior. Use file:line throughout, so a teammate could land the change from your
+    map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold = the SCATTERED, HETEROGENEOUS dependent set of the MergeRequest model plus
+# the contract pieces. Discriminator = the `dependents` group, 16 NON-OBVIOUS DIRECT
+# callers across services/workers/models/graphql/serializers/lib/api, each touching
+# an MR a different way. `sense_blast MergeRequest` (file-disambiguated) returns the
+# set; in a 36k-file monolith a baseline greps the noisy token and gets the obvious
+# callers but misses the buried ones. Obvious MR-named controller/create-service are
+# light `write-path` anchors.
+gold:
+  # contract
+  - {id: mr-model,         group: contract,   match: [app/models/merge_request.rb], relation: "the MergeRequest model itself - the contract under change"}
+  - {id: c:issuable,       group: contract,   match: [app/models/concerns/issuable.rb], relation: "Issuable concern; shared issue/MR behavior the contract exposes"}
+  - {id: c:noteable,       group: contract,   match: [app/models/concerns/noteable.rb], relation: "Noteable concern; discussions/notes hang off the MR through this"}
+  - {id: c:mentionable,    group: contract,   match: [app/models/concerns/mentionable.rb], relation: "Mentionable concern; cross-references resolve through this"}
+  # write-path anchors (grep-easy, NOT the discriminator)
+  - {id: a:mr-ctrl,        group: write-path, match: [app/controllers/projects/merge_requests_controller.rb], relation: "creates/updates merge requests over HTTP"}
+  - {id: a:mr-create-svc,  group: write-path, match: [app/services/merge_requests/create_service.rb], relation: "MergeRequests::CreateService builds and persists an MR"}
+  # THE discriminator: 16 NON-OBVIOUS DIRECT dependents across disjoint areas
+  - {id: d:notes-resolve,  group: dependents, match: [app/services/notes/resolve_service.rb], relation: "Notes::ResolveService resolves discussion notes on an MR"}
+  - {id: d:milestone-prom, group: dependents, match: [app/services/milestones/promote_service.rb], relation: "Milestones::PromoteService re-points an MR's milestone when promoted"}
+  - {id: d:issuable-destroy,group: dependents, match: [app/services/issuable/destroy_service.rb], relation: "Issuable::DestroyService#destroy_ci_records tears down an MR's CI records"}
+  - {id: d:ghost-user,     group: dependents, match: [app/services/users/migrate_records_to_ghost_user_service.rb], relation: "reassigns an MR's authorship to the Ghost User when a user is ghost-migrated", disambiguator: "REASSIGNS author_id — verified @1f9c256f0d: migrate_merge_requests:86 calls batched_migrate(MergeRequest, :author_id) → sets author_id to the ghost user. NOT a nullify; the dependent: :nullify path (user.rb) is a separate association, not the MR authorship migration"}
+  - {id: d:timelog,        group: dependents, match: [app/services/timelogs/create_service.rb], relation: "Timelogs::CreateService logs time against an MR"}
+  - {id: d:auto-merge,     group: dependents, match: [app/workers/auto_merge_process_worker.rb], relation: "AutoMergeProcessWorker processes auto-merge for MRs"}
+  - {id: d:event,          group: dependents, match: [app/models/event.rb], relation: "Event targets an MR (event feed / activity)"}
+  - {id: d:ci-pipeline,    group: dependents, match: [app/models/ci/pipeline.rb], relation: "Ci::Pipeline#related_merge_requests links pipelines to MRs"}
+  - {id: d:jira,           group: dependents, match: [app/models/integrations/jira.rb], relation: "Integrations::Jira#close_issue acts on the issues an MR closes"}
+  - {id: d:gql-issuable,   group: dependents, match: [app/graphql/types/issuable_type.rb], relation: "Types::IssuableType.resolve_type resolves an MR's GraphQL type"}
+  - {id: d:discussion-ent, group: dependents, match: [app/serializers/base_discussion_entity.rb], relation: "BaseDiscussionEntity serializes an MR's discussions"}
+  - {id: d:url-builder,    group: dependents, match: [lib/gitlab/url_builder.rb], relation: "Gitlab::UrlBuilder#build builds the canonical URL for an MR"}
+  - {id: d:cycle-analytics,group: dependents, match: [lib/gitlab/analytics/cycle_analytics/base_query_builder.rb], relation: "CycleAnalytics::BaseQueryBuilder builds MR-based value-stream queries"}
+  - {id: d:streaming-ser,  group: dependents, match: [lib/gitlab/import_export/json/streaming_serializer.rb], relation: "StreamingSerializer#remove_cached_external_diff handles an MR's external diff on export"}
+  - {id: d:github-xref,    group: dependents, match: [lib/gitlab/github_import/importer/events/cross_referenced.rb], relation: "GithubImport cross-references MRs during import"}
+  - {id: d:api-discussions,group: dependents, match: [lib/api/discussions.rb], relation: "API::Discussions exposes an MR's discussions over the API"}
+  # spec
+  - {id: spec:mr,          group: specs,      match: [spec/models/merge_request_spec.rb]}

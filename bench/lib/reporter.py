@@ -90,9 +90,10 @@ def load_results(results_dir):
         tool_dir = os.path.join(results_dir, tool)
         if not os.path.isdir(tool_dir) or tool.startswith("."):
             continue
-        # "vertical" is the reserved subtree holding per-vertical benches
-        # (results/vertical/<name>/), not an arm. The global report skips it;
-        # a vertical report is produced by pointing this at results/vertical/<name>.
+        # Legacy guard: per-vertical benches now live under verticals/<name>/results/
+        # (not a "vertical" subtree of the global results/). A vertical report is
+        # produced by pointing this at verticals/<name>/results. This skip is kept
+        # so any stale results/vertical/ subtree is still ignored as a non-arm.
         if tool == "vertical":
             continue
         for repo in sorted(os.listdir(tool_dir)):

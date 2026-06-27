@@ -19,8 +19,8 @@ import gold as G  # noqa: E402
 from judge import read_answer_text  # noqa: E402
 
 SENSE_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))  # oss/sense
-RESULTS = os.path.join(SENSE_REPO, "bench", "results", "vertical", "ruby-rails")
-SCEN = os.path.join(SENSE_REPO, "bench", "scenarios", "vertical", "ruby-rails")
+RESULTS = os.path.join(SENSE_REPO, "bench", "verticals", "ruby-rails", "results")
+SCEN = os.path.join(SENSE_REPO, "bench", "verticals", "ruby-rails", "scenarios")
 INDEX = os.path.join(os.path.dirname(SENSE_REPO), "sense-benchmark", "sense")  # per-repo .sense
 
 
