@@ -11,8 +11,8 @@
 #
 # Does NOT: pin SHAs (do that in PINNED_COMMITS.json first — ls-remote fills a missing
 # commit if the url is present), run `sense setup` (the bench runner adds the sense
-# steering at run time), or freeze the held-out anchor (that is docker + LLM, a separate
-# forward-horizon step — see freeze-heldout.sh).
+# steering at run time), or touch docker / freeze the held-out anchor — a vertical runs
+# the two arms directly on the host; docker + freeze-heldout.sh are GLOBAL-bench only.
 #
 # Usage:
 #   bash bench/drivers/provision-repos.sh                 # all repos in the vertical's repos.txt
