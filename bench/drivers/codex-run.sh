@@ -72,10 +72,10 @@ elif command -v gtimeout >/dev/null; then TIMEOUT_BIN=gtimeout; fi
 SENSE_BIN_DIR="$(dirname "$(command -v sense)")"
 SCRUBBED_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vFx "$SENSE_BIN_DIR" | paste -sd: -)"
 
-# Strict serialization: hold the codex (GPT subscription) session lock so two
-# sessions on the SAME metered plan can never overlap. Independent of the
-# opencode lock, so a kimi sweep and a gpt sweep stay concurrent. Released on exit.
-pace_lock_acquire codex
+# Per-repo lock so two sessions can bench DIFFERENT repos concurrently and only
+# ever serialize on the SAME repo's clones+results. If a sweep parent already holds
+# this repo's lock (exported BENCH_PACE_LOCK_HELD), this is a no-op. Released on exit.
+pace_lock_acquire "repo-$REPO"
 
 SCEN="$SCENARIOS_DIR/$REPO.yaml"
 [[ -f "$SCEN" ]] || { echo "no scenario $SCEN" >&2; exit 1; }

@@ -41,17 +41,48 @@ MODELS="${MODELS:-claude-opus-4-8}"
 REPOS="${REPOS:-ruby_llm discourse}"
 # For variance (--runs N) use runs-variance.sh, not this single-run sweeper.
 
+# Count whitespace-separated words without disturbing the caller's positional
+# params (string queue avoids the bash 3.2 empty-array-under-`set -u` hazard).
+count_words() { echo $#; }
+
 echo "[sweep] models: $MODELS"
 echo "[sweep] repos:  $REPOS"
 for m in $MODELS; do
   # Re-resolve RESULTS_DIR to this model's own root so models never overwrite.
   unset RESULTS_DIR; export BENCH_MODEL="$m"; source "$BENCH_DIR/lib/bench-paths.sh"
-  for r in $REPOS; do
+  # Work queue over the planned repos. A repo currently being benched by ANOTHER
+  # session (its per-repo lock is held) is DEFERRED to the back of the queue and
+  # retried later, so two sessions on the same tool divide the repos instead of
+  # one blocking on the whole planned set. When pacing is off the try-acquire is a
+  # no-op (always "acquired"), so the queue drains in order = exact prior behavior.
+  queue="$REPOS"
+  stuck=0   # consecutive deferrals with no progress (whole remaining queue locked)
+  while [ -n "$queue" ]; do
+    # Pop the front token.
+    r="${queue%% *}"
+    case "$queue" in *" "*) queue="${queue#* }";; *) queue="";; esac
     # Idempotent skip: this (model, repo) already has results under its model root.
     if [[ -f "$RESULTS_DIR/sense/$r/scored.json" || -d "$RESULTS_DIR/sense/$r/run-1" ]]; then
       echo "[skip] $r / $m (already benched)"
+      stuck=0
       continue
     fi
+    # Per-repo lock: if another session is benching this repo right now, defer it
+    # to the back of the queue and move on to the next free repo.
+    if ! pace_lock_try_acquire "repo-$r"; then
+      echo "[defer] $r / $m busy in another session -> back of queue"
+      queue="${queue:+$queue }$r"
+      stuck=$((stuck + 1))
+      remaining="$(count_words $queue)"
+      if [ "$stuck" -ge "$remaining" ]; then
+        # A full pass with every remaining repo locked: wait for one to free up.
+        # (Only reachable with pacing on — try-acquire never fails when off.)
+        pace_sleep "$OPENCODE_PACE_SECONDS" "all $remaining remaining repos locked; waiting for a free one"
+        stuck=0
+      fi
+      continue
+    fi
+    stuck=0
     echo "[run ] $r / $m  start $(date +%H:%M:%S)"
     rm -rf "$RESULTS_DIR/baseline/$r" "$RESULTS_DIR/sense/$r"
     # Dispatch the right harness by model id:
@@ -72,11 +103,15 @@ for m in $MODELS; do
       *)
         run=(bash bench/drivers/bench-sense-local.sh --tool baseline,sense --repo "$r" --no-build --model "$m") ;;
     esac
+    # The child runner inherits this repo's lock via the exported
+    # BENCH_PACE_LOCK_HELD (so the metered runners do not re-lock); the opus runner
+    # ignores it. Either way we release it here once the repo is fully benched.
     if "${run[@]}"; then
       echo "[ok  ] $r / $m  done  $(date +%H:%M:%S)"
     else
       echo "[FAIL run] $r / $m  (rerun later — sweep is idempotent)"
     fi
+    pace_lock_release
     # Inter-repo spacing for the metered arms only, so the next repo starts in a
     # less-drained window. The opus dispatch (paced=0) is unaffected.
     [ "$paced" = 1 ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between repos (after $r/$m)"
