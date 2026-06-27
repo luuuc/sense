@@ -147,12 +147,20 @@ bash ../drivers/rescan-all.sh        # (re)index this vertical's repos, smallest
 
 ## Adding a new vertical
 
-1. Run `mkdir -p verticals/<name>/scenarios` and add a `repos.txt` membership list.
-2. Author `<repo>.yaml` plus `<repo>.rubric.yaml` per repo under `scenarios/`.
-3. Clone and index the repos under `$SENSE_BENCH_ROOT`, then run `rescan-all.sh`.
-4. Run `VERTICAL=<name> ... bash ../drivers/runs-variance.sh <repo>`. The
-   `results/` tree is created on first run, and the matrix appears at
-   `results/report.md`.
+Two drivers automate the mechanics; the judgment (repo choice, scenario authoring)
+stays manual by design.
 
-No code changes are required, because `bench-paths.sh` derives every path from
-`<name>`.
+1. **Stamp the dirs:** `bash ../drivers/new-vertical.sh <name>` creates
+   `verticals/<name>/scenarios/` + `repos.txt` (and a local doc skeleton). Then fill
+   `repos.txt` and pick the 6 repos.
+2. **Per repo, run the loop:** `bash ../drivers/vertical-loop.sh <repo>` (set
+   `VERTICAL=<name>`). It chains index → scout → preflight → bench → report → harvest
+   and STOPS at the human gates (scenario authoring, tie diagnosis); pass `--yes` to
+   clear the cost gate before the paid Opus×2 sweep. The `results/` tree is created on
+   first run and the matrix appears at `results/report.md`.
+
+Done by hand, that loop is: `mkdir -p verticals/<name>/scenarios` + a `repos.txt`;
+author `<repo>.yaml` + `<repo>.rubric.yaml`; clone/index under `$SENSE_BENCH_ROOT`
+(`rescan-all.sh`); then `VERTICAL=<name> ... bash ../drivers/runs-variance.sh <repo>`.
+No code changes are required either way, because `bench-paths.sh` derives every path
+from `<name>`.
