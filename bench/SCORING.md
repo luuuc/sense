@@ -296,7 +296,7 @@ when `judged.json` is newer than `transcript.json` unless `--force`.
 ## Quality gates on the scorer itself (Phase 4 audit)
 
 The scorer can be wrong, and the loop can optimize a wrong scorer.
-Three auditors run in parallel after each improvement-loop iteration
+Three auditors run in parallel after each bench iteration
 and watch the scoring layer:
 
 | Auditor | Asks | Output | Flag if |

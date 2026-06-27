@@ -3,7 +3,7 @@
 
 Each teardown article carries a `headline:` block (repo, deps_delta, overall_from,
 overall_to) and a `data:` pointer to its bench model root
-(bench/results/vertical/<vertical>/<model>/). This recomputes those numbers from
+(bench/verticals/<vertical>/results/<model>/). This recomputes those numbers from
 the live results and prints FRESH / OUTDATED per article, so a re-bench can't
 silently leave stale figures in a draft. It checks NUMBERS only; the prose is the
 author's. Articles with no `headline:` block (the essay, gem feeders) are skipped.

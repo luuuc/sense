@@ -1,0 +1,89 @@
+# bench — what the improvement loop may NOT touch.
+#
+# Read this file at the top of every iteration. Any improvements.json entry
+# that targets a locked path or attempts to redefine a locked structural
+# property is rejected with a logged reason before Phase 2 applies it.
+#
+# Changing this file is a versioned bench change made by a human — not an
+# iteration of the loop. After editing, bump locked_version + re-grade the
+# held-out set (the bench's anchor cannot be trusted across a structural shift).
+
+locked_version: 1
+
+# --- Fairness formula axes ---------------------------------------------------
+# Axes can be *reweighted* by the loop (within ±0.05/iteration per axis).
+# Axes can NOT be added, removed, or renamed by the loop. If the bench ever
+# needs a different axis structure, name it v2 and re-grade held-out.
+fairness_formula_axes:
+  - keyword_coverage
+  - llm_quality
+  - citation_grounding
+  - efficiency
+
+# --- Judge identity ----------------------------------------------------------
+# The LLM judge is fixed. Swapping models would invalidate every prior score.
+judge_model: claude-opus-4-7
+
+# --- Prompts the loop must not edit -----------------------------------------
+# The loop tunes the bench within the rubric; it must not tune what "good"
+# means by rewriting the judge or auditor prompts. judge_prompt is an external
+# file; the three audit prompts live as inline SYSTEM_PROMPT constants in
+# their respective .py files (locked because the source files themselves
+# are orchestration code).
+judge_prompt_path: bench/lib/judge_prompt.v1.md
+auditor_prompt_paths:
+  - bench/lib/audit_scoring.py     # SYSTEM_PROMPT — score-auditor
+  - bench/lib/audit_scenarios.py   # SYSTEM_PROMPT — scenario-auditor
+  - bench/lib/audit_watchdog.py    # SYSTEM_PROMPT — anti-Goodhart watchdog
+
+# --- Convergence criteria ---------------------------------------------------
+# The four convergence criteria are versioned. The loop may not redefine
+# them. Bumping convergence_criteria_version is a human change.
+convergence_criteria_version: 1
+
+# --- Held-out set ------------------------------------------------------------
+# The held-out scenarios, rubrics, frozen transcripts, and gold grades are
+# pinned via SHA256 in held_out_lockfile. The loop refuses to start if any
+# held-out file's hash does not match the lockfile.
+held_out_dir: bench/scenarios/held-out
+held_out_lockfile: bench/global/locked/held-out.lock
+
+# --- Orchestration code -----------------------------------------------------
+# Bench orchestration is off-limits to automated edits.
+orchestration_paths:
+  - bench/global/run.sh
+  - bench/score.sh
+  - bench/report.sh
+  - bench/global/freeze-heldout.sh
+  - bench/lib/lock_check.py
+  - bench/lib/convergence.py
+  - bench/lib/delta_report.py
+  - bench/lib/readiness.py
+  - bench/lib/cost_tracker.py
+  - bench/lib/heldout_rescore.py
+  - bench/lib/scorer.py        # added post-Card-15 — the constrained/failed split is a scoring contract
+  - bench/lib/fairness.py      # fairness formula values are locked even though the structure is in fairness_formula_axes
+  - bench/lib/load-env.sh
+  - bench/judge.sh
+
+# --- Improvement-action whitelist -------------------------------------------
+# The only actions the loop is permitted to emit in improvements.json.
+# A new action type is a versioned bench change.
+permitted_actions:
+  - add_check
+  - remove_check
+  - tighten_check
+  - raise_threshold
+  - update_weights
+  - adjust_ceiling   # TIME_CEILINGS / EFFICIENCY_CEILINGS
+
+# --- Per-iteration tunable bounds -------------------------------------------
+# Magnitude caps on what a single iteration may change. Cumulative drift is
+# tracked by the convergence evaluator; held-out re-grading is required if
+# cumulative motion in any category exceeds the held-out re-grade threshold.
+tunable_bounds:
+  time_ceiling_step_pct: 0.20         # ±20% per iteration per repo
+  efficiency_ceiling_step_pct: 0.20
+  fairness_axis_weight_delta: 0.05    # ±0.05 per axis per iteration
+  rubric_criterion_weight_delta: 0.10 # ±0.10 per criterion per iteration
+  held_out_regrade_threshold: 0.10    # cumulative rubric drift triggering re-grade

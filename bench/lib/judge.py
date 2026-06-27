@@ -67,7 +67,7 @@ def _credit_exhausted_signature(http_code: int, body_lower: str) -> str | None:
 
 def _notify_credit_exhausted(caller: str, reason: str) -> None:
     """Loud stderr banner + best-effort macOS notification. The stamp
-    file is written by the shell wrapper (improve-loop.sh) so it can
+    file is written by the shell wrapper so it can
     survive across Python processes and persist across iterations.
     """
     banner = (

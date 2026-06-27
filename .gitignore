@@ -8,9 +8,9 @@ doc/
 # AI assistant workspace (kept local, never pushed)
 .claude/
 CLAUDE.md
-# Exception: bench/docker/**/CLAUDE.md are baked into docker images
+# Exception: bench/global/docker/**/CLAUDE.md are baked into docker images
 # at build time, not the user's local AI context.
-!bench/docker/**/CLAUDE.md
+!bench/global/docker/**/CLAUDE.md
 .claude.json
 .mcp.json
 .opencode/
@@ -103,9 +103,9 @@ bench/CHANGELOG.md
 /.council
 
 # Host-built sense indexes staged into the docker build context by
-# bench/build-prescan.sh. Each one is ~350MB (nextjs.sense) and is
+# bench/global/build-prescan.sh. Each one is ~350MB (nextjs.sense) and is
 # regenerated on demand from $SENSE_BENCH_ROOT/sense/<repo>/.sense.
-bench/docker/sense/preindex/
+bench/global/docker/sense/preindex/
 
 # Local-only bench result snapshots (manual backups before full sweeps).
 bench/results.snapshot-*/
@@ -114,16 +114,24 @@ bench/results/report-for-humans-*.md
 
 # Per-model reports under a vertical's results tree derive from the run data on
 # demand via report.sh, so they are regenerated, not committed. The vertical-root
-# cross-model matrix (vertical/<name>/report.md|json) IS tracked by design, like
-# the global bench/results/report.md|json — only the per-model copies are ignored.
-bench/results/vertical/*/*/report.md
-bench/results/vertical/*/*/report.json
-bench/results/vertical/**/citation-hallucinations.md
+# cross-model matrix (verticals/<name>/results/report.md|json) IS tracked by design,
+# like the global bench/results/report.md|json — only the per-model copies are ignored.
+bench/verticals/*/results/*/report.md
+bench/verticals/*/results/*/report.json
+bench/verticals/**/citation-hallucinations.md
 # Per-repo variance reports are temporary, model-shared scratch (runs-variance.sh
 # overwrites <repo>.md per run); not durable evidence, so kept out of git.
-bench/results/vertical/**/variance/
-bench/bench-sense-local.sh
+bench/verticals/**/variance/
+# Raw codex JSONL is the pre-normalized intermediate (parse-codex-result.py turns
+# it into the canonical transcript.json); large, redundant, embeds local paths.
+bench/**/codex-raw*.jsonl
+bench/drivers/bench-sense-local.sh
 /bench/embed-recall
+
+# Per-machine index build-state (built_at timestamps + symbol/edge counts +
+# fingerprints), rewritten on every local rescan, so two contributors conflict.
+# Untracked: rely on `sense status` for the live fingerprint.
+bench/index-state.json
 
 # Local scratch: Python coverage DB and scenario backups taken while
 # reworking a seam (e.g. forem.embed.yaml.bak before the reaction rewrite).
@@ -131,5 +139,5 @@ bench/lib/.coverage
 bench/scenarios/*.bak
 .local/
 bench/RESCAN-TIMINGS.md
-bench/results/vertical/ruby-rails/variance/
+bench/verticals/ruby-rails/results/variance/
 /bench/results/loopA-gaps

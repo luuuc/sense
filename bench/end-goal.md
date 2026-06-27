@@ -56,7 +56,7 @@ These five conditions are not aspirational — they are the convergence criteria
 The bench cannot move faster than its anchor. Two anchors:
 
 1. **Held-out hand grades.** Re-grade the held-out set by hand every 5 iterations or any time rubric weights move beyond ±0.10 cumulative. If the loop drifts away from human judgment, the held-out correlation drops first.
-2. **`bench/locked/locked.yaml`.** Lists what the loop may never touch: the four fairness-formula axes, the judge model, the judge/auditor prompt paths, the convergence criteria. The loop reads this file at start and refuses any improvement that targets a locked entry.
+2. **`bench/global/locked/locked.yaml`.** Lists what the loop may never touch: the four fairness-formula axes, the judge model, the judge/auditor prompt paths, the convergence criteria. The loop reads this file at start and refuses any improvement that targets a locked entry.
 
 A change to `locked.yaml` is a versioned bench change — bump the version, re-grade the held-out set, do not pretend the previous bench's scores still mean the same thing.
 

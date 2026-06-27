@@ -31,7 +31,7 @@ REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")
 VERTICAL_DIR = os.path.join(REPO_ROOT, ".doc", "launch", "02-rails-vertical")
 DEFAULT_ARTICLES = os.path.join(VERTICAL_DIR, "articles")
 DEFAULT_RESULTS = os.path.join(
-    REPO_ROOT, "bench", "results", "vertical", "ruby-rails", "claude-opus-4-8")
+    REPO_ROOT, "bench", "verticals", "ruby-rails", "results", "claude-opus-4-8")
 
 REQUIRED_BLOCKS = list("ABCDEFGHIJ")
 REQUIRED_KEYS = ("repo", "data", "agents")

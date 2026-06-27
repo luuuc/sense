@@ -27,8 +27,8 @@ import os
 import sys
 
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DEFAULT = os.path.join(REPO_ROOT, "bench", "results", "vertical",
-                       "ruby-rails", "claude-opus-4-8")
+DEFAULT = os.path.join(REPO_ROOT, "bench", "verticals", "ruby-rails",
+                       "results", "claude-opus-4-8")
 ORDER = ["mastodon", "gitlabhq", "chatwoot", "discourse", "solidus", "forem",
          "ruby_llm", "redmine", "rails", "llm.rb", "langchainrb", "lobsters", "raix"]
 GEMS = {"ruby_llm", "llm.rb", "langchainrb", "raix"}

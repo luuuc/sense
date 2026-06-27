@@ -89,7 +89,7 @@ for tool_dir in "$RESULTS_DIR"/*/; do
   [[ -d "$tool_dir" ]] || continue
   tool=$(basename "$tool_dir")
   # "vertical" is the reserved per-vertical subtree, not an arm; it is scored on
-  # its own root (RESULTS_DIR=results/vertical/<name>), never as a global arm.
+  # its own root (RESULTS_DIR=verticals/<name>/results), never as a global arm.
   [[ "$tool" == "vertical" ]] && continue
 
   for repo_dir in "$tool_dir"*/; do

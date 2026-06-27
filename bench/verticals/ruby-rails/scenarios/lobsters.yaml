@@ -1,0 +1,193 @@
+name: Lobsters work session - audit the Story contract before a teardown rework
+repo: lobsters
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL, it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# WHY THIS SEAM (re-authored 2026-06-16; prior vote/score-contract version kept as
+# lobsters.votescore.*.bak). That version targeted the scattered vote consumers,
+# which all NAME `Vote`/`vote` literally; on Opus 4.8 the frontier grep baseline
+# enumerated them BETTER than sense (baseline consumers 4/5,3/5,4/5 vs sense
+# 2/5,2/5,3/5) and the scenario LOST.
+#
+# Story is Lobsters' CENTRAL content model. `sense_blast Story` resolves a
+# heterogeneous, scattered dependent set: search indexing, the stats/graph cache,
+# the markdown re-renderer, the inbound-email mailbox that resolves a reply's
+# parent, the Link URL handler, the polymorphic Vote target, the flag-permission
+# check, comments, and the moderation surface. They live across models, helpers,
+# mailboxes and lib/extras, each touching a story a different way, and `story` is
+# a noisy token across this small but dense app. A structural blast returns the
+# resolved set in one call; a hand audit under session load enumerates it
+# incompletely. The headline is whether the agent assembles that fan-out
+# completely and cheaply.
+description: 'You are a maintainer about to rework how a Story and everything
+  attached to it behaves when it is changed or torn down. Before touching the model,
+  you need a complete audit of what depends on the Story contract today, so the
+  rework does not silently break a dependent. Work through the tasks below one at a
+  time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where does the central submission model
+    sit, the thing users post, comment on, vote on, tag and flag, along with the
+    shared pieces it is built on? Hand the next agent a map so they can act with
+    small, targeted lookups, not a fresh exploration of the codebase. No Explore
+    agents.
+    "
+  checks:
+  - type: word
+    value: Story
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the Story contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the concern it includes, the
+    associations other records hang off it through), and what does a teammate need to
+    know about that contract before changing it? Give file:line for the model and
+    each shared piece.
+    "
+  checks:
+  - type: word
+    value: concern
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: contains
+    value: story.rb
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how a story is created and ranked
+  prompt: "Task: trace how a submission becomes a stored Story and what runs around
+    it. Start from where a story is created and follow it through URL handling,
+    markdown rendering, and the ranking/score machinery. Give file:line for each
+    layer and the order they run.
+    "
+  checks:
+  - type: word
+    value: score
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the Story contract
+  prompt: "Task: this is the core of the ticket. Find EVERY place in the codebase
+    that depends on the Story model, so the rework cannot silently break one. Be
+    exhaustive and group them by area (content and rendering, search, statistics,
+    voting and flagging, inbound email, and moderation). Many depend on it
+    indirectly or in non-obvious ways, a shared concern, an association, a service
+    that derives something from a story rather than naming the class plainly, so a
+    surface text search both misses some and drowns the rest in unrelated matches.
+    List EVERY dependent individually with its own file:line and one phrase on how it
+    uses the story, do not collapse a set into a summary like \"various models\" - an
+    unlisted dependent counts as missed. A missed dependent is a regression shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the scattered dependent set across disjoint areas
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace how story identity and visibility are guarded
+  prompt: "Task: when work runs against a story (search indexing, stats, inbound
+    email replies, moderation), how does the code confirm it is operating on a real,
+    current, visible story before acting? Trace where those guards live and what they
+    check. Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: you are about to change the Story contract (how it stores and tears
+    down some of its attached data). Assess the full blast radius: which dependents
+    are at risk, which are most likely to break, and what must be re-verified after
+    the change, across every area you found. Be complete and use file:line; rank by
+    risk. A missed high-risk dependent is the one that pages someone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered dependents by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the model and
+    shared pieces you will edit, every dependent that must be reviewed or touched
+    grouped by area, and the specs/fixtures that must be updated or added to cover the
+    behavior. Use file:line throughout, so a teammate could land the change from your
+    map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold = the SCATTERED, HETEROGENEOUS dependent set of the Story model plus the
+# contract pieces. Discriminator = the `dependents` group, NON-OBVIOUS direct
+# callers across models/helpers/mailboxes/lib (search, stats, markdowner, inbox
+# mailbox, link URL handler, polymorphic vote target, flag permission, comments,
+# moderation), each touching a story a different way. `sense_blast Story` returns
+# the set; a hand grep/read audit of a noisy token in a dense small app enumerates
+# it incompletely. The obvious stories_controller is a light `write-path` anchor.
+gold:
+  - {id: story-model,    group: contract,   match: [app/models/story.rb], relation: "the Story model itself - the contract under change"}
+  - {id: c:token,        group: contract,   match: [concerns/token.rb], relation: "Token concern Story includes; supplies its short-id token"}
+  - {id: a:stories-ctrl, group: write-path, match: [app/controllers/stories_controller.rb], relation: "creates/shows/previews stories"}
+  # THE discriminator: non-obvious direct dependents scattered across models/helpers/mailboxes/lib
+  - {id: d:comment,      group: dependents, match: [app/models/comment.rb], relation: "a Comment belongs to a Story (`belongs_to :story`)"}
+  - {id: d:link,         group: dependents, match: [app/models/link.rb], relation: "Link#url= normalizes/dedupes a story's URL"}
+  - {id: d:search,       group: dependents, match: [app/models/search.rb], relation: "Search#perform_story_search! indexes/queries stories"}
+  - {id: d:stats,        group: dependents, match: [app/models/stats.rb], relation: "Stats.fill_stories_graph_cache aggregates stories for the graph cache"}
+  - {id: d:user-canflag, group: dependents, match: [app/models/user.rb], relation: "User#can_flag? checks a story before allowing a flag"}
+  - {id: d:vote-target,  group: dependents, match: [app/models/vote.rb], relation: "Vote#target resolves the polymorphic votable, a story or comment"}
+  - {id: d:users-helper, group: dependents, match: [app/helpers/users_helper.rb], relation: "UsersHelper#styled_user_link renders a story author link"}
+  - {id: d:inbox-mbox,   group: dependents, match: [app/mailboxes/inbox_mailbox.rb], relation: "InboxMailbox#parent resolves the story/comment an email reply belongs to"}
+  - {id: d:markdowner,   group: dependents, match: [extras/markdowner.rb], relation: "Markdowner.rerender_db_markdown! re-renders a story's markdown body"}
+  - {id: d:mod-flagged,  group: dependents, match: [mod/flagged_controller.rb], relation: "Mod::FlaggedController#flagged_stories lists flagged stories for moderation"}
+  - {id: d:mod-mails,    group: dependents, match: [mod/mails_controller.rb], relation: "Mod::MailsController#parse_references_and_recipients resolves the story a mod mail references"}
+  # the test matrix
+  - {id: spec:story,     group: specs,      match: [models/story_spec.rb]}
+  - {id: spec:search,    group: specs,      match: [models/search_spec.rb]}
+  - {id: spec:vote,      group: specs,      match: [models/vote_spec.rb]}

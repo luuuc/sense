@@ -30,14 +30,15 @@ def _resolve_root():
     if os.environ.get("RESULTS_DIR"):
         return os.environ["RESULTS_DIR"]
     # Auto-discover which bench root holds this repo. Candidates: the global root,
-    # and every vertical model root (results/vertical/<name>/<model>/). A repo may
+    # and every vertical model root (verticals/<name>/results/<model>/). A repo may
     # live in several (e.g. discourse is in global + the vertical, and a vertical
     # repo may be benched on multiple models), so when more than one matches, make
     # the caller disambiguate with RESULTS_DIR rather than silently pick one.
     cands = []
     if os.path.isdir(os.path.join(_DEFAULT, "baseline", REPO)):
         cands.append(_DEFAULT)
-    for cand in sorted(glob.glob(os.path.join(_DEFAULT, "vertical", "*", "*"))):
+    _verticals = os.path.join(os.path.dirname(_DEFAULT), "verticals")
+    for cand in sorted(glob.glob(os.path.join(_verticals, "*", "results", "*"))):
         if os.path.isdir(os.path.join(cand, "baseline", REPO)):
             cands.append(cand)
     if len(cands) == 1:

@@ -1,0 +1,232 @@
+name: llm.rb work session - add support for a new LLM provider
+repo: llm.rb
+# Single-prompt session bench (run via bench/drivers/bench-sense-local.sh): all steps are
+# presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's
+# name and prompt ONLY (checks/gold are NOT shown). Everything rendered is kept
+# NEUTRAL, it states the task, never the answer's shape, file paths, class or
+# method names, counts, or which tool to reach for. This is a SMALL gem, so it
+# goes DEEPER than "list the providers": each provider is a Provider subclass plus
+# a factory method (LLM.openai) AND a parallel set of components in its own subdir
+#, request_adapter (build the HTTP request), response_adapter (parse it),
+# stream_parser (parse streamed chunks), error_handler (map HTTP errors to typed
+# errors), models. A new provider must add an entry in EACH parallel family; thin
+# providers (DeepSeek) reuse a richer one's components by inheritance, a
+# grep-invisible reuse. The Provider base blast is 44. The headline is CUMULATIVE
+# efficiency (tool calls, billed + context tokens, time) at held accuracy.
+description: 'You are a maintainer about to add support for a new external LLM
+  provider to this library, mirroring how the existing providers are built. Work
+  through the tasks below one at a time; each builds on what you learned in the
+  previous one. Keep every answer concrete with file:line so the next step (and a
+  teammate opening the PR) can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized, and where do the integrations with external
+    LLM providers live along with the shared machinery they are built on, including
+    how a caller obtains a specific provider? Hand the next agent a map so they can
+    act with small, targeted lookups, not a fresh exploration of the codebase. No
+    Explore agents.
+    "
+  checks:
+  - type: word
+    value: Provider
+    required: true
+  - type: word
+    value: provider
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Trace a chat call from the entry point to request and response handling
+  prompt: "Task: trace how a single chat or completion call is routed to a concrete
+    provider and turned into an outgoing request and then a parsed result. Start
+    from how a caller gets a provider and follow it down to where that provider's
+    request is built and its response is parsed. Give file:line for each layer and
+    the order they run.
+    "
+  checks:
+  - type: word
+    value: Provider
+    required: true
+  - type: word
+    value: complete
+    required: false
+    description: Reached a concrete provider contract call
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the provider family and its base contract
+  prompt: "Task: a new provider will be built on the same shared base the existing
+    providers use, then customize a few pieces. Map the shared contract such a
+    provider must implement (completion, chat, embeddings, and the capability
+    accessors) and which existing providers customize it and how each differs,
+    including any provider that reuses another's behavior. Be complete with
+    file:line; a missed method is a capability the new provider silently won't
+    support.
+    "
+  checks:
+  - type: word
+    value: Provider
+    required: true
+  - type: word
+    value: complete
+    required: true
+    description: Anchored on a concrete contract method every provider implements
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the shared base plus the per-provider customizations
+  - type: contains
+    value: provider.rb
+    required: false
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the per-provider component families
+  prompt: "Task: each provider owns a parallel set of small components, one that
+    builds its outgoing request, one that parses its response into the library's
+    shape, and others. Map these component families and the per-provider
+    implementation of each, and tie each provider's components together. Be
+    complete with file:line; a missed component is a piece the new provider won't
+    have.
+    "
+  checks:
+  - type: word
+    value: adapter
+    required: true
+    description: Found the request/response component families
+  - type: word
+    value: response
+    required: false
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the parallel component families across providers
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Map the streaming and error-handling paths
+  prompt: "Task: providers also stream partial results and turn failed HTTP
+    responses into typed errors. Map, per provider, how a streamed response is
+    parsed incrementally and how an HTTP failure becomes a typed error, plus the
+    shared error types they map onto. Be complete with file:line.
+    "
+  checks:
+  - type: word
+    value: stream
+    required: true
+  - type: word
+    value: error
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Find every site that must change to add a new provider
+  prompt: "Task: you will add the new provider. Find every place in the codebase
+    that must change for it to be obtainable, perform requests, parse responses,
+    stream, handle errors, and be tested, including where the shared base is
+    depended on and where a caller obtains it. Be complete and use file:line; a
+    missed site means the new provider is unreachable or untested.
+    "
+  checks:
+  - type: word
+    value: Provider
+    required: true
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Reached the factory, the component families, and the specs
+  - type: contains
+    value: spec
+    required: false
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the edit map
+  prompt: "Task: produce the complete edit map for adding the new provider: which
+    files to create and which to change across each area you explored (the provider
+    class and where a caller obtains it, the request and response components, the
+    streaming and error components), and which specs to add. Use file:line
+    throughout, so a teammate could open the PR from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: spec
+    required: false
+  - type: contains
+    value: adapter
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold is the multi-component per-provider fan-out, the heart of the task: a new
+# provider needs a Provider subclass, a factory entry, and an entry in EACH
+# parallel component family, request_adapter, response_adapter, stream_parser,
+# error_handler, under its own subdir. Nothing but the provider-name convention
+# links these files, and thin providers reuse a richer one's components by
+# inheritance, so completeness here is exactly what grep misses and Sense's
+# inheritance graph captures. All targets are file-path matched so both mention and
+# cited are scored. Headline is CUMULATIVE efficiency at held accuracy.
+gold:
+  # dispatch, the factory that hands back a provider + the shared base
+  - {id: factory,         group: dispatch,   match: [lib/llm.rb], relation: "the LLM factory module — `LLM.openai/anthropic/google/ollama/...` require and instantiate each provider; `registry_for` dispatches a call to the right provider"}
+  - {id: provider-base,   group: dispatch,   match: [lib/llm/provider.rb], relation: "abstract `LLM::Provider`; defines the complete/chat/embed/respond/responses contract every provider subclass implements"}
+  # the provider fan-out (subclasses of LLM::Provider)
+  - {id: prov:openai,     group: providers,  match: [providers/openai.rb], relation: "`LLM::OpenAI` provider subclass; wires OpenAI's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:anthropic,  group: providers,  match: [providers/anthropic.rb], relation: "`LLM::Anthropic` provider subclass; wires Anthropic's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:google,     group: providers,  match: [providers/google.rb], relation: "`LLM::Google` provider subclass; wires Google's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:ollama,     group: providers,  match: [providers/ollama.rb], relation: "`LLM::Ollama` provider subclass; wires Ollama's request/response/stream/error adapters to the Provider contract"}
+  - {id: prov:bedrock,    group: providers,  match: [providers/bedrock.rb], relation: "`LLM::Bedrock` provider subclass (AWS Bedrock) implementing the Provider contract"}
+  - {id: prov:deepseek,   group: providers,  match: [providers/deepseek.rb], relation: "`LLM::DeepSeek` provider subclass implementing the Provider contract"}
+  # request-builder component family
+  - {id: req:openai,      group: request,    match: [providers/openai/request_adapter.rb], relation: "`LLM::OpenAI::RequestAdapter#adapt` builds OpenAI's API request body from LLM messages"}
+  - {id: req:anthropic,   group: request,    match: [providers/anthropic/request_adapter.rb], relation: "`LLM::Anthropic::RequestAdapter#adapt` builds Anthropic's API request body from LLM messages"}
+  - {id: req:google,      group: request,    match: [providers/google/request_adapter.rb], relation: "`LLM::Google::RequestAdapter#adapt` builds Google's API request body from LLM messages"}
+  - {id: req:ollama,      group: request,    match: [providers/ollama/request_adapter.rb], relation: "`LLM::Ollama::RequestAdapter#adapt` builds Ollama's API request body from LLM messages"}
+  # response-parser component family
+  - {id: resp:openai,     group: response,   match: [providers/openai/response_adapter.rb], relation: "`LLM::OpenAI::ResponseAdapter#adapt` parses OpenAI's API response into an LLM result"}
+  - {id: resp:anthropic,  group: response,   match: [providers/anthropic/response_adapter.rb], relation: "`LLM::Anthropic::ResponseAdapter#adapt` parses Anthropic's API response into an LLM result"}
+  - {id: resp:google,     group: response,   match: [providers/google/response_adapter.rb], relation: "`LLM::Google::ResponseAdapter#adapt` parses Google's API response into an LLM result"}
+  - {id: resp:ollama,     group: response,   match: [providers/ollama/response_adapter.rb], relation: "`LLM::Ollama::ResponseAdapter#adapt` parses Ollama's API response into an LLM result"}
+  # streaming component family
+  - {id: stream:openai,   group: streaming,  match: [providers/openai/stream_parser.rb], relation: "`LLM::OpenAI::StreamParser#parse!` merges OpenAI's streaming chunks into a message"}
+  - {id: stream:anthropic,group: streaming,  match: [providers/anthropic/stream_parser.rb], relation: "`LLM::Anthropic::StreamParser#parse!` merges Anthropic's streaming chunks into a message"}
+  - {id: stream:google,   group: streaming,  match: [providers/google/stream_parser.rb], relation: "`LLM::Google::StreamParser#parse!` merges Google's streaming chunks into a message"}
+  - {id: stream:ollama,   group: streaming,  match: [providers/ollama/stream_parser.rb], relation: "`LLM::Ollama::StreamParser#parse!` merges Ollama's streaming chunks into a message"}
+  # error-handling component family
+  - {id: err:openai,      group: errors,     match: [providers/openai/error_handler.rb], relation: "`LLM::OpenAI::ErrorHandler#raise_error!` maps OpenAI's HTTP error to an LLM::Error subclass"}
+  - {id: err:anthropic,   group: errors,     match: [providers/anthropic/error_handler.rb], relation: "`LLM::Anthropic::ErrorHandler#raise_error!` maps Anthropic's HTTP error to an LLM::Error subclass"}
+  - {id: err:google,      group: errors,     match: [providers/google/error_handler.rb], relation: "`LLM::Google::ErrorHandler#raise_error!` maps Google's HTTP error to an LLM::Error subclass"}
+  - {id: err:ollama,      group: errors,     match: [providers/ollama/error_handler.rb], relation: "`LLM::Ollama::ErrorHandler#raise_error!` maps Ollama's HTTP error to an LLM::Error subclass"}
+  # test matrix, the provider contract spec + per-provider behavior specs
+  - {id: spec:provider,   group: specs,      match: [spec/provider_spec.rb], relation: "shared provider-contract spec all providers must satisfy"}
+  - {id: spec:openai-chat,group: specs,      match: [openai/chat_spec.rb], relation: "OpenAI chat/completion spec"}
+  - {id: spec:openai-stream,group: specs,    match: [openai/stream_parser_spec.rb], relation: "OpenAI stream-parser spec"}

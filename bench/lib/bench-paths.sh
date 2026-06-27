@@ -13,8 +13,12 @@
 # global bench is deliberately single-model: BENCH_MODEL is ignored there.
 #
 #   GLOBAL :           results/                              scenarios/
-#   VERTICAL:          results/vertical/<name>/              scenarios/vertical/<name>/
-#   VERTICAL + model:  results/vertical/<name>/<model>/      scenarios/vertical/<name>/
+#   VERTICAL:          verticals/<name>/results/             verticals/<name>/scenarios/
+#   VERTICAL + model:  verticals/<name>/results/<model>/     verticals/<name>/scenarios/
+#
+# Each vertical is one self-contained home: verticals/<name>/ holds repos.txt,
+# scenarios/, and results/ together. The global bench keeps the legacy top-level
+# results/ + scenarios/ roots (baseline + competitors vs sense).
 #
 # Source this AFTER setting BENCH_DIR (and optionally VERTICAL / BENCH_MODEL). It
 # exports RESULTS_DIR and SCENARIOS_DIR so child scripts (run/score/judge/report)
@@ -23,8 +27,8 @@
 # multi-model loops `unset RESULTS_DIR` before re-sourcing to re-derive per model.
 : "${BENCH_DIR:?bench-paths.sh: BENCH_DIR must be set before sourcing}"
 if [ -n "${VERTICAL:-}" ]; then
-  _results_base="$BENCH_DIR/results/vertical/$VERTICAL"
-  SCENARIOS_DIR="${SCENARIOS_DIR:-$BENCH_DIR/scenarios/vertical/$VERTICAL}"
+  _results_base="$BENCH_DIR/verticals/$VERTICAL/results"
+  SCENARIOS_DIR="${SCENARIOS_DIR:-$BENCH_DIR/verticals/$VERTICAL/scenarios}"
 else
   _results_base="$BENCH_DIR/results"
   SCENARIOS_DIR="${SCENARIOS_DIR:-$BENCH_DIR/scenarios}"

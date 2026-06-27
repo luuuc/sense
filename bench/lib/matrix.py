@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cross-model matrix for a vertical bench.
 
-A vertical bench is model-scoped: results/vertical/<name>/<model>/<arm>/<repo>/.
+A vertical bench is model-scoped: verticals/<name>/results/<model>/<arm>/<repo>/.
 The per-model report (reporter.py) compares baseline vs sense within one model;
 this aggregates ACROSS models so opus-4-8, gpt-5.5, the ollama-cloud models, ...
 sit side by side. For each (model, repo) it reads the mean cited-recall per arm
@@ -9,7 +9,7 @@ sit side by side. For each (model, repo) it reads the mean cited-recall per arm
 the discriminator `dependents` group delta when the scenario carries one.
 
 Usage: matrix.py <vertical-root> [--format markdown|json]
-  e.g. matrix.py results/vertical/ruby-rails --format markdown
+  e.g. matrix.py verticals/ruby-rails/results --format markdown
 """
 import glob
 import json
@@ -113,7 +113,7 @@ def render_markdown(data, root):
              "Sense vs baseline cited-recall by model. `overall Δ` is the whole-scenario "
              "cited-recall lift; `deps Δ` is the discriminator `dependents` group (the headline "
              "where a scenario has one). Each model is benched independently under "
-             "`results/vertical/" + name + "/<model>/`.\n"]
+             "`verticals/" + name + "/results/<model>/`.\n"]
     if not data:
         lines.append("_No model results yet._")
         return "\n".join(lines) + "\n"
