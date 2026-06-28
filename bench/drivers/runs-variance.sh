@@ -98,6 +98,12 @@ for m in $MODELS; do
   fi
   if [ "$ok" = 1 ]; then
     python3 bench/lib/variance-row.py "$REPO" "$m" >> "$OUT" || echo "[FAIL agg] $m"
+    # Refresh this model's per-repo report + citation check from the run-* data
+    # just written (RESULTS_DIR is this model's root; VERTICAL is set, so report.sh
+    # renders the plain-English vertical prose). Keeps <model>/report.md from
+    # going stale after a variance run.
+    bash "$BENCH_DIR/report.sh" --md  >/dev/null 2>&1 || echo "[warn] $m per-model report.md refresh failed" >&2
+    bash "$BENCH_DIR/report.sh" --json >/dev/null 2>&1 || echo "[warn] $m per-model report.json refresh failed" >&2
     echo "[ok  ] $REPO / $m  done  $(date +%H:%M:%S)"
   else
     echo "[FAIL run] $REPO / $m"

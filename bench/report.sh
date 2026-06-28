@@ -28,7 +28,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-output=$(python3 "$LIB_DIR/reporter.py" "$RESULTS_DIR" --format "$FORMAT")
+# A vertical bench (VERTICAL set) gets the plain-English, internal-reference-free
+# prose; the global bench (VERTICAL empty) keeps its existing report verbatim.
+output=$(python3 "$LIB_DIR/reporter.py" "$RESULTS_DIR" --format "$FORMAT" ${VERTICAL:+--vertical})
 echo "$output"
 
 if [[ "$FORMAT" == "markdown" ]]; then

@@ -41,6 +41,26 @@ METRIC_DIRECTIONS = {
 }
 
 
+# Plain-English metric descriptions for the vertical reports (no internal-doc
+# references, no project jargon). Selected only when reporter.py is run with
+# --vertical; the global bench keeps METRIC_DIRECTIONS above unchanged. Same keys
+# and order so the "Reading the scores" table renders identically in shape.
+METRIC_DIRECTIONS_PLAIN = {
+    "cited_recall": ("higher", "The headline. Of the must-find items the scenario declares, the share the answer pinned to an exact location (`path:line`) so an agent can jump straight there."),
+    "b_score": ("higher", "One blended score: 55% cited recall + 25% correct-relationship rate + 20% truthfulness. A single number for the whole answer's quality."),
+    "relationship_audit": ("higher", "Coverage: the share of the must-find set the answer named at all, graded against the authored relationships."),
+    "related_recall": ("higher", "Coverage with the CORRECT relationship stated, not just the name. Naming an endpoint is easy; stating how it connects is the harder test."),
+    "grounded_precision": ("higher", "Truthfulness: of the items the answer described, the share described correctly (1 minus false-claims over described)."),
+    "contradictions": ("lower", "Count of confidently false relationship claims. The fabrication signal."),
+    "process_efficiency": ("lower", "Reads, tool calls, and billed tokens spent — credited as a saving only when recall is at least as high as the baseline, so a cheaper-but-thinner answer never wins."),
+    "efficiency": ("higher", "Combined token and time efficiency, calibrated per repo."),
+    "tokens": ("lower", "Billed (uncached) tokens — lower is cheaper."),
+    "wall_time": ("lower", "Wall-clock time."),
+    "cost_usd": ("lower", "API cost in USD."),
+    "cites": ("higher", "Citations that resolved against the repo checkout: `grounded/total`. A trailing **!N** flags line numbers past end-of-file (made-up). Reported, not folded into the headline."),
+}
+
+
 def _attach_fairness(result, result_dir):
     """Load judged.json from result_dir and stamp fairness onto result.
 
@@ -133,6 +153,36 @@ def load_results(results_dir):
                         continue
 
                 results.append(result)
+                continue
+
+            # Runs-only layout (vertical campaign): the repo dir has no top-level
+            # scored.json, only run-1/, run-2/, ... Each run is loaded as its own
+            # result so the aggregate averages across runs. (The branch above —
+            # top-level scored.json present — is unchanged, so the global bench is
+            # byte-identical.)
+            for run_entry in sorted(os.listdir(repo_dir)):
+                if not run_entry.startswith("run-"):
+                    continue
+                run_dir = os.path.join(repo_dir, run_entry)
+                run_scored = os.path.join(run_dir, "scored.json")
+                if not os.path.exists(run_scored):
+                    continue
+                with open(run_scored) as f:
+                    r2 = json.load(f)
+                r2["tool"] = tool
+                r2["repo_key"] = repo
+                r2["_run"] = run_entry
+                _attach_fairness(r2, run_dir)
+
+                meta_path = os.path.join(run_dir, "run_meta.json")
+                if os.path.exists(meta_path):
+                    with open(meta_path) as f:
+                        meta = json.load(f)
+                    r2["_tool_version"] = meta.get("tool_version")
+                    r2["_repo_commit"] = meta.get("repo_commit")
+                    r2["_timestamp"] = meta.get("timestamp")
+
+                results.append(r2)
 
     return results
 
@@ -380,8 +430,8 @@ def _fmt_billed_delta(rows):
 _RECALL_PARITY_EPS = 0.02
 
 
-def _process_efficiency_md(aggregate):
-    """Fix 4 — process efficiency reported ONLY at held correctness (rule 5).
+def _process_efficiency_md(aggregate, vertical=False):
+    """Process efficiency reported ONLY at held correctness.
 
     Compares the sense arm against baseline on the process axes that the spike
     moved (reads, tool-calls, billed tokens). The cost win is surfaced as a
@@ -408,6 +458,9 @@ def _process_efficiency_md(aggregate):
         verdict = f"Sense recall is HIGHER ({sr:.2f} vs {br:.2f}) — any process saving is a bonus on top of a completeness win."
     elif held:
         verdict = f"Recall is at parity ({sr:.2f} vs {br:.2f}, within ±{_RECALL_PARITY_EPS:g}) — process savings below are a clean same-answer-cheaper win."
+    elif vertical:
+        verdict = (f"Recall is BELOW parity ({sr:.2f} vs {br:.2f}) — efficiency is NOT claimed, "
+                   f"since a cheaper but less-complete answer is not a win.")
     else:
         verdict = (f"Recall is BELOW parity ({sr:.2f} vs {br:.2f}) — per Judging Contract rule 5, "
                    f"process efficiency is NOT claimed (a cheaper, less-complete answer is not a win).")
@@ -539,28 +592,40 @@ def format_terminal(tables, aggregate, header):
 # ── Markdown ─────────────────────────────────────────────────────────
 
 
-def format_markdown(tables, aggregate, header):
+def format_markdown(tables, aggregate, header, vertical=False):
     lines = []
     lines.append("## Scenario Evaluation")
     lines.append("")
     lines.append(f"Results: {len(aggregate)} tools × {len(tables)} scenarios")
     lines.append("")
-    lines.append("**The headline is `cited_recall`; the blind `llm_quality`/`fairness` composite has been RETIRED** (it weighted 55% on omission-blind prose a frontier baseline aces, 0% on the objective axes Sense wins — it understated Sense ~16×, which silently favored the baseline). Each repo leads with a PRIMARY table of the axes that decompose Sense's value:")
-    lines.append("")
-    lines.append("- **Cited recall (THE headline)** — share of the gold must-find set pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous basename+line). An agent can jump straight there. This is where Sense's structural advantage concentrates.")
-    lines.append("- **Mention recall** — share the answer named at all (completeness of the map), location optional.")
-    lines.append("- **Billed context** — `token_total_billed` with `token_input_uncached` alongside. Lower is better; reported, never traded against recall.")
-    lines.append("")
-    lines.append("The aggregate adds the **B-score** = `0.55·cited_recall + 0.25·related + 0.20·grounded_precision` — one fair blended number, every term an objective/reference-aware axis Sense wins on merit (no efficiency: it dilutes and is not a correctness axis; efficiency is reported separately, gated at held recall). **Related** = correct-relation rate; **grounded_precision** = anti-fabrication (1 − contradictions/covered).")
-    lines.append("")
-    lines.append("**Citations** are `file.ext:line`/`file.ext:Symbol` references the assistant printed. The scorer checks each against the repo at `run_meta.repo_commit`; `gold_f1` was dropped (it punished Sense for real beyond-gold finds). The ungrounded-citation list lives in [`citation-hallucinations.md`](citation-hallucinations.md).")
+    if vertical:
+        lines.append("Each scenario declares a **must-find set** of code locations a good answer should surface. The headline metric is **cited recall** — the share of that set the answer pinned to an exact location (`path:line`), so an agent can navigate straight there. Each repo below leads with a table of the axes that make up the comparison:")
+        lines.append("")
+        lines.append("- **Cited recall (the headline)** — share of the must-find set pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous name + line).")
+        lines.append("- **Mention recall** — share the answer named at all, location optional (how complete the map is).")
+        lines.append("- **Billed context** — billed tokens (uncached input + output) used to produce the answer, with uncached input shown alongside. Lower is better; never traded against recall.")
+        lines.append("")
+        lines.append("The aggregate adds the **B-score** = `0.55·cited recall + 0.25·correct-relationship rate + 0.20·truthfulness` — one blended number for the whole answer. Efficiency is reported separately and only credited when recall holds.")
+        lines.append("")
+        lines.append("**Citations** are `file:line` / `file:Symbol` references the answer printed. Each is checked against the repo at the benchmarked commit; the ones that did not resolve are listed in [`citation-hallucinations.md`](citation-hallucinations.md).")
+    else:
+        lines.append("**The headline is `cited_recall`; the blind `llm_quality`/`fairness` composite has been RETIRED** (it weighted 55% on omission-blind prose a frontier baseline aces, 0% on the objective axes Sense wins — it understated Sense ~16×, which silently favored the baseline). Each repo leads with a PRIMARY table of the axes that decompose Sense's value:")
+        lines.append("")
+        lines.append("- **Cited recall (THE headline)** — share of the gold must-find set pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous basename+line). An agent can jump straight there. This is where Sense's structural advantage concentrates.")
+        lines.append("- **Mention recall** — share the answer named at all (completeness of the map), location optional.")
+        lines.append("- **Billed context** — `token_total_billed` with `token_input_uncached` alongside. Lower is better; reported, never traded against recall.")
+        lines.append("")
+        lines.append("The aggregate adds the **B-score** = `0.55·cited_recall + 0.25·related + 0.20·grounded_precision` — one fair blended number, every term an objective/reference-aware axis Sense wins on merit (no efficiency: it dilutes and is not a correctness axis; efficiency is reported separately, gated at held recall). **Related** = correct-relation rate; **grounded_precision** = anti-fabrication (1 − contradictions/covered).")
+        lines.append("")
+        lines.append("**Citations** are `file.ext:line`/`file.ext:Symbol` references the assistant printed. The scorer checks each against the repo at `run_meta.repo_commit`; `gold_f1` was dropped (it punished Sense for real beyond-gold finds). The ungrounded-citation list lives in [`citation-hallucinations.md`](citation-hallucinations.md).")
     lines.append("")
 
     lines.append("### Reading the scores")
     lines.append("")
     lines.append("| Metric | Best | Meaning |")
     lines.append("|--------|------|---------|")
-    for metric, (direction, meaning) in METRIC_DIRECTIONS.items():
+    metric_dirs = METRIC_DIRECTIONS_PLAIN if vertical else METRIC_DIRECTIONS
+    for metric, (direction, meaning) in metric_dirs.items():
         arrow = "Higher" if direction == "higher" else "Lower"
         lines.append(f"| {metric} | {arrow} | {meaning} |")
     lines.append("")
@@ -583,7 +648,10 @@ def format_markdown(tables, aggregate, header):
 
     lines.append("### Aggregate")
     lines.append("")
-    lines.append("Ranked by **cited_recall** (the headline). The blind `fairness`/`llm_quality` composite is RETIRED — see the note above. **B-score** = `0.55·cited + 0.25·related + 0.20·grounded_precision`. The `Failures` column shows scenarios the tool could not complete. Costs marked `*` are estimated from partial-transcript token usage.")
+    if vertical:
+        lines.append("Ranked by **cited recall** (the headline). **B-score** = `0.55·cited + 0.25·correct-relationship rate + 0.20·truthfulness`. The `Failures` column shows scenarios the tool could not complete. Costs marked `*` are estimated from partial token usage.")
+    else:
+        lines.append("Ranked by **cited_recall** (the headline). The blind `fairness`/`llm_quality` composite is RETIRED — see the note above. **B-score** = `0.55·cited + 0.25·related + 0.20·grounded_precision`. The `Failures` column shows scenarios the tool could not complete. Costs marked `*` are estimated from partial-transcript token usage.")
     lines.append("")
     lines.append("| Rank | Tool | Scenarios | Failures | **Cited Recall** | **B-score** | Rel Audit (cov) | Related | Grounded Prec. | Contradict. | Avg Efficiency | Avg Tokens | Avg Time | Total Cost | Avg Grounding |")
     lines.append("|-----:|------|----------:|--------:|---------------:|-----------:|--------------:|--------:|---------------:|------------:|--------------:|-----------:|--------:|-----------:|--------------:|")
@@ -613,7 +681,7 @@ def format_markdown(tables, aggregate, header):
         )
     lines.append("")
 
-    lines.extend(_process_efficiency_md(aggregate))
+    lines.extend(_process_efficiency_md(aggregate, vertical))
 
     return "\n".join(lines)
 
@@ -625,7 +693,7 @@ def format_json(tables, aggregate, header):
 # ── Citation hallucination log ───────────────────────────────────────
 
 
-def format_hallucination_log(results):
+def format_hallucination_log(results, vertical=False):
     """Render `citation-hallucinations.md` from scored results.
 
     Grouped tool → scenario. Hallucinated (out-of-range line numbers)
@@ -633,15 +701,26 @@ def format_hallucination_log(results):
     symbol not near cited line) is softer and listed second.
     """
     lines = ["# Citation hallucinations", ""]
-    lines.append(
-        "Citations the assistant printed that did not resolve against the "
-        "repo checked out at `run_meta.repo_commit`. "
-        "**Hallucinated** = line number beyond EOF (made-up number). "
-        "**Unresolved** = file not in repo, or symbol not within ±5 lines "
-        "of the cited line."
-    )
-    lines.append("")
-    lines.append("Not yet folded into the fairness score — see pitch 20-04.")
+    if vertical:
+        lines.append(
+            "Citations the answer printed that did not resolve against the "
+            "repo checked out at the benchmarked commit. "
+            "**Hallucinated** = line number beyond end-of-file (a made-up number). "
+            "**Unresolved** = file not in the repo, or symbol not within ±5 lines "
+            "of the cited line."
+        )
+        lines.append("")
+        lines.append("Reported for transparency; not folded into the headline score.")
+    else:
+        lines.append(
+            "Citations the assistant printed that did not resolve against the "
+            "repo checked out at `run_meta.repo_commit`. "
+            "**Hallucinated** = line number beyond EOF (made-up number). "
+            "**Unresolved** = file not in repo, or symbol not within ±5 lines "
+            "of the cited line."
+        )
+        lines.append("")
+        lines.append("Not yet folded into the fairness score — see pitch 20-04.")
     lines.append("")
 
     by_tool = {}
@@ -690,6 +769,10 @@ if __name__ == "__main__":
 
     results_dir = sys.argv[1]
     fmt = "terminal"
+    # --vertical selects the plain-English, internal-reference-free prose for the
+    # per-model vertical reports. Omitted by the global bench, whose output stays
+    # byte-identical. report.sh passes it automatically when VERTICAL is set.
+    vertical = "--vertical" in sys.argv
     for i, arg in enumerate(sys.argv):
         if arg == "--format" and i + 1 < len(sys.argv):
             fmt = sys.argv[i + 1]
@@ -706,7 +789,7 @@ if __name__ == "__main__":
     if fmt == "terminal":
         print(format_terminal(tables, aggregate, header))
     elif fmt == "markdown":
-        output = format_markdown(tables, aggregate, header)
+        output = format_markdown(tables, aggregate, header, vertical)
         print(output)
         md_path = os.path.join(results_dir, "report.md")
         with open(md_path, "w") as f:
@@ -715,7 +798,7 @@ if __name__ == "__main__":
 
         # Hallucination log lives next to report.md and is regenerated
         # on every markdown run so it never drifts from the scored data.
-        halluc_output = format_hallucination_log(results)
+        halluc_output = format_hallucination_log(results, vertical)
         halluc_path = os.path.join(results_dir, "citation-hallucinations.md")
         with open(halluc_path, "w") as f:
             f.write(halluc_output)
