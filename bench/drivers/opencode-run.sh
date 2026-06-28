@@ -59,6 +59,16 @@ OPENCODE_MIN_ANSWER_CHARS="${OPENCODE_MIN_ANSWER_CHARS:-200}" # a run whose fina
                                                     # truncated/empty-stream artifact, not a real answer: retry it, and flag
                                                     # it as invalid if it stays empty (the audit answers run ~4000+ chars, so
                                                     # 200 is far below any real answer yet catches the 0/94-char degenerate runs)
+OPENCODE_OFFLOAD_DETECT="${OPENCODE_OFFLOAD_DETECT:-1}" # answer-offload gate (the gitlabhq/Kimi+Qwen failure mode): the model
+                                                    # writes its real audit into a scratch file ($TMPDIR/opencode/{final,*_audit,
+                                                    # compact}.json or the repo tree) and returns a short POINTER stub that can
+                                                    # clear the char gate yet scores 0.0. We isolate the run's TMPDIR, then flag a
+                                                    # run as offloaded if a *_audit/final*/compact*.json artifact appears OR a
+                                                    # short answer points at a written .json file. Treated like a truncation:
+                                                    # retried, then flagged error=answer_offloaded_to_file. Set 0 to disable.
+OPENCODE_OFFLOAD_MAX_CHARS="${OPENCODE_OFFLOAD_MAX_CHARS:-4000}" # a "pointer stub" is short; a real inline audit runs ~4000+ chars.
+                                                    # The content-signal half of the gate only fires below this length so a long,
+                                                    # complete inline answer that merely mentions a .json path is never nuked.
 while [[ $# -gt 0 ]]; do case "$1" in
   --tool) TOOLS_CSV="$2"; shift 2;;
   --repo) REPO="$2"; shift 2;;
@@ -169,10 +179,21 @@ for tool in "${TOOLS[@]}"; do
   fi
 
   raw="$out/opencode-raw.jsonl"; LOGFILE="$out/opencode.log"; : > "$LOGFILE"
-  attempts=$((OPENCODE_RETRIES + 1)); start=$(date +%s); rc=0; otok=0; achars=0
+  # Isolated scratch for the offload gate: point the run's TMPDIR here so the model's
+  # "write my audit to a file" behavior lands somewhere we can deterministically scan
+  # (opencode + the model's bash tool both honor TMPDIR). Recreated fresh per attempt.
+  run_scratch="$out/run-scratch"
+  attempts=$((OPENCODE_RETRIES + 1)); start=$(date +%s); rc=0; otok=0; achars=0; offload=0
   for attempt in $(seq 1 "$attempts"); do
     git -C "$repo_dir" checkout -- . 2>/dev/null || true   # reset tracked edits between attempts (keeps untracked sense surface)
-    ( cd "$repo_dir" && PATH="$run_path" run_guarded "$raw" \
+    # Clear offload artifacts a prior attempt/run wrote into the repo tree: they are
+    # UNTRACKED (git checkout won't remove them) and would false-positive this
+    # attempt's offload scan. Names match the detector; the sense surface
+    # (opencode.json/AGENTS.md/.opencode) never matches, so it is preserved.
+    [ "$OPENCODE_OFFLOAD_DETECT" = 1 ] && find "$repo_dir" -maxdepth 2 -type f \
+      \( -iname '*audit*.json' -o -iname '*final*.json' -o -iname '*compact*.json' \) -delete 2>/dev/null || true
+    rm -rf "$run_scratch"; mkdir -p "$run_scratch"         # fresh offload-scratch per attempt
+    ( cd "$repo_dir" && export PATH="$run_path" TMPDIR="$run_scratch" && run_guarded "$raw" \
         opencode run --format json -m "$MODEL" --dir "$repo_dir" \
         --dangerously-skip-permissions "$PROMPT" )
     rc=$?
@@ -218,16 +239,60 @@ ans='\n'.join(parts)
 perr = 1 if ('llm_call_failed' in ans or 'Operation not allowed' in ans) else 0
 print(len(ans), perr)" 2>/dev/null || echo "0 0")
     achars="${achars:-0}"; perr="${perr:-0}"
+    # Offload gate: did the model write its audit to a scratch file and return a
+    # pointer stub? Two signals -- (a) a *_audit/final*/compact*.json artifact in the
+    # isolated TMPDIR or the repo tree, or (b) a SHORT answer (< OFFLOAD_MAX_CHARS)
+    # that points at a written .json file. Either => offloaded => retry/flag.
+    offload=0
+    if [ "$OPENCODE_OFFLOAD_DETECT" = 1 ]; then
+      offload=$(python3 - "$out/transcript.json" "$run_scratch" "$repo_dir" "$achars" "$OPENCODE_OFFLOAD_MAX_CHARS" <<'PY' 2>/dev/null || echo 0
+import json, os, re, sys, glob
+tpath, scratch, repo_dir, achars, maxchars = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+# (a) file signal: model-chosen audit/final/compact .json names in the scratch or repo tree.
+NAME = re.compile(r'(audit|final|compact|merge_request_audit).*\.json$', re.I)
+def has_artifact(root, maxdepth):
+    if not os.path.isdir(root): return False
+    root = root.rstrip('/')
+    base_depth = root.count(os.sep)
+    for dp, _dn, fns in os.walk(root):
+        if dp.count(os.sep) - base_depth > maxdepth: continue
+        for fn in fns:
+            if NAME.search(fn): return True
+    return False
+file_sig = has_artifact(scratch, 4) or has_artifact(repo_dir, 1)
+# (b) content signal: a SHORT answer that says it wrote/saved its output to a .json file.
+parts = []
+try:
+    for l in open(tpath):
+        l = l.strip()
+        if not l: continue
+        try: d = json.loads(l)
+        except Exception: continue
+        e = d.get('event', d)
+        if e.get('type') != 'assistant': continue
+        for b in e.get('message', {}).get('content', []):
+            if b.get('type') == 'text' and b.get('text'): parts.append(b['text'])
+except FileNotFoundError: pass
+ans = '\n'.join(parts)
+POINTER = re.compile(r'(written|wrote|saved|stored|output(?:ted)?|see|created|generated)\b[^\n]{0,60}\.json', re.I)
+content_sig = achars < maxchars and bool(POINTER.search(ans))
+print(1 if (file_sig or content_sig) else 0)
+PY
+)
+      offload="${offload:-0}"
+    fi
     # Accept a run only if it produced a REAL answer: tokens streamed AND a
     # final answer of usable length AND not a provider error. Retry everything
     # else: a true no-output hang (otok=0), an empty/truncated answer (achars <
     # min), or a provider cap error (perr=1) -- all were previously scored 0.0.
-    if [ "${otok:-0}" -gt 0 ] && [ "${achars:-0}" -ge "$OPENCODE_MIN_ANSWER_CHARS" ] && [ "$perr" -eq 0 ]; then
+    if [ "${otok:-0}" -gt 0 ] && [ "${achars:-0}" -ge "$OPENCODE_MIN_ANSWER_CHARS" ] && [ "$perr" -eq 0 ] && [ "$offload" -eq 0 ]; then
       [ "$attempt" -gt 1 ] && echo "[opencode]   recovered on attempt $attempt (rc=$rc, out_tok=$otok, answer_chars=$achars)" >&2
       break
     fi
     if [ "$perr" -eq 1 ]; then
       reason="provider error (llm_call_failed / 'Operation not allowed' -- likely an ollama-cloud cap)"
+    elif [ "$offload" -eq 1 ]; then
+      reason="answer offloaded to file (wrote *_audit/final*/compact*.json + returned a pointer stub; scores 0)"
     elif [ "${otok:-0}" -gt 0 ] && [ "${achars:-0}" -lt "$OPENCODE_MIN_ANSWER_CHARS" ]; then
       reason="empty/truncated answer (out_tok=$otok, answer_chars=$achars < $OPENCODE_MIN_ANSWER_CHARS)"
     else
@@ -252,6 +317,7 @@ print(len(ans), perr)" 2>/dev/null || echo "0 0")
 
   cp "$LOGFILE" "$out/claude.log" 2>/dev/null || true
   [[ "$KEEP_RAW" == 1 ]] || rm -f "$raw"
+  [[ "$KEEP_RAW" == 1 ]] || rm -rf "$run_scratch"   # offload-scratch: keep only with --keep-raw
 
   nmcp=$(python3 -c "import json;print(json.load(open('$out/channels.json'))['channels']['mcp_sense'])" 2>/dev/null || echo 0)
   ncli=$(python3 -c "import json;print(json.load(open('$out/channels.json'))['channels']['cli_sense'])" 2>/dev/null || echo 0)
@@ -262,10 +328,10 @@ print(len(ans), perr)" 2>/dev/null || echo "0 0")
 
   commit=$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || echo "")
   ver=""; [[ "$tool" == sense ]] && ver="$SVER"
-  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" "$attempts" "$otok" "$achars" "$OPENCODE_MIN_ANSWER_CHARS" "$perr" > "$out/run_meta.json" <<'PY'
+  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" "$attempts" "$otok" "$achars" "$OPENCODE_MIN_ANSWER_CHARS" "$perr" "$offload" > "$out/run_meta.json" <<'PY'
 import json, sys
-tool, repo, scen, wall, model, commit, ver, rc, attempts, otok, achars, min_chars, perr = sys.argv[1:14]
-rc = int(rc); otok = int(otok); achars = int(achars); min_chars = int(min_chars); perr = int(perr)
+tool, repo, scen, wall, model, commit, ver, rc, attempts, otok, achars, min_chars, perr, offload = sys.argv[1:15]
+rc = int(rc); otok = int(otok); achars = int(achars); min_chars = int(min_chars); perr = int(perr); offload = int(offload)
 # Classify the watchdog exit so the contaminated-vs-real distinction is legible
 # downstream (124 hard cap / 125 stalled / 126 cold-start hang).
 KIND = {0: None, 124: "hard_cap_timeout", 125: "stalled_midrun", 126: "no_first_output_hang"}
@@ -295,6 +361,9 @@ if perr == 1:
     meta["error"] = "provider_cap_error"
     meta["watchdog_kind"] = "provider_cap_error"
     meta["note"] = "final answer was an ollama-cloud provider error (llm_call_failed / 'Operation not allowed'); likely a rate-limit/session cap -- re-run this repo after the cap resets, do NOT score as a 0.0"
+elif offload == 1:
+    meta["error"] = "answer_offloaded_to_file"
+    meta["note"] = "model wrote its audit to a scratch/repo .json file and returned a pointer stub (retried, still offloaded); scores 0.0 but is NOT a real answer -- exclude per the validity gate, do NOT trust as a tie"
 elif achars < min_chars:
     meta["error"] = "empty_final_answer"
     meta["note"] = f"final answer only {achars} chars (< {min_chars}); truncated/empty stream, retried and still short -- not a real 0.0"
@@ -305,6 +374,7 @@ elif rc != 0:
 print(json.dumps(meta, indent=2))
 PY
   if [ "${perr:-0}" -eq 1 ]; then flag=" *** INVALID: provider cap error (Operation not allowed) -- re-run after reset ***"; hclass=cap;
+  elif [ "${offload:-0}" -eq 1 ]; then flag=" *** INVALID: answer offloaded to file (pointer stub) ***"; hclass=offload;
   elif [ "${achars:-0}" -lt "$OPENCODE_MIN_ANSWER_CHARS" ]; then flag=" *** INVALID: empty/truncated answer ***"; hclass=truncated;
   elif [ "$rc" -eq 126 ]; then flag=""; hclass=hang;
   elif [ "$rc" -ne 0 ]; then flag=""; hclass=watchdog;

@@ -1,0 +1,386 @@
+{
+  "scenario": "GitLab work session - audit the MergeRequest contract before a teardown rework",
+  "repo": "gitlabhq",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "gitlabhq.rubric.yaml"
+  },
+  "scenario_quality": 0.5621,
+  "relationship_audit": {
+    "total": 22,
+    "covered": 22,
+    "related": 19,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 0.8636,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [
+      "d:jira",
+      "d:streaming-ser",
+      "d:github-xref"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "mr-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:issuable",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:noteable",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:mentionable",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:mr-ctrl",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:mr-create-svc",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:notes-resolve",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:milestone-prom",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:issuable-destroy",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:ghost-user",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:timelog",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:auto-merge",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:event",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:ci-pipeline",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:jira",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:gql-issuable",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:discussion-ent",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:url-builder",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:cycle-analytics",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:streaming-ser",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:github-xref",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:api-discussions",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.8,
+          "rationale": "The answer correctly identifies GitLab as a Rails monolith with CE+EE overlay, names the central model at app/models/merge_request.rb, and maps all major layers (concerns, child models, services, workers, GraphQL, REST API, serializers, finders) by directory or file \u2014 enough for an agent to start targeted lookups. No line numbers anywhere, which leaves the agent one lookup short on each symbol, but the directory-level coverage is broad and accurate."
+        },
+        "specificity": {
+          "score": 0.75,
+          "rationale": "Concrete file paths are given for the model (app/models/merge_request.rb), API (lib/api/merge_requests.rb), GraphQL type (app/graphql/types/merge_request_type.rb), and finder (app/finders/merge_requests_finder.rb), and concern names are listed individually (Issuable, Noteable, Referable, Awards, TimeTrackable). The absence of any :line anchors means the agent still needs a symbol lookup for each, but paths are specific rather than vague."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The answer names the concern stack but never explains WHY behavior is factored into concerns (shared Issue/MR surface, DRY on labels/milestones/assignees) or why child models are split across app/models/merge_request/ vs app/models/merge_requests/ subdirectories. It lists architecture rather than explaining its motivation."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged anywhere \u2014 the ee/ overlay is mentioned once in passing but there is no hedge about what lives there vs the FOSS tree, no note about which connections the agent could not confirm from a static read, and no caveat about the absence of line numbers."
+        },
+        "relationship": {
+          "score": 0.35,
+          "rationale": "The answer says MergeRequest is 'built on a stack of shared concerns' and lists them, but never states what each concern contributes (e.g., Noteable provides the polymorphic has_many :notes, Issuable shares label/milestone/assignee behavior with Issue). Pipelines, events, and notifications \u2014 key things that attach to or read MergeRequest \u2014 are not mentioned at all, so the connecting relationships are largely absent."
+        }
+      },
+      "step_quality": 0.54,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2103,
+        "cache_creation_input_tokens": 30983,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Map the MergeRequest contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The answer maps ~22 concerns with file paths, lists key associations by type (belongs_to/has_many/has_one), and pins both state machines to specific lines (203, 255) and the dual-write pattern at 2861-3120 \u2014 an agent can begin targeted lookups immediately. The model file itself is cited at app/models/merge_request.rb:3, and coverage is broad enough that no fresh exploration of the concerns layer is needed."
+        },
+        "specificity": {
+          "score": 0.72,
+          "rationale": "Concern file paths are concrete (app/models/concerns/issuable.rb, noteable.rb, etc.) but line numbers are uniformly ':1', pointing to file start rather than the actual include site in merge_request.rb; associations are listed without line anchors. State machines and dual-write lines are precise exceptions that raise the score slightly."
+        },
+        "justification": {
+          "score": 0.25,
+          "rationale": "The answer lists pieces without explaining WHY behavior is factored into concerns \u2014 the shared Issue/MR lineage (Issuable, Noteable pulled in to avoid duplication across both models) is never stated. The only genuine justification is the dual-write explanation for the merge_data split; everything else is enumeration."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No part of the contract is flagged as unconfirmed or uncertain; the answer presents every item with equal confidence, including EE-overlay concerns and the full association list, with no caveat about what a static pass might miss."
+        },
+        "relationship": {
+          "score": 0.62,
+          "rationale": "The 'What it gives the MR' column does state functional bindings (Noteable \u2192 discussion/resolvable-note capabilities; TimeTrackable \u2192 timelogs/spend_time; Issuable \u2192 notes/labels/assignees/mention behaviour), which partially satisfies the criterion. However, the answer never states that Issuable is the shared Issue-and-MR concern that pulls in mention/label/award behavior, nor that Noteable may itself be pulled in through Issuable \u2014 the inter-concern dependency chain is absent."
+        }
+      },
+      "step_quality": 0.618,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2562,
+        "cache_creation_input_tokens": 18556,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Trace how a merge request is created and updated",
+      "scores": {
+        "map_quality": {
+          "score": 0.88,
+          "rationale": "The answer traces all five major paths (create, update, push-driven refresh, merge, close) with file:line for each service and worker entry point, and closes with an explicit inline-vs-async inventory. Minor gap: fan-out effects like system notes and cross-references are named inside AfterCreateService prose but without their own file:line, so an agent would still need a targeted lookup to find where those records are written."
+        },
+        "specificity": {
+          "score": 0.85,
+          "rationale": "Key services carry line numbers (create_service.rb:5, after_create_service.rb:5, update_service.rb:14, merge_service.rb:17, post_merge_service.rb:15, close_service.rb:7) and entry-point lines are given (controller :3, API :444/:838). Workers listed in the async inventory (CloseIssueWorker, NotifyAboutPushWorker, WebHooksWorker, etc.) lack file:line, requiring follow-up lookups for those."
+        },
+        "justification": {
+          "score": 0.3,
+          "rationale": "The answer correctly splits inline vs async but never explains WHY effects like diff creation, pipeline setup, or notifications are deferred \u2014 no mention of request-latency budgets, fan-out volume, or GitLab's multi-tenant scale. The 'why' criterion is essentially absent."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "The feature-flag conditionality on pipeline creation ('sync or async depending on feature flag') is noted but not flagged as an unconfirmed branch; other effects (e.g., cross-reference creation, LFS linking) are asserted without acknowledging they were not fully opened. No explicit 'could not confirm' markers anywhere."
+        },
+        "relationship": {
+          "score": 0.82,
+          "rationale": "Each path is assembled as an explicit chain \u2014 entry point \u2192 service \u2192 persist \u2192 worker \u2192 downstream service \u2014 rather than a flat file list, and the handoff points (NewMergeRequestWorker \u2192 AfterCreateService, RefreshService \u2192 PostMergeService) are named with their connecting call. The chain from AfterCreateService to individual effect-handlers (notification_service, todo_service) names the method but not the class file, slightly weakening the last hop."
+        }
+      },
+      "step_quality": 0.727,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1978,
+        "cache_creation_input_tokens": 18721,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Audit every dependent of the MergeRequest contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The answer enumerates 630+ individual dependents across all ten areas the rubric names, and every specific file called out in the rubric is present with file:line \u2014 ghost-user migration at app/services/users/migrate_records_to_ghost_user_service.rb:87, URL builder at lib/gitlab/url_builder.rb:36, auto_merge_process_worker.rb:57, cycle-analytics entries, GitHub importer cross-referenced.rb:56, Jira at integrations/jira.rb:371, note resolution at notes/resolve_service.rb:9, milestone promotion at milestones/promote_service.rb:65. The one gap is that the ee/ overlay is not broken out as a distinct section, so dependents reached only through ee/ are unconfirmed."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Every entry carries an exact file:line and a one-phrase label; the rubric's three named sentinel files (resolve_service.rb, url_builder.rb, auto_merge_process_worker.rb) all appear with correct line numbers. No group collapses into 'various services.'"
+        },
+        "justification": {
+          "score": 0.3,
+          "rationale": "The answer groups entries by area, which the rubric credits, but within each area the one-liners describe what a file does ('closes MR', 'processes auto-merge queue') rather than WHY a contract change to MergeRequest would break it or what architectural role that dependency plays; no cross-area rationale is offered."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer flags nothing \u2014 no mention of ee/ overlay gaps, no caveat about concern-reached dependents that a text search would miss, no acknowledgment that a static search on 'MergeRequest' class references can both miss indirect dependents and surface irrelevant matches."
+        },
+        "relationship": {
+          "score": 0.38,
+          "rationale": "Model entries often state the association explicitly ('belongs_to :merge_request, class_name: MergeRequest' for ci/pipeline.rb, 'noteable type whitelist includes MergeRequest' for diff_note.rb), which is strong; but the bulk of entries in services, workers, and lib/ \u2014 including the non-obvious url_builder ('URL builder for MR'), analytics layer ('analytics stage', 'maps MR to stage event'), and GitHub importer ('PR vs Issue') \u2014 give only functional labels and never state the connecting association, concern, or call path that makes each one a genuine MergeRequest dependent."
+        }
+      },
+      "step_quality": 0.6035,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4090,
+        "cache_creation_input_tokens": 33288,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Trace how merge request visibility and permissions are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.82,
+          "rationale": "The answer maps guards across all major layers with file:line \u2014 policies (merge_request_policy.rb:7-52, project_policy.rb:516-539), controller (application_controller.rb:6), API (helpers.rb:383, merge_requests.rb:401/444/480/838), GraphQL (merge_request_type.rb:13, mutations/base.rb:21), services, and model-level (merge_request.rb:1116, ability.rb:67); an agent could target follow-up lookups precisely rather than re-exploring. Small gap: no mention of finder-layer scopes (MergeRequestsFinder) that gate visibility before policy checks fire."
+        },
+        "specificity": {
+          "score": 0.83,
+          "rationale": "Ability symbols are named (:read_merge_request, :accept_merge_request, :create_merge_request_from), helpers are named (find_merge_request_with_access, authorize_read_merge_request!), and nearly every citation carries a line number; the answer is concrete enough that an agent can jump directly to the guards."
+        },
+        "justification": {
+          "score": 0.08,
+          "rationale": "The answer lists what each guard checks but never explains WHY visibility must be re-enforced at each layer in a multi-tenant system (e.g., API caller != controller caller, services are invoked in background jobs with no implicit actor); the rationale section is absent."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No caveats about guards that may be implicit or missing \u2014 for instance, no flag that background workers (AutoMergeProcessWorker, MergeWorker) re-establish or skip actor context, or that the ee/ overlay may add additional policy rules not traced here."
+        },
+        "relationship": {
+          "score": 0.42,
+          "rationale": "The answer groups guards by layer but does not trace the enforcement chain: it never states that authorize_read_merge_request! calls can?(:read_merge_request) which dispatches through DeclarativePolicy to merge_request_policy.rb, or that find_merge_request_with_access is the chokepoint that threads the API caller identity into the same policy stack; items are listed in isolation rather than connected as a path."
+        }
+      },
+      "step_quality": 0.559,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1364,
+        "cache_creation_input_tokens": 17813,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer covers all major areas (models, services, workers, GraphQL, serializers, lib/analytics/import) with a three-tier risk ranking and a re-verification checklist, which gives an agent a usable starting surface. However, no file:line numbers appear anywhere in the answer, and the ee/ overlay is never mentioned, meaning the agent must still open every file to find entry points."
+        },
+        "specificity": {
+          "score": 0.5,
+          "rationale": "Files are named concretely and consistently (e.g., `app/services/merge_requests/after_create_service.rb`, `app/workers/merge_request_cleanup_refs_worker.rb`), and each table entry includes a stated reason for its risk tier. The complete absence of line numbers is the main gap \u2014 the rubric requires file:line, and without it the agent must scan every named file."
+        },
+        "justification": {
+          "score": 0.72,
+          "rationale": "Most Critical and High entries carry a one-line mechanical explanation of the coupling (e.g., 'Diffs are created in `after_create`, reloaded on branch change, and partially deleted after merge'), which tells the agent WHY the risk exists. The Medium tier degrades to bullet-list groupings with no per-item rationale."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "The answer flags no uncertainty at all \u2014 no mention of the ee/ overlay, no acknowledgment of dependents buried in concerns, no caveat about what a static pass cannot see. The rubric explicitly asks for these flags and they are absent."
+        },
+        "relationship": {
+          "score": 0.42,
+          "rationale": "A few entries name the connecting mechanism ('polymorphic on MR', 'cascades from MR via Issuable/Noteable'), but most Critical and High rows describe what the dependent does rather than the association or concern path that links it to MergeRequest. The Medium tier (analytics, import/export, background migrations) lists files with no connecting relationship at all, which is the weakest form the rubric penalises."
+        }
+      },
+      "step_quality": 0.517,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1902,
+        "cache_creation_input_tokens": 18741,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.55,
+          "rationale": "Edit targets (merge_request.rb, concerns list, child models) and spec files are enumerated concretely, but the dependent review section defers entirely to prior steps ('all 79 listed in Step 4', 'all 152 listed') rather than producing a standalone map a teammate could act on; the JSON high-risk list partially compensates but is still a flat file roster without insertion points."
+        },
+        "specificity": {
+          "score": 0.55,
+          "rationale": "Files to edit and spec paths are concrete (e.g. spec/services/merge_requests/create_service_spec.rb), but the dependent body is summarized as area counts ('all 43 listed') with no per-file line numbers, so an agent reviewing workers or serializers still needs to re-derive the list."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "The map is almost purely a listing exercise; 'Child attached models to update/verify' and 'all 152 listed; focus on Create, Update...' name areas without explaining why each file is touched by the contract change or what specifically breaks."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No uncertainty flags appear: the EE overlay, dynamically-dispatched concern behavior, and files reached through polymorphism are not acknowledged as potentially missed, and the single conditional note about background migrations does not flag confidence level."
+        },
+        "relationship": {
+          "score": 0.15,
+          "rationale": "The map connects almost nothing: child models, specs, and dependents are listed without stating the association or concern path that ties each to the contract change; the JSON step_3 lifecycle chain is the only place relationships appear, and it covers creation flow only, not the change-impact chain the criterion requires."
+        }
+      },
+      "step_quality": 0.37,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1870,
+        "cache_creation_input_tokens": 21668,
+        "cache_read_input_tokens": 13332
+      }
+    }
+  ]
+}
