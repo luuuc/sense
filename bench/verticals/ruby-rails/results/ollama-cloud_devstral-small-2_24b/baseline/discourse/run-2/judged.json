@@ -1,0 +1,402 @@
+{
+  "scenario": "Discourse work session - audit the Upload contract before a teardown rework",
+  "repo": "discourse",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "discourse.rubric.yaml"
+  },
+  "scenario_quality": 0.2293,
+  "relationship_audit": {
+    "total": 21,
+    "covered": 10,
+    "related": 8,
+    "contradicted": 0,
+    "covered_recall": 0.4762,
+    "related_recall": 0.381,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "d:pretty-text",
+      "d:topic-link",
+      "d:s3-store",
+      "d:s3-inventory",
+      "d:hotlinked",
+      "d:convert-video",
+      "d:backup-creator",
+      "d:site-icon",
+      "d:user-profile",
+      "d:plugin-instance",
+      "d:site-setting-ext"
+    ],
+    "missed_related": [
+      "d:cooked-post",
+      "d:pretty-text",
+      "d:topic-link",
+      "d:s3-store",
+      "d:s3-inventory",
+      "d:hotlinked",
+      "d:convert-video",
+      "d:backup-creator",
+      "d:site-icon",
+      "d:app-helper",
+      "d:user-profile",
+      "d:plugin-instance",
+      "d:site-setting-ext"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "upload-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:has-url",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "optimized-image",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:uploads-ctrl",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:upload-creator",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:cooked-post",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:pretty-text",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:topic-link",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:s3-store",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:s3-inventory",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:hotlinked",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:convert-video",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:email-styles",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:backup-creator",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:site-icon",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:app-helper",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:metadata-ctrl",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:user-profile",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:user-merger",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:plugin-instance",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:site-setting-ext",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.35,
+          "rationale": "The answer correctly names Discourse as a forum platform and lists four directories (app/models, app/services, lib, config), but omits app/jobs entirely and never mentions lib/file_store/ or lib/upload_creator.rb \u2014 two pieces the rubric specifically calls out. The orientation is two thin paragraphs before the answer pivots to later steps; an agent could pick an entry point but would need substantial additional exploration to act safely."
+        },
+        "specificity": {
+          "score": 0.25,
+          "rationale": "Only one concrete path appears in the orientation (app/models/upload.rb); lib/file_store/ and lib/upload_creator.rb are absent. 'Shared pieces include concerns, associations, and services' is exactly the vague label the rubric penalizes."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "There is no explanation of WHY Upload is the shared media record or why storage is abstracted behind a file store \u2014 the answer only names the fact that the model 'is used across the platform' without any architectural reasoning."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty flags appear anywhere in the orientation; the answer states locations flatly with no indication of what was unconfirmed or where the agent should verify before acting."
+        },
+        "relationship": {
+          "score": 0.15,
+          "rationale": "The answer lists what references Upload (posts, avatars, themes, emails, backups) but never states the connecting mechanism \u2014 no mention of associations, URL resolution, or the file-store abstraction layer; 'shared pieces include concerns, associations, and services' names categories without any connecting path."
+        }
+      },
+      "step_quality": 0.22,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1617,
+        "cache_creation_input_tokens": 26549,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Map the Upload contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.5,
+          "rationale": "The answer enumerates associations with line numbers in upload.rb and names HasUrl, giving the agent a starting enumeration; but it never explains what HasUrl does (URL resolution) or what the optimized_images family represents as derived records, so the agent cannot know what a contract change must preserve without opening those files."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "Line numbers within upload.rb are present for each association, which is useful, but the HasUrl concern's own file path is never given, and app/models/optimized_image.rb (the canonical derived-record file) is never cited \u2014 the agent still needs a lookup to find the shared pieces."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The answer is a pure list; there is no explanation for why URL resolution lives in a concern rather than the model, why variants are separate records, or what any structural decision means for a future change."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No uncertainty is flagged anywhere \u2014 the answer asserts callbacks at 'lines 53-64' and 'methods for generating URLs' without noting that the concern's internals and callback semantics were not inspected, leaving the agent unaware of gaps."
+        },
+        "relationship": {
+          "score": 0.25,
+          "rationale": "HasUrl is named but its role (supplying URL resolution behavior) is not stated; optimized_images is listed as a has_many without explaining that these are derived/variant records spawned from an upload \u2014 the answer names endpoints without the connecting relationship that makes each piece part of the contract."
+        }
+      },
+      "step_quality": 0.345,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1389,
+        "cache_creation_input_tokens": 18147,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Trace how an upload is created and processed",
+      "scores": {
+        "map_quality": {
+          "score": 0.28,
+          "rationale": "The answer identifies UploadCreator at its file path and gives rough line ranges for init/processing/storage/post-processing, but misses the file store abstraction (what Discourse.store dispatches to), remote storage handling, specific background job names (e.g. GenerateOptimizedImages), and the optimized image model \u2014 an agent still needs significant exploration to follow the full chain safely."
+        },
+        "specificity": {
+          "score": 0.25,
+          "rationale": "Names UploadCreator with a path and mentions `Discourse.store.store_upload` at lines 258-263, but gives no method names, no store implementation class, no specific job class names, and no reference to OptimizedImage or the cooked-post processor \u2014 the pieces are approximate ranges, not actionable file:line citations."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "States that thumbnail generation is 'enqueued as background jobs' but never explains WHY heavy processing is pushed async (to keep the request fast); the WHY for storage abstraction is also absent."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "No flags anywhere about what the answer did not open \u2014 no acknowledgment that store behavior differs between local and S3, that specific job names were not confirmed, or that remote-upload handling was not traced."
+        },
+        "relationship": {
+          "score": 0.22,
+          "rationale": "A numbered list implies sequence but never writes an explicit connected chain (file \u2192 UploadCreator \u2192 Discourse.store \u2192 FileStore \u2192 OptimizedImage \u2192 Jobs::X); each step is described in isolation without stating how it hands off to the next, so the route is implied rather than assembled."
+        }
+      },
+      "step_quality": 0.2225,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1504,
+        "cache_creation_input_tokens": 18113,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Audit every dependent of the Upload contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.4,
+          "rationale": "The answer covers six of the eight required areas with plausible file:line entries, but several rubric-called dependents are entirely absent: lib/s3_inventory.rb (S3 inventory reconciliation), lib/backup_restore/creator.rb (backup creator bundling remote uploads), the hotlinked-image download job and video conversion job (only their specs appear, not the job files), the site-icon manager, the manifest controller, and lib/site_setting_extension.rb (upload-typed site-setting hydration); a large 'Other Dependencies' catch-all also undermines the grouped structure the rubric requires."
+        },
+        "specificity": {
+          "score": 0.55,
+          "rationale": "File:line pairs are present throughout and largely plausible, but the one-phrase descriptions are uniformly mechanical ('Gets upload from URL', 'Finds upload by SHA1') rather than behavior-level identifiers that tell the agent what the dependent does with the upload, reducing actionability for a rework."
+        },
+        "justification": {
+          "score": 0.25,
+          "rationale": "There is no explanation of why each area or dependent is at risk if the Upload contract changes; phrases like 'Purges deleted uploads' or 'Restores uploads' describe the current call site, not the impact of a contract change (e.g., 'rewrites stored upload URLs embedded in post HTML', 'reconciles S3 bucket contents against Upload rows'), so the agent cannot triage risk from the answer."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer contains no caveats, no flags about what a static line-by-line pass can miss, and no acknowledgement that dependents reached only through a concern, an association, or a URL-derivation path may not surface this way; the agent is left with false confidence in completeness."
+        },
+        "relationship": {
+          "score": 0.2,
+          "rationale": "Every entry states which method was called ('find_by_sha1', 'get_upload_from_url') but none states the structural route by which the dependent reaches Upload \u2014 which concern supplies URL resolution, which association chains through optimized_image, which job holds a direct Upload.where query vs. deriving a path through the file store; the answer is at grep-output quality on this criterion."
+        }
+      },
+      "step_quality": 0.3325,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2522,
+        "cache_creation_input_tokens": 20361,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Trace how upload identity and storage location are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.15,
+          "rationale": "The answer lists Upload model internal methods (upload.rb:212-654) but entirely omits the cross-service guard picture the step asks for: no presence checks in cooked-post processing, no URL resolution in email rendering, no remote-upload handling in backup/restore, no store lookups in S3 reconciliation. An agent still needs a full re-exploration of all four service paths."
+        },
+        "specificity": {
+          "score": 0.2,
+          "rationale": "File:line citations are concrete within upload.rb, but they only cover the model's own methods; `lib/upload_security.rb` is dropped in as a one-liner with no symbols or lines. Guards in lib/email, lib/backup_restore, lib/s3_inventory are absent entirely."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The answer names what each method does but never explains WHY guards are needed (upload may be secure, missing, or live on remote storage), which is the reasoning an agent needs to choose the right guard when reworking the contract."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No gaps or unconfirmed paths are flagged; the answer presents a complete-looking list while silently omitting every cross-service guard path, leaving the agent with false confidence."
+        },
+        "relationship": {
+          "score": 0.1,
+          "rationale": "Methods are listed in isolation with no connecting path stating which guard/resolver gates which downstream effect (e.g., which URL resolution check gates the email styler, which presence check gates the backup bundler). A guard named without the relation it protects scores low per rubric."
+        }
+      },
+      "step_quality": 0.1375,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1834,
+        "cache_creation_input_tokens": 18382,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer lists eight category labels that mirror the step prompt's own wording, with zero file:line citations anywhere and no risk ranking beyond a binary High/Medium split; an agent reading it has no entry point and must re-explore the entire codebase from scratch."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "Not a single concrete path or symbol is named \u2014 'Post Rendering and Cooking', 'Storage and CDN', 'Background Jobs' are category labels that could have been generated without ever reading a file; the rubric requires file:line with a stated reason per dependent."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "Every justification is a tautology: 'changes to how uploads are stored could break CDN' restates the premise; no answer explains why a specific class or method is high-risk relative to another (e.g., URL rewriting vs. icon reading)."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No part of the answer flags any dependent as uncertain, indirectly reached, or needing agent verification; the rubric asks for explicit flags on concern-/association-reached or URL-derive-reached dependents."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "The answer names zero connecting relationships \u2014 no concern, no association, no storage route, no derive-a-URL path; it is a grouped category list with no route from the Upload contract change to any named dependent."
+        }
+      },
+      "step_quality": 0.025,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 984,
+        "cache_creation_input_tokens": 18092,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.45,
+          "rationale": "The answer covers most areas (post rendering, storage, jobs, email, backup, theming, profiles, plugin surface) with some file:line in the JSON, but critically conflates 'edit' with 'review' (32 files listed as things to edit, including lib/email/receiver.rb and backup restorer), omits the HasUrl concern file as a shared piece, misses spec/models/upload_spec.rb and spec/lib/upload_creator_spec.rb, and the file store (lib/file_store/) is absent throughout."
+        },
+        "specificity": {
+          "score": 0.5,
+          "rationale": "The JSON section supplies file:line for dependents and some model methods (e.g., 'update_secure_status: app/models/upload.rb:492-509'), but the top-level 'Dependents to Review or Touch' section is pure vague area labels, the specs list lacks spec/models/upload_spec.rb and spec/lib/upload_creator_spec.rb, and insertion points within edited files are never stated."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "Area groupings (email, backup, etc.) gesture at rationale but no individual file in the 32-file edit list carries an explanation of why the Upload contract change touches it; there is no statement of what the contract change actually is or what behavior each file must preserve or update."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer contains no uncertainty flags whatsoever \u2014 no 'verify before committing', no 'indirect dependents not confirmed', nothing flagged about storage semantics or fixture coverage; the agent would have to assume everything is confirmed."
+        },
+        "relationship": {
+          "score": 0.15,
+          "rationale": "The map is a grouped file list throughout; no file states the connecting relationship (e.g., 'lib/email/styles.rb reaches Upload via HasUrl URL resolution to rewrite secure-upload links in HTML', 'lib/backup_restore/uploads_restorer.rb iterates upload records by association'); specs are listed with no statement of which path or contract piece each exercises."
+        }
+      },
+      "step_quality": 0.3225,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1726,
+        "cache_creation_input_tokens": 22378,
+        "cache_read_input_tokens": 13332
+      }
+    }
+  ]
+}

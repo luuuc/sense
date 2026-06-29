@@ -1,0 +1,414 @@
+{
+  "scenario": "Discourse work session - audit the Upload contract before a teardown rework",
+  "repo": "discourse",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v2-rel",
+    "rubric_path": "discourse.rubric.yaml"
+  },
+  "scenario_quality": 0.0741,
+  "relationship_audit": {
+    "total": 21,
+    "covered": 3,
+    "related": 3,
+    "contradicted": 0,
+    "covered_recall": 0.1429,
+    "related_recall": 0.1429,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "c:has-url",
+      "optimized-image",
+      "d:cooked-post",
+      "d:pretty-text",
+      "d:topic-link",
+      "d:s3-store",
+      "d:s3-inventory",
+      "d:hotlinked",
+      "d:convert-video",
+      "d:email-styles",
+      "d:backup-creator",
+      "d:site-icon",
+      "d:app-helper",
+      "d:metadata-ctrl",
+      "d:user-profile",
+      "d:user-merger",
+      "d:plugin-instance",
+      "d:site-setting-ext"
+    ],
+    "missed_related": [
+      "c:has-url",
+      "optimized-image",
+      "d:cooked-post",
+      "d:pretty-text",
+      "d:topic-link",
+      "d:s3-store",
+      "d:s3-inventory",
+      "d:hotlinked",
+      "d:convert-video",
+      "d:email-styles",
+      "d:backup-creator",
+      "d:site-icon",
+      "d:app-helper",
+      "d:metadata-ctrl",
+      "d:user-profile",
+      "d:user-merger",
+      "d:plugin-instance",
+      "d:site-setting-ext"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "upload-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "c:has-url",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "optimized-image",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "a:uploads-ctrl",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "a:upload-creator",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "d:cooked-post",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:pretty-text",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:topic-link",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:s3-store",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:s3-inventory",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:hotlinked",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:convert-video",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:email-styles",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:backup-creator",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:site-icon",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:app-helper",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:metadata-ctrl",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:user-profile",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:user-merger",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:plugin-instance",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "d:site-setting-ext",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.15,
+          "rationale": "The answer is a task-tracking status document, not an orientation; it says 'Oriented in the codebase' as a done bullet but never delivers the orientation itself \u2014 no statement that this is Discourse, no description of the Rails directory structure, no explanation of where Upload sits as the central shared media record. An agent reading it would still need a fresh exploration to pick any entry point."
+        },
+        "specificity": {
+          "score": 0.35,
+          "rationale": "Full file paths are present and concrete (e.g., app/models/upload.rb, lib/upload_creator.rb), which is the answer's only real contribution, but the list is diluted with noise like plugin locale files (client.de.yml, server.pl_PL.yml) and carries no per-file context explaining what each cited path does."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The only justification offered is 'The Upload model is central to many features including posts, avatars, themes, emails, and backups' \u2014 a restatement of the prompt, not an explanation of WHY the architecture is shaped this way (shared media record, storage abstracted behind a file store)."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "No uncertainty flags appear anywhere in the answer; every section projects confident completion with 'None' under Blocked, giving an agent no signal about which connections were assumed vs. confirmed."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "The answer names files in a flat list with zero connecting relationships \u2014 no mention of the associations by which posts/avatars/themes reference Upload, no mention of the URL-resolution concern, no mention of storage abstraction; naming files without routes scores at the floor of this criterion."
+        }
+      },
+      "step_quality": 0.145,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1746,
+        "cache_creation_input_tokens": 20099,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Map the Upload contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.1,
+          "rationale": "The answer is a task-management progress document with a file list; it names app/models/upload.rb as 'Core Upload model' but supplies no contract details \u2014 no HasUrl concern, no optimized_image as derived variant, no associations, and no file:line for any contract piece. The agent cannot know what a change must preserve."
+        },
+        "specificity": {
+          "score": 0.1,
+          "rationale": "File paths are listed (upload.rb, upload_reference.rb, upload_creator.rb) but with only one-line labels like 'Core Upload model'; the contract-specific pieces (the concern, the associations, optimized_image.rb) are entirely absent, and no line numbers are given for any contract element."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No explanation is given for why the contract is shaped the way it is (URL resolution via a concern, variants as separate records); the answer contains no reasoning, only a file inventory."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer flags no uncertainty and identifies nothing it could not confirm; it presents the file list as if complete while omitting the core contract pieces entirely."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No connecting relationships are stated for any contract piece; the answer names files with one-line labels but never says which concern supplies URL behavior, how optimized images are derived from an upload, or how associations bind to Upload."
+        }
+      },
+      "step_quality": 0.055,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1545,
+        "cache_creation_input_tokens": 20086,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Trace how an upload is created and processed",
+      "scores": {
+        "map_quality": {
+          "score": 0.1,
+          "rationale": "The answer is a task-progress document that lists files with one-line labels; it names lib/upload_creator.rb as 'Upload creation logic' but never traces the actual sequence file \u2192 creator \u2192 file store \u2192 variants/post-processing with file:line, and gives no inline-vs-async breakdown of the chain."
+        },
+        "specificity": {
+          "score": 0.1,
+          "rationale": "File paths are listed but with zero line numbers; key chain pieces \u2014 the file store (lib/file_store/), optimized_image creation, and cooked-post processing \u2014 are either absent or not connected to specific call sites within the creation flow."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "No explanation is given for why heavy processing is pushed to background jobs (to keep the request fast) or for any other architectural choice; the answer only restates that jobs exist."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer implicitly signals that some work is async by listing scheduled/regular job files, but it never explicitly flags which parts of the chain it did not open or where async boundaries were assumed rather than confirmed."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "The answer is a flat file roster with no assembled chain; upload_creator.rb is not connected to the file store, variants, or post-processing steps, so the agent still faces a full re-exploration to construct the creation path."
+        }
+      },
+      "step_quality": 0.06,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1344,
+        "cache_creation_input_tokens": 19964,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Audit every dependent of the Upload contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.18,
+          "rationale": "The answer is a task-management progress document, not a completed audit. It lists some jobs and services but entirely omits the areas the rubric calls out as critical: email (no lib/email/styles.rb), backup (no lib/backup_restore/creator.rb), S3 inventory (no lib/s3_inventory.rb), site-setting extension (no lib/site_setting_extension.rb), theming (no site-icon manager, splash-screen helper, manifest controller), user merger, and the cooked-post processor/pretty-text secure-upload rewriting. Locale and config YML files (chat plugin locales, presence/microsoft-auth settings) appear in the list as Upload dependents, which is noise, not signal. The 'In Progress' status confirms the audit is self-described as incomplete."
+        },
+        "specificity": {
+          "score": 0.12,
+          "rationale": "No line numbers appear anywhere, only bare file paths. The key non-obvious dependents the rubric specifically names (lib/email/styles.rb, lib/backup_restore/creator.rb, lib/s3_inventory.rb, lib/site_setting_extension.rb) are absent. Chat locale and plugin-config YML files add irrelevant entries, diluting the list without adding coverage."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The 'Relevant Files' section gives only file paths with no phrase on how each file uses Upload, what contract piece it depends on, or why a change would affect it. No WHY is stated for any dependent, which the rubric requires ('strips secure uploads from email', 'bundles them in a backup', etc.)."
+        },
+        "uncertainty": {
+          "score": 0.12,
+          "rationale": "The 'In Progress' marker implicitly signals the audit is unfinished, but the answer never explicitly flags what a static pass can miss: dependents reached only through a concern/association, or service code that derives a URL/path from an upload without referencing the class by name. An agent reading this would not know where to probe further."
+        },
+        "relationship": {
+          "score": 0.04,
+          "rationale": "Zero connecting relationships are stated for any dependent. No entry says how it reaches Upload (which concern, which association, which URL-derivation route). The list is a flat file inventory with no connectivity information, exactly the pattern the rubric marks as 'scores low however complete'."
+        }
+      },
+      "step_quality": 0.1145,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2269,
+        "cache_creation_input_tokens": 20201,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Trace how upload identity and storage location are guarded",
+      "scores": {
+        "map_quality": {
+          "score": 0.04,
+          "rationale": "The answer is a task-state progress document, not an answer to the step prompt \u2014 it states 'In Progress: Continuing to audit dependencies and trace how upload identity and storage location are guarded' but produces zero actual tracing. No file:line for any guard, URL resolver, presence check, or store lookup is given; the agent must explore the entire file list from scratch."
+        },
+        "specificity": {
+          "score": 0.04,
+          "rationale": "The 'Relevant Files' section lists file paths (no line numbers) but attaches no description of which method or check inside each file guards identity or resolves storage; naming a file is not naming a guard, and no guard is named anywhere in the answer."
+        },
+        "justification": {
+          "score": 0.03,
+          "rationale": "The only explanatory content is 'The Upload model is central to many features' in Critical Context, which does not address WHY work must re-confirm or resolve uploads before acting (secure uploads, missing uploads, remote storage). No justification for any guard is present."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer declares 'Blocked: None' and flags no uncertainty about missing or implicit guards; it does not acknowledge what a static pass cannot confirm or where guards may be absent."
+        },
+        "relationship": {
+          "score": 0.0,
+          "rationale": "No guard or resolver is connected to any dependent it protects; the answer contains no stated path from any URL/path resolution mechanism to any downstream effect, making it impossible for the agent to know which lookup gates which behavior."
+        }
+      },
+      "step_quality": 0.0265,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1219,
+        "cache_creation_input_tokens": 20083,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer is a planning/progress document, not a blast radius assessment \u2014 'Next Steps' explicitly lists 'Assess the blast radius' as still pending. The 'Relevant Files' list names Upload-adjacent files but provides no risk grouping, no ranking, and no statement of what must be re-verified; locale YAMLs and plugin settings.yml files add noise without any blast signal."
+        },
+        "specificity": {
+          "score": 0.08,
+          "rationale": "Files carry full paths but zero line numbers for how they connect to the Upload contract, and several entries (chat plugin locale YAMLs, microsoft-auth settings.yml) are not Upload dependents at all, diluting the list further."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The one sentence in Critical Context ('many plugins and core features depend on the Upload contract') names no file, no risk reason, and no area grouping; no file in the list is accompanied by a why-it-breaks explanation."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "Blocked is listed as 'None' and no dependent is flagged as unconfirmed, indirect, or concern/association-reached \u2014 false confidence given the assessment has not actually been performed."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "No connecting relationship is stated for any listed file: entries like 'Job for syncing access control for uploads' describe the file's purpose, not the association, concern, or URL-derive path by which it reaches the Upload contract."
+        }
+      },
+      "step_quality": 0.051,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1458,
+        "cache_creation_input_tokens": 19994,
+        "cache_read_input_tokens": 13332
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer is a task-tracking document, not a change map; the 'Next Steps' section explicitly states it still needs to 'Produce the change + verification map,' and no specs/fixtures, no edit insertion points, and no area groupings appear anywhere."
+        },
+        "specificity": {
+          "score": 0.12,
+          "rationale": "File paths are named (e.g. app/models/upload.rb, lib/upload_creator.rb) but every entry lacks a line number, no insertion point is identified, and the spec/ tree is entirely absent \u2014 an agent cannot act from paths alone."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "Each file carries at most a four-word label ('Upload creation logic', 'Core Upload model') that names the file, not why the contract change touches it or what must be preserved \u2014 the WHY required by the rubric is missing throughout."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "No uncertainty flags appear anywhere in the answer; storage semantics, indirect dependents, and fixture coverage are all silent, leaving the agent no signals about where to verify before committing."
+        },
+        "relationship": {
+          "score": 0.05,
+          "rationale": "The 'Relevant Files' section is a flat list with no connecting relationship stated for any entry \u2014 no concern, association, storage route, or spec-to-behavior chain links any file to the Upload contract change."
+        }
+      },
+      "step_quality": 0.0665,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1382,
+        "cache_creation_input_tokens": 20072,
+        "cache_read_input_tokens": 13332
+      }
+    }
+  ]
+}

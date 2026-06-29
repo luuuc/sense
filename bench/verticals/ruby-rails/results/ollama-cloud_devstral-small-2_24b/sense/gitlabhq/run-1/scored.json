@@ -1,0 +1,804 @@
+{
+  "scenario": "GitLab work session - audit the MergeRequest contract before a teardown rework",
+  "repo": "gitlabhq",
+  "adoption_score": 0.9739,
+  "keyword_coverage": 1.0,
+  "step_avg_score": 0.9286,
+  "efficiency": 0.0,
+  "completeness": 0.9643,
+  "tool_fluency": 0.9565,
+  "discoverability": 1.0,
+  "citation_grounding": {
+    "total": 45,
+    "grounded": 45,
+    "unresolved": 0,
+    "hallucinated": 0,
+    "rate": 1.0,
+    "examples": {
+      "grounded": [
+        "app/models/merge_request.rb:3 (line 3 in app/models/merge_request.rb (file has 3239 lines))",
+        "app/models/application_record.rb:3 (line 3 in app/models/application_record.rb (file has 172 lines))",
+        "app/models/concerns/issuable.rb:9 (line 9 in app/models/concerns/issuable.rb (file has 743 lines))",
+        "app/models/concerns/noteable.rb:3 (line 3 in app/models/concerns/noteable.rb (file has 250 lines))",
+        "app/models/concerns/referable.rb:7 (line 7 in app/models/concerns/referable.rb (file has 171 lines))"
+      ],
+      "unresolved": [],
+      "hallucinated": []
+    },
+    "details": [
+      {
+        "file": "app/models/merge_request.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request.rb (file has 3239 lines)"
+      },
+      {
+        "file": "app/models/application_record.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/application_record.rb (file has 172 lines)"
+      },
+      {
+        "file": "app/models/concerns/issuable.rb",
+        "locator": "9",
+        "status": "grounded",
+        "reason": "line 9 in app/models/concerns/issuable.rb (file has 743 lines)"
+      },
+      {
+        "file": "app/models/concerns/noteable.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/concerns/noteable.rb (file has 250 lines)"
+      },
+      {
+        "file": "app/models/concerns/referable.rb",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in app/models/concerns/referable.rb (file has 171 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/create_service.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/services/merge_requests/create_service.rb (file has 93 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/build_service.rb",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in app/services/merge_requests/build_service.rb (file has 402 lines)"
+      },
+      {
+        "file": "app/models/event.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/event.rb (file has 563 lines)"
+      },
+      {
+        "file": "app/models/note.rb",
+        "locator": "442",
+        "status": "grounded",
+        "reason": "line 442 in app/models/note.rb (file has 936 lines)"
+      },
+      {
+        "file": "app/models/merge_request_diff.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request_diff.rb (file has 1139 lines)"
+      },
+      {
+        "file": "app/models/merge_requests_closing_issues.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_requests_closing_issues.rb (file has 70 lines)"
+      },
+      {
+        "file": "app/models/award_emoji.rb",
+        "locator": "108",
+        "status": "grounded",
+        "reason": "line 108 in app/models/award_emoji.rb (file has 129 lines)"
+      },
+      {
+        "file": "app/models/todo.rb",
+        "locator": "365",
+        "status": "grounded",
+        "reason": "line 365 in app/models/todo.rb (file has 498 lines)"
+      },
+      {
+        "file": "app/models/sent_notification.rb",
+        "locator": "188",
+        "status": "grounded",
+        "reason": "line 188 in app/models/sent_notification.rb (file has 227 lines)"
+      },
+      {
+        "file": "app/models/analytics/cycle_analytics/merge_request_stage_event.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/models/analytics/cycle_analytics/merge_request_stage_event.rb (file has 38 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/base_service.rb",
+        "locator": "57",
+        "status": "grounded",
+        "reason": "line 57 in app/services/merge_requests/base_service.rb (file has 376 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/update_service.rb",
+        "locator": "251",
+        "status": "grounded",
+        "reason": "line 251 in app/services/merge_requests/update_service.rb (file has 419 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/merge_service.rb",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in app/services/merge_requests/merge_service.rb (file has 216 lines)"
+      },
+      {
+        "file": "app/services/issuable/destroy_service.rb",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in app/services/issuable/destroy_service.rb (file has 81 lines)"
+      },
+      {
+        "file": "app/services/notification_service.rb",
+        "locator": "765",
+        "status": "grounded",
+        "reason": "line 765 in app/services/notification_service.rb (file has 1129 lines)"
+      },
+      {
+        "file": "app/services/system_notes/issuables_service.rb",
+        "locator": "281",
+        "status": "grounded",
+        "reason": "line 281 in app/services/system_notes/issuables_service.rb (file has 605 lines)"
+      },
+      {
+        "file": "app/services/merge_requests/cleanup_refs_service.rb",
+        "locator": "23",
+        "status": "grounded",
+        "reason": "line 23 in app/services/merge_requests/cleanup_refs_service.rb (file has 72 lines)"
+      },
+      {
+        "file": "app/workers/merge_request_cleanup_refs_worker.rb",
+        "locator": "26",
+        "status": "grounded",
+        "reason": "line 26 in app/workers/merge_request_cleanup_refs_worker.rb (file has 70 lines)"
+      },
+      {
+        "file": "app/workers/merge_requests/refresh/notify_about_push_worker.rb",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in app/workers/merge_requests/refresh/notify_about_push_worker.rb (file has 39 lines)"
+      },
+      {
+        "file": "app/workers/auto_merge_process_worker.rb",
+        "locator": "55",
+        "status": "grounded",
+        "reason": "line 55 in app/workers/auto_merge_process_worker.rb (file has 70 lines)"
+      },
+      {
+        "file": "app/workers/integrations/group_mention_worker.rb",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in app/workers/integrations/group_mention_worker.rb (file has 42 lines)"
+      },
+      {
+        "file": "app/graphql/types/issuable_type.rb",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in app/graphql/types/issuable_type.rb (file has 25 lines)"
+      },
+      {
+        "file": "app/graphql/mutations/award_emojis/base.rb",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in app/graphql/mutations/award_emojis/base.rb (file has 40 lines)"
+      },
+      {
+        "file": "app/graphql/resolvers/concerns/resolves_merge_requests.rb",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in app/graphql/resolvers/concerns/resolves_merge_requests.rb (file has 127 lines)"
+      },
+      {
+        "file": "app/graphql/subscriptions/ci/pipeline_creation_requests_updated.rb",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in app/graphql/subscriptions/ci/pipeline_creation_requests_updated.rb (file has 19 lines)"
+      },
+      {
+        "file": "app/serializers/analytics_merge_request_entity.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/serializers/analytics_merge_request_entity.rb (file has 11 lines)"
+      },
+      {
+        "file": "app/serializers/note_entity.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/serializers/note_entity.rb (file has 127 lines)"
+      },
+      {
+        "file": "app/serializers/base_discussion_entity.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/serializers/base_discussion_entity.rb (file has 69 lines)"
+      },
+      {
+        "file": "lib/api/discussions.rb",
+        "locator": "4",
+        "status": "grounded",
+        "reason": "line 4 in lib/api/discussions.rb (file has 316 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests_controller.rb",
+        "locator": "367",
+        "status": "grounded",
+        "reason": "line 367 in app/controllers/projects/merge_requests_controller.rb (file has 771 lines)"
+      },
+      {
+        "file": "lib/gitlab/analytics/cycle_analytics/base_query_builder.rb",
+        "locator": "6",
+        "status": "grounded",
+        "reason": "line 6 in lib/gitlab/analytics/cycle_analytics/base_query_builder.rb (file has 89 lines)"
+      },
+      {
+        "file": "lib/banzai/reference_parser/merge_request_parser.rb",
+        "locator": "21",
+        "status": "grounded",
+        "reason": "line 21 in lib/banzai/reference_parser/merge_request_parser.rb (file has 57 lines)"
+      },
+      {
+        "file": "lib/gitlab/import/merge_request_helpers.rb",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in lib/gitlab/import/merge_request_helpers.rb (file has 137 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "57",
+        "status": "grounded",
+        "reason": "line 57 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/models/ability.rb",
+        "locator": "79",
+        "status": "grounded",
+        "reason": "line 79 in app/models/ability.rb (file has 211 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "14",
+        "status": "grounded",
+        "reason": "line 14 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/policies/merge_request_policy.rb",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in app/policies/merge_request_policy.rb (file has 56 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests_controller.rb",
+        "locator": "635",
+        "status": "grounded",
+        "reason": "line 635 in app/controllers/projects/merge_requests_controller.rb (file has 771 lines)"
+      },
+      {
+        "file": "app/controllers/projects/merge_requests_controller.rb",
+        "locator": "675",
+        "status": "grounded",
+        "reason": "line 675 in app/controllers/projects/merge_requests_controller.rb (file has 771 lines)"
+      },
+      {
+        "file": "app/models/merge_request/cleanup_schedule.rb",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in app/models/merge_request/cleanup_schedule.rb (file has 73 lines)"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 23,
+    "mentioned": 13,
+    "cited": 12,
+    "mention_recall": 0.5652,
+    "cited_recall": 0.5217,
+    "groups": {
+      "contract": {
+        "total": 4,
+        "mentioned": 3,
+        "cited": 3,
+        "mention_recall": 0.75,
+        "cited_recall": 0.75
+      },
+      "write-path": {
+        "total": 2,
+        "mentioned": 2,
+        "cited": 2,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "dependents": {
+        "total": 16,
+        "mentioned": 7,
+        "cited": 7,
+        "mention_recall": 0.4375,
+        "cited_recall": 0.4375
+      },
+      "specs": {
+        "total": 1,
+        "mentioned": 1,
+        "cited": 0,
+        "mention_recall": 1.0,
+        "cited_recall": 0.0
+      }
+    },
+    "missed_mention": [
+      "c:mentionable",
+      "d:notes-resolve",
+      "d:milestone-prom",
+      "d:ghost-user",
+      "d:timelog",
+      "d:ci-pipeline",
+      "d:jira",
+      "d:url-builder",
+      "d:streaming-ser",
+      "d:github-xref"
+    ],
+    "missed_cite": [
+      "c:mentionable",
+      "d:notes-resolve",
+      "d:milestone-prom",
+      "d:ghost-user",
+      "d:timelog",
+      "d:ci-pipeline",
+      "d:jira",
+      "d:url-builder",
+      "d:streaming-ser",
+      "d:github-xref",
+      "spec:mr"
+    ],
+    "details": [
+      {
+        "id": "mr-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:issuable",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:noteable",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "c:mentionable",
+        "group": "contract",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "a:mr-ctrl",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "a:mr-create-svc",
+        "group": "write-path",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:notes-resolve",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:milestone-prom",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:issuable-destroy",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:ghost-user",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:timelog",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:auto-merge",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:event",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:ci-pipeline",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:jira",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:gql-issuable",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:discussion-ent",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:url-builder",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:cycle-analytics",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "d:streaming-ser",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:github-xref",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "d:api-discussions",
+        "group": "dependents",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "spec:mr",
+        "group": "specs",
+        "mentioned": true,
+        "cited": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "MergeRequest",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 41,
+          "unique_refs": 45,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 3,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the MergeRequest contract and what it is built on",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "concern",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 41,
+          "unique_refs": 45,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "merge_request.rb",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 3,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how a merge request is created and updated",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "service",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 41,
+          "unique_refs": 45,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 2,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Audit every dependent of the MergeRequest contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 41,
+          "unique_refs": 45,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how merge request visibility and permissions are guarded",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 41,
+          "unique_refs": 45,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 2,
+      "total_bonus": 2,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 0.5
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 41,
+          "unique_refs": 45,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 41,
+          "unique_refs": 45,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "spec",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [
+      "Read(README.md)",
+      "Glob(**/*.rb)"
+    ],
+    "post_mcp_verification_reads": [
+      "Read(merge_request.rb)",
+      "Read(ability.rb)",
+      "Read(merge_request_policy.rb)",
+      "Read(cleanup_schedule.rb)",
+      "Read(merge_request_cleanup_refs_worker.rb)"
+    ],
+    "post_mcp_misses": [],
+    "has_mcp_tools": true,
+    "detail": "pre-MCP bypasses: 2, post-MCP verification reads: 5, post-MCP misses: 0 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 31,
+    "grep_count": 1,
+    "read_count": 6,
+    "mcp_count": 22,
+    "token_input_uncached": 1309083,
+    "token_output": 4523,
+    "token_cache_read": 0,
+    "token_cache_write": 0,
+    "token_total_billed": 1313606,
+    "token_total_all": 1313606,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 1313606,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 13407,
+    "audit_chars": 211310,
+    "overhead": null
+  }
+}

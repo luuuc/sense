@@ -1,6 +1,6 @@
 ## Scenario Evaluation
 
-Results: 2 tools × 10 scenarios
+Results: 2 tools × 13 scenarios
 
 Each scenario declares a **must-find set** of code locations a good answer should surface. The headline metric is **cited recall** — the share of that set the answer pinned to an exact location (`path:line`), so an agent can navigate straight there. Each repo below leads with a table of the axes that make up the comparison:
 
@@ -38,6 +38,17 @@ The aggregate adds the **B-score** = `0.55·cited recall + 0.25·correct-relatio
 
 _Billed-context Δ (sense vs baseline): **-44%** — Sense loads less._
 
+### discourse
+
+> Multi-step Discourse exploration: trace topic creation flow from controller to persistence, locate specs, understand Guardian authorization. Tests Rails service object tracing and test convention awareness.
+
+| Tool | Mention recall | Cited recall (fixed) | Billed ctx | Uncached in | Cached read | Time |
+|------|---------------:|---------------------:|-----------:|------------:|------------:|-----:|
+| baseline | 33% (8/24) | 33% (8/24) | 399,856 | 391,350 | — | — |
+| sense | 38% (9/24) | 29% (7/24) | 137,102 | 135,443 | — | — |
+
+_Billed-context Δ (sense vs baseline): **-66%** — Sense loads less._
+
 ### forem
 
 | Tool | Mention recall | Cited recall (fixed) | Billed ctx | Uncached in | Cached read | Time |
@@ -46,6 +57,15 @@ _Billed-context Δ (sense vs baseline): **-44%** — Sense loads less._
 | sense | 38% (10/26) | 35% (9/26) | 366,179 | 361,628 | — | — |
 
 _Billed-context Δ (sense vs baseline): **+80%** — Sense loads more._
+
+### gitlabhq
+
+| Tool | Mention recall | Cited recall (fixed) | Billed ctx | Uncached in | Cached read | Time |
+|------|---------------:|---------------------:|-----------:|------------:|------------:|-----:|
+| baseline | 26% (6/23) | 4% (1/23) | 5,259,702 | 5,246,803 | — | — |
+| sense | 30% (7/23) | 22% (5/23) | 245,817 | 242,119 | — | — |
+
+_Billed-context Δ (sense vs baseline): **-95%** — Sense loads less._
 
 ### langchainrb
 
@@ -82,6 +102,15 @@ _Billed-context Δ (sense vs baseline): **+206%** — Sense loads more._
 | sense | 48% (11/23) | 43% (10/23) | 1,580,047 | 1,574,420 | — | — |
 
 _Billed-context Δ (sense vs baseline): **+55%** — Sense loads more._
+
+### rails
+
+| Tool | Mention recall | Cited recall (fixed) | Billed ctx | Uncached in | Cached read | Time |
+|------|---------------:|---------------------:|-----------:|------------:|------------:|-----:|
+| baseline | 50% (9/18) | 22% (4/18) | 2,316,028 | 2,311,477 | — | — |
+| sense | 61% (11/18) | 61% (11/18) | 1,653,951 | 1,648,287 | — | — |
+
+_Billed-context Δ (sense vs baseline): **-29%** — Sense loads less._
 
 ### raix
 
@@ -125,8 +154,8 @@ Ranked by **cited recall** (the headline). **B-score** = `0.55·cited + 0.25·co
 
 | Rank | Tool | Scenarios | Failures | **Cited Recall** | **B-score** | Rel Audit (cov) | Related | Grounded Prec. | Contradict. | Avg Efficiency | Avg Tokens | Avg Time | Total Cost | Avg Grounding |
 |-----:|------|----------:|--------:|---------------:|-----------:|--------------:|--------:|---------------:|------------:|--------------:|-----------:|--------:|-----------:|--------------:|
-| 1 | sense :1st_place_medal: | 19 | 0 | 0.4734 | **0.5993** | 0.5791 | 0.5587 | 0.9962 | **1** | 0.0000 | 1,679,775 | 0.0s | — | 99.6% (955/959) |
-| 2 | baseline :2nd_place_medal: | 20 | 0 | 0.2465 | **0.4645** | 0.5322 | 0.5158 | 1.0000 | 0 | 0.0000 | 1,202,933 | 0.0s | — | 100.0% (473/473) |
+| 1 | sense :1st_place_medal: | 26 | 0 | 0.4727 | **0.5973** | 0.5680 | 0.5513 | 0.9973 | **1** | 0.0105 | 1,572,784 | 0.0s | — | 98.6% (1253/1271) **!1** |
+| 2 | baseline :2nd_place_medal: | 26 | 0 | 0.2467 | **0.4547** | 0.4969 | 0.4785 | 0.9968 | **1** | 0.0000 | 2,044,783 | 0.0s | — | 100.0% (663/663) |
 
 
 ### Process efficiency (at held recall)
@@ -135,6 +164,6 @@ _Sense recall is HIGHER (0.47 vs 0.25) — any process saving is a bonus on top 
 
 | Process axis | baseline | sense | Δ |
 |------|---------:|------:|----:|
-| Reads | 16 | 10 | **-38%** |
-| Tool calls | 30 | 37 | **+22%** |
-| Billed tokens | 1,202,933 | 1,679,775 | **+40%** |
+| Reads | 19 | 8 | **-55%** |
+| Tool calls | 37 | 34 | **-7%** |
+| Billed tokens | 2,044,783 | 1,572,784 | **-23%** |
