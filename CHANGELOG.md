@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.4] - 2026-06-29
+
+### Bug Fixes
+
+- surface reverse-composition dependents for ORM models
 ## [1.11.3] - 2026-06-25
 
 ### Bug Fixes
