@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fwcd/tree-sitter-kotlin v0.0.0-20260411204054-55622a49bd59
-	github.com/mark3labs/mcp-go v0.55.0
+	github.com/mark3labs/mcp-go v0.55.1
 	github.com/mattn/go-isatty v0.0.22
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-c v0.24.2
