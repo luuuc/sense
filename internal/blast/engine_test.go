@@ -1188,6 +1188,186 @@ func TestDoubleReachableAppearsInFirstGroup(t *testing.T) {
 	}
 }
 
+// TestReverseCompositionSurfacesMaskedComposer covers the visitedKind-masking
+// fix: a dependent that both calls and composes the subject is recorded under
+// the higher-confidence calls edge, so the old visitedKind bucketing never
+// listed it as a composer. The edge-table-derived set must still surface it.
+func TestReverseCompositionSurfacesMaskedComposer(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "Base")
+	dep := fix.addSymbol(t, "Dependent")
+	fix.addEdge(t, dep, base, model.EdgeCalls, 1.0)
+	fix.addEdge(t, dep, base, model.EdgeComposes, 0.5)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	found := false
+	for _, s := range res.AffectedViaComposition {
+		if s.ID == dep {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("AffectedViaComposition = %+v, want Dependent (a composer masked by a calls edge must still surface)", res.AffectedViaComposition)
+	}
+}
+
+// TestReverseCompositionSurvivesResultCap covers the capResults-eviction fix:
+// strong 1.0 callers fill the result cap and evict the low-confidence composer
+// from the caller lists, but it must remain in the reverse-composition set —
+// the whole point on a high-fan-out hub like a Django model.
+func TestReverseCompositionSurvivesResultCap(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "Base")
+	c1 := fix.addSymbol(t, "Caller1")
+	c2 := fix.addSymbol(t, "Caller2")
+	fix.addEdge(t, c1, base, model.EdgeCalls, 1.0)
+	fix.addEdge(t, c2, base, model.EdgeCalls, 1.0)
+	comp := fix.addSymbol(t, "Composer")
+	fix.addEdge(t, comp, base, model.EdgeComposes, 0.5)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.1, MaxResults: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	inCallers := false
+	for _, c := range res.DirectCallers {
+		if c.ID == comp {
+			inCallers = true
+		}
+	}
+	if inCallers {
+		t.Fatal("setup invalid: the composer was meant to be evicted by the result cap")
+	}
+	found := false
+	for _, s := range res.AffectedViaComposition {
+		if s.ID == comp {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("AffectedViaComposition = %+v, want Composer (a cap-evicted composer must still surface)", res.AffectedViaComposition)
+	}
+}
+
+// TestReverseCompositionRespectsCap covers the maxResults trim on the
+// reverse-composition set itself.
+func TestReverseCompositionRespectsCap(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "Base")
+	c1 := fix.addSymbol(t, "Composer1")
+	c2 := fix.addSymbol(t, "Composer2")
+	fix.addEdge(t, c1, base, model.EdgeComposes, 0.9)
+	fix.addEdge(t, c2, base, model.EdgeComposes, 0.9)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.1, MaxResults: 1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if len(res.AffectedViaComposition) != 1 {
+		t.Errorf("AffectedViaComposition = %d, want 1 (capped to MaxResults)", len(res.AffectedViaComposition))
+	}
+	if !res.Truncated {
+		t.Error("Truncated = false, want true (the reverse-composition set was capped — silent truncation breaks the audit-completeness promise)")
+	}
+}
+
+// TestReverseCompositionReconcilesTotalAffected covers the total_affected
+// reconciliation: a composer reachable only by a composes edge the BFS prunes by
+// confidence still surfaces in the composition set AND is counted in the total,
+// so the response never under-reports what it returns.
+func TestReverseCompositionReconcilesTotalAffected(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "Base")
+	comp := fix.addSymbol(t, "Composer")
+	fix.addEdge(t, comp, base, model.EdgeComposes, 0.5) // decays below the floor
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.9})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	found := false
+	for _, s := range res.AffectedViaComposition {
+		if s.ID == comp {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("AffectedViaComposition = %+v, want the BFS-pruned composer", res.AffectedViaComposition)
+	}
+	if res.TotalAffected < 1 {
+		t.Errorf("TotalAffected = %d, want >= 1 (a composer surfaced in the response must be counted)", res.TotalAffected)
+	}
+}
+
+// TestReverseCompositionDedupsAcrossSeeds locks the set-dedup behavior: one
+// composer that holds an FK to two different seeds appears exactly once.
+func TestReverseCompositionDedupsAcrossSeeds(t *testing.T) {
+	fix := newFixtureDB(t)
+	base1 := fix.addSymbol(t, "Base1")
+	base2 := fix.addSymbol(t, "Base2")
+	comp := fix.addSymbol(t, "Composer")
+	fix.addEdge(t, comp, base1, model.EdgeComposes, 0.9)
+	fix.addEdge(t, comp, base2, model.EdgeComposes, 0.9)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base1, base2}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	seen := 0
+	for _, s := range res.AffectedViaComposition {
+		if s.ID == comp {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("Composer appears %d times in AffectedViaComposition, want exactly 1", seen)
+	}
+}
+
+// TestReverseCompositionExcludesSelfSeed covers the seed-skip filter: a seed that
+// composes itself must not list itself as its own dependent.
+func TestReverseCompositionExcludesSelfSeed(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "Base")
+	dep := fix.addSymbol(t, "Dependent")
+	fix.addEdge(t, base, base, model.EdgeComposes, 0.9) // self-loop seed
+	fix.addEdge(t, dep, base, model.EdgeComposes, 0.9)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	for _, s := range res.AffectedViaComposition {
+		if s.ID == base {
+			t.Errorf("AffectedViaComposition contains the seed itself (%d); a self-compose must be skipped", base)
+		}
+	}
+}
+
+// TestReverseCompositionExcludesOwnMember covers the childSet-skip filter: a
+// member of the subject is not one of the subject's external dependents.
+func TestReverseCompositionExcludesOwnMember(t *testing.T) {
+	fix := newFixtureDB(t)
+	base := fix.addSymbol(t, "Base")
+	member := fix.addSymbolWith(t, "Base#field", model.KindMethod, &base)
+	fix.addEdge(t, member, base, model.EdgeComposes, 0.9)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{base}, blast.Options{MaxHops: 1, MinConfidence: 0.1})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	for _, s := range res.AffectedViaComposition {
+		if s.ID == member {
+			t.Errorf("AffectedViaComposition contains the subject's own member (%d); members must be skipped", member)
+		}
+	}
+}
+
 // --- Pitch 15-02 fixture tests ---
 
 func TestTierClassification(t *testing.T) {

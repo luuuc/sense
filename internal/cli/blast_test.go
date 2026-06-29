@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/sqlite"
@@ -111,6 +112,31 @@ func degradeIndexColumn(t *testing.T, dir, table, column string) {
 	}
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", sqlite.SchemaVersion)); err != nil {
 		t.Fatalf("stamp user_version: %v", err)
+	}
+}
+
+// TestCollectBlastFileIDsIncludesEdgeKindGroups guards the empty-path
+// regression: AffectedViaComposition is computed from the edge table
+// independently of the capped caller lists, so a composer's file may be
+// referenced by no caller. CollectBlastFileIDs must still gather it, or that
+// dependent renders with an empty path and loses its citation.
+func TestCollectBlastFileIDsIncludesEdgeKindGroups(t *testing.T) {
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 1, FileID: 1},
+		DirectCallers: []model.Symbol{{ID: 2, FileID: 2}},
+		// a composer whose file (99) appears nowhere in the caller lists
+		AffectedViaComposition: []model.Symbol{{ID: 9, FileID: 99}},
+		AffectedSubclasses:     []model.Symbol{{ID: 8, FileID: 88}},
+		AffectedViaIncludes:    []model.Symbol{{ID: 7, FileID: 77}},
+	}
+	got := map[int64]bool{}
+	for _, id := range CollectBlastFileIDs(r) {
+		got[id] = true
+	}
+	for _, want := range []int64{1, 2, 99, 88, 77} {
+		if !got[want] {
+			t.Errorf("CollectBlastFileIDs missing file id %d (edge-kind group file not collected)", want)
+		}
 	}
 }
 

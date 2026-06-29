@@ -187,9 +187,12 @@ type Result struct {
 	// view-helper or Stimulus-dispatched symbol's view reachability surfaces.
 	ViewReached bool
 
-	// Edge-kind groups: filtered views over the same nodes that appear
-	// in DirectCallers/IndirectCallers. A node appears in at most one
-	// group (the edge kind that discovered it first in BFS order).
+	// Edge-kind groups. A node appears in at most one group. Subclasses and
+	// includes are filtered views over the capped DirectCallers/IndirectCallers,
+	// bucketed by the edge kind that discovered each node first in BFS order.
+	// AffectedViaComposition is computed independently from the edge table (the
+	// complete reverse-composition set), so it may surface composers the result
+	// cap evicted from the caller lists — that is the point on high-fan-out hubs.
 	AffectedSubclasses     []model.Symbol
 	AffectedViaComposition []model.Symbol
 	AffectedViaIncludes    []model.Symbol
@@ -249,6 +252,10 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	}
 	directIDs, indirectIDs := state.partition(seedSet)
 	totalAffectedCount := len(directIDs) + len(indirectIDs)
+	// Snapshot the uncapped affected set so reverse-composition dependents the BFS
+	// pruned by confidence (surfaced below from the edge table) can be reconciled
+	// into total_affected rather than appearing only in the composition list.
+	affectedSet := idSet(directIDs, indirectIDs)
 	directIDs, indirectIDs = state.capResults(directIDs, indirectIDs, opts.MaxResults)
 
 	symbolsByID, err := state.hydrate(ctx, db, subject, directIDs, indirectIDs)
@@ -271,7 +278,23 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 
 	risk, reasons := classifyRisk(len(directCallers), hasTemporal(directTemporalIDs, indirectCallers))
 	symbolTiers := state.buildTiers(directIDs, indirectIDs, symbolsByID, isSelf)
-	subclasses, viaComposition, viaIncludes := state.buildEdgeKindGroups(directIDs, indirectIDs, symbolsByID, isSelf)
+	subclasses, viaIncludes := state.buildEdgeKindGroups(directIDs, indirectIDs, symbolsByID, isSelf)
+
+	// Composition is derived from the edge table directly rather than from the
+	// capped/visitedKind-bucketed callers: on a high-fan-out hub the reverse
+	// composers (e.g. every Django model holding a ForeignKey to this one) ride
+	// low-confidence composes edges that capResults evicts beneath the 1.0
+	// call/test callers, and a composer that also calls the subject is recorded
+	// under the calls edge and never bucketed here. excludeGrouped keeps the
+	// one-node-one-group invariant against the inherits/includes buckets above.
+	excludeGrouped := symbolIDSet(subclasses, viaIncludes)
+	viaComposition, err := state.loadReverseComposition(ctx, db, symbolIDs, seedSet, excludeGrouped, isSelf, opts.MaxResults)
+	if err != nil {
+		return Result{}, fmt.Errorf("blast: reverse composition: %w", err)
+	}
+	// Count any composer the BFS did not visit (pruned by confidence) into the
+	// total so total_affected never under-reports what the response surfaces.
+	totalAffectedCount += countUnvisited(viaComposition, affectedSet)
 
 	return Result{
 		Symbol:                 subject,
@@ -718,10 +741,50 @@ func (s *bfsState) buildTiers(directIDs, indirectIDs []int64, symbolsByID map[in
 	return tiers
 }
 
+// idSet collects two id slices into a membership set.
+func idSet(a, b []int64) map[int64]struct{} {
+	set := make(map[int64]struct{}, len(a)+len(b))
+	for _, id := range a {
+		set[id] = struct{}{}
+	}
+	for _, id := range b {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+// symbolIDSet collects the ids of two symbol slices into a membership set.
+func symbolIDSet(a, b []model.Symbol) map[int64]struct{} {
+	set := make(map[int64]struct{}, len(a)+len(b))
+	for _, sym := range a {
+		set[sym.ID] = struct{}{}
+	}
+	for _, sym := range b {
+		set[sym.ID] = struct{}{}
+	}
+	return set
+}
+
+// countUnvisited returns how many of syms are absent from visited — the
+// composers the BFS pruned by confidence but the edge-table query still surfaced.
+func countUnvisited(syms []model.Symbol, visited map[int64]struct{}) int {
+	n := 0
+	for _, sym := range syms {
+		if _, seen := visited[sym.ID]; !seen {
+			n++
+		}
+	}
+	return n
+}
+
 // buildEdgeKindGroups partitions the affected callers (skipping self-members)
-// into the structural edge-kind views — subclasses (inherits), composition,
-// and includes — by the edge kind that first discovered each node.
-func (s *bfsState) buildEdgeKindGroups(directIDs, indirectIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) (subclasses, viaComposition, viaIncludes []model.Symbol) {
+// into the structural edge-kind views — subclasses (inherits) and includes — by
+// the edge kind that first discovered each node. Composition is NOT derived here:
+// the visitedKind bucketing under-reports it (a composer also reached by a
+// higher-confidence calls edge is recorded as a caller, and low-confidence
+// composers are evicted by the result cap), so it is computed separately from
+// the edge table — see loadReverseComposition.
+func (s *bfsState) buildEdgeKindGroups(directIDs, indirectIDs []int64, symbolsByID map[int64]model.Symbol, isSelf selfMethodFn) (subclasses, viaIncludes []model.Symbol) {
 	for _, idSlice := range [2][]int64{directIDs, indirectIDs} {
 		for _, id := range idSlice {
 			sym, ok := symbolsByID[id]
@@ -731,14 +794,12 @@ func (s *bfsState) buildEdgeKindGroups(directIDs, indirectIDs []int64, symbolsBy
 			switch s.visitedKind[id] {
 			case "inherits":
 				subclasses = append(subclasses, sym)
-			case "composes":
-				viaComposition = append(viaComposition, sym)
 			case "includes":
 				viaIncludes = append(viaIncludes, sym)
 			}
 		}
 	}
-	return subclasses, viaComposition, viaIncludes
+	return subclasses, viaIncludes
 }
 
 // edgePair is the (source, target) shape one BFS hop returns. source

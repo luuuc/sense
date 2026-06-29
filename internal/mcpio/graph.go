@@ -49,6 +49,7 @@ func trimLongestEdgeList(e *GraphEdges, resp *GraphResponse) bool {
 		{len(e.CalledBy), func(k int) { e.CalledBy = e.CalledBy[:len(e.CalledBy)-k] }},
 		{len(e.Calls), func(k int) { e.Calls = e.Calls[:len(e.Calls)-k] }},
 		{len(e.Composes), func(k int) { e.Composes = e.Composes[:len(e.Composes)-k] }},
+		{len(e.ComposedBy), func(k int) { e.ComposedBy = e.ComposedBy[:len(e.ComposedBy)-k] }},
 		{len(e.Inherits), func(k int) { e.Inherits = e.Inherits[:len(e.Inherits)-k] }},
 		{len(e.Includes), func(k int) { e.Includes = e.Includes[:len(e.Includes)-k] }},
 		{len(e.Imports), func(k int) { e.Imports = e.Imports[:len(e.Imports)-k] }},
@@ -465,8 +466,12 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 					Ref:       FormatRefPtr(fp, e.Target.LineStart),
 				})
 			case model.EdgeComposes:
+				// Inbound: a symbol that composes THIS one (holds a has-a
+				// relationship to it). Routed to ComposedBy, distinct from the
+				// outbound Composes bucket, so the reverse fan-out a Django model's
+				// FK dependents form is not conflated with what the model owns.
 				fp := fileRefOrNil(e.Target.FileID, files)
-				edges.Composes = append(edges.Composes, ComposeEdgeRef{
+				edges.ComposedBy = append(edges.ComposedBy, ComposeEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
 					File:      fp,
 					LineStart: e.Target.LineStart,
@@ -518,7 +523,7 @@ func qualifiedOrName(s model.Symbol) string {
 
 func countEdgeSymbols(edges GraphEdges) int {
 	return len(edges.Calls) + len(edges.CalledBy) +
-		len(edges.Inherits) + len(edges.Composes) +
+		len(edges.Inherits) + len(edges.Composes) + len(edges.ComposedBy) +
 		len(edges.Includes) + len(edges.Imports) +
 		len(edges.Tests) + len(edges.Temporal)
 }
@@ -554,6 +559,11 @@ func collectEdgeFiles(edges GraphEdges, seen map[string]struct{}) {
 		}
 	}
 	for _, e := range edges.Composes {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range edges.ComposedBy {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
