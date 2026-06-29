@@ -36,6 +36,12 @@ type Index struct {
 	// a coincidental same-named symbol that lives in a test file. Built from the
 	// same SymbolRefs; a file id absent from the map is treated as non-test.
 	fileIsTest map[int64]bool
+	// fileModelModule flags files that are framework model-definition modules,
+	// populated by language-specific classifiers (see isDjangoModelModuleRef in
+	// django.go). It lets a `composes` edge prefer a model-definition target over
+	// a same-named non-model symbol; see preferDjangoModelComposes. A file id
+	// absent from the map is treated as not a model module.
+	fileModelModule map[int64]bool
 	// ancestry maps a class's qualified name to its direct superclass qualified
 	// names (as written on the `inherits` edge). It powers inherited-method
 	// resolution: a call to `Sub#m` with no own `Sub#m` resolves to the nearest
@@ -50,10 +56,11 @@ type Index struct {
 // preserved in each map bucket.
 func NewIndex(refs []model.SymbolRef) *Index {
 	ix := &Index{
-		byQualified: make(map[string][]model.SymbolRef, len(refs)),
-		byName:      make(map[string][]model.SymbolRef, len(refs)),
-		fileLang:    make(map[int64]string),
-		fileIsTest:  make(map[int64]bool),
+		byQualified:     make(map[string][]model.SymbolRef, len(refs)),
+		byName:          make(map[string][]model.SymbolRef, len(refs)),
+		fileLang:        make(map[int64]string),
+		fileIsTest:      make(map[int64]bool),
+		fileModelModule: make(map[int64]bool),
 	}
 	for _, r := range refs {
 		ix.byQualified[r.Qualified] = append(ix.byQualified[r.Qualified], r)
@@ -64,6 +71,9 @@ func NewIndex(refs []model.SymbolRef) *Index {
 		}
 		if r.Path != "" {
 			ix.fileIsTest[r.FileID] = isTestPath(r.Path)
+		}
+		if isDjangoModelModuleRef(r) {
+			ix.fileModelModule[r.FileID] = true
 		}
 	}
 	return ix
@@ -355,6 +365,7 @@ func (ix *Index) resolveQualified(target string, req Request, gatedKind bool) (R
 		matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
 	}
 	if len(matches) > 0 {
+		matches = ix.preferDjangoModelComposes(matches, req)
 		return pickBest(matches, req.SourceFileID, req.BaseConfidence), true, true
 	}
 	// The qualified name matched only cross-language or test-only symbols: a

@@ -60,19 +60,21 @@ func MarshalGraphCompactDirectional(r GraphResponse, direction model.Direction) 
 // table is derived from that logic. Returns nil for direction == Both
 // (or empty), meaning "render every bucket as today".
 //
-//	Callers — outbound (calls) excluded.
-//	Callees — inbound-only (called_by, tests) excluded.
-//	Inherits / Composes / Includes / Imports — populated by both
-//	paths (outbound = "what this inherits from / composes / etc.",
-//	inbound = "what inherits from / composes / etc. this"), never
-//	excluded.
+//	Callers — outbound (calls, composes) excluded.
+//	Callees — inbound-only (called_by, composed_by, tests) excluded.
+//	calls/called_by and composes/composed_by are directional pairs: the
+//	outbound member is dropped for a callers query, the inbound member for
+//	a callees query.
+//	Inherits / Includes / Imports — populated by both paths (outbound =
+//	"what this inherits from / includes / etc.", inbound = "what inherits
+//	from / includes / etc. this") into one bucket, never excluded.
 //	Temporal — bidirectional, never excluded.
 func outOfScopeEdgeBuckets(direction model.Direction) []string {
 	switch direction {
 	case model.DirectionCallers:
-		return []string{"calls"}
+		return []string{"calls", "composes"}
 	case model.DirectionCallees:
-		return []string{"called_by", "tests"}
+		return []string{"called_by", "composed_by", "tests"}
 	default:
 		return nil
 	}
@@ -177,6 +179,9 @@ func normalizeGraphResponse(r *GraphResponse) {
 	if r.Edges.Composes == nil {
 		r.Edges.Composes = []ComposeEdgeRef{}
 	}
+	if r.Edges.ComposedBy == nil {
+		r.Edges.ComposedBy = []ComposeEdgeRef{}
+	}
 	if r.Edges.Includes == nil {
 		r.Edges.Includes = []IncludeEdgeRef{}
 	}
@@ -234,6 +239,9 @@ func normalizeGraphEdgesScoped(e *GraphEdges, skip map[string]struct{}) {
 	}
 	if _, ok := skip["composes"]; !ok && e.Composes == nil {
 		e.Composes = []ComposeEdgeRef{}
+	}
+	if _, ok := skip["composed_by"]; !ok && e.ComposedBy == nil {
+		e.ComposedBy = []ComposeEdgeRef{}
 	}
 	if _, ok := skip["includes"]; !ok && e.Includes == nil {
 		e.Includes = []IncludeEdgeRef{}

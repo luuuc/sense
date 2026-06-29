@@ -182,7 +182,11 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // project's own architecture (inheritance, framework, design-pattern, composition
 // lead; naming/structure/testing trail), so the fixture's key_types line now
 // precedes its structure line — digest moved.
-const oracleGolden = "60c3c73e13d7e50bcfa45a5f00e8e9239ebda0f8b4f0997954400d5949a3eb50"
+// sense_graph now splits inbound composition into its own `composed_by` bucket
+// (reverse-composition, distinct from outbound `composes`), so every graph
+// response gained an empty `composed_by` field and callees-direction responses
+// drop it — digest moved. No edge content changed.
+const oracleGolden = "83a83c93c603a6b1550af16056341c2c9f5769f5503edaf9fc895e564a716983"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))

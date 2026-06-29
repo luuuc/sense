@@ -177,14 +177,23 @@ type GraphSymbol struct {
 // leave unrequested kinds as empty slices and callers must treat
 // `[]` as "none found" rather than "not provided."
 type GraphEdges struct {
-	Calls    []CallEdgeRef     `json:"calls"`
-	CalledBy []CallEdgeRef     `json:"called_by"`
-	Inherits []InheritEdgeRef  `json:"inherits"`
-	Composes []ComposeEdgeRef  `json:"composes"`
-	Includes []IncludeEdgeRef  `json:"includes"`
-	Imports  []ImportEdgeRef   `json:"imports"`
-	Tests    []TestEdgeRef     `json:"tests"`
-	Temporal []TemporalEdgeRef `json:"temporal"`
+	Calls    []CallEdgeRef    `json:"calls"`
+	CalledBy []CallEdgeRef    `json:"called_by"`
+	Inherits []InheritEdgeRef `json:"inherits"`
+	Composes []ComposeEdgeRef `json:"composes"`
+	// ComposedBy is the reverse-composition direction: the symbols that hold a
+	// has-a relationship TO this one (a Django model's ForeignKey / OneToOne /
+	// ManyToMany dependents). Kept distinct from Composes — "what I own" vs "what
+	// owns me" are different questions, and merging them hid the reverse fan-out
+	// a change-impact audit needs. Note: composes/composed_by are a directional
+	// pair (like calls/called_by), so a callers-direction query now returns
+	// inbound composers here, NOT in Composes; inherits/includes/imports stay
+	// merged into one bucket per kind.
+	ComposedBy []ComposeEdgeRef  `json:"composed_by"`
+	Includes   []IncludeEdgeRef  `json:"includes"`
+	Imports    []ImportEdgeRef   `json:"imports"`
+	Tests      []TestEdgeRef     `json:"tests"`
+	Temporal   []TemporalEdgeRef `json:"temporal"`
 }
 
 // CallEdgeRef is the shape of a calls / called_by edge entry. File

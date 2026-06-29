@@ -240,3 +240,45 @@ func TestSiblingSymbolIDsScanError(t *testing.T) {
 		t.Fatal("SiblingSymbolIDs: expected row scan error, got nil")
 	}
 }
+
+func TestInboundComposersQueryError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastQueryFault("kind = 'composes'")
+	t.Cleanup(disarmBlastFaults)
+	if _, err := inboundComposers(context.Background(), db, []int64{1, 2}); err == nil {
+		t.Fatal("inboundComposers: expected query error, got nil")
+	}
+}
+
+func TestInboundComposersScanError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastRowsFault("kind = 'composes'", blastRowsBadValue)
+	t.Cleanup(disarmBlastFaults)
+	if _, err := inboundComposers(context.Background(), db, []int64{1, 2}); err == nil {
+		t.Fatal("inboundComposers: expected row scan error, got nil")
+	}
+}
+
+func TestInboundComposersRowsIterationError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastRowsFault("kind = 'composes'", blastRowsNext)
+	t.Cleanup(disarmBlastFaults)
+	if _, err := inboundComposers(context.Background(), db, []int64{1, 2}); err == nil {
+		t.Fatal("inboundComposers: expected rows.Err iteration error, got nil")
+	}
+}
+
+// TestLoadReverseCompositionPropagatesQueryError covers the error return after
+// inboundComposers fails inside the method.
+func TestLoadReverseCompositionPropagatesQueryError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastQueryFault("kind = 'composes'")
+	t.Cleanup(disarmBlastFaults)
+	s := &bfsState{childSet: map[int64]struct{}{}}
+	noSelf := func(model.Symbol) bool { return false }
+	_, err := s.loadReverseComposition(context.Background(), db, []int64{1, 2},
+		map[int64]struct{}{}, map[int64]struct{}{}, noSelf, 100)
+	if err == nil {
+		t.Fatal("loadReverseComposition: expected propagated query error, got nil")
+	}
+}

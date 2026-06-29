@@ -154,14 +154,23 @@ func TestBuildGraphResponseComposesEdges(t *testing.T) {
 
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
-	if len(resp.Edges.Composes) != 3 {
-		t.Fatalf("Composes = %d, want 3 (2 outbound + 1 inbound)", len(resp.Edges.Composes))
+	// Outbound composes ("what User owns") land in Composes; the inbound composer
+	// ("what owns User") lands in ComposedBy — the two directions are no longer
+	// conflated.
+	if len(resp.Edges.Composes) != 2 {
+		t.Fatalf("Composes = %d, want 2 (outbound only)", len(resp.Edges.Composes))
 	}
 	if resp.Edges.Composes[0].Symbol != "Order" {
 		t.Errorf("Composes[0].Symbol = %q, want %q", resp.Edges.Composes[0].Symbol, "Order")
 	}
 	if resp.Edges.Composes[0].File == nil {
 		t.Error("Composes[0].File = nil, want non-nil")
+	}
+	if len(resp.Edges.ComposedBy) != 1 {
+		t.Fatalf("ComposedBy = %d, want 1 (the inbound composer)", len(resp.Edges.ComposedBy))
+	}
+	if resp.Edges.ComposedBy[0].Symbol != "Order" {
+		t.Errorf("ComposedBy[0].Symbol = %q, want %q", resp.Edges.ComposedBy[0].Symbol, "Order")
 	}
 }
 
@@ -288,14 +297,24 @@ func TestBuildGraphResponseComposesDirection(t *testing.T) {
 	}
 	files := func(int64) (string, bool) { return "", false }
 
+	// Callees = outbound only: the owned Order surfaces in Composes; the inbound
+	// composer is out of scope.
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallees})
 	if len(resp.Edges.Composes) != 1 || resp.Edges.Composes[0].Symbol != "Order" {
-		t.Errorf("callees direction: want only outbound Order, got %v", resp.Edges.Composes)
+		t.Errorf("callees direction: want only outbound Order in Composes, got %v", resp.Edges.Composes)
+	}
+	if len(resp.Edges.ComposedBy) != 0 {
+		t.Errorf("callees direction: want empty ComposedBy, got %v", resp.Edges.ComposedBy)
 	}
 
+	// Callers = inbound only: the composer Profile surfaces in ComposedBy; the
+	// outbound Composes bucket is out of scope.
 	resp = BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
-	if len(resp.Edges.Composes) != 1 || resp.Edges.Composes[0].Symbol != "Profile" {
-		t.Errorf("callers direction: want only inbound Profile, got %v", resp.Edges.Composes)
+	if len(resp.Edges.ComposedBy) != 1 || resp.Edges.ComposedBy[0].Symbol != "Profile" {
+		t.Errorf("callers direction: want only inbound Profile in ComposedBy, got %v", resp.Edges.ComposedBy)
+	}
+	if len(resp.Edges.Composes) != 0 {
+		t.Errorf("callers direction: want empty Composes, got %v", resp.Edges.Composes)
 	}
 }
 

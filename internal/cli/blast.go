@@ -9,6 +9,7 @@ import (
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/model"
 )
 
 // blastHelp mirrors the `sense blast` example block in
@@ -254,21 +255,30 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 }
 
 // collectBlastFileIDs returns the unique file ids referenced by the
-// blast Result's direct + indirect callers. Batched so the caller
-// hydrates paths in one query.
+// blast Result's direct + indirect callers and its structural edge-kind
+// groups. Batched so the caller hydrates paths in one query. The
+// edge-kind groups matter because AffectedViaComposition is computed
+// from the edge table independently of the capped caller lists, so it
+// can carry composers whose files no caller references — without them
+// here those dependents would render with an empty path.
 func CollectBlastFileIDs(r blast.Result) []int64 {
 	seen := map[int64]struct{}{r.Symbol.FileID: {}}
 	ids := []int64{r.Symbol.FileID}
-	for _, c := range r.DirectCallers {
-		if _, ok := seen[c.FileID]; !ok {
-			seen[c.FileID] = struct{}{}
-			ids = append(ids, c.FileID)
+	note := func(fileID int64) {
+		if _, ok := seen[fileID]; !ok {
+			seen[fileID] = struct{}{}
+			ids = append(ids, fileID)
 		}
 	}
+	for _, c := range r.DirectCallers {
+		note(c.FileID)
+	}
 	for _, hop := range r.IndirectCallers {
-		if _, ok := seen[hop.Symbol.FileID]; !ok {
-			seen[hop.Symbol.FileID] = struct{}{}
-			ids = append(ids, hop.Symbol.FileID)
+		note(hop.Symbol.FileID)
+	}
+	for _, group := range [][]model.Symbol{r.AffectedSubclasses, r.AffectedViaComposition, r.AffectedViaIncludes} {
+		for _, sym := range group {
+			note(sym.FileID)
 		}
 	}
 	return ids

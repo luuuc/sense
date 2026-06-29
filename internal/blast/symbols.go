@@ -137,6 +137,106 @@ func SiblingSymbolIDs(ctx context.Context, db *sql.DB, symbolID int64) ([]int64,
 	return ids, rows.Err()
 }
 
+// loadReverseComposition returns the symbols that declare a `composes` edge
+// directly onto one of the seed symbols — the reverse-composition dependents
+// ("what composes the subject"). For a Django model this is every model that
+// holds a ForeignKey / OneToOne / ManyToMany to it, scattered across apps.
+//
+// It reads the edge table directly instead of bucketing the BFS callers, because
+// on a high-fan-out hub the composers are buried: they ride low-confidence
+// composes edges that capResults evicts beneath the 1.0 call/test callers, and a
+// composer that also calls the subject is recorded under the calls edge, never
+// bucketed as a composer. Because it selects `composes` edges only, the test
+// call-sites that dominate the caller list (calls/tests edges) are excluded by
+// construction. Seeds, the subject's own members (childSet / isSelf), and ids
+// already placed in another edge-kind group (excludeGrouped) are skipped; output
+// is ordered by id and capped to maxResults.
+func (s *bfsState) loadReverseComposition(ctx context.Context, db *sql.DB, seedIDs []int64, seedSet, excludeGrouped map[int64]struct{}, isSelf selfMethodFn, maxResults int) ([]model.Symbol, error) {
+	composerIDs, err := inboundComposers(ctx, db, seedIDs)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]int64, 0, len(composerIDs))
+	for _, id := range composerIDs {
+		if _, isSeed := seedSet[id]; isSeed {
+			continue
+		}
+		if _, isChild := s.childSet[id]; isChild {
+			continue
+		}
+		if _, grouped := excludeGrouped[id]; grouped {
+			continue
+		}
+		kept = append(kept, id)
+	}
+	if len(kept) > maxResults {
+		// Signal the cap so the response is not read as a complete dependent set —
+		// "audit every dependent" depends on the agent knowing it was truncated.
+		s.truncated = true
+		kept = kept[:maxResults]
+	}
+	syms, err := loadSymbols(ctx, db, kept)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Symbol, 0, len(kept))
+	for _, id := range kept {
+		if sym, ok := syms[id]; ok && !isSelf(sym) {
+			out = append(out, sym)
+		}
+	}
+	sortSymbolsByID(out)
+	return out, nil
+}
+
+// inboundComposers returns the distinct source symbol ids of `composes` edges
+// whose target is any of ids, ordered ascending. These are the symbols that
+// compose (hold a structural has-a relationship to) one of the seeds. The set
+// dedups sources that compose more than one seed; chunking keeps the IN clause
+// under SQLITE_MAX_VARIABLE_NUMBER on a wide seed set.
+func inboundComposers(ctx context.Context, db *sql.DB, ids []int64) ([]int64, error) {
+	set := make(map[int64]struct{}, len(ids))
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		q := `SELECT DISTINCT source_id FROM sense_edges
+		      WHERE target_id IN (` + placeholders + `) AND kind = 'composes' AND source_id IS NOT NULL`
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := db.QueryContext(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			set[id] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+	out := make([]int64, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
 func filterIDs(ids []int64, keep map[int64]struct{}) []int64 {
 	out := make([]int64, 0, len(ids))
 	for _, id := range ids {
