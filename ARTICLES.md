@@ -16,4 +16,8 @@ In chronological order.
 
 ## Benchmarking AI on Ruby and Rails (in progress)
 
-How well does an AI agent navigate real Ruby and Rails code, with and without a structural map? This series runs the same maintainer task on each repo twice, plain Claude Code as the baseline and Claude Code plus Sense, on an open and reproducible harness, then reports where Sense earns its place and where it does not. It spans 13 codebases, from large Rails apps down to the Ruby AI-stack gems. Links are added here as each piece publishes.
+How well does an AI agent navigate real Ruby and Rails code, with and without a structural map? This series runs the same maintainer task on each repo twice, plain Claude Code as the baseline and Claude Code plus Sense, on an open and reproducible harness, then reports where Sense earns its place and where it does not. It spans 13 codebases, from large Rails apps down to the Ruby AI-stack gems, with 6 companion engineering pieces on dev.to. Links are added here as each piece publishes.
+
+- 2026-06-29 — [Chatwoot is one of the best-built Rails apps shipping. That's exactly why my AI agent failed on it.](https://medium.com/@lucdiallo/chatwoot-is-one-of-the-best-built-rails-apps-shipping-thats-exactly-why-my-ai-agent-failed-on-it-034044346de2) (Medium)
+
+13 more Medium per-repo essays and 6 native dev.to engineering articles to come.
