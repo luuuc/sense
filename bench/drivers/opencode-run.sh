@@ -51,6 +51,10 @@ SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benc
 TOOLS_CSV="baseline,sense"; REPO=""; MODEL="kimi-for-coding/k2p7"
 SESSION_TIMEOUT=""; KEEP_RAW=0
 # Stability knobs (cloud/subscription providers over opencode can be flaky). See the watchdog below.
+# Record whether the caller pinned these BEFORE defaulting, so the metered-arm
+# bump below only fires when they were left at the default (an explicit override wins).
+OPENCODE_MAX_SECS_SET="${OPENCODE_MAX_SECS+1}"
+OPENCODE_STALL_IDLE_SET="${OPENCODE_STALL_IDLE+1}"
 OPENCODE_MAX_SECS="${OPENCODE_MAX_SECS:-1200}"     # hard ceiling floor (was a flat 600 that killed slow-but-working sense runs)
 OPENCODE_FIRST_GRACE="${OPENCODE_FIRST_GRACE:-240}" # allow this long for the FIRST streamed byte (MCP cold start); 0 bytes past it = a hang
 OPENCODE_STALL_IDLE="${OPENCODE_STALL_IDLE:-150}"   # after output starts, kill only if the stream goes silent this long (stuck mid-run)
@@ -87,6 +91,17 @@ case "$MODEL" in
   */*) : ;;                                   # already provider/model
   *:cloud) MODEL="ollama-cloud/${MODEL%:cloud}" ;;
   *) MODEL="ollama-cloud/$MODEL" ;;
+esac
+
+# Metered Kimi-for-Coding throttles SILENTLY for minutes at the heavy final-
+# synthesis turn; the default 150s stall watchdog guillotines that recoverable
+# cooldown -> empty_final_answer (proven: native Kimi waits it out and converges).
+# Give this arm a longer stall tolerance + hard cap unless the caller pinned them.
+case "$MODEL" in
+  *kimi*)
+    [ -z "$OPENCODE_STALL_IDLE_SET" ] && OPENCODE_STALL_IDLE=600
+    [ -z "$OPENCODE_MAX_SECS_SET" ]   && OPENCODE_MAX_SECS=3000
+    ;;
 esac
 
 command -v opencode >/dev/null || { echo "opencode CLI not found in PATH" >&2; exit 1; }
@@ -177,6 +192,27 @@ for tool in "${TOOLS[@]}"; do
   else
     run_path="$SCRUBBED_PATH"
   fi
+
+  # Enable opencode tool-output pruning + a larger compaction buffer for BOTH
+  # arms (uniform = fair). prune:true drops stale tool outputs from context so the
+  # heavy final-synthesis turn stays light enough to clear a metered throttle (the
+  # Kimi empty_final_answer fix). Merges into the sense arm's MCP opencode.json;
+  # creates a compaction-only one for the baseline (which otherwise has none).
+  python3 - "$repo_dir/opencode.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+cfg = {}
+if os.path.exists(p):
+    try:
+        with open(p) as f:
+            cfg = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        cfg = {}
+cfg.setdefault("$schema", "https://opencode.ai/config.json")
+cfg["compaction"] = {"auto": True, "prune": True, "reserved": 30000}
+with open(p, "w") as f:
+    json.dump(cfg, f, indent=2)
+PY
 
   raw="$out/opencode-raw.jsonl"; LOGFILE="$out/opencode.log"; : > "$LOGFILE"
   # Isolated scratch for the offload gate: point the run's TMPDIR here so the model's
