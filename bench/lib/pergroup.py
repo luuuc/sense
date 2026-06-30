@@ -64,6 +64,12 @@ def collect(arm):
     by_group, overall = {}, []
     for p in runs(arm):
         d = json.load(open(p))
+        # A failed run (empty_final_answer / truncated stream / provider cap) is
+        # NOT a real 0.0 — its own run_meta says so. Blending it as 0.0
+        # manufactures a false loss (the Kimi throttle-truncation artifact).
+        # Skip it; an arm with no surviving run surfaces as no-data below.
+        if d.get("failed"):
+            continue
         g = d.get("gold_recall", {})
         overall.append(g.get("cited_recall", 0.0))
         for gn, gd in g.get("groups", {}).items():
