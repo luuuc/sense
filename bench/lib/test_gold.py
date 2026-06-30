@@ -200,6 +200,67 @@ class ScoreGoldRecallTest(unittest.TestCase):
         self.assertEqual(r["missed_cite"], ["b"])
 
 
+class GoldUniqueSuffixTest(unittest.TestCase):
+    """Multi-segment gold-unique suffix: credit a repo-relative citation whose
+    basename collides between two gold targets (so form-4 is disabled), while
+    excluding a cross-tree sibling that shares the same tail."""
+
+    SALEOR = [
+        {"id": "order-build", "group": "dependents",
+         "match": ["saleor/order/utils.py"]},
+        {"id": "checkout-append", "group": "dependents",
+         "match": ["saleor/checkout/utils.py"]},
+        {"id": "bulk", "group": "dependents",
+         "match": ["saleor/graphql/order/bulk_mutations/order_bulk_create.py"]},
+    ]
+
+    def test_unique_suffixes_skip_colliding_basename(self):
+        allp = ["saleor/order/utils.py", "saleor/checkout/utils.py"]
+        sufs = gold._gold_unique_suffixes("saleor/order/utils.py", allp)
+        self.assertIn("order/utils.py", sufs)        # 2-seg suffix is gold-unique
+        self.assertNotIn("utils.py", sufs)           # bare basename collides → out
+
+    def _det(self, text):
+        r = gold.score_gold_recall(text, self.SALEOR)
+        return {x["id"]: x for x in r["details"]}
+
+    def test_repo_relative_citation_credited(self):
+        # Agent working INSIDE the saleor/ package writes the natural
+        # repo-relative path (no saleor/ prefix). utils.py collides → form-4 off;
+        # the 2-segment gold-unique suffix order/utils.py must still credit.
+        d = self._det("repriced at order/utils.py:248")
+        self.assertTrue(d["order-build"]["cited"])
+        self.assertTrue(d["order-build"]["mentioned"])
+        self.assertFalse(d["checkout-append"]["cited"])
+
+    def test_cross_tree_sibling_not_credited(self):
+        # graphql/order/utils.py is a DIFFERENT real file; citing it must NOT
+        # credit the saleor/order/utils.py gold (the '/' before order is blocked).
+        d = self._det("see graphql/order/utils.py:248")
+        self.assertFalse(d["order-build"]["cited"])
+
+    def test_full_prefixed_path_still_credited(self):
+        d = self._det("saleor/checkout/utils.py:334 reads base price")
+        self.assertTrue(d["checkout-append"]["cited"])
+
+    def test_bare_colliding_basename_not_credited(self):
+        # bare utils.py:5 is ambiguous between two gold targets → neither cited.
+        d = self._det("utils.py:5")
+        self.assertFalse(d["order-build"]["cited"])
+        self.assertFalse(d["checkout-append"]["cited"])
+
+    def test_suffix_paren_and_json_line_forms(self):
+        d = self._det("order/utils.py (line 248)")
+        self.assertTrue(d["order-build"]["cited"])
+        d = self._det('{"file": "checkout/utils.py", "line": 334}')
+        self.assertTrue(d["checkout-append"]["cited"])
+
+    def test_named_without_line_is_mention_not_cite(self):
+        d = self._det("the reprice lives in order/utils.py somewhere")
+        self.assertTrue(d["order-build"]["mentioned"])
+        self.assertFalse(d["order-build"]["cited"])
+
+
 class ScoreGoldF1Test(unittest.TestCase):
     """Precision/recall/F1 of the claimed (cited) file set vs gold."""
 

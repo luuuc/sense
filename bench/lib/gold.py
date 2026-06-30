@@ -95,6 +95,77 @@ def _cited(pattern, hay, basename=None):
     return False
 
 
+def _all_gold_file_patterns(gold):
+    """Every lower-cased file-like `match` pattern across the gold set."""
+    pats = []
+    for item in gold:
+        if isinstance(item, str):
+            item = {"match": [item]}
+        for p in item.get("match") or []:
+            sp = str(p).lower()
+            if _is_file_like(sp):
+                pats.append(sp)
+    return pats
+
+
+def _gold_unique_suffixes(pattern, all_patterns):
+    """Segment-aligned suffixes of `pattern` that identify it uniquely among the
+    gold file paths — i.e. no OTHER gold pattern ends with that same suffix.
+
+    This is what lets a citation of `order/utils.py:248` credit the gold
+    `saleor/order/utils.py` even though the bare basename `utils.py` collides
+    with `saleor/checkout/utils.py` (so the basename form-4 is disabled): the
+    2-segment suffix `order/utils.py` belongs to exactly one gold target. The
+    full path is always included (k == len). `pattern`/`all_patterns` are
+    lower-cased. Uniqueness is taken over GOLD only — no repo tree needed — so
+    the matching anchor (see `_cited_via_gold_suffix`) must block a leading path
+    separator to keep a cross-tree sibling like `graphql/order/utils.py` out.
+    """
+    segs = [s for s in pattern.split("/") if s]
+    others = [p for p in all_patterns if p != pattern]
+    out = []
+    for k in range(1, len(segs) + 1):
+        suf = "/".join(segs[-k:])
+        if not any(o == suf or o.endswith("/" + suf) for o in others):
+            out.append(suf)
+    return out
+
+
+# Boundary before a gold-unique suffix: start / space / quote / backtick are
+# fine, but a word char, '.', '-' OR '/' means the suffix is the tail of a
+# LONGER path (e.g. `order/utils.py` inside `graphql/order/utils.py`), which is
+# a different file and must not match. The '/' in the look-behind is what the
+# repo-tree compaction oracle gets from real `repo_files`; here it stands in for
+# that knowledge so the matcher stays sound without a checkout.
+_SUFFIX_ANCHOR = r"(?<![\w./\-])"
+
+
+def _mentioned_via_gold_suffix(pattern, hay, all_patterns):
+    """Is a gold-unique segment-suffix of `pattern` named anywhere in `hay`?"""
+    for suf in _gold_unique_suffixes(pattern, all_patterns):
+        if re.search(_SUFFIX_ANCHOR + re.escape(suf), hay):
+            return True
+    return False
+
+
+def _cited_via_gold_suffix(pattern, hay, all_patterns):
+    """Is a gold-unique segment-suffix of `pattern` pinned to a line in `hay`?
+
+    Accepts the same three line-pin forms as `_cited` (path:N, path (line N),
+    JSON sibling "line": N), but matches a gold-unique suffix rather than the
+    full literal path, so a natural repo-relative citation earns credit while a
+    cross-tree sibling sharing the tail does not (see `_SUFFIX_ANCHOR`).
+    """
+    for suf in _gold_unique_suffixes(pattern, all_patterns):
+        esc = _SUFFIX_ANCHOR + re.escape(suf)
+        if (re.search(esc + r":\d+", hay)
+                or re.search(esc + r"\s*\(line\s+\d+\)", hay)
+                or re.search(esc + r'[^\n{}]{0,%d}?"lines?"\s*:\s*\[?\s*"?\d+'
+                             % _LINE_FIELD_WINDOW, hay)):
+            return True
+    return False
+
+
 def _gold_basenames(gold):
     """Map each gold file path -> its basename IFF that basename is unique.
 
@@ -306,6 +377,7 @@ def score_gold_recall(answer_text, gold, repo_files=None, transcript_text=None):
     tx = transcript_text.lower() if transcript_text else None
     oracle_on = bool(repo_files) and tx is not None
     unique_basenames = _gold_basenames(gold)
+    all_file_patterns = _all_gold_file_patterns(gold)
     details, groups = [], {}
     men_total = cit_total = 0
     for item in gold:
@@ -318,6 +390,12 @@ def score_gold_recall(answer_text, gold, repo_files=None, transcript_text=None):
         file_pats = [str(p).lower() for p in pats if _is_file_like(str(p))]
         if file_pats:
             cited = any(_cited(p, hay, unique_basenames.get(p)) for p in file_pats)
+            # Gold-unique segment-suffix: credit a natural repo-relative citation
+            # (e.g. order/utils.py:248) whose basename collides between two gold
+            # targets, while excluding a cross-tree sibling. No repo tree needed.
+            for p in file_pats:
+                mentioned = mentioned or _mentioned_via_gold_suffix(p, hay, all_file_patterns)
+                cited = cited or _cited_via_gold_suffix(p, hay, all_file_patterns)
             if oracle_on:
                 for p in file_pats:
                     om, oc = _oracle_match(p, hay, repo_files, tx)
