@@ -19,5 +19,8 @@ In chronological order.
 How well does an AI agent navigate real Ruby and Rails code, with and without a structural map? This series runs the same maintainer task on each repo twice, plain Claude Code as the baseline and Claude Code plus Sense, on an open and reproducible harness, then reports where Sense earns its place and where it does not. It spans 13 codebases, from large Rails apps down to the Ruby AI-stack gems, with 6 companion engineering pieces on dev.to. Links are added here as each piece publishes.
 
 - 2026-06-29 — [Chatwoot is one of the best-built Rails apps shipping. That's exactly why my AI agent failed on it.](https://medium.com/@lucdiallo/chatwoot-is-one-of-the-best-built-rails-apps-shipping-thats-exactly-why-my-ai-agent-failed-on-it-034044346de2) (Medium)
+- 2026-06-30 — [Mastodon found a flaw in my own tool. Fixing it is the best part of this story.](https://medium.com/@lucdiallo/mastodon-found-a-flaw-in-my-own-tool-fixing-it-is-the-best-part-of-this-story-a27a127fa33a) (Medium)
+- 2026-06-30 — [The AI judge that called a half-finished audit 'exhaustive'](https://dev.to/luuuc/the-ai-judge-that-called-a-half-finished-audit-exhaustive-45n7) (dev.to)
+- 2026-07-01 — [GitLab is the biggest Rails monolith there is. How much of it can an AI map?](https://medium.com/@lucdiallo/gitlab-is-the-biggest-rails-monolith-there-is-how-much-of-it-can-an-ai-map-39334bc31308) (Medium)
 
-13 more Medium per-repo essays and 6 native dev.to engineering articles to come.
+11 more Medium per-repo essays and 5 native dev.to engineering articles to come.
