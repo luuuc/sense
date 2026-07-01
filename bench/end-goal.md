@@ -17,7 +17,7 @@ The benchmark exists to answer one question, repeatedly and trustworthily: *give
 - **Audience is the next agent.** Scenario prompts say so explicitly ("hand the next agent…"). Rubric criteria score for "could the agent edit from this?" — not "did the human reader feel informed?".
 - **No prose-quality bonuses.** A beautifully-written answer that lacks file:line citations scores worse than a terse list of file:line + reasons. The LLM judge is steered toward that prior.
 - **Citations and call-orders are first-class.** "file:line for every method in the chain, in order" is the bar.
-- **The output of the bench is differential.** Sense vs baseline, with a single fairness number per scenario. Absolute scores matter less than the gap between tools on the same task.
+- **The output of the bench is differential.** The same agent with the tool (sense) vs without it (baseline), with a single fairness number per scenario. Absolute scores matter less than the gap the tool opens on the same task.
 
 ---
 
