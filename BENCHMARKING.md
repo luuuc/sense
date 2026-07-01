@@ -18,7 +18,7 @@ The benchmark is the pilot. Product fixes are usually a byproduct of benching a 
 
 These are the same rules the internal methodology runs on. They are publishable on purpose, because a benchmark that only flatters the tool measures nothing.
 
-1. **The agent is the baseline.** Both arms are the same capable agent on the same frontier model. One has Sense, one has grep, read, and its own reasoning. The question is never "is Sense useful in the abstract," it is "where does Sense let the agent reach structure it could not assemble by reading and grepping alone." That reach is hardest to see from the inside, because a strong agent reads and recalls its way to most answers and feels done, which is exactly the false confidence the bench is built to catch.
+1. **The agent is the constant; Sense is a tool it reaches for.** Both arms are the same capable agent on the same frontier model — one working with Sense, one with only grep, read, and its own reasoning (the baseline). The question is never "is Sense useful in the abstract," it is "where does the tool let the agent reach structure it could not assemble by reading and grepping alone." That reach is hardest to see from the inside, because a strong agent reads and recalls its way to most answers and feels done, which is exactly the false confidence the bench is built to catch.
 
 2. **A proxy is never a verdict.** grep-reachability is not "the baseline would have found it." A single run is noise. Metadata is not evidence. Conclusions come from reading the full transcripts of both arms, side by side, per target.
 
