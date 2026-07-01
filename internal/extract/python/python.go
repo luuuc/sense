@@ -366,6 +366,12 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 		})
 	}
 
+	if kind == "attribute" {
+		if handled, err := w.tryEmitCeleryDispatch(fn, source, line); handled || err != nil {
+			return err
+		}
+	}
+
 	return w.emit.Edge(extract.EmittedEdge{
 		SourceQualified: source,
 		TargetQualified: target,
