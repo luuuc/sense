@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.5] - 2026-07-01
+
+### Bug Fixes
+
+- resolve celery task dispatch to the task function
 ## [1.11.4] - 2026-06-29
 
 ### Bug Fixes
