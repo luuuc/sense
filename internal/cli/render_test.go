@@ -342,13 +342,14 @@ func TestRenderImportsNonEmpty(t *testing.T) {
 func TestRenderEdgeGroupFull(t *testing.T) {
 	filePtr := func(s string) *string { return &s }
 	edges := mcpio.GraphEdges{
-		Inherits: []mcpio.InheritEdgeRef{{Symbol: "Base"}},
-		Composes: []mcpio.ComposeEdgeRef{{Symbol: "Config"}},
-		Includes: []mcpio.IncludeEdgeRef{{Symbol: "Loggable"}},
-		Imports:  []mcpio.ImportEdgeRef{{Symbol: "fmt"}},
-		Calls:    []mcpio.CallEdgeRef{{Symbol: "Process", Confidence: 1.0}},
-		CalledBy: []mcpio.CallEdgeRef{{Symbol: "Main", File: filePtr("main.go"), Confidence: 0.9}},
-		Tests:    []mcpio.TestEdgeRef{{File: "test.go", Confidence: 0.8}},
+		Inherits:    []mcpio.InheritEdgeRef{{Symbol: "Base"}},
+		InheritedBy: []mcpio.InheritEdgeRef{{Symbol: "PremiumCheckout"}},
+		Composes:    []mcpio.ComposeEdgeRef{{Symbol: "Config"}},
+		Includes:    []mcpio.IncludeEdgeRef{{Symbol: "Loggable"}},
+		Imports:     []mcpio.ImportEdgeRef{{Symbol: "fmt"}},
+		Calls:       []mcpio.CallEdgeRef{{Symbol: "Process", Confidence: 1.0}},
+		CalledBy:    []mcpio.CallEdgeRef{{Symbol: "Main", File: filePtr("main.go"), Confidence: 0.9}},
+		Tests:       []mcpio.TestEdgeRef{{File: "test.go", Confidence: 0.8}},
 	}
 
 	var buf bytes.Buffer
@@ -358,6 +359,7 @@ func TestRenderEdgeGroupFull(t *testing.T) {
 
 	for _, want := range []string{
 		"inherits  Base",
+		"inherited by PremiumCheckout",
 		"composes  Config",
 		"includes  Loggable",
 		"imports   fmt",
