@@ -1214,13 +1214,14 @@ func TestGraphCallSiteNoSnippetForNonCallEdges(t *testing.T) {
 	}
 }
 
-// TestGraphInheritsInboundExposesImplementors pins the cross-language
+// TestGraphInboundImplementorsSurfaceInInheritedBy pins the cross-language
 // "who inherits / implements this" path: when a trait or base class is
 // the focal symbol, inbound EdgeInherits edges (implementors,
-// subclasses) must surface in the Inherits bucket. Before this was
-// wired up, `sense graph` on a hub trait like axum's Handler returned
-// empty inherits even when impls were correctly indexed.
-func TestGraphInheritsInboundExposesImplementors(t *testing.T) {
+// subclasses) must surface in the InheritedBy bucket (subtypes),
+// distinct from Inherits (supertypes). Before this was wired up,
+// `sense graph` on a hub trait like axum's Handler returned empty
+// inheritance even when impls were correctly indexed.
+func TestGraphInboundImplementorsSurfaceInInheritedBy(t *testing.T) {
 	files := func(id int64) (string, bool) {
 		switch id {
 		case 1:
@@ -1253,14 +1254,17 @@ func TestGraphInheritsInboundExposesImplementors(t *testing.T) {
 
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
-	if len(resp.Edges.Inherits) != 2 {
-		t.Fatalf("Inherits = %d, want 2 (MethodRouter, Layered)", len(resp.Edges.Inherits))
+	if len(resp.Edges.InheritedBy) != 2 {
+		t.Fatalf("InheritedBy = %d, want 2 (MethodRouter, Layered)", len(resp.Edges.InheritedBy))
+	}
+	if len(resp.Edges.Inherits) != 0 {
+		t.Fatalf("Inherits = %d, want 0 (implementors are subtypes, not supertypes)", len(resp.Edges.Inherits))
 	}
 	want := map[string]string{
 		"MethodRouter": "src/router.rs:1355",
 		"Layered":      "src/layered.rs:317",
 	}
-	for _, e := range resp.Edges.Inherits {
+	for _, e := range resp.Edges.InheritedBy {
 		ref, ok := want[e.Symbol]
 		if !ok {
 			t.Errorf("unexpected inherits entry %q", e.Symbol)
@@ -1307,11 +1311,11 @@ func TestGraphInheritsInboundSkipsUnresolvedSource(t *testing.T) {
 
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
-	if len(resp.Edges.Inherits) != 1 {
-		t.Fatalf("Inherits = %d, want 1 (resolved-only, blanket impl dropped)", len(resp.Edges.Inherits))
+	if len(resp.Edges.InheritedBy) != 1 {
+		t.Fatalf("InheritedBy = %d, want 1 (resolved-only, blanket impl dropped)", len(resp.Edges.InheritedBy))
 	}
-	if resp.Edges.Inherits[0].Symbol != "MethodRouter" {
-		t.Errorf("Inherits[0] = %q, want MethodRouter", resp.Edges.Inherits[0].Symbol)
+	if resp.Edges.InheritedBy[0].Symbol != "MethodRouter" {
+		t.Errorf("InheritedBy[0] = %q, want MethodRouter", resp.Edges.InheritedBy[0].Symbol)
 	}
 }
 
@@ -1343,16 +1347,20 @@ func TestGraphInheritsInboundIncludedInCallersDirection(t *testing.T) {
 
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
 
-	if len(resp.Edges.Inherits) != 1 {
-		t.Fatalf("Inherits = %d under DirectionCallers, want 1", len(resp.Edges.Inherits))
+	if len(resp.Edges.InheritedBy) != 1 {
+		t.Fatalf("InheritedBy = %d under DirectionCallers, want 1", len(resp.Edges.InheritedBy))
 	}
 
 	raw, err := MarshalGraphCompactDirectional(resp, model.DirectionCallers)
 	if err != nil {
 		t.Fatalf("MarshalGraphCompactDirectional: %v", err)
 	}
-	if !bytes.Contains(raw, []byte(`"inherits":[`)) {
-		t.Errorf("compact callers output should include inherits bucket; got:\n%s", raw)
+	if !bytes.Contains(raw, []byte(`"inherited_by":[`)) {
+		t.Errorf("compact callers output should include inherited_by bucket; got:\n%s", raw)
+	}
+	// inherits (supertypes) is outbound-only, pruned from a callers query.
+	if bytes.Contains(raw, []byte(`"inherits":[`)) {
+		t.Errorf("compact callers output should omit the outbound inherits bucket; got:\n%s", raw)
 	}
 	if !bytes.Contains(raw, []byte(`"MethodRouter"`)) {
 		t.Errorf("compact callers output should include MethodRouter; got:\n%s", raw)

@@ -32,14 +32,15 @@ func TestMarshalGraphRoundTrip(t *testing.T) {
 				{Symbol: "PaymentGateway#charge", File: &filePath, Confidence: 1.0},
 				{Symbol: "Beacon.track", File: nil, Confidence: 0.9},
 			},
-			CalledBy:   []CallEdgeRef{},
-			Inherits:   []InheritEdgeRef{{Symbol: "ApplicationService", File: nil}},
-			Composes:   []ComposeEdgeRef{},
-			ComposedBy: []ComposeEdgeRef{},
-			Includes:   []IncludeEdgeRef{},
-			Imports:    []ImportEdgeRef{},
-			Tests:      []TestEdgeRef{{File: "test/services/checkout_service_test.rb", Confidence: 0.8}},
-			Temporal:   []TemporalEdgeRef{},
+			CalledBy:    []CallEdgeRef{},
+			Inherits:    []InheritEdgeRef{{Symbol: "ApplicationService", File: nil}},
+			InheritedBy: []InheritEdgeRef{},
+			Composes:    []ComposeEdgeRef{},
+			ComposedBy:  []ComposeEdgeRef{},
+			Includes:    []IncludeEdgeRef{},
+			Imports:     []ImportEdgeRef{},
+			Tests:       []TestEdgeRef{{File: "test/services/checkout_service_test.rb", Confidence: 0.8}},
+			Temporal:    []TemporalEdgeRef{},
 		},
 		NextSteps: []NextStep{},
 	}
@@ -104,12 +105,12 @@ func TestMarshalZeroValueEmptySlices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalGraph: %v", err)
 	}
-	for _, field := range []string{`"calls": []`, `"called_by": []`, `"inherits": []`, `"composes": []`, `"composed_by": []`, `"includes": []`, `"imports": []`, `"tests": []`, `"temporal": []`, `"next_steps": []`} {
+	for _, field := range []string{`"calls": []`, `"called_by": []`, `"inherits": []`, `"inherited_by": []`, `"composes": []`, `"composed_by": []`, `"includes": []`, `"imports": []`, `"tests": []`, `"temporal": []`, `"next_steps": []`} {
 		if !strings.Contains(string(graphBytes), field) {
 			t.Errorf("GraphResponse zero-value missing %s\ngot:\n%s", field, graphBytes)
 		}
 	}
-	for _, nullField := range []string{`"calls": null`, `"called_by": null`, `"inherits": null`, `"composes": null`, `"composed_by": null`, `"includes": null`, `"imports": null`, `"tests": null`, `"temporal": null`, `"next_steps": null`} {
+	for _, nullField := range []string{`"calls": null`, `"called_by": null`, `"inherits": null`, `"inherited_by": null`, `"composes": null`, `"composed_by": null`, `"includes": null`, `"imports": null`, `"tests": null`, `"temporal": null`, `"next_steps": null`} {
 		if strings.Contains(string(graphBytes), nullField) {
 			t.Errorf("GraphResponse zero-value slice field should be []: %s\ngot:\n%s", nullField, graphBytes)
 		}
@@ -601,34 +602,37 @@ func TestMarshalGraphCompactDirectional(t *testing.T) {
 		}
 	}
 
-	t.Run("callers omits calls but keeps inherits", func(t *testing.T) {
+	t.Run("callers omits calls and inherits but keeps inherited_by", func(t *testing.T) {
 		raw, err := MarshalGraphCompactDirectional(base(), model.DirectionCallers)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
 		s := string(raw)
-		for _, key := range []string{`"calls"`} {
+		// `inherits` (supertypes) is outbound-only, so it is pruned from a
+		// callers query alongside `calls`.
+		for _, key := range []string{`"calls"`, `"inherits":`} {
 			if strings.Contains(s, key) {
 				t.Errorf("expected %s to be absent for direction=callers:\n%s", key, s)
 			}
 		}
-		// `inherits` carries inheritors (inbound EdgeInherits) under
+		// `inherited_by` carries inheritors (inbound EdgeInherits) under
 		// the callers direction — the natural fit for "who implements
 		// this trait." Empty bucket renders as `[]`.
-		for _, key := range []string{`"called_by":[]`, `"tests":[]`, `"inherits":[]`} {
+		for _, key := range []string{`"called_by":[]`, `"tests":[]`, `"inherited_by":[]`} {
 			if !strings.Contains(s, key) {
 				t.Errorf("expected %s to be present for direction=callers:\n%s", key, s)
 			}
 		}
 	})
 
-	t.Run("callees omits called_by and tests", func(t *testing.T) {
+	t.Run("callees omits called_by, tests and inherited_by", func(t *testing.T) {
 		raw, err := MarshalGraphCompactDirectional(base(), model.DirectionCallees)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
 		s := string(raw)
-		for _, key := range []string{`"called_by"`, `"tests"`} {
+		// `inherited_by` (subtypes) is inbound-only, pruned from a callees query.
+		for _, key := range []string{`"called_by"`, `"tests"`, `"inherited_by"`} {
 			if strings.Contains(s, key) {
 				t.Errorf("expected %s to be absent for direction=callees:\n%s", key, s)
 			}
@@ -640,13 +644,13 @@ func TestMarshalGraphCompactDirectional(t *testing.T) {
 		}
 	})
 
-	t.Run("both renders all eight buckets", func(t *testing.T) {
+	t.Run("both renders all edge buckets", func(t *testing.T) {
 		raw, err := MarshalGraphCompactDirectional(base(), model.DirectionBoth)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
 		s := string(raw)
-		for _, key := range []string{"calls", "called_by", "inherits", "composes", "includes", "imports", "tests", "temporal"} {
+		for _, key := range []string{"calls", "called_by", "inherits", "inherited_by", "composes", "composed_by", "includes", "imports", "tests", "temporal"} {
 			if !strings.Contains(s, `"`+key+`":[]`) {
 				t.Errorf("expected %q:[] to be present for direction=both:\n%s", key, s)
 			}
