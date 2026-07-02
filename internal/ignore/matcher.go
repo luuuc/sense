@@ -15,6 +15,11 @@ var defaultPatterns = []string{
 	"node_modules/",
 	"dist/",
 	"build/",
+	// _next/ is the Next.js build output tree (static export under out/_next,
+	// chunks named <hash>.js — not *.min.js). Committing it into a repo (e.g. a
+	// vendored dashboard) otherwise floods the index with minified-bundle
+	// symbols. The .next/ build cache is already skipped as a dot-dir.
+	"_next/",
 	"*.min.js",
 	"*.bundle.js",
 	"*.min.css",
