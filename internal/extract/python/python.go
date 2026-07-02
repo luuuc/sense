@@ -52,6 +52,8 @@ package python
 import (
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
@@ -366,10 +368,12 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 		})
 	}
 
+	conf := 1.0
 	if kind == "attribute" {
 		if handled, err := w.tryEmitCeleryDispatch(fn, source, line); handled || err != nil {
 			return err
 		}
+		conf = attrReceiverConfidence(fn, w.source)
 	}
 
 	return w.emit.Edge(extract.EmittedEdge{
@@ -377,8 +381,31 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 		TargetQualified: target,
 		Kind:            model.EdgeCalls,
 		Line:            &line,
-		Confidence:      1.0,
+		Confidence:      conf,
 	})
+}
+
+// attrReceiverConfidence rates a `receiver.method` call by how well the
+// receiver type is known at extraction time. A `self`/`cls` receiver or a
+// Capitalized (class / constant / module-as-class) receiver stays fully
+// confident; a lowercase-variable or chained receiver is an unverified
+// instance call, emitted at ConfidenceUnresolved so the resolver's bare-name
+// fallback does not surface it as a confident caller (a bare `x.id` binding
+// to an arbitrary same-named `id`). Mirrors Ruby's resolveCallTarget, which
+// already distinguishes a constant receiver from an identifier one.
+func attrReceiverConfidence(attr *sitter.Node, src []byte) float64 {
+	obj := attr.ChildByFieldName("object")
+	if obj == nil || obj.Kind() != "identifier" {
+		return extract.ConfidenceUnresolved
+	}
+	t := extract.Text(obj, src)
+	if t == "self" || t == "cls" {
+		return 1.0
+	}
+	if r, _ := utf8.DecodeRuneInString(t); unicode.IsUpper(r) {
+		return 1.0
+	}
+	return extract.ConfidenceUnresolved
 }
 
 // literalGetattrTarget returns the second argument of a `getattr` call

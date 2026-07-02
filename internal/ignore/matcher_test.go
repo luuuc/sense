@@ -30,6 +30,30 @@ func TestBasicPatterns(t *testing.T) {
 	}
 }
 
+// TestDefaultPatternsIgnoreNextBuildOutput pins that a committed Next.js build
+// tree (the litellm dashboard: out/_next/static/chunks/<hash>.js — a dir named
+// _next, chunks NOT named *.min.js) is excluded by the built-in defaults, while
+// a real source file under an unrelated path is not.
+func TestDefaultPatternsIgnoreNextBuildOutput(t *testing.T) {
+	m := New(DefaultPatterns()...)
+	tests := []struct {
+		path  string
+		isDir bool
+		want  bool
+	}{
+		{"litellm/proxy/_experimental/out/_next", true, true},
+		{"litellm/proxy/_experimental/out/_next/static/chunks/496b84010c33cf69.js", false, true},
+		{"node_modules/react/index.js", false, true},
+		{"litellm/proxy/main.py", false, false},
+		{"ui/src/components/Foo.tsx", false, false},
+	}
+	for _, tt := range tests {
+		if got := m.Match(tt.path, tt.isDir); got != tt.want {
+			t.Errorf("Match(%q, dir=%v) = %v, want %v", tt.path, tt.isDir, got, tt.want)
+		}
+	}
+}
+
 func TestNegation(t *testing.T) {
 	m := New("*.log", "!important.log")
 	if m.Match("debug.log", false) != true {
@@ -214,7 +238,7 @@ func TestDefaultPatterns(t *testing.T) {
 		t.Error("DefaultPatterns must return a defensive copy")
 	}
 	want := map[string]bool{
-		"vendor/": true, "node_modules/": true, "dist/": true, "build/": true,
+		"vendor/": true, "node_modules/": true, "dist/": true, "build/": true, "_next/": true,
 		"*.min.js": true, "*.bundle.js": true, "*.min.css": true,
 	}
 	for _, p := range again {

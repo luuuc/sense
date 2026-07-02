@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/sqlite"
 	"github.com/luuuc/sense/internal/version"
 )
@@ -654,6 +655,9 @@ func renderQuickOrientation(ctx context.Context, db *sql.DB) (string, error) {
 }
 
 func renderEntryPoints(ctx context.Context, db *sql.DB) string {
+	// NB: unlike renderHubSymbols, this does not confidence-filter its edges yet;
+	// its dominant noise source is build-artifact symbols (minified JS bundles),
+	// addressed at the scanner layer, not here.
 	rows, err := db.QueryContext(ctx, `
 		WITH outgoing AS (
 			SELECT source_id, COUNT(*) AS cnt
@@ -693,14 +697,20 @@ func renderEntryPoints(ctx context.Context, db *sql.DB) string {
 }
 
 func renderHubSymbols(ctx context.Context, db *sql.DB) string {
+	// Count only edges at or above blast's traversal floor. Bare-name
+	// collision guesses (ConfidenceNameCollision, 0.3) are deliberately below
+	// it so impact analysis ignores them; counting them here manufactured
+	// nonsense hubs (a generic `get`/`patch`/`items` collecting thousands of
+	// unresolved-receiver `.get()` calls), contradicting what blast/graph show.
 	rows, err := db.QueryContext(ctx, `
 		SELECT s.qualified, COUNT(e.id) as callers
 		FROM sense_symbols s
 		JOIN sense_edges e ON e.target_id = s.id
 		WHERE e.kind IN ('calls', 'references')
+		  AND e.confidence >= ?
 		GROUP BY s.id
 		ORDER BY callers DESC
-		LIMIT 5`)
+		LIMIT 5`, extract.ConfidenceUnresolved)
 	if err != nil {
 		return ""
 	}

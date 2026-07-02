@@ -1,6 +1,10 @@
 package python
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/luuuc/sense/internal/extract"
+)
 
 // These tests exercise Celery async-dispatch edge resolution: a call to
 // `task.delay(...)` / `task.apply_async(...)` emits a calls edge to the task
@@ -46,7 +50,10 @@ func TestCeleryDottedReceiverUsesLastSegment(t *testing.T) {
 
 func TestCeleryNonDispatchMethodUnaffected(t *testing.T) {
 	// `.run()` is not a dispatch method: the default attribute-call edge
-	// (surface text, confidence 1.0) is emitted, no task-receiver edge at 0.9.
+	// (surface text) is emitted, no task-receiver edge at 0.9. The receiver
+	// `worker` is a lowercase variable of unverified type, so the call is
+	// emitted at ConfidenceUnresolved (not 1.0) — an unknown-receiver instance
+	// call the resolver must not surface as a confident caller.
 	r := parse(t, `def go():
     worker.run()
 `)
@@ -54,8 +61,8 @@ func TestCeleryNonDispatchMethodUnaffected(t *testing.T) {
 	if e == nil {
 		t.Fatal("expected the default attribute-call edge for a non-dispatch method")
 	}
-	if e.Confidence != 1.0 {
-		t.Errorf("default attribute-call confidence = %v, want 1.0", e.Confidence)
+	if e.Confidence != extract.ConfidenceUnresolved {
+		t.Errorf("default attribute-call confidence = %v, want %v (unverified receiver)", e.Confidence, extract.ConfidenceUnresolved)
 	}
 	if findEdge(r, "go", "worker", "calls") != nil {
 		t.Error("non-dispatch `.run()` must not emit a task-receiver edge")

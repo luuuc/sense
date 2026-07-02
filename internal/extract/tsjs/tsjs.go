@@ -50,6 +50,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
@@ -713,9 +715,13 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 		return nil
 	}
 	var target string
+	conf := 1.0
 	switch fn.Kind() {
-	case "identifier", "member_expression":
+	case "identifier":
 		target = extract.Text(fn, w.source)
+	case "member_expression":
+		target = extract.Text(fn, w.source)
+		conf = memberReceiverConfidence(fn, w.source)
 	default:
 		return nil
 	}
@@ -729,8 +735,33 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 		TargetQualified: target,
 		Kind:            model.EdgeCalls,
 		Line:            &line,
-		Confidence:      1.0,
+		Confidence:      conf,
 	})
+}
+
+// memberReceiverConfidence rates a `receiver.method()` call by how well the
+// receiver type is known at extraction time. `this` (resolved against the
+// enclosing class) and a Capitalized (class / namespace) receiver stay fully
+// confident; a lowercase-variable or chained receiver is an unverified
+// instance call, emitted at ConfidenceUnresolved so the resolver's bare-name
+// fallback does not surface it as a confident caller (a bare `x.id` binding to
+// an arbitrary same-named `id`). Mirrors the Python and Ruby extractors.
+func memberReceiverConfidence(member *sitter.Node, src []byte) float64 {
+	obj := member.ChildByFieldName("object")
+	if obj == nil {
+		return extract.ConfidenceUnresolved
+	}
+	if obj.Kind() == "this" {
+		return 1.0
+	}
+	if obj.Kind() != "identifier" {
+		return extract.ConfidenceUnresolved
+	}
+	t := extract.Text(obj, src)
+	if r, _ := utf8.DecodeRuneInString(t); unicode.IsUpper(r) {
+		return 1.0
+	}
+	return extract.ConfidenceUnresolved
 }
 
 // handleDefaultExport handles anonymous default exports by synthesizing

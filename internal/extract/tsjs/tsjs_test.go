@@ -1653,3 +1653,40 @@ function run() {
 		t.Errorf("expected 1 references edge (skip call target), got %d", edges)
 	}
 }
+
+// TestMemberReceiverConfidence pins the emit-alignment for JS/TS: a member call
+// is rated by how well its receiver type is known. `this` (resolved against the
+// enclosing class) and a Capitalized (class/namespace) receiver stay fully
+// confident; a lowercase-variable or chained receiver is an unverified instance
+// call at ConfidenceUnresolved, so bare-name fallback cannot surface it as a
+// confident caller.
+func TestMemberReceiverConfidence(t *testing.T) {
+	r := parseTS(t, `class C {
+  m() {
+    this.helper();
+    Other.build();
+    obj.save();
+    a.b.run();
+  }
+}
+`, "c.ts")
+	cases := []struct {
+		target string
+		want   float64
+	}{
+		{"helper", 1.0}, // this. is stripped
+		{"Other.build", 1.0},
+		{"obj.save", extract.ConfidenceUnresolved},
+		{"a.b.run", extract.ConfidenceUnresolved},
+	}
+	for _, c := range cases {
+		e := findEdg(r, "C.m", c.target, "calls")
+		if e == nil {
+			t.Errorf("missing calls edge to %q", c.target)
+			continue
+		}
+		if e.Confidence != c.want {
+			t.Errorf("%s confidence = %v, want %v", c.target, e.Confidence, c.want)
+		}
+	}
+}

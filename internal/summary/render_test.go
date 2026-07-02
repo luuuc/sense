@@ -3,6 +3,7 @@ package summary
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,74 @@ func seedTestDB(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	return db, func() { _ = db.Close() }
+}
+
+// TestRenderHubSymbolsConfidenceFilter proves the hub list counts only edges at
+// or above blast's traversal floor (extract.ConfidenceUnresolved). A bare-name
+// collision target (0.3) with many incoming edges must NOT out-rank a genuinely
+// resolved target with fewer high-confidence edges — the litellm `get`-8019-callers
+// nonsense-hub bug.
+func TestRenderHubSymbolsConfidenceFilter(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "index.db")
+
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+
+	now := time.Now()
+	fid, err := adapter.WriteFile(ctx, &model.File{
+		Path: "app/models/thing.rb", Language: "ruby", Hash: "h", Symbols: 6, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mkSym := func(name string) int64 {
+		id, e := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: name, Qualified: name, Kind: model.KindMethod, LineStart: 1, LineEnd: 2,
+		})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return id
+	}
+	// `noise` = bare-name collision target; `Real` = resolved central symbol.
+	noiseID := mkSym("noise")
+	realID := mkSym("Real")
+
+	callerN := 0
+	writeEdges := func(target int64, n int, conf float64) {
+		for i := 0; i < n; i++ {
+			callerN++
+			caller := mkSym(fmt.Sprintf("caller_%d", callerN))
+			if _, e := adapter.WriteEdge(ctx, &model.Edge{
+				SourceID: model.Int64Ptr(caller), TargetID: target,
+				Kind: model.EdgeCalls, FileID: fid, Confidence: conf,
+			}); e != nil {
+				t.Fatal(e)
+			}
+		}
+	}
+	writeEdges(noiseID, 20, 0.3) // below the 0.5 floor — must be excluded
+	writeEdges(realID, 3, 1.0)   // resolved — must appear
+
+	_ = adapter.Close()
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	got := renderHubSymbols(ctx, db)
+	if !strings.Contains(got, "`Real` (3 callers)") {
+		t.Errorf("expected resolved hub `Real` (3 callers), got: %q", got)
+	}
+	if strings.Contains(got, "noise") {
+		t.Errorf("bare-name collision target (0.3) must be excluded from hubs, got: %q", got)
+	}
 }
 
 func TestRenderFingerprint(t *testing.T) {
