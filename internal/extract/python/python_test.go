@@ -1693,3 +1693,37 @@ def run(*ARGS, **KWARGS):
 		t.Error("should not emit references for **kwargs param name")
 	}
 }
+
+// TestAttrReceiverConfidence pins the emit-alignment: an attribute call is
+// rated by how well its receiver type is known. self/cls and a Capitalized
+// (class/constant) receiver stay fully confident; a lowercase-variable or
+// chained receiver is an unverified instance call at ConfidenceUnresolved, so
+// the resolver's bare-name fallback cannot surface it as a confident caller.
+func TestAttrReceiverConfidence(t *testing.T) {
+	r := parse(t, `class C:
+    def m(self):
+        self.helper()
+        Other.build()
+        obj.save()
+        a.b.run()
+`)
+	cases := []struct {
+		target string
+		want   float64
+	}{
+		{"self.helper", 1.0},
+		{"Other.build", 1.0},
+		{"obj.save", extract.ConfidenceUnresolved},
+		{"a.b.run", extract.ConfidenceUnresolved},
+	}
+	for _, c := range cases {
+		e := findEdge(r, "C.m", c.target, "calls")
+		if e == nil {
+			t.Errorf("missing calls edge to %q", c.target)
+			continue
+		}
+		if e.Confidence != c.want {
+			t.Errorf("%s confidence = %v, want %v", c.target, e.Confidence, c.want)
+		}
+	}
+}
