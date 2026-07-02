@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.6] - 2026-07-02
+
+### Bug Fixes
+
+- exclude bare-name collision edges from hub symbols
+- ignore Next.js _next build output by default
+- rate unknown-receiver calls by receiver knownness
 ## [1.11.5] - 2026-07-01
 
 ### Bug Fixes
