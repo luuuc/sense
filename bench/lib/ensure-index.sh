@@ -81,7 +81,22 @@ if [[ "$FP" == ERR_* ]]; then echo "[ensure-index] cannot compute fingerprint ($
 echo "[ensure-index] current scan fingerprint: $FP"
 
 if [ "$ALL" = 1 ]; then
-  mapfile -t REPOS < <(python3 -c "import json;print('\n'.join(json.load(open('$STATE')).keys()))" 2>/dev/null)
+  # --all = every repo with an index on disk (the ground truth for staleness),
+  # unioned with anything already logged (so a repo whose index was deleted still
+  # reports "no index"). Ordered small-first by index.db byte size so cheap repos
+  # finish before the giants block the queue. Size-on-disk is used (not recorded
+  # edges) because it exists for EVERY repo without a prior rebuild; a missing
+  # index sorts as size 0 (reported as "no index" early). Name breaks ties.
+  REPOS=()
+  while IFS= read -r line; do [ -n "$line" ] && REPOS+=("$line"); done < <(SENSE_CLONES="$CLONES" python3 -c "import json,os
+try: d=json.load(open('$STATE'))
+except FileNotFoundError: d={}
+clones=os.environ['SENSE_CLONES']
+on_disk={r for r in os.listdir(clones) if os.path.isfile(os.path.join(clones,r,'.sense','index.db'))} if os.path.isdir(clones) else set()
+def size(r):
+    try: return os.path.getsize(os.path.join(clones,r,'.sense','index.db'))
+    except OSError: return 0
+print('\n'.join(sorted(on_disk | set(d), key=lambda r: (size(r), r))))" 2>/dev/null)
 fi
 [ "${#REPOS[@]}" -eq 0 ] && { echo "usage: ensure-index.sh [--check|--all] <repo> ..."; exit 2; }
 
