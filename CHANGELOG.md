@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.7] - 2026-07-03
+
+### Bug Fixes
+
+- split sense_graph inherits into directed inherits/inherited_by
 ## [1.11.6] - 2026-07-02
 
 ### Bug Fixes
