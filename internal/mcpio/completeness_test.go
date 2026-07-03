@@ -117,6 +117,72 @@ func TestGraphCompletenessPartialTruncated(t *testing.T) {
 	}
 }
 
+// A sizable inherited_by (direct-subtype) list gets anti-over-traversal steering
+// so the agent trusts the enumeration instead of graph-walking each subclass
+// (the litellm 31-calls-for-a-2-call-set blowup).
+const subtypeNote = "complete set of direct subtypes"
+
+func graphWithInheritedBy(n int) *GraphResponse {
+	return &GraphResponse{Edges: GraphEdges{InheritedBy: make([]InheritEdgeRef, n)}}
+}
+
+func TestGraphCompletenessSubtypeNoteComplete(t *testing.T) {
+	c := graphCompleteness(graphWithInheritedBy(manySubtypes), 5)
+	if c.Verdict != "complete" {
+		t.Fatalf("verdict = %q, want complete", c.Verdict)
+	}
+	if !strings.Contains(c.Advice, subtypeNote) {
+		t.Errorf("advice should steer against per-subclass expansion: %q", c.Advice)
+	}
+}
+
+func TestGraphCompletenessSubtypeNoteBelowThreshold(t *testing.T) {
+	c := graphCompleteness(graphWithInheritedBy(manySubtypes-1), 4)
+	if strings.Contains(c.Advice, subtypeNote) {
+		t.Errorf("small subtype list must not trigger the note: %q", c.Advice)
+	}
+}
+
+// called_by must NOT trigger the note: a resolved caller set is a SUBSET of a
+// model's true dependents (behavioral deps reach it via a bare local Sense never
+// resolved), so claiming it complete suppressed saleor's grep and dropped it to
+// 0/4. Even a large called_by list stays unsteered.
+func TestGraphCompletenessCalledByDoesNotTriggerNote(t *testing.T) {
+	c := graphCompleteness(&GraphResponse{Edges: GraphEdges{CalledBy: make([]CallEdgeRef, 125)}}, 125)
+	if strings.Contains(c.Advice, subtypeNote) {
+		t.Errorf("called_by must not get the subtype note (saleor grep-trap regression): %q", c.Advice)
+	}
+}
+
+// Low-confidence-hidden is call-edge noise that never sheds the inherited_by
+// set, so the note stands even though the verdict is partial.
+func TestGraphCompletenessSubtypeNotePartialLowConf(t *testing.T) {
+	resp := graphWithInheritedBy(6)
+	resp.LowConfidenceHidden = 3
+	c := graphCompleteness(resp, 6)
+	if c.Verdict != "partial" {
+		t.Fatalf("verdict = %q, want partial", c.Verdict)
+	}
+	if !strings.Contains(c.Advice, subtypeNote) {
+		t.Errorf("inherited_by not shed by low-conf hidden — note should stand: %q", c.Advice)
+	}
+}
+
+// When budget actually shed edges (truncated / omitted), the list is NOT the
+// full set, so the "ARE the complete set" claim must be suppressed.
+func TestGraphCompletenessEnumeratedNoteSuppressedWhenShed(t *testing.T) {
+	trunc := graphWithInheritedBy(6)
+	trunc.Truncated = true
+	if strings.Contains(graphCompleteness(trunc, 6).Advice, subtypeNote) {
+		t.Error("truncated response must not claim the enumerated set is complete")
+	}
+	omit := graphWithInheritedBy(6)
+	omit.OmittedEdges = 2
+	if strings.Contains(graphCompleteness(omit, 6).Advice, subtypeNote) {
+		t.Error("omitted-edges response must not claim the enumerated set is complete")
+	}
+}
+
 // BuildBlastResponse should stamp a per-caller relation reflecting the edge
 // kind of the bucket each affected symbol came from.
 func TestBuildBlastResponseRelation(t *testing.T) {
