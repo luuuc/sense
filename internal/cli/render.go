@@ -48,6 +48,9 @@ func renderEdgeGroup(w io.Writer, label string, edges mcpio.GraphEdges) {
 	if s := renderInherits(edges.Inherits); s != "" {
 		_, _ = fmt.Fprintf(w, label, "inherits", s)
 	}
+	if s := renderInherits(edges.InheritedBy); s != "" {
+		_, _ = fmt.Fprintf(w, label, "inherited by", s)
+	}
 	if s := renderComposes(edges.Composes); s != "" {
 		_, _ = fmt.Fprintf(w, label, "composes", s)
 	}

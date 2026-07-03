@@ -180,14 +180,24 @@ type GraphEdges struct {
 	Calls    []CallEdgeRef    `json:"calls"`
 	CalledBy []CallEdgeRef    `json:"called_by"`
 	Inherits []InheritEdgeRef `json:"inherits"`
-	Composes []ComposeEdgeRef `json:"composes"`
+	// InheritedBy is the reverse-inheritance direction: the symbols that extend
+	// THIS one (subclasses, trait/interface implementors). Kept distinct from
+	// Inherits for the same reason Composes/ComposedBy are split — "what I
+	// extend" (the contract I must satisfy) vs "what extends me" (my change-impact
+	// radius) are different questions, and merging them printed a supertype and a
+	// subtype in one undirected list where "AnthropicConfig inherits DatabricksConfig"
+	// read backwards (Databricks is the child). inherits/inherited_by are a
+	// directional pair (like calls/called_by), so a callers-direction query
+	// returns inbound inheritors here, NOT in Inherits.
+	InheritedBy []InheritEdgeRef `json:"inherited_by"`
+	Composes    []ComposeEdgeRef `json:"composes"`
 	// ComposedBy is the reverse-composition direction: the symbols that hold a
 	// has-a relationship TO this one (a Django model's ForeignKey / OneToOne /
 	// ManyToMany dependents). Kept distinct from Composes — "what I own" vs "what
 	// owns me" are different questions, and merging them hid the reverse fan-out
 	// a change-impact audit needs. Note: composes/composed_by are a directional
 	// pair (like calls/called_by), so a callers-direction query now returns
-	// inbound composers here, NOT in Composes; inherits/includes/imports stay
+	// inbound composers here, NOT in Composes; includes/imports stay
 	// merged into one bucket per kind.
 	ComposedBy []ComposeEdgeRef  `json:"composed_by"`
 	Includes   []IncludeEdgeRef  `json:"includes"`

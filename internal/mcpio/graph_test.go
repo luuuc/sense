@@ -73,8 +73,11 @@ func TestApplyGraphBudgetTrimsLongestEdgeList(t *testing.T) {
 }
 
 func TestApplyGraphBudgetTrimsEveryEdgeKind(t *testing.T) {
-	// All eight edge kinds start equally long; a tiny budget forces the
-	// trimmer to cycle through and shrink each kind's slice in turn.
+	// All ten edge kinds start equally long; a tiny budget forces the
+	// trimmer to cycle through and shrink each kind's slice in turn. The
+	// directed inheritance/composition split adds ComposedBy and
+	// InheritedBy as their own buckets, so each must have its drop path
+	// exercised alongside the outbound Composes / Inherits kinds.
 	r := GraphResponse{Symbol: GraphSymbol{Name: "Hub", Qualified: "pkg.Hub"}}
 	const per = 12
 	for i := 0; i < per; i++ {
@@ -82,7 +85,9 @@ func TestApplyGraphBudgetTrimsEveryEdgeKind(t *testing.T) {
 		r.Edges.CalledBy = append(r.Edges.CalledBy, CallEdgeRef{Symbol: s, Confidence: 1.0})
 		r.Edges.Calls = append(r.Edges.Calls, CallEdgeRef{Symbol: s, Confidence: 1.0})
 		r.Edges.Inherits = append(r.Edges.Inherits, InheritEdgeRef{Symbol: s})
+		r.Edges.InheritedBy = append(r.Edges.InheritedBy, InheritEdgeRef{Symbol: s})
 		r.Edges.Composes = append(r.Edges.Composes, ComposeEdgeRef{Symbol: s})
+		r.Edges.ComposedBy = append(r.Edges.ComposedBy, ComposeEdgeRef{Symbol: s})
 		r.Edges.Includes = append(r.Edges.Includes, IncludeEdgeRef{Symbol: s})
 		r.Edges.Imports = append(r.Edges.Imports, ImportEdgeRef{Symbol: s})
 		r.Edges.Temporal = append(r.Edges.Temporal, TemporalEdgeRef{Symbol: s, Strength: 0.5})
@@ -93,8 +98,9 @@ func TestApplyGraphBudgetTrimsEveryEdgeKind(t *testing.T) {
 	// drop path while proving no relationship type is dropped entirely.
 	ApplyGraphBudget(&r, 200)
 	kinds := []int{
-		len(r.Edges.CalledBy), len(r.Edges.Calls), len(r.Edges.Inherits), len(r.Edges.Composes),
-		len(r.Edges.Includes), len(r.Edges.Imports), len(r.Edges.Temporal), len(r.Edges.Tests),
+		len(r.Edges.CalledBy), len(r.Edges.Calls), len(r.Edges.Inherits), len(r.Edges.InheritedBy),
+		len(r.Edges.Composes), len(r.Edges.ComposedBy), len(r.Edges.Includes), len(r.Edges.Imports),
+		len(r.Edges.Temporal), len(r.Edges.Tests),
 	}
 	for i, n := range kinds {
 		if n != 1 {
@@ -104,7 +110,7 @@ func TestApplyGraphBudgetTrimsEveryEdgeKind(t *testing.T) {
 	if !r.Truncated {
 		t.Error("expected Truncated=true")
 	}
-	if want := (per - 1) * 8; r.OmittedEdges != want {
+	if want := (per - 1) * 10; r.OmittedEdges != want {
 		t.Errorf("OmittedEdges = %d, want %d", r.OmittedEdges, want)
 	}
 }
@@ -1214,13 +1220,14 @@ func TestGraphCallSiteNoSnippetForNonCallEdges(t *testing.T) {
 	}
 }
 
-// TestGraphInheritsInboundExposesImplementors pins the cross-language
+// TestGraphInboundImplementorsSurfaceInInheritedBy pins the cross-language
 // "who inherits / implements this" path: when a trait or base class is
 // the focal symbol, inbound EdgeInherits edges (implementors,
-// subclasses) must surface in the Inherits bucket. Before this was
-// wired up, `sense graph` on a hub trait like axum's Handler returned
-// empty inherits even when impls were correctly indexed.
-func TestGraphInheritsInboundExposesImplementors(t *testing.T) {
+// subclasses) must surface in the InheritedBy bucket (subtypes),
+// distinct from Inherits (supertypes). Before this was wired up,
+// `sense graph` on a hub trait like axum's Handler returned empty
+// inheritance even when impls were correctly indexed.
+func TestGraphInboundImplementorsSurfaceInInheritedBy(t *testing.T) {
 	files := func(id int64) (string, bool) {
 		switch id {
 		case 1:
@@ -1253,14 +1260,17 @@ func TestGraphInheritsInboundExposesImplementors(t *testing.T) {
 
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
-	if len(resp.Edges.Inherits) != 2 {
-		t.Fatalf("Inherits = %d, want 2 (MethodRouter, Layered)", len(resp.Edges.Inherits))
+	if len(resp.Edges.InheritedBy) != 2 {
+		t.Fatalf("InheritedBy = %d, want 2 (MethodRouter, Layered)", len(resp.Edges.InheritedBy))
+	}
+	if len(resp.Edges.Inherits) != 0 {
+		t.Fatalf("Inherits = %d, want 0 (implementors are subtypes, not supertypes)", len(resp.Edges.Inherits))
 	}
 	want := map[string]string{
 		"MethodRouter": "src/router.rs:1355",
 		"Layered":      "src/layered.rs:317",
 	}
-	for _, e := range resp.Edges.Inherits {
+	for _, e := range resp.Edges.InheritedBy {
 		ref, ok := want[e.Symbol]
 		if !ok {
 			t.Errorf("unexpected inherits entry %q", e.Symbol)
@@ -1307,11 +1317,11 @@ func TestGraphInheritsInboundSkipsUnresolvedSource(t *testing.T) {
 
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{})
 
-	if len(resp.Edges.Inherits) != 1 {
-		t.Fatalf("Inherits = %d, want 1 (resolved-only, blanket impl dropped)", len(resp.Edges.Inherits))
+	if len(resp.Edges.InheritedBy) != 1 {
+		t.Fatalf("InheritedBy = %d, want 1 (resolved-only, blanket impl dropped)", len(resp.Edges.InheritedBy))
 	}
-	if resp.Edges.Inherits[0].Symbol != "MethodRouter" {
-		t.Errorf("Inherits[0] = %q, want MethodRouter", resp.Edges.Inherits[0].Symbol)
+	if resp.Edges.InheritedBy[0].Symbol != "MethodRouter" {
+		t.Errorf("InheritedBy[0] = %q, want MethodRouter", resp.Edges.InheritedBy[0].Symbol)
 	}
 }
 
@@ -1343,16 +1353,20 @@ func TestGraphInheritsInboundIncludedInCallersDirection(t *testing.T) {
 
 	resp := BuildGraphResponse(context.Background(), sc, files, BuildGraphRequest{Direction: model.DirectionCallers})
 
-	if len(resp.Edges.Inherits) != 1 {
-		t.Fatalf("Inherits = %d under DirectionCallers, want 1", len(resp.Edges.Inherits))
+	if len(resp.Edges.InheritedBy) != 1 {
+		t.Fatalf("InheritedBy = %d under DirectionCallers, want 1", len(resp.Edges.InheritedBy))
 	}
 
 	raw, err := MarshalGraphCompactDirectional(resp, model.DirectionCallers)
 	if err != nil {
 		t.Fatalf("MarshalGraphCompactDirectional: %v", err)
 	}
-	if !bytes.Contains(raw, []byte(`"inherits":[`)) {
-		t.Errorf("compact callers output should include inherits bucket; got:\n%s", raw)
+	if !bytes.Contains(raw, []byte(`"inherited_by":[`)) {
+		t.Errorf("compact callers output should include inherited_by bucket; got:\n%s", raw)
+	}
+	// inherits (supertypes) is outbound-only, pruned from a callers query.
+	if bytes.Contains(raw, []byte(`"inherits":[`)) {
+		t.Errorf("compact callers output should omit the outbound inherits bucket; got:\n%s", raw)
 	}
 	if !bytes.Contains(raw, []byte(`"MethodRouter"`)) {
 		t.Errorf("compact callers output should include MethodRouter; got:\n%s", raw)

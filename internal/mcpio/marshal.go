@@ -65,16 +65,19 @@ func MarshalGraphCompactDirectional(r GraphResponse, direction model.Direction) 
 //	calls/called_by and composes/composed_by are directional pairs: the
 //	outbound member is dropped for a callers query, the inbound member for
 //	a callees query.
-//	Inherits / Includes / Imports — populated by both paths (outbound =
-//	"what this inherits from / includes / etc.", inbound = "what inherits
-//	from / includes / etc. this") into one bucket, never excluded.
+//	Inherits / InheritedBy are a directional pair (like calls/called_by):
+//	the outbound member (supertypes) is dropped for a callers query, the
+//	inbound member (subtypes) for a callees query.
+//	Includes / Imports — populated by both paths (outbound = "what this
+//	includes / imports", inbound = "what includes / imports this") into one
+//	bucket, never excluded.
 //	Temporal — bidirectional, never excluded.
 func outOfScopeEdgeBuckets(direction model.Direction) []string {
 	switch direction {
 	case model.DirectionCallers:
-		return []string{"calls", "composes"}
+		return []string{"calls", "composes", "inherits"}
 	case model.DirectionCallees:
-		return []string{"called_by", "composed_by", "tests"}
+		return []string{"called_by", "composed_by", "tests", "inherited_by"}
 	default:
 		return nil
 	}
@@ -176,6 +179,9 @@ func normalizeGraphResponse(r *GraphResponse) {
 	if r.Edges.Inherits == nil {
 		r.Edges.Inherits = []InheritEdgeRef{}
 	}
+	if r.Edges.InheritedBy == nil {
+		r.Edges.InheritedBy = []InheritEdgeRef{}
+	}
 	if r.Edges.Composes == nil {
 		r.Edges.Composes = []ComposeEdgeRef{}
 	}
@@ -236,6 +242,9 @@ func normalizeGraphEdgesScoped(e *GraphEdges, skip map[string]struct{}) {
 	}
 	if _, ok := skip["inherits"]; !ok && e.Inherits == nil {
 		e.Inherits = []InheritEdgeRef{}
+	}
+	if _, ok := skip["inherited_by"]; !ok && e.InheritedBy == nil {
+		e.InheritedBy = []InheritEdgeRef{}
 	}
 	if _, ok := skip["composes"]; !ok && e.Composes == nil {
 		e.Composes = []ComposeEdgeRef{}

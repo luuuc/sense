@@ -186,7 +186,12 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // (reverse-composition, distinct from outbound `composes`), so every graph
 // response gained an empty `composed_by` field and callees-direction responses
 // drop it — digest moved. No edge content changed.
-const oracleGolden = "83a83c93c603a6b1550af16056341c2c9f5769f5503edaf9fc895e564a716983"
+// sense_graph now splits inbound inheritance into its own `inherited_by` bucket
+// (subtypes, distinct from outbound `inherits` supertypes), mirroring the
+// composed_by split, so every graph response gained an empty `inherited_by`
+// field; callers-direction responses drop `inherits` and callees drop
+// `inherited_by` — digest moved. No edge content changed.
+const oracleGolden = "e48785ad58f92c14e3885935ce38124825dc0850a6d1879c02ca698400f421c0"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))

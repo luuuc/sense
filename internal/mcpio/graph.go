@@ -51,6 +51,7 @@ func trimLongestEdgeList(e *GraphEdges, resp *GraphResponse) bool {
 		{len(e.Composes), func(k int) { e.Composes = e.Composes[:len(e.Composes)-k] }},
 		{len(e.ComposedBy), func(k int) { e.ComposedBy = e.ComposedBy[:len(e.ComposedBy)-k] }},
 		{len(e.Inherits), func(k int) { e.Inherits = e.Inherits[:len(e.Inherits)-k] }},
+		{len(e.InheritedBy), func(k int) { e.InheritedBy = e.InheritedBy[:len(e.InheritedBy)-k] }},
 		{len(e.Includes), func(k int) { e.Includes = e.Includes[:len(e.Includes)-k] }},
 		{len(e.Imports), func(k int) { e.Imports = e.Imports[:len(e.Imports)-k] }},
 		{len(e.Temporal), func(k int) { e.Temporal = e.Temporal[:len(e.Temporal)-k] }},
@@ -240,7 +241,7 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 	resp.ViewEdges = viewEdgesSignal(sc.File.Path, anyViewTemplate(inboundEdgeFiles(sc.Inbound, files)))
 
 	symbolsReturned := len(resp.Edges.Calls) + len(resp.Edges.CalledBy) + len(testCallers) +
-		len(resp.Edges.Inherits) + len(resp.Edges.Composes) +
+		len(resp.Edges.Inherits) + len(resp.Edges.InheritedBy) + len(resp.Edges.Composes) +
 		len(resp.Edges.Includes) + len(resp.Edges.Imports) + len(resp.Edges.Tests) +
 		len(resp.Edges.Temporal)
 
@@ -443,9 +444,10 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 				})
 			case model.EdgeInherits:
 				// Inheritors of this symbol (subclasses, trait
-				// implementors) land in the same bucket as the
-				// outbound direction — the convention shared with
-				// Composes / Includes / Imports.
+				// implementors) route to InheritedBy — distinct from
+				// the outbound Inherits bucket (supertypes), so "what
+				// extends me" is not conflated with "what I extend".
+				// Mirrors the Composes / ComposedBy split.
 				//
 				// Skip edges whose source didn't resolve to an
 				// indexed symbol (Target.ID == 0). For inbound
@@ -458,7 +460,7 @@ func categorizeEdges(ctx context.Context, outbound, inbound []model.EdgeRef, fil
 					continue
 				}
 				fp := fileRefOrNil(e.Target.FileID, files)
-				edges.Inherits = append(edges.Inherits, InheritEdgeRef{
+				edges.InheritedBy = append(edges.InheritedBy, InheritEdgeRef{
 					Symbol:    qualifiedOrName(e.Target),
 					File:      fp,
 					LineStart: e.Target.LineStart,
@@ -523,7 +525,8 @@ func qualifiedOrName(s model.Symbol) string {
 
 func countEdgeSymbols(edges GraphEdges) int {
 	return len(edges.Calls) + len(edges.CalledBy) +
-		len(edges.Inherits) + len(edges.Composes) + len(edges.ComposedBy) +
+		len(edges.Inherits) + len(edges.InheritedBy) +
+		len(edges.Composes) + len(edges.ComposedBy) +
 		len(edges.Includes) + len(edges.Imports) +
 		len(edges.Tests) + len(edges.Temporal)
 }
@@ -554,6 +557,11 @@ func collectEdgeFiles(edges GraphEdges, seen map[string]struct{}) {
 		}
 	}
 	for _, e := range edges.Inherits {
+		if e.File != nil {
+			seen[*e.File] = struct{}{}
+		}
+	}
+	for _, e := range edges.InheritedBy {
 		if e.File != nil {
 			seen[*e.File] = struct{}{}
 		}
@@ -650,7 +658,8 @@ func graphIndexCaveat(resp GraphResponse) string {
 	if resp.Symbol.File == "" {
 		return ""
 	}
-	hasEdges := len(resp.Edges.Calls)+len(resp.Edges.CalledBy)+len(resp.Edges.Inherits)+
+	hasEdges := len(resp.Edges.Calls)+len(resp.Edges.CalledBy)+
+		len(resp.Edges.Inherits)+len(resp.Edges.InheritedBy)+
 		len(resp.Edges.Composes)+len(resp.Edges.Includes)+len(resp.Edges.Imports) > 0
 	if !hasEdges {
 		return ""
