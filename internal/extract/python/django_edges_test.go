@@ -107,3 +107,16 @@ func TestURLPatternEdgeError(t *testing.T) {
 		t.Error("expected error from failing emitter on URL pattern edge")
 	}
 }
+
+func TestModuleLevelRelationFieldAssignmentIsSkipped(t *testing.T) {
+	// A relational field assigned at module scope has no owning class, so the
+	// composes rule must not fire.
+	r := parse(t, `
+owner = ForeignKey(User)
+`)
+	for _, e := range r.edges {
+		if string(e.Kind) == "composes" && e.TargetQualified == "User" {
+			t.Fatal("module-level ForeignKey must not emit a composes edge")
+		}
+	}
+}

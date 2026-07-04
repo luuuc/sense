@@ -324,8 +324,9 @@ func (w *walker) emitFunctionAndWalkBody(n *sitter.Node, scope []string, decorat
 	}
 
 	body := n.ChildByFieldName("body")
+	localTypes := inferLocalTypes(n, w.source)
 	if err := extract.WalkNamedDescendants(body, "call", func(c *sitter.Node) error {
-		return w.emitCall(c, qualified)
+		return w.emitCall(c, qualified, localTypes)
 	}); err != nil {
 		return err
 	}
@@ -338,8 +339,10 @@ func (w *walker) emitFunctionAndWalkBody(n *sitter.Node, scope []string, decorat
 // emit surface text with confidence 1.0. `getattr(obj, "name")` with a
 // literal string second argument emits target = the string with
 // confidence 0.7; any other callable form (subscript, lambda call,
-// `f()()`) is skipped.
-func (w *walker) emitCall(call *sitter.Node, source string) error {
+// `f()()`) is skipped. An attribute call whose receiver type is provable
+// (localTypes / the django objects chain) resolves to `<Type>.<method>`
+// at ConfidenceDynamic instead of the bare-name tier.
+func (w *walker) emitCall(call *sitter.Node, source string, localTypes map[string]string) error {
 	fn := call.ChildByFieldName("function")
 	if fn == nil {
 		return nil
@@ -372,6 +375,18 @@ func (w *walker) emitCall(call *sitter.Node, source string) error {
 	if kind == "attribute" {
 		if handled, err := w.tryEmitCeleryDispatch(fn, source, line); handled || err != nil {
 			return err
+		}
+		if typed, ok := typedReceiverTarget(fn, w.source, localTypes); ok {
+			// ConfidenceDynamic here means "receiver type proven from local
+			// context", not dispatch heuristics — the same tier Ruby's typed
+			// locals use, below self/static (1.0), above unverified (0.5).
+			return w.emit.Edge(extract.EmittedEdge{
+				SourceQualified: source,
+				TargetQualified: typed,
+				Kind:            model.EdgeCalls,
+				Line:            &line,
+				Confidence:      extract.ConfidenceDynamic,
+			})
 		}
 		conf = attrReceiverConfidence(fn, w.source)
 	}
