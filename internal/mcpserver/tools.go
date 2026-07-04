@@ -125,7 +125,7 @@ func blastTool() mcp.Tool {
 			mcp.Description("How many dependency hops to follow (default 3). Higher values find more distant impacts."),
 		),
 		mcp.WithNumber("min_confidence",
-			mcp.Description("Minimum edge confidence 0.0–1.0 (default 0.7). Lower values include weaker relationships."),
+			mcp.Description("Minimum edge confidence 0.0–1.0 (default 0.3, which already includes weak edges). Raising it above 0.5 silently drops unverified-receiver call edges — most production dependents. Prefer leaving it unset."),
 		),
 		mcp.WithBoolean("include_tests",
 			mcp.Description("Include affected test files in the results (default true)"),
