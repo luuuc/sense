@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.9] - 2026-07-04
+
+### Bug Fixes
+
+- resolve provable Python receiver types to typed method targets
+- advertise sense_blast's real min_confidence default
 ## [1.11.8] - 2026-07-04
 
 ### Bug Fixes
