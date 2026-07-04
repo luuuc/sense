@@ -82,11 +82,12 @@ func LanguageTier(lang string) string {
 //     should not require changing the ambiguous clamp.
 //   - Dynamic: the extractor proved the target beyond surface text but
 //     short of a static reference — a literal argument at a
-//     dynamic-dispatch callsite (Ruby send, Python getattr), or a
-//     receiver whose type was inferred from local context (typed
-//     params/locals, constructor assignments, ORM builder chains).
-//     Non-literal dynamic dispatch is skipped entirely, not flagged
-//     low-confidence.
+//     dynamic-dispatch callsite (Ruby send, Python getattr), a receiver
+//     whose type was inferred from local context (typed params/locals,
+//     constructor assignments, ORM builder chains), or a receiver typed
+//     by a double-keyed framework convention (a qs/queryset-named
+//     receiver calling QuerySet API). Non-literal dynamic dispatch is
+//     skipped entirely, not flagged low-confidence.
 const (
 	ConfidenceStatic     = 1.0
 	ConfidenceConvention = 0.9

@@ -48,6 +48,56 @@ var querySetChainMethods = map[string]bool{
 // bounded against pathological generated code).
 const maxQuerySetChainDepth = 10
 
+// querySetReturningMethods are method NAMES that return a QuerySet by Django
+// convention regardless of receiver: the overridable get_queryset hook (and
+// its pre-1.6 spelling) and the ORM-internal _chain. `_clone` is deliberately
+// absent — GIS geometries and sql.Query define their own.
+var querySetReturningMethods = map[string]bool{
+	"get_queryset":  true,
+	"get_query_set": true,
+	"_chain":        true,
+}
+
+// querySetTerminalMethods are the QuerySet methods that do NOT return a
+// QuerySet (instances, scalars, containers). They complete the method key:
+// a call is recognized as QuerySet API when it is either a chain method or
+// one of these.
+var querySetTerminalMethods = map[string]bool{
+	"create": true, "acreate": true,
+	"get": true, "aget": true, "first": true, "afirst": true,
+	"last": true, "alast": true, "earliest": true, "aearliest": true,
+	"latest": true, "alatest": true, "count": true, "acount": true,
+	"exists": true, "aexists": true, "contains": true, "acontains": true,
+	"delete": true, "adelete": true, "update": true, "aupdate": true,
+	"aggregate": true, "aaggregate": true, "explain": true, "aexplain": true,
+	"iterator": true, "aiterator": true, "in_bulk": true, "ain_bulk": true,
+	"get_or_create": true, "aget_or_create": true,
+	"update_or_create": true, "aupdate_or_create": true,
+	"bulk_create": true, "abulk_create": true,
+	"bulk_update": true, "abulk_update": true,
+	"dates": true, "datetimes": true,
+}
+
+// isQuerySetMethodName reports whether a method name belongs to the QuerySet
+// API (chainable or terminal). It is the METHOD key of the double-keyed
+// receiver-name convention: a receiver named qs/queryset types as QuerySet
+// only for calls that are QuerySet API — either key alone proves nothing.
+func isQuerySetMethodName(name string) bool {
+	return querySetChainMethods[name] || querySetTerminalMethods[name]
+}
+
+// isQuerySetNameConvention is the NAME key: locals and parameters literally
+// named qs/queryset are querysets by overwhelming Django convention. Only
+// meaningful combined with isQuerySetMethodName (see typedReceiverTarget).
+//
+// Exposure bound: a wrong guess (a list named qs calling .count()) emits a
+// QuerySet.* target, which resolves ONLY in a repo that defines a QuerySet
+// class — django itself, where the convention holds — and is dropped as
+// unresolvable everywhere else (edges need a resolved target to persist).
+func isQuerySetNameConvention(name string) bool {
+	return name == "qs" || name == "queryset"
+}
+
 // isQuerySetExpr reports whether an expression provably evaluates to a Django
 // QuerySet builder: `<PascalModel>.objects`, a chain of QuerySet-RETURNING
 // method calls rooted there (`Model.objects.filter(…).exclude(…)`), or a
@@ -65,29 +115,52 @@ func isQuerySetExprDepth(n *sitter.Node, src []byte, types map[string]string, de
 	}
 	switch n.Kind() {
 	case "identifier":
-		return types[extract.Text(n, src)] == querySetTypeName
+		name := extract.Text(n, src)
+		// The name convention is safe here: every path FROM this root still
+		// requires whitelisted QuerySet methods (chain hops above, the final
+		// method key in typedReceiverTarget), so both keys always apply.
+		return types[name] == querySetTypeName || isQuerySetNameConvention(name)
 	case "attribute":
-		leaf := n.ChildByFieldName("attribute")
-		obj := n.ChildByFieldName("object")
-		if leaf == nil || obj == nil {
-			return false
-		}
-		if extract.Text(leaf, src) != "objects" {
-			return false
-		}
-		return obj.Kind() == "identifier" && isPascalCase(extract.Text(obj, src))
+		return isModelObjectsAttr(n, src)
 	case "call":
-		fn := n.ChildByFieldName("function")
-		if fn == nil || fn.Kind() != "attribute" {
-			return false
-		}
-		leaf := fn.ChildByFieldName("attribute")
-		if leaf == nil || !querySetChainMethods[extract.Text(leaf, src)] {
-			return false
-		}
-		return isQuerySetExprDepth(fn.ChildByFieldName("object"), src, types, depth+1)
+		return isQuerySetChainCall(n, src, types, depth)
 	}
 	return false
+}
+
+// isModelObjectsAttr matches the chain root: `<PascalModel>.objects`.
+func isModelObjectsAttr(n *sitter.Node, src []byte) bool {
+	leaf := n.ChildByFieldName("attribute")
+	obj := n.ChildByFieldName("object")
+	if leaf == nil || obj == nil {
+		return false
+	}
+	if extract.Text(leaf, src) != "objects" {
+		return false
+	}
+	return obj.Kind() == "identifier" && isPascalCase(extract.Text(obj, src))
+}
+
+// isQuerySetChainCall matches a chain hop: a conventionally QuerySet-returning
+// method regardless of receiver (self.get_queryset(), self._chain()), or a
+// chainable QuerySet method whose receiver is itself a queryset expression.
+func isQuerySetChainCall(n *sitter.Node, src []byte, types map[string]string, depth int) bool {
+	fn := n.ChildByFieldName("function")
+	if fn == nil || fn.Kind() != "attribute" {
+		return false
+	}
+	leaf := fn.ChildByFieldName("attribute")
+	if leaf == nil {
+		return false
+	}
+	name := extract.Text(leaf, src)
+	if querySetReturningMethods[name] {
+		return true
+	}
+	if !querySetChainMethods[name] {
+		return false
+	}
+	return isQuerySetExprDepth(fn.ChildByFieldName("object"), src, types, depth+1)
 }
 
 // emitDjangoModelField checks if an assignment's RHS is a Django relational field
