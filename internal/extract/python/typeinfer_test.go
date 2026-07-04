@@ -616,3 +616,108 @@ def run(obj):
 		t.Fatal("attribute-target assignments must not enter the local type map")
 	}
 }
+
+// Django receiver-name convention (double-keyed): a receiver literally named
+// qs/queryset calling a known QuerySet method types as QuerySet — BOTH keys
+// must agree; either alone stays bare.
+
+func TestQuerySetNamedReceiverWithQuerySetMethodResolves(t *testing.T) {
+	r := parse(t, `
+def run(queryset):
+    return queryset.filter(active=True)
+`)
+	e := findEdge(r, "run", "QuerySet.filter", "calls")
+	if e == nil {
+		t.Fatal("expected queryset.filter to resolve via the name+method convention")
+	}
+	if e.Confidence != extract.ConfidenceDynamic {
+		t.Errorf("confidence = %v, want ConfidenceDynamic", e.Confidence)
+	}
+}
+
+func TestQsNamedReceiverTerminalMethodResolves(t *testing.T) {
+	r := parse(t, `
+def run(qs):
+    return qs.get(pk=1)
+`)
+	if findEdge(r, "run", "QuerySet.get", "calls") == nil {
+		t.Fatal("expected qs.get to resolve via the name+method convention")
+	}
+}
+
+func TestQsNamedReceiverNonQuerySetMethodStaysBare(t *testing.T) {
+	r := parse(t, `
+def run(qs):
+    qs.append(x)
+`)
+	if findEdge(r, "run", "QuerySet.append", "calls") != nil {
+		t.Fatal("append is not a QuerySet method; the name key alone must not type")
+	}
+	if findEdge(r, "run", "qs.append", "calls") == nil {
+		t.Fatal("expected the bare edge")
+	}
+}
+
+func TestOtherNamedReceiverWithQuerySetMethodStaysBare(t *testing.T) {
+	r := parse(t, `
+def run(items):
+    items.filter(x)
+`)
+	if findEdge(r, "run", "QuerySet.filter", "calls") != nil {
+		t.Fatal("filter on a non-convention name must not type; the method key alone must not type")
+	}
+}
+
+func TestQsNamedChainContinues(t *testing.T) {
+	r := parse(t, `
+def run(qs):
+    return qs.filter(a=1).annotate(n=Count("id"))
+`)
+	if findEdge(r, "run", "QuerySet.annotate", "calls") == nil {
+		t.Fatal("expected the chain to continue from a convention-named receiver")
+	}
+}
+
+func TestGetQuerysetAssignmentTypesLocal(t *testing.T) {
+	r := parse(t, `
+def run(self):
+    objs = self.get_queryset()
+    return objs.exclude(hidden=True)
+`)
+	if findEdge(r, "run", "QuerySet.exclude", "calls") == nil {
+		t.Fatal("expected a local assigned from get_queryset() to type as QuerySet")
+	}
+}
+
+func TestGetQuerysetDirectChainResolves(t *testing.T) {
+	r := parse(t, `
+def run(self):
+    return self.get_queryset().filter(active=True)
+`)
+	if findEdge(r, "run", "QuerySet.filter", "calls") == nil {
+		t.Fatal("expected a chain rooted at get_queryset() to resolve")
+	}
+}
+
+func TestChainAssignmentTypesLocal(t *testing.T) {
+	r := parse(t, `
+def run(self):
+    clone = self._chain()
+    return clone.order_by("name")
+`)
+	if findEdge(r, "run", "QuerySet.order_by", "calls") == nil {
+		t.Fatal("expected a local assigned from _chain() to type as QuerySet")
+	}
+}
+
+func TestCloneIsNotAQuerySetConvention(t *testing.T) {
+	// GIS geometries and sql.Query both have _clone; it proves nothing.
+	r := parse(t, `
+def run(self):
+    shell = self._clone(rings)
+    shell.filter(x)
+`)
+	if findEdge(r, "run", "QuerySet.filter", "calls") != nil {
+		t.Fatal("_clone must not type the local as QuerySet")
+	}
+}

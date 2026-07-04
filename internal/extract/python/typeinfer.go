@@ -158,6 +158,11 @@ func callResultTypeName(right *sitter.Node, src []byte, types map[string]string)
 		if isReceiverClassName(name) {
 			return name, true
 		}
+		// Conventionally QuerySet-returning hooks type the local regardless
+		// of receiver (objs = self.get_queryset()).
+		if querySetReturningMethods[name] {
+			return querySetTypeName, true
+		}
 		// The call's RESULT is a QuerySet only when the method itself is a
 		// builder (terminal methods like get/first return instances).
 		if querySetChainMethods[name] {
@@ -264,11 +269,22 @@ func typedReceiverTarget(fn *sitter.Node, src []byte, types map[string]string) (
 		return "", false
 	}
 	if obj.Kind() == "identifier" {
-		if t := types[extract.Text(obj, src)]; t != "" {
-			return t + "." + method, true
+		objName := extract.Text(obj, src)
+		if t := types[objName]; t != "" {
+			// A QuerySet-typed receiver only proves QuerySet API calls;
+			// anything else falls back to the bare tier.
+			if t != querySetTypeName || isQuerySetMethodName(method) {
+				return t + "." + method, true
+			}
+			return "", false
+		}
+		// Double-keyed Django convention: receiver NAMED qs/queryset AND a
+		// QuerySet API method — both keys must agree, either alone is noise.
+		if isQuerySetNameConvention(objName) && isQuerySetMethodName(method) {
+			return querySetTypeName + "." + method, true
 		}
 	}
-	if isQuerySetExpr(obj, src, types) {
+	if isQuerySetExpr(obj, src, types) && isQuerySetMethodName(method) {
 		return querySetTypeName + "." + method, true
 	}
 	return "", false
