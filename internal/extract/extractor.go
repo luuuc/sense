@@ -80,9 +80,12 @@ func LanguageTier(lang string) string {
 //     checkout_service.rb). Same numeric value as Ambiguous today
 //     but semantically distinct — a change to the tests confidence
 //     should not require changing the ambiguous clamp.
-//   - Dynamic: the extractor resolved a literal argument passed to a
-//     dynamic-dispatch callsite (Ruby send, Python getattr). Non-
-//     literal dynamic dispatch is skipped entirely, not flagged
+//   - Dynamic: the extractor proved the target beyond surface text but
+//     short of a static reference — a literal argument at a
+//     dynamic-dispatch callsite (Ruby send, Python getattr), or a
+//     receiver whose type was inferred from local context (typed
+//     params/locals, constructor assignments, ORM builder chains).
+//     Non-literal dynamic dispatch is skipped entirely, not flagged
 //     low-confidence.
 const (
 	ConfidenceStatic     = 1.0

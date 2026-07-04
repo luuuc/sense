@@ -23,6 +23,73 @@ var djangoRelationFields = map[string]bool{
 	"ManyToManyField": true,
 }
 
+// querySetTypeName is the receiver type assigned to Django manager/builder
+// chains. Manager methods are generated from QuerySet (Manager.from_queryset),
+// so `Model.objects.filter` resolves to the real definition, QuerySet.filter.
+const querySetTypeName = "QuerySet"
+
+// querySetChainMethods are the QuerySet methods that RETURN a QuerySet, so a
+// chain may continue past them. Terminal methods (get, first, create, count,
+// aggregate, …) return instances or scalars — a chain hop after one of those
+// proves nothing, so they are deliberately absent (closed-world: emit only
+// what is provable).
+var querySetChainMethods = map[string]bool{
+	"filter": true, "exclude": true, "all": true, "none": true,
+	"order_by": true, "reverse": true, "distinct": true,
+	"annotate": true, "alias": true, "values": true, "values_list": true,
+	"select_related": true, "prefetch_related": true,
+	"only": true, "defer": true, "using": true,
+	"union": true, "intersection": true, "difference": true,
+	"select_for_update": true, "complex_filter": true,
+}
+
+// maxQuerySetChainDepth bounds the chain recursion (the Ruby receiver walk
+// caps at 3 hops; ORM chains legitimately run longer, so allow more but stay
+// bounded against pathological generated code).
+const maxQuerySetChainDepth = 10
+
+// isQuerySetExpr reports whether an expression provably evaluates to a Django
+// QuerySet builder: `<PascalModel>.objects`, a chain of QuerySet-RETURNING
+// method calls rooted there (`Model.objects.filter(…).exclude(…)`), or a
+// local variable already typed QuerySet in the function's type map. The
+// PascalCase-model requirement keeps the rule off arbitrary `.objects`
+// attributes; the chain-method whitelist keeps it off terminal calls
+// (`Model.objects.get(pk=1)` returns an instance, not a QuerySet).
+func isQuerySetExpr(n *sitter.Node, src []byte, types map[string]string) bool {
+	return isQuerySetExprDepth(n, src, types, 0)
+}
+
+func isQuerySetExprDepth(n *sitter.Node, src []byte, types map[string]string, depth int) bool {
+	if n == nil || depth > maxQuerySetChainDepth {
+		return false
+	}
+	switch n.Kind() {
+	case "identifier":
+		return types[extract.Text(n, src)] == querySetTypeName
+	case "attribute":
+		leaf := n.ChildByFieldName("attribute")
+		obj := n.ChildByFieldName("object")
+		if leaf == nil || obj == nil {
+			return false
+		}
+		if extract.Text(leaf, src) != "objects" {
+			return false
+		}
+		return obj.Kind() == "identifier" && isPascalCase(extract.Text(obj, src))
+	case "call":
+		fn := n.ChildByFieldName("function")
+		if fn == nil || fn.Kind() != "attribute" {
+			return false
+		}
+		leaf := fn.ChildByFieldName("attribute")
+		if leaf == nil || !querySetChainMethods[extract.Text(leaf, src)] {
+			return false
+		}
+		return isQuerySetExprDepth(fn.ChildByFieldName("object"), src, types, depth+1)
+	}
+	return false
+}
+
 // emitDjangoModelField checks if an assignment's RHS is a Django relational field
 // call (e.g. `models.ForeignKey(User)`). If so, it emits a composes edge from the
 // enclosing class to the target model. The call can be bare (`ForeignKey(User)`)
