@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.11] - 2026-07-04
+
+### Bug Fixes
+
+- type Django private-manager receivers as QuerySet chains
 ## [1.11.10] - 2026-07-04
 
 ### Bug Fixes
