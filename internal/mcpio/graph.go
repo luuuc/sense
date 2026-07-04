@@ -263,18 +263,51 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 // Dynamic-dispatch residual stays in index_caveat, never folded in here.
 func graphCompleteness(resp *GraphResponse, symbolsReturned int) *Completeness {
 	hidden := resp.LowConfidenceHidden + resp.OmittedEdges
+	// The enumerated reverse-dependent list is authoritative only when nothing
+	// was shed for budget: truncation / omitted edges drop real edges, but a
+	// low-confidence-hidden residual is call-edge noise that never touches the
+	// high-confidence inherited_by / called_by set. Suppress the note when
+	// edges were actually dropped, so "these ARE the full set" is never a lie.
+	note := ""
+	if !resp.Truncated && resp.OmittedEdges == 0 {
+		note = enumeratedSetNote(resp)
+	}
 	if resp.Truncated || hidden > 0 {
 		advice := "Partial: re-run with min_confidence=0.3 or a specific direction to see the rest."
 		if resp.OmittedEdges > 0 {
 			advice = "Partial: edges dropped for token budget — narrow with a direction or a specific symbol."
 		}
-		return &Completeness{Verdict: "partial", Resolved: symbolsReturned, Hidden: hidden, Advice: advice}
+		return &Completeness{Verdict: "partial", Resolved: symbolsReturned, Hidden: hidden, Advice: advice + note}
 	}
 	return &Completeness{
 		Verdict:  "complete",
 		Resolved: symbolsReturned,
-		Advice:   "Complete resolvable edge set — act on it, do not re-grep. Dynamic-dispatch residual, if any, is in index_caveat.",
+		Advice:   "Complete resolvable edge set — act on it, do not re-grep. Dynamic-dispatch residual, if any, is in index_caveat." + note,
 	}
+}
+
+// manySubtypes is the inherited_by list size above which the agent is tempted
+// to walk the subclasses node-by-node instead of trusting the enumeration.
+// Small lists don't provoke the walk, so the note stays silent below it.
+const manySubtypes = 5
+
+// enumeratedSetNote returns anti-over-traversal steering ONLY for a sizable
+// inherited_by (direct-subtype) list. Inheritance is fully resolved, so the
+// list IS the complete set of subtypes and re-graphing each child to enumerate
+// the hierarchy is pure redundancy.
+//
+// Deliberately NOT applied to called_by: a resolved caller set is complete for
+// a FUNCTION but only a SUBSET of a MODEL's true dependents (behavioral deps
+// reach it through a bare local the resolver never saw), so claiming it complete
+// would suppress the grep that finds them. Caller-walking is also often
+// legitimate (chasing callers-of-callers up a chain), so it stays unsteered.
+func enumeratedSetNote(resp *GraphResponse) string {
+	if len(resp.Edges.InheritedBy) < manySubtypes {
+		return ""
+	}
+	return " The inherited_by list here is the complete set of direct subtypes — do not call" +
+		" graph on each subclass just to enumerate the hierarchy; query a subclass only to" +
+		" answer a new question about it."
 }
 
 // BuildFullGraphResponse builds the complete response for a multi-hop

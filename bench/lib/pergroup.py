@@ -14,7 +14,7 @@ flat scored.json for single runs). Objective only — no judge, no LLM. This is 
 HEADLINE metric; the reference-aware audit (rescore_audit.py) is secondary and
 over-credits homogeneous fan-outs.
 """
-import json, os, sys, glob
+import json, os, sys, glob, statistics
 
 REPO = sys.argv[1] if len(sys.argv) > 1 else sys.exit("usage: pergroup.py <repo> [threshold]")
 THRESH = float(sys.argv[2]) if len(sys.argv) > 2 else 0.50
@@ -61,7 +61,7 @@ def runs(arm):
 
 
 def collect(arm):
-    by_group, overall = {}, []
+    by_group, overall, toks, walls = {}, [], [], []
     for p in runs(arm):
         d = json.load(open(p))
         # A failed run (empty_final_answer / truncated stream / provider cap) is
@@ -74,21 +74,30 @@ def collect(arm):
         overall.append(g.get("cited_recall", 0.0))
         for gn, gd in g.get("groups", {}).items():
             by_group.setdefault(gn, []).append((gd.get("cited", 0), gd.get("total", 0)))
-    return by_group, overall
+        # Per-run billed tokens + wall drive the efficiency-at-parity axis below
+        # (the sentry-shaped hidden win: reach ties, but sense is robustly cheaper).
+        m = d.get("metrics", {}) or {}
+        if isinstance(m.get("token_total_billed"), (int, float)):
+            toks.append(m["token_total_billed"])
+        if isinstance(m.get("wall_time_seconds"), (int, float)):
+            walls.append(m["wall_time_seconds"])
+    return by_group, overall, {"toks": toks, "walls": walls}
 
 
-bg, bo = collect("baseline")
-sg, so = collect("sense")
+bg, bo, beff = collect("baseline")
+sg, so, seff = collect("sense")
 if not bo or not so:
     sys.exit(f"no scored runs for {REPO} (baseline={len(bo)} sense={len(so)}) — bench it first")
 
 print(f"### {REPO} — per-group objective cited-recall (threshold +{THRESH:.0%})\n")
 print(f"{'group':16} {'baseline (per run)':28} {'sense (per run)':28}  delta")
 groups = sorted(set(bg) | set(sg))
+deltas = {}
 for gn in groups:
     b = bg.get(gn, []); s = sg.get(gn, [])
     bm = sum(c for c, _ in b) / sum(t for _, t in b) if any(t for _, t in b) else 0.0
     sm = sum(c for c, _ in s) / sum(t for _, t in s) if any(t for _, t in s) else 0.0
+    deltas[gn] = sm - bm
     bstr = ", ".join(f"{c}/{t}" for c, t in b)
     sstr = ", ".join(f"{c}/{t}" for c, t in s)
     flag = "  <== WIN >= threshold" if (sm - bm) >= THRESH else ("  <- sense ahead" if sm - bm > 0.05 else "")
@@ -97,4 +106,27 @@ for gn in groups:
 bmean = sum(bo) / len(bo); smean = sum(so) / len(so)
 print(f"\noverall cited-recall  baseline {[round(x,2) for x in bo]} mean {bmean:.2f}"
       f"  |  sense {[round(x,2) for x in so]} mean {smean:.2f}  delta {smean-bmean:+.2f}")
-print(f"\nVERDICT: {'WIN' if any((sum(c for c,_ in sg.get(gn,[]))/max(1,sum(t for _,t in sg.get(gn,[]))) - sum(c for c,_ in bg.get(gn,[]))/max(1,sum(t for _,t in bg.get(gn,[])))) >= THRESH for gn in groups) else 'NOT YET >=threshold — re-author toward the indirect-edge seam or prove colocated/resolver-gap'}")
+
+# Headline verdict. A reach WIN (any group clears the threshold) is the primary
+# axis. When reach TIES, the win may still be real but INVISIBLE to cited-recall:
+# on a grep-clean repo both arms reach the full set, and Sense's value shows up as
+# fewer round-trips (the sentry case: -46% wall at held recall). Surface it via the
+# same efficiency-at-parity gate scoreboard.py uses, so a robust cheaper-at-parity
+# tie banks as a ◆ win instead of reading as a draw.
+if any(d >= THRESH for d in deltas.values()):
+    print("\nVERDICT: WIN")
+else:
+    from scoreboard import eff_at_parity  # same-dir import; safe (guarded __main__)
+    eff = eff_at_parity(beff, seff)
+    if eff is not None:
+        # eff is not None => walls are non-empty (eff_at_parity gates on that),
+        # so median is safe. Wall % is display-only; the gate lives in eff_at_parity.
+        wb, ws = statistics.median(beff["walls"]), statistics.median(seff["walls"])
+        wall_pct = (ws - wb) / wb * 100.0 if wb else 0.0
+        print(f"\nVERDICT: EFFICIENCY-AT-PARITY WIN ◆ — recall tied, sense robustly cheaper: "
+              f"billed tokens {eff:+.0f}%, wall {wall_pct:+.0f}% "
+              f"(every sense run under every baseline run; sense wall-median lower)")
+    else:
+        print("\nVERDICT: NOT YET >=threshold — re-author toward the indirect-edge seam, "
+              "prove colocated/resolver-gap, or (if recall ties by design) sense is NOT "
+              "robustly cheaper here so there is no efficiency-at-parity win either")
