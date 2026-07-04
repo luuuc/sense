@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.10] - 2026-07-04
+
+### Bug Fixes
+
+- type Django queryset receivers by convention, double-keyed
 ## [1.11.9] - 2026-07-04
 
 ### Bug Fixes
