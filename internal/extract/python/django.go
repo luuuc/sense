@@ -128,17 +128,55 @@ func isQuerySetExprDepth(n *sitter.Node, src []byte, types map[string]string, de
 	return false
 }
 
-// isModelObjectsAttr matches the chain root: `<PascalModel>.objects`.
+// djangoManagerLeafNames are the attribute names that root a manager chain:
+// the public `objects` plus the private accessors Django's own plumbing uses
+// (`Model._default_manager` / `Model._base_manager`). The exposure bound is
+// the same as the name convention: a wrong guess emits a QuerySet.* target
+// that only resolves in a repo defining a QuerySet class.
+var djangoManagerLeafNames = map[string]bool{
+	"objects":          true,
+	"_default_manager": true,
+	"_base_manager":    true,
+}
+
+// isModelObjectsAttr matches the chain root: a manager leaf (objects /
+// _default_manager / _base_manager) on a model reference — a PascalCase
+// identifier or one of the self-attribute idioms Django's own plumbing uses
+// (`self.model` in managers/descriptors, `self.__class__` in Model methods,
+// `self.through` in related descriptors).
 func isModelObjectsAttr(n *sitter.Node, src []byte) bool {
 	leaf := n.ChildByFieldName("attribute")
 	obj := n.ChildByFieldName("object")
 	if leaf == nil || obj == nil {
 		return false
 	}
-	if extract.Text(leaf, src) != "objects" {
+	if !djangoManagerLeafNames[extract.Text(leaf, src)] {
 		return false
 	}
-	return obj.Kind() == "identifier" && isPascalCase(extract.Text(obj, src))
+	if obj.Kind() == "identifier" && isPascalCase(extract.Text(obj, src)) {
+		return true
+	}
+	return isSelfModelRef(obj, src)
+}
+
+// isSelfModelRef matches exactly `self.model`, `self.__class__`, and
+// `self.through` — the three attribute shapes that hold a model class inside
+// Django framework plumbing. No general attribute walk: anything else
+// (self.request, obj.model) stays unproven.
+func isSelfModelRef(n *sitter.Node, src []byte) bool {
+	if n.Kind() != "attribute" {
+		return false
+	}
+	obj := n.ChildByFieldName("object")
+	leaf := n.ChildByFieldName("attribute")
+	if obj == nil || leaf == nil || obj.Kind() != "identifier" || extract.Text(obj, src) != "self" {
+		return false
+	}
+	switch extract.Text(leaf, src) {
+	case "model", "__class__", "through":
+		return true
+	}
+	return false
 }
 
 // isQuerySetChainCall matches a chain hop: a conventionally QuerySet-returning

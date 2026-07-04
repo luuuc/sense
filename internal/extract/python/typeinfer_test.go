@@ -201,6 +201,93 @@ def run(thing):
 	}
 }
 
+func TestPrivateManagerLeafResolvesToQuerySet(t *testing.T) {
+	r := parse(t, `
+def purge():
+    return Product._base_manager.filter(active=False)
+`)
+	if findEdge(r, "purge", "QuerySet.filter", "calls") == nil {
+		t.Fatal("expected QuerySet.filter from a Model._base_manager chain")
+	}
+}
+
+func TestDefaultManagerChainContinuationResolves(t *testing.T) {
+	r := parse(t, `
+def routed(db):
+    return Product._default_manager.using(db).filter(active=True)
+`)
+	if findEdge(r, "routed", "QuerySet.using", "calls") == nil {
+		t.Fatal("expected QuerySet.using for the _default_manager chain root")
+	}
+	if findEdge(r, "routed", "QuerySet.filter", "calls") == nil {
+		t.Fatal("expected QuerySet.filter past the using() hop")
+	}
+}
+
+func TestLowercasePrivateManagerRootDoesNotFire(t *testing.T) {
+	r := parse(t, `
+def run(thing):
+    return thing._default_manager.filter(x=1)
+`)
+	if findEdge(r, "run", "QuerySet.filter", "calls") != nil {
+		t.Fatal("private-manager leaves still require a proven model root")
+	}
+}
+
+func TestSelfModelManagerRootResolves(t *testing.T) {
+	r := parse(t, `
+class RelatedManager:
+    def clear(self, db):
+        self.model._base_manager.using(db).filter(pk__in=ids).delete()
+`)
+	if findEdge(r, "RelatedManager.clear", "QuerySet.filter", "calls") == nil {
+		t.Fatal("expected QuerySet.filter from a self.model._base_manager chain")
+	}
+}
+
+func TestSelfClassDefaultManagerResolves(t *testing.T) {
+	r := parse(t, `
+class Model:
+    def validate_unique(self):
+        return self.__class__._default_manager.filter(**kwargs)
+`)
+	if findEdge(r, "Model.validate_unique", "QuerySet.filter", "calls") == nil {
+		t.Fatal("expected QuerySet.filter from a self.__class__._default_manager chain")
+	}
+}
+
+func TestSelfThroughObjectsRootResolves(t *testing.T) {
+	r := parse(t, `
+class ManyRelatedManager:
+    def exists(self, db):
+        return self.through._default_manager.using(db).exists()
+`)
+	if findEdge(r, "ManyRelatedManager.exists", "QuerySet.exists", "calls") == nil {
+		t.Fatal("expected QuerySet.exists from a self.through._default_manager chain")
+	}
+}
+
+func TestOtherSelfAttributeRootDoesNotFire(t *testing.T) {
+	r := parse(t, `
+class View:
+    def run(self):
+        return self.request._default_manager.filter(x=1)
+`)
+	if findEdge(r, "View.run", "QuerySet.filter", "calls") != nil {
+		t.Fatal("only self.model/self.__class__/self.through prove a model root")
+	}
+}
+
+func TestNonSelfAttributeRootDoesNotFire(t *testing.T) {
+	r := parse(t, `
+def run(obj):
+    return obj.model._base_manager.filter(x=1)
+`)
+	if findEdge(r, "run", "QuerySet.filter", "calls") != nil {
+		t.Fatal("the model-attribute root is proven only on self")
+	}
+}
+
 func TestDottedAnnotationParamUsesLeafType(t *testing.T) {
 	r := parse(t, `
 def compile(query: sql.Query):
@@ -354,6 +441,11 @@ func TestInferenceHelpersTolerateNilNodes(t *testing.T) {
 	// calls pin each helper's own contract.
 	if t2, ok := annotationTypeName(nil, nil); ok || t2 != "" {
 		t.Fatal("nil annotation must yield no type")
+	}
+	// A node without attribute/object fields (any non-attribute kind) must
+	// answer false through the nil-field guard, never panic.
+	if isModelObjectsAttr(mustParseRoot(t, "x = 1\n"), []byte("x = 1\n")) {
+		t.Fatal("a field-less node must not match the manager chain root")
 	}
 	if t2, ok := callResultTypeName(nil, nil, nil); ok || t2 != "" {
 		t.Fatal("nil RHS must yield no type")
