@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.8] - 2026-07-04
+
+### Bug Fixes
+
+- steer agents off per-subclass graph over-traversal
 ## [1.11.7] - 2026-07-03
 
 ### Bug Fixes
