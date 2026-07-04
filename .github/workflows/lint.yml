@@ -1,0 +1,37 @@
+name: golangci-lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Lint needs the embedded bundle present: internal/embed go:embeds the
+      # model and ORT library, so typechecking fails without them. Same cache
+      # key as ci.yml, so this is usually a no-op restore.
+      - name: Cache dependencies (model + ORT)
+        uses: actions/cache@v6
+        with:
+          path: internal/embed/bundle
+          key: sense-deps-linux-amd64-${{ hashFiles('scripts/fetch-deps.sh') }}
+
+      - name: Fetch dependencies (model + ORT)
+        run: ./scripts/fetch-deps.sh --local
+
+      - name: Lint
+        # Same `make lint` a contributor runs locally; golangci-lint is pinned
+        # in the Makefile (GOLANGCI_VERSION). This dedicated workflow exists so
+        # the README badge reflects lint status alone; ci.yml still runs lint
+        # as part of the full `make ci` parity gate.
+        run: make lint
