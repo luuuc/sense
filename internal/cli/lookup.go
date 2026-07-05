@@ -59,47 +59,47 @@ type Match struct {
 //   - len(matches) > 1  → ambiguous; render disambiguation
 //   - Resolution == ResFuzzy → suggestions, not resolved matches
 func Lookup(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
+	return lookupCascade(ctx, db, query, "")
+}
+
+// LookupInFile runs the same tier cascade as Lookup with a file-path
+// substring constraint applied inside every tier: a lower-tier match in
+// the pinned file beats a higher-tier match elsewhere. When no tier
+// yields a file-matching candidate it returns no matches — it never
+// falls back to a candidate outside the file, so callers can surface
+// the conflict instead of a silently unconstrained winner.
+func LookupInFile(ctx context.Context, db *sql.DB, query, file string) ([]Match, error) {
+	return lookupCascade(ctx, db, query, file)
+}
+
+// lookupCascade walks the five tiers in order and returns the first
+// tier that produces a match surviving the optional file filter.
+func lookupCascade(ctx context.Context, db *sql.DB, query, file string) ([]Match, error) {
 	if query == "" {
 		return nil, nil
 	}
 
-	matches, err := lookupByQualified(ctx, db, query)
-	if err != nil {
-		return nil, err
+	tiers := []struct {
+		fn  func(context.Context, *sql.DB, string) ([]Match, error)
+		res Resolution
+	}{
+		{lookupByQualified, ResExactQualified},
+		{lookupByName, ResExactName},
+		{lookupBySuffix, ResSuffix},
+		{lookupByContainment, ResContainment},
+		{lookupFuzzy, ResFuzzy},
 	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResExactQualified), nil
+	for _, t := range tiers {
+		matches, err := t.fn(ctx, db, query)
+		if err != nil {
+			return nil, err
+		}
+		matches = FilterMatches(matches, file, "")
+		if len(matches) > 0 {
+			return setResolution(matches, t.res), nil
+		}
 	}
-
-	matches, err = lookupByName(ctx, db, query)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResExactName), nil
-	}
-
-	matches, err = lookupBySuffix(ctx, db, query)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResSuffix), nil
-	}
-
-	matches, err = lookupByContainment(ctx, db, query)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResContainment), nil
-	}
-
-	matches, err = lookupFuzzy(ctx, db, query)
-	if err != nil {
-		return nil, err
-	}
-	return setResolution(matches, ResFuzzy), nil
+	return nil, nil
 }
 
 func setResolution(matches []Match, r Resolution) []Match {

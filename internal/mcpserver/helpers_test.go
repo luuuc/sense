@@ -106,12 +106,30 @@ func TestSuggestionsResult(t *testing.T) {
 }
 
 func TestNotFoundResult(t *testing.T) {
-	result := notFoundResult("SomeSymbol")
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result := ts.handlers.notFoundResult(ctx, "SomeSymbol")
 	if result == nil {
 		t.Fatal("notFoundResult returned nil")
 	}
 	if len(result.Content) == 0 {
 		t.Fatal("notFoundResult returned empty content")
+	}
+	tc, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content is %T, want mcp.TextContent", result.Content[0])
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+		t.Fatalf("unmarshal not-found: %v", err)
+	}
+	// Agents may key on the error string — it must stay stable.
+	if resp["error"] != "symbol not found" {
+		t.Errorf("error = %v, want the stable \"symbol not found\"", resp["error"])
+	}
+	if _, ok := resp["next_steps"]; !ok {
+		t.Errorf("expected a next_steps pointer at sense_search, got %v", resp)
 	}
 }
 

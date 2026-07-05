@@ -13,6 +13,7 @@ import (
 	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/model"
+	"github.com/luuuc/sense/internal/search"
 )
 
 func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -136,28 +137,39 @@ const disambiguationCap = 10
 // When the symbol is not found, ambiguous, or only fuzzy-matched, it
 // returns a resolveError whose result field carries a pre-built
 // *mcp.CallToolResult with structured JSON for the LLM.
+//
+// A non-empty fileHint is a hard constraint, mirroring the CLI's
+// --file flag: resolution runs the lookup tiers with the file filter
+// applied inside each tier, so a lower-tier match in the pinned file
+// beats a higher-tier match elsewhere. When no tier matches the file,
+// the error names the constraint and lists where the symbol does
+// resolve — it never falls back to a conflicting cross-file winner.
 func (h *handlers) resolveSymbol(ctx context.Context, tool, symbol, fileHint string) (cli.Match, error) {
+	if fileHint != "" {
+		matches, err := cli.LookupInFile(ctx, h.db, symbol, fileHint)
+		if err != nil {
+			return cli.Match{}, fmt.Errorf("%s: lookup: %w", tool, err)
+		}
+		if len(matches) == 0 {
+			return cli.Match{}, &resolveError{h.notFoundInFileResult(ctx, symbol, fileHint)}
+		}
+		return h.pickResolved(ctx, symbol, matches)
+	}
+
 	matches, err := cli.Lookup(ctx, h.db, symbol)
 	if err != nil {
 		return cli.Match{}, fmt.Errorf("%s: lookup: %w", tool, err)
 	}
-
-	// Disambiguate by file path substring when the caller supplied one.
-	// Mirrors the CLI's --file flag: an ambiguous symbol (a re-opened Ruby
-	// class, or a name shared with a JS/TS component in a full-stack repo)
-	// resolves to the single candidate whose path contains the hint. A hint
-	// that matches nothing is ignored so the normal not-found/ambiguous
-	// handling still runs.
-	if fileHint != "" {
-		if filtered := cli.FilterMatches(matches, fileHint, ""); len(filtered) > 0 {
-			matches = filtered
-		}
-	}
-
 	if len(matches) == 0 {
-		return cli.Match{}, &resolveError{notFoundResult(symbol)}
+		return cli.Match{}, &resolveError{h.notFoundResult(ctx, symbol)}
 	}
+	return h.pickResolved(ctx, symbol, matches)
+}
 
+// pickResolved reduces a non-empty match list to a single resolved
+// match, or a resolveError carrying the suggestion/disambiguation
+// result. Shared by the plain and file-constrained resolution paths.
+func (h *handlers) pickResolved(ctx context.Context, symbol string, matches []cli.Match) (cli.Match, error) {
 	if len(matches) == 1 && matches[0].Resolution != cli.ResFuzzy {
 		return matches[0], nil
 	}
@@ -213,10 +225,83 @@ func (h *handlers) dominantMatch(ctx context.Context, matches []cli.Match) (cli.
 	return cli.Match{}, false
 }
 
-func notFoundResult(symbol string) *mcp.CallToolResult {
+// notFoundSteeringCap bounds the nearest-candidate list attached to a
+// not-found response. Two or three is enough to steer a retry; more
+// reads like a search result and belongs in sense_search itself.
+const notFoundSteeringCap = 3
+
+// notFoundResult reports a symbol no lookup tier matched, steering the
+// agent instead of dead-ending: the nearest indexed candidates from the
+// search engine plus a next_steps pointer at sense_search. The "error"
+// key stays "symbol not found" — agents may key on it.
+func (h *handlers) notFoundResult(ctx context.Context, symbol string) *mcp.CallToolResult {
 	resp := map[string]any{
 		"error": "symbol not found",
 		"query": symbol,
+	}
+	if candidates := h.nearestCandidates(ctx, symbol); len(candidates) > 0 {
+		resp["candidates"] = candidates
+	}
+	resp["next_steps"] = []mcpio.NextStep{{
+		Tool:   "sense_search",
+		Args:   map[string]any{"query": symbol},
+		Reason: "no indexed symbol has this name — search ranks the nearest matches (a renamed or removed symbol's successor usually surfaces here)",
+	}}
+	out, _ := json.MarshalIndent(resp, "", "  ")
+	return mcp.NewToolResultError(string(out))
+}
+
+// nearestCandidates asks the search engine for the closest indexed
+// symbols to a name no lookup tier matched. Best-effort: any failure
+// degrades to no candidates, keeping the not-found shape well-formed
+// on an empty or engine-less index.
+func (h *handlers) nearestCandidates(ctx context.Context, symbol string) []string {
+	if h.search == nil {
+		return nil
+	}
+	results, _, err := h.search.Search(ctx, search.Options{
+		Query: symbol,
+		Limit: notFoundSteeringCap,
+		Mode:  search.ModeHybrid,
+	})
+	if err != nil || len(results) == 0 {
+		return nil
+	}
+
+	fileIDs := make([]int64, len(results))
+	for i, r := range results {
+		fileIDs[i] = r.FileID
+	}
+	pathByID, err := cli.LoadFilePaths(ctx, h.db, fileIDs)
+	if err != nil {
+		pathByID = map[int64]string{}
+	}
+
+	candidates := make([]string, len(results))
+	for i, r := range results {
+		candidates[i] = fmt.Sprintf("%s (%s) %s:%d", r.Qualified, r.Kind, pathByID[r.FileID], r.LineStart)
+	}
+	return candidates
+}
+
+// notFoundInFileResult reports that no lookup tier matched the symbol
+// inside the pinned file. The cross-file matches ride along under
+// "elsewhere" so the agent sees the conflict — the file it pinned does
+// not contain the symbol it asked for — instead of a wrong graph.
+func (h *handlers) notFoundInFileResult(ctx context.Context, symbol, fileHint string) *mcp.CallToolResult {
+	resp := map[string]any{
+		"error": "symbol not found in file",
+		"query": symbol,
+		"file":  fileHint,
+	}
+	if matches, err := cli.Lookup(ctx, h.db, symbol); err == nil && len(matches) > 0 && matches[0].Resolution != cli.ResFuzzy {
+		limit := min(len(matches), notFoundSteeringCap)
+		elsewhere := make([]string, limit)
+		for i := range elsewhere {
+			m := matches[i]
+			elsewhere[i] = fmt.Sprintf("%s (%s) %s:%d", m.Qualified, m.Kind, m.File, m.LineStart)
+		}
+		resp["elsewhere"] = elsewhere
 	}
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	return mcp.NewToolResultError(string(out))

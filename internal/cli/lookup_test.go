@@ -31,12 +31,15 @@ func seedLookupDB(t *testing.T) *sql.DB {
 	// Two User symbols in different namespaces exercise the
 	// ambiguity path. CheckoutService is a unique qualified name
 	// exercising the success path. "Ordr" is close enough to
-	// "Order" for the fuzzy tier.
+	// "Order" for the fuzzy tier. PowerUser matches a "User" query
+	// only at the suffix tier, exercising the cross-tier file
+	// constraint.
 	files := []model.File{
 		{Path: "app/models/user.rb", Language: "ruby", Hash: "aaa", IndexedAt: time.Now()},
 		{Path: "app/models/admin/user.rb", Language: "ruby", Hash: "bbb", IndexedAt: time.Now()},
 		{Path: "app/services/checkout_service.rb", Language: "ruby", Hash: "ccc", IndexedAt: time.Now()},
 		{Path: "app/models/order.rb", Language: "ruby", Hash: "ddd", IndexedAt: time.Now()},
+		{Path: "app/models/power_user.rb", Language: "ruby", Hash: "eee", IndexedAt: time.Now()},
 	}
 	fileIDs := make([]int64, len(files))
 	for i := range files {
@@ -52,6 +55,7 @@ func seedLookupDB(t *testing.T) *sql.DB {
 		{FileID: fileIDs[1], Name: "User", Qualified: "Admin::User", Kind: "class", LineStart: 2, LineEnd: 15},
 		{FileID: fileIDs[2], Name: "CheckoutService", Qualified: "App::Services::CheckoutService", Kind: "class", LineStart: 12, LineEnd: 85},
 		{FileID: fileIDs[3], Name: "Order", Qualified: "App::Order", Kind: "class", LineStart: 1, LineEnd: 30},
+		{FileID: fileIDs[4], Name: "PowerUser", Qualified: "App::PowerUser", Kind: "class", LineStart: 5, LineEnd: 40},
 	}
 	for i := range symbols {
 		if _, werr := adapter.WriteSymbol(ctx, &symbols[i]); werr != nil {
@@ -78,6 +82,50 @@ func TestLookupExactQualified(t *testing.T) {
 	}
 	if matches[0].File != "app/services/checkout_service.rb" {
 		t.Errorf("file = %q", matches[0].File)
+	}
+}
+
+// TestLookupInFile covers the file-constrained cascade: the constraint
+// applies inside every tier, so a suffix-tier match in the pinned file
+// beats the exact-name winners elsewhere, and a file no tier matches
+// returns nothing instead of falling back to a cross-file winner.
+func TestLookupInFile(t *testing.T) {
+	db := seedLookupDB(t)
+	ctx := context.Background()
+
+	// "User" resolves at the exact-name tier (App::User, Admin::User),
+	// but the pinned file only holds App::PowerUser — a suffix match.
+	matches, err := LookupInFile(ctx, db, "User", "power_user.rb")
+	if err != nil {
+		t.Fatalf("LookupInFile: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Qualified != "App::PowerUser" {
+		t.Fatalf("want the pinned file's App::PowerUser, got %+v", matches)
+	}
+	if matches[0].Resolution != ResSuffix {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResSuffix)
+	}
+
+	// A file hint matching one of the exact-name candidates keeps the
+	// higher tier's semantics.
+	matches, err = LookupInFile(ctx, db, "User", "admin/user.rb")
+	if err != nil {
+		t.Fatalf("LookupInFile: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Qualified != "Admin::User" {
+		t.Fatalf("want Admin::User, got %+v", matches)
+	}
+	if matches[0].Resolution != ResExactName {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResExactName)
+	}
+
+	// A file no tier matches yields nothing — never the cross-file winner.
+	matches, err = LookupInFile(ctx, db, "User", "no/such/file.rb")
+	if err != nil {
+		t.Fatalf("LookupInFile: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("want no matches for an unmatchable file, got %+v", matches)
 	}
 }
 
