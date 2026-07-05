@@ -518,6 +518,9 @@ func TestResolveSymbolFileHintDisambiguates(t *testing.T) {
 	if !ok || len(elsewhere) == 0 {
 		t.Errorf("expected cross-file matches under elsewhere, got %v", resp["elsewhere"])
 	}
+	if _, ok := resp["next_steps"]; !ok {
+		t.Errorf("expected a retry pointer in next_steps alongside elsewhere, got %v", resp)
+	}
 }
 
 // TestResolveSymbolFileHintConstrainsAcrossTiers reproduces the Finding-9
@@ -574,15 +577,17 @@ func TestResolveSymbolFileHintConstrainsAcrossTiers(t *testing.T) {
 	}
 }
 
-// TestNotFoundInFileResultOmitsFuzzyElsewhere covers the elsewhere guard:
-// when the symbol only fuzzy-matches cross-file, the not-found-in-file
-// response carries no elsewhere list — suggestions are not locations.
+// TestNotFoundInFileResultOmitsFuzzyElsewhere covers the elsewhere guard
+// and the steering floor: when the symbol only fuzzy-matches cross-file,
+// the not-found-in-file response carries no elsewhere list (suggestions
+// are not locations) but still steers — the double failure (bad name AND
+// pinned file) must never be a bare dead end.
 func TestNotFoundInFileResultOmitsFuzzyElsewhere(t *testing.T) {
 	ts := setupTestServer(t)
 	ctx := context.Background()
 
 	// "Verfiy" fuzzy-matches the fixture's "Verify" but no exact tier hits.
-	result := ts.handlers.notFoundInFileResult(ctx, "Verfiy", "some/file.go")
+	result := ts.handlers.notFoundInFileResult(ctx, "sense_graph", "Verfiy", "some/file.go")
 	var resp map[string]any
 	text := result.Content[0].(mcp.TextContent).Text
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
@@ -593,6 +598,9 @@ func TestNotFoundInFileResultOmitsFuzzyElsewhere(t *testing.T) {
 	}
 	if _, ok := resp["elsewhere"]; ok {
 		t.Errorf("fuzzy-only matches must not be presented as elsewhere locations, got %v", resp["elsewhere"])
+	}
+	if _, ok := resp["next_steps"]; !ok {
+		t.Errorf("the double failure must still steer via next_steps, got %v", resp)
 	}
 }
 
@@ -614,6 +622,10 @@ func TestNearestCandidates(t *testing.T) {
 		if !strings.Contains(c, "(") || !strings.Contains(c, ":") {
 			t.Errorf("candidate %q missing kind or file:line", c)
 		}
+	}
+
+	if got := ts.handlers.nearestCandidates(ctx, "zzqqxxnothing"); len(got) != 0 {
+		t.Errorf("expected no candidates for an unmatchable query, got %v", got)
 	}
 
 	bare := &handlers{}

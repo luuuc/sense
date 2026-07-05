@@ -67,7 +67,8 @@ func Lookup(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
 // the pinned file beats a higher-tier match elsewhere. When no tier
 // yields a file-matching candidate it returns no matches — it never
 // falls back to a candidate outside the file, so callers can surface
-// the conflict instead of a silently unconstrained winner.
+// the conflict instead of a silently unconstrained winner. An empty
+// file degrades to plain Lookup.
 func LookupInFile(ctx context.Context, db *sql.DB, query, file string) ([]Match, error) {
 	return lookupCascade(ctx, db, query, file)
 }
@@ -79,6 +80,9 @@ func lookupCascade(ctx context.Context, db *sql.DB, query, file string) ([]Match
 		return nil, nil
 	}
 
+	fuzzy := func(ctx context.Context, db *sql.DB, q string) ([]Match, error) {
+		return lookupFuzzy(ctx, db, q, file)
+	}
 	tiers := []struct {
 		fn  func(context.Context, *sql.DB, string) ([]Match, error)
 		res Resolution
@@ -87,7 +91,7 @@ func lookupCascade(ctx context.Context, db *sql.DB, query, file string) ([]Match
 		{lookupByName, ResExactName},
 		{lookupBySuffix, ResSuffix},
 		{lookupByContainment, ResContainment},
-		{lookupFuzzy, ResFuzzy},
+		{fuzzy, ResFuzzy},
 	}
 	for _, t := range tiers {
 		matches, err := t.fn(ctx, db, query)
@@ -205,7 +209,13 @@ func escapeLike(s string) string {
 //
 // Results are capped at fuzzyMaxResults, sorted by distance then
 // alphabetically. Only matches within fuzzyMaxDistance are returned.
-func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
+//
+// A non-empty file skips rows outside that path before the distance
+// computation: this tier streams every symbol, and a file-constrained
+// cascade reaches it whenever the symbol exists only outside the pinned
+// file — without the skip, that common miss pays a whole-index
+// Levenshtein scan whose results the filter then discards anyway.
+func lookupFuzzy(ctx context.Context, db *sql.DB, query, file string) ([]Match, error) {
 	if len(query) < fuzzyMinQueryLen {
 		return nil, nil
 	}
@@ -227,6 +237,9 @@ func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error)
 		var m Match
 		if err := rows.Scan(&m.ID, &m.Name, &m.Qualified, &m.Kind, &m.File, &m.Language, &m.LineStart); err != nil {
 			return nil, fmt.Errorf("lookup fuzzy scan: %w", err)
+		}
+		if file != "" && !strings.Contains(m.File, file) {
+			continue
 		}
 		d := bestLevenshtein(query, m.Name, m.Qualified)
 		if d <= fuzzyMaxDistance {

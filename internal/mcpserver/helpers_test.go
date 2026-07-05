@@ -131,6 +131,21 @@ func TestNotFoundResult(t *testing.T) {
 	if _, ok := resp["next_steps"]; !ok {
 		t.Errorf("expected a next_steps pointer at sense_search, got %v", resp)
 	}
+	// A query nothing matches must not fabricate candidates.
+	if _, ok := resp["candidates"]; ok {
+		t.Errorf("expected no candidates for an unmatchable query, got %v", resp["candidates"])
+	}
+
+	// A query the search engine does match carries the steering payload.
+	result = ts.handlers.notFoundResult(ctx, "auth")
+	var withHits map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &withHits); err != nil {
+		t.Fatalf("unmarshal not-found with hits: %v", err)
+	}
+	candidates, ok := withHits["candidates"].([]any)
+	if !ok || len(candidates) == 0 {
+		t.Errorf("expected nearest candidates for a search-matchable query, got %v", withHits["candidates"])
+	}
 }
 
 func TestLoadFrameworks(t *testing.T) {

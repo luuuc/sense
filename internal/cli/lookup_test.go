@@ -127,6 +127,29 @@ func TestLookupInFile(t *testing.T) {
 	if len(matches) != 0 {
 		t.Errorf("want no matches for an unmatchable file, got %+v", matches)
 	}
+
+	// A fuzzy hit in the pinned file keeps its ResFuzzy tag — callers
+	// must be able to route it to suggestions, never a resolved match.
+	matches, err = LookupInFile(ctx, db, "Ordr", "order.rb")
+	if err != nil {
+		t.Fatalf("LookupInFile: %v", err)
+	}
+	if len(matches) != 1 || matches[0].Qualified != "App::Order" {
+		t.Fatalf("want the fuzzy App::Order match, got %+v", matches)
+	}
+	if matches[0].Resolution != ResFuzzy {
+		t.Errorf("resolution = %q, want %q", matches[0].Resolution, ResFuzzy)
+	}
+
+	// The fuzzy tier honors the file constraint too: the same near-miss
+	// pinned to a different file finds nothing.
+	matches, err = LookupInFile(ctx, db, "Ordr", "user.rb")
+	if err != nil {
+		t.Fatalf("LookupInFile: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("want no fuzzy matches outside the pinned file, got %+v", matches)
+	}
 }
 
 func TestLookupExactUnqualifiedAmbiguous(t *testing.T) {
@@ -343,7 +366,7 @@ func TestLookupQueryErrorPropagates(t *testing.T) {
 
 func TestLookupFuzzyQueryError(t *testing.T) {
 	db := closedQueryDB(t)
-	if _, err := lookupFuzzy(context.Background(), db, "abcdef"); err == nil {
+	if _, err := lookupFuzzy(context.Background(), db, "abcdef", ""); err == nil {
 		t.Error("expected error from lookupFuzzy on a closed DB")
 	}
 }
