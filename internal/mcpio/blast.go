@@ -211,14 +211,14 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 	// the full magnitude.
 	resp.DirectCallers = enumerateByArea(tier1Direct, directEnumCap)
 	if seenCount > 0 {
-		note := fmt.Sprintf("%d of %d direct callers were already returned by an earlier sense_graph/sense_blast call on this symbol; only new callers are listed.",
+		note := fmt.Sprintf("%d of %d direct callers were already returned by an earlier sense_graph/sense_blast call in this session; only new callers are listed.",
 			seenCount, directTier1)
 		if seenCount == directTier1 {
 			// All direct callers were already shown — there is no "new" subset.
-			note = fmt.Sprintf("all %d direct callers were already returned by an earlier sense_graph/sense_blast call on this symbol; see that response for the list.",
+			note = fmt.Sprintf("all %d direct callers were already returned by an earlier sense_graph/sense_blast call in this session; see that response for the list.",
 				directTier1)
 		}
-		resp.SeenVia = &BlastSeenSummary{Count: seenCount, Note: note}
+		resp.SeenElsewhere = &SeenSummary{Count: seenCount, Note: note}
 	}
 	// Charge the full tier-1 direct count against the shared tier1Cap so
 	// indirect enumeration keeps its prior ceiling even though only the top
@@ -344,8 +344,8 @@ func blastCompleteness(resp *BlastResponse, totalAffected int) *Completeness {
 	// verdict complete (the seen-collapse is a dedup, not a truncation) and
 	// keeps the cap check honest (the full set is still accounted for).
 	seenCollapsed := 0
-	if resp.SeenVia != nil {
-		seenCollapsed = resp.SeenVia.Count
+	if resp.SeenElsewhere != nil {
+		seenCollapsed = resp.SeenElsewhere.Count
 	}
 	// total_affected is the engine's count of the direct+indirect caller union.
 	// The inherit/include/compose groups are a re-classification of those SAME
@@ -473,9 +473,9 @@ func BuildDiffBlastResponseSeen(ctx context.Context, ref string, results []blast
 	}
 
 	if seenCount > 0 {
-		resp.SeenVia = &BlastSeenSummary{
+		resp.SeenElsewhere = &SeenSummary{
 			Count: seenCount,
-			Note: fmt.Sprintf("%d of %d direct callers were already returned by an earlier sense_graph/sense_blast call on this symbol; only new callers are listed.",
+			Note: fmt.Sprintf("%d of %d direct callers were already returned by an earlier sense_graph/sense_blast call in this session; only new callers are listed.",
 				seenCount, directTotal),
 		}
 	}

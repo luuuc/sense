@@ -143,15 +143,13 @@ type DispatchInferredRef struct {
 // GraphLayer holds edges discovered at one BFS hop beyond the root.
 // Depth is the hop number (2, 3, …). Edges use the same shape as the
 // root's edges so the LLM can process them uniformly. SeenElsewhere
-// summarises layer entries collapsed because an earlier call already
-// returned them to this session — a token-saving deduplication, not a
-// truncation: the data is already in the agent's context. The root's
-// depth-1 edges never collapse; they are the direct answer to the
-// question asked.
+// summarises layer entries collapsed because the session already holds
+// them — never the root's depth-1 edges (see CollapseSeenLayerEdges
+// for the full contract).
 type GraphLayer struct {
-	Depth         int               `json:"depth"`
-	Edges         GraphEdges        `json:"edges"`
-	SeenElsewhere *BlastSeenSummary `json:"seen_elsewhere,omitempty"`
+	Depth         int          `json:"depth"`
+	Edges         GraphEdges   `json:"edges"`
+	SeenElsewhere *SeenSummary `json:"seen_elsewhere,omitempty"`
 }
 
 // TestCallerSummary segments test callers out of the main called_by
@@ -362,23 +360,24 @@ type BlastResponse struct {
 	// question for it but no view edge exists, "" (omitted) otherwise. See
 	// viewedges.go for the full contract.
 	ViewEdges string `json:"view_edges,omitempty"`
-	// SeenVia summarises the direct callers collapsed out of the enumerated
-	// list because an earlier sense_graph/sense_blast call already returned
-	// them to this session. It is a token-saving deduplication, not a
-	// truncation: the data is already in the agent's context, so the magnitude
-	// fields (total_affected, direct_callers_by_area) and the completeness
-	// verdict are unaffected. Present only when at least one caller was
-	// collapsed.
-	SeenVia      *BlastSeenSummary `json:"seen_elsewhere,omitempty"`
-	SenseMetrics BlastMetrics      `json:"-"`
-	Freshness    *Freshness        `json:"freshness,omitempty"`
-	NextSteps    []NextStep        `json:"next_steps"`
+	// SeenElsewhere summarises the direct callers collapsed out of the
+	// enumerated list because the session already received them from an
+	// earlier call. It is a token-saving deduplication, not a truncation:
+	// the data is already in the agent's context, so the magnitude fields
+	// (total_affected, direct_callers_by_area) and the completeness verdict
+	// are unaffected. Present only when at least one caller was collapsed.
+	SeenElsewhere *SeenSummary `json:"seen_elsewhere,omitempty"`
+	SenseMetrics  BlastMetrics `json:"-"`
+	Freshness     *Freshness   `json:"freshness,omitempty"`
+	NextSteps     []NextStep   `json:"next_steps"`
 }
 
-// BlastSeenSummary collapses direct callers already returned earlier this
-// session into a single count + note, instead of re-enumerating them. Count
-// is how many enumerated direct callers were omitted; Note explains why.
-type BlastSeenSummary struct {
+// SeenSummary replaces entries a response would re-enumerate with a single
+// count + note, because an earlier call this session already returned them.
+// Blast uses it for collapsed direct callers; graph uses it for collapsed
+// deeper-layer call edges. Count is how many entries were omitted; Note
+// explains why and how to recover them.
+type SeenSummary struct {
 	Count int    `json:"count"`
 	Note  string `json:"note"`
 }

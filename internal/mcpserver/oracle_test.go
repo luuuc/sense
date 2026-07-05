@@ -195,7 +195,12 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // nearest indexed candidates (when the search engine finds any) and a
 // next_steps pointer at sense_search, so graph/not_found gained a next_steps
 // entry — digest moved. The "error" key is unchanged.
-const oracleGolden = "1738ff2d7e6165730e89aa9f19d605524ccd9a3111130b8f5917bd24dc2c0c15"
+// Blast's seen_elsewhere note now says "in this session" instead of "on this
+// symbol": the seen set is session-wide (graph layer targets feed it too),
+// so the old wording was false whenever the collapsed caller was first
+// delivered by a call on a different symbol — digest moved. Counts and keys
+// are unchanged.
+const oracleGolden = "f828538af81dd76968dd9eafc73a539738f51fa9629988d33913adec6b7ee922"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))

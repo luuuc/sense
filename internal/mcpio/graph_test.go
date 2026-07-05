@@ -53,7 +53,7 @@ func TestCollapseSeenLayers(t *testing.T) {
 	seen := SeenFunc(func(id int64) bool { return id == 1 || id == 10 || id == 12 })
 
 	r := build()
-	CollapseSeenLayers(&r, seen)
+	CollapseSeenLayerEdges(&r, seen)
 	if len(r.Edges.CalledBy) != 1 {
 		t.Errorf("root depth-1 edges must never collapse, got %+v", r.Edges.CalledBy)
 	}
@@ -70,14 +70,14 @@ func TestCollapseSeenLayers(t *testing.T) {
 
 	// Nothing seen: no summary, nothing removed.
 	r2 := build()
-	CollapseSeenLayers(&r2, func(int64) bool { return false })
+	CollapseSeenLayerEdges(&r2, func(int64) bool { return false })
 	if r2.Layers[0].SeenElsewhere != nil || len(r2.Layers[0].Edges.CalledBy) != 3 {
 		t.Errorf("no-seen pass must be a no-op, got %+v", r2.Layers[0])
 	}
 
 	// Nil predicate disables the pass.
 	r3 := build()
-	CollapseSeenLayers(&r3, nil)
+	CollapseSeenLayerEdges(&r3, nil)
 	if r3.Layers[0].SeenElsewhere != nil || len(r3.Layers[0].Edges.CalledBy) != 3 {
 		t.Errorf("nil SeenFunc must disable the pass, got %+v", r3.Layers[0])
 	}

@@ -247,7 +247,7 @@ func TestMCPIntegration(t *testing.T) {
 			Risk          string `json:"risk"`
 			DirectCallers []any  `json:"direct_callers"`
 			TotalAffected int    `json:"total_affected"`
-			SeenVia       *struct {
+			SeenElsewhere *struct {
 				Count int `json:"count"`
 			} `json:"seen_elsewhere"`
 		}
@@ -269,8 +269,8 @@ func TestMCPIntegration(t *testing.T) {
 		// the enumerated direct callers plus the collapsed count cover it.
 		enumerated := len(blastResp.DirectCallers)
 		collapsed := 0
-		if blastResp.SeenVia != nil {
-			collapsed = blastResp.SeenVia.Count
+		if blastResp.SeenElsewhere != nil {
+			collapsed = blastResp.SeenElsewhere.Count
 		}
 		if blastResp.TotalAffected < 5 {
 			t.Errorf("total_affected = %d, want >= 5 (magnitude must survive seen-collapse)", blastResp.TotalAffected)

@@ -1430,8 +1430,8 @@ func TestBuildBlastResponseSeenNilIsByteIdentical(t *testing.T) {
 	plain := BuildBlastResponse(context.Background(), r, files, nil)
 	seenNil := BuildBlastResponseSeen(context.Background(), r, files, nil, nil)
 
-	if seenNil.SeenVia != nil {
-		t.Errorf("nil seen-set must not set seen_elsewhere, got %+v", seenNil.SeenVia)
+	if seenNil.SeenElsewhere != nil {
+		t.Errorf("nil seen-set must not set seen_elsewhere, got %+v", seenNil.SeenElsewhere)
 	}
 	pj, _ := json.Marshal(plain)
 	sj, _ := json.Marshal(seenNil)
@@ -1456,11 +1456,11 @@ func TestBuildBlastResponseSeenCollapsesPerID(t *testing.T) {
 			t.Errorf("seen caller C%d must not be enumerated", id)
 		}
 	}
-	if resp.SeenVia == nil || resp.SeenVia.Count != 3 {
-		t.Fatalf("seen_elsewhere = %+v, want count 3", resp.SeenVia)
+	if resp.SeenElsewhere == nil || resp.SeenElsewhere.Count != 3 {
+		t.Fatalf("seen_elsewhere = %+v, want count 3", resp.SeenElsewhere)
 	}
-	if !strings.Contains(resp.SeenVia.Note, "3 of 5") {
-		t.Errorf("seen_elsewhere note = %q, want it to mention 3 of 5", resp.SeenVia.Note)
+	if !strings.Contains(resp.SeenElsewhere.Note, "3 of 5") {
+		t.Errorf("seen_elsewhere note = %q, want it to mention 3 of 5", resp.SeenElsewhere.Note)
 	}
 }
 
@@ -1538,8 +1538,8 @@ func TestBuildBlastResponseSeenLeavesNonCallerSetsAlone(t *testing.T) {
 	// Mark every id seen — even the indirect/subclass/compose/include ids.
 	resp := BuildBlastResponseSeen(context.Background(), r, noFiles, nil, seenSet(1, 2, 3, 4, 5))
 
-	if len(resp.DirectCallers) != 0 || resp.SeenVia == nil || resp.SeenVia.Count != 1 {
-		t.Errorf("direct caller C1 should collapse: callers=%d seen=%+v", len(resp.DirectCallers), resp.SeenVia)
+	if len(resp.DirectCallers) != 0 || resp.SeenElsewhere == nil || resp.SeenElsewhere.Count != 1 {
+		t.Errorf("direct caller C1 should collapse: callers=%d seen=%+v", len(resp.DirectCallers), resp.SeenElsewhere)
 	}
 	// Only DIRECT callers collapse; the other relations are untouched.
 	if len(resp.IndirectCallers) != 1 {
@@ -1576,8 +1576,8 @@ func TestBuildDiffBlastResponseSeenCollapses(t *testing.T) {
 	if len(resp.DirectCallers) != 1 || resp.DirectCallers[0].Symbol != "New" {
 		t.Errorf("direct_callers = %+v, want only the unseen 'New'", resp.DirectCallers)
 	}
-	if resp.SeenVia == nil || resp.SeenVia.Count != 1 {
-		t.Fatalf("seen_elsewhere = %+v, want count 1", resp.SeenVia)
+	if resp.SeenElsewhere == nil || resp.SeenElsewhere.Count != 1 {
+		t.Fatalf("seen_elsewhere = %+v, want count 1", resp.SeenElsewhere)
 	}
 	if resp.TotalAffected != 2 {
 		t.Errorf("total_affected = %d, want 2 (full dedup union, not the remainder)", resp.TotalAffected)

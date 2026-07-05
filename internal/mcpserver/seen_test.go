@@ -64,10 +64,10 @@ func TestSeenDedupCollapsesOnlyRenderedCallers(t *testing.T) {
 		if err := json.Unmarshal([]byte(resultText(t, result)), &resp); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if resp.SeenVia == nil {
+		if resp.SeenElsewhere == nil {
 			return 0
 		}
-		return resp.SeenVia.Count
+		return resp.SeenElsewhere.Count
 	}
 
 	trimmed := seenAfterGraph(1)      // budget=1 trims called_by to ~one entry
@@ -142,11 +142,90 @@ func TestGraphFanWalkCollapsesSharedLayer(t *testing.T) {
 	}
 }
 
-// TestRenderedGraphIDs pins what the graph response marks seen: the rendered
+// TestGraphLayerMarkingHonorsBudgetTrim is the layer twin of the caller-leak
+// regression: layer targets must be marked seen AFTER the budget trim, never
+// from the pre-trim response. Call 1 runs with a starvation budget that
+// sheds its depth-2 layer, so the layer's hub target (main.main) was never
+// delivered; call 2 (full budget) shares that hub at depth 2 and must
+// RENDER it, not collapse it — collapsing would tell the agent "already
+// returned to this session", which would be false.
+func TestGraphLayerMarkingHonorsBudgetTrim(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	graphLayer := func(symbol string, budget int) (map[string]any, []any) {
+		ts.handlers.defaults.GraphTokenBudget = budget
+		result, err := ts.handlers.handleGraph(ctx, toolReq(map[string]any{
+			"symbol": symbol, "direction": "callers",
+		}))
+		if err != nil {
+			t.Fatalf("handleGraph(%s, budget=%d): %v", symbol, budget, err)
+		}
+		var resp map[string]any
+		if err := json.Unmarshal([]byte(resultText(t, result)), &resp); err != nil {
+			t.Fatalf("unmarshal %s: %v", symbol, err)
+		}
+		layers, _ := resp["layers"].([]any)
+		return resp, layers
+	}
+
+	// Call 1: starve the budget so the depth-2 layer (main.main) is shed.
+	resp1, layers1 := graphLayer("auth.Verify", 1)
+	if len(layers1) != 0 {
+		t.Skipf("budget=1 did not shed the layer (got %v) — fixture grew; retune the starvation budget", resp1["layers"])
+	}
+
+	// Call 2: full budget on the sibling sharing the depth-2 hub. The hub
+	// was never delivered, so it must render, and nothing may collapse.
+	_, layers2 := graphLayer("model.FindUser", 1_000_000)
+	if len(layers2) == 0 {
+		t.Fatal("expected a depth-2 layer on the second call")
+	}
+	l2 := layers2[0].(map[string]any)
+	if se, collapsed := l2["seen_elsewhere"]; collapsed {
+		t.Fatalf("layer collapsed against budget-shed targets the agent never received: %v", se)
+	}
+	callers, _ := l2["edges"].(map[string]any)["called_by"].([]any)
+	if len(callers) == 0 {
+		t.Error("the never-delivered depth-2 hub must render in full on the second call")
+	}
+}
+
+// TestBlastCollapsesCallerFirstSeenAsLayerTarget pins the cross-tool rider:
+// marking layer targets means a later sense_blast collapses a direct caller
+// the session first received only as a graph layer entry. The flow is the
+// fan-walk's natural next step — graph a sibling (layer shows the hub's
+// caller), then blast the hub.
+func TestBlastCollapsesCallerFirstSeenAsLayerTarget(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	// graph model.FindUser callers: depth-1 = HandleRequest, depth-2 layer =
+	// main.main (rendered, hence marked).
+	if _, err := ts.handlers.handleGraph(ctx, toolReq(map[string]any{
+		"symbol": "model.FindUser", "direction": "callers",
+	})); err != nil {
+		t.Fatalf("handleGraph: %v", err)
+	}
+
+	// blast HandleRequest: its direct caller main.main was delivered as a
+	// layer entry above, so it collapses into seen_elsewhere.
+	v := runBlast(t, ts.handlers, "handler.HandleRequest")
+	if v.SeenElsewhere == nil || v.SeenElsewhere.Count < 1 {
+		t.Fatalf("expected the layer-delivered caller collapsed into seen_elsewhere, got %+v", v)
+	}
+	for _, c := range v.DirectCallers {
+		if c["symbol"] == "main.main" {
+			t.Errorf("main.main must be collapsed, not re-enumerated: %v", v.DirectCallers)
+		}
+	}
+}
+
+// TestIdsToMarkSeen pins what the graph response marks seen: the rendered
 // depth-1 called_by callers (blast's direct-caller set) plus the rendered
 // layer call-edge targets (feeding the layer seen-collapse) — never the
 // root's callees, and never unresolved view edges (ID 0).
-func TestRenderedGraphIDs(t *testing.T) {
+func TestIdsToMarkSeen(t *testing.T) {
 	resp := &mcpio.GraphResponse{
 		Edges: mcpio.GraphEdges{
 			CalledBy: []mcpio.CallEdgeRef{
@@ -155,8 +234,10 @@ func TestRenderedGraphIDs(t *testing.T) {
 				{ID: 0, Symbol: "app/views/x.erb"}, // unresolved view edge — skip
 				{ID: 3, Symbol: "C#o"},
 			},
-			// Root callees must NOT be collected — they are not blast direct
-			// callers and the root's edges never collapse.
+			// Root callees must NOT be collected — deliberate conservatism,
+			// not principle: marking them would widen what a later blast
+			// collapses, an expansion that needs its own bench (see
+			// idsToMarkSeen's doc), not a rider on this fixture.
 			Calls: []mcpio.CallEdgeRef{{ID: 88, Symbol: "callee"}},
 		},
 		Layers: []mcpio.GraphLayer{{
@@ -168,10 +249,10 @@ func TestRenderedGraphIDs(t *testing.T) {
 		}},
 	}
 
-	got := renderedGraphIDs(resp)
+	got := idsToMarkSeen(resp)
 	want := map[int64]bool{1: true, 2: true, 3: true, 4: true, 5: true}
 	if len(got) != len(want) {
-		t.Fatalf("renderedGraphIDs = %v, want called_by {1,2,3} + layer targets {4,5}", got)
+		t.Fatalf("idsToMarkSeen = %v, want called_by {1,2,3} + layer targets {4,5}", got)
 	}
 	for _, id := range got {
 		if !want[id] {
@@ -186,7 +267,7 @@ type blastView struct {
 	DirectCallers       []map[string]any `json:"direct_callers"`
 	TotalAffected       int              `json:"total_affected"`
 	DirectCallersByArea map[string]int   `json:"direct_callers_by_area"`
-	SeenVia             *struct {
+	SeenElsewhere       *struct {
 		Count int `json:"count"`
 	} `json:"seen_elsewhere"`
 	Completeness *struct {
@@ -221,8 +302,8 @@ func TestBlastSingleCallIsFullThenGraphDedups(t *testing.T) {
 
 	// 1. Fresh session: blast on auth.Verify enumerates its callers in full.
 	first := runBlast(t, h, "auth.Verify")
-	if first.SeenVia != nil {
-		t.Errorf("fresh-session blast must collapse nothing, got seen_elsewhere=%+v", first.SeenVia)
+	if first.SeenElsewhere != nil {
+		t.Errorf("fresh-session blast must collapse nothing, got seen_elsewhere=%+v", first.SeenElsewhere)
 	}
 	if len(first.DirectCallers) == 0 {
 		t.Fatal("fresh blast should enumerate at least one direct caller")
@@ -236,8 +317,8 @@ func TestBlastSingleCallIsFullThenGraphDedups(t *testing.T) {
 	// 2+3. Second blast on the same symbol: the callers recorded by the first
 	// blast are now collapsed, but the radius is preserved.
 	second := runBlast(t, h, "auth.Verify")
-	if second.SeenVia == nil || second.SeenVia.Count != firstCount {
-		t.Errorf("second blast seen_elsewhere = %+v, want count %d (all callers already returned)", second.SeenVia, firstCount)
+	if second.SeenElsewhere == nil || second.SeenElsewhere.Count != firstCount {
+		t.Errorf("second blast seen_elsewhere = %+v, want count %d (all callers already returned)", second.SeenElsewhere, firstCount)
 	}
 	if len(second.DirectCallers) != 0 {
 		t.Errorf("second blast enumerated %d callers, want 0 (all already seen)", len(second.DirectCallers))

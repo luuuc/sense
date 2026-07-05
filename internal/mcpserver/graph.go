@@ -196,7 +196,7 @@ func (h *handlers) shapeGraphResponse(ctx context.Context, resp *mcpio.GraphResp
 	// re-trimmed. Sibling fan-walks (one graph call per subclass of a
 	// shared parent) repeat the same hub callers at depth 2 on every call;
 	// this is where that repetition stops costing tokens.
-	mcpio.CollapseSeenLayers(resp, h.seenPredicate())
+	mcpio.CollapseSeenLayerEdges(resp, h.seenPredicate())
 
 	// Keep hub responses within the MCP token budget — sheds deeper layers
 	// and trims the longest edge list, recording the count in OmittedEdges.
@@ -207,12 +207,11 @@ func (h *handlers) shapeGraphResponse(ctx context.Context, resp *mcpio.GraphResp
 	// collapse ONLY entries the model actually received, never ones the
 	// budget dropped (collapsing an unshown entry would silently lose it).
 	// The rendered called_by set is exactly blast's depth-1 direct-caller
-	// set; layer targets feed the layer collapse above and, like every
-	// shown-with-ref symbol, are fair game for blast's own seen collapse.
-	// Inherit/include/compose targets are not marked — blast lists those
-	// separately. Test callers, segmented into their own bucket, are
-	// intentionally left un-collapsed.
-	h.markSeen(append(renderedGraphIDs(resp), gr.Root.Symbol.ID))
+	// set; layer targets feed the layer collapse above. Marking layer
+	// targets also means a later blast collapses direct callers the session
+	// first saw as a layer entry — deliberate, they were delivered with
+	// refs. See idsToMarkSeen for what is deliberately NOT marked.
+	h.markSeen(append(idsToMarkSeen(resp), gr.Root.Symbol.ID))
 }
 
 const (
@@ -352,17 +351,20 @@ func appendDispatchCallers(inferred []mcpio.DispatchInferredRef, ids *[]int64, i
 	return inferred
 }
 
-// renderedGraphIDs collects the symbol ids of the call-edge targets the graph
+// idsToMarkSeen collects the symbol ids of the call-edge targets the graph
 // response ACTUALLY rendered, read after segmentation and the budget trim:
 // the depth-1 called_by callers (exactly blast's direct-caller set, so a
 // later sense_blast can collapse them with no risk of hiding a caller that
 // was never shown) plus the deeper layers' called_by/calls targets (feeding
-// the layer seen-collapse on later graph calls). Test callers (segmented
-// into their own bucket) and inherit/include/compose targets are
-// deliberately not returned — blast enumerates those separately. IDs of 0
+// the layer seen-collapse on later graph calls). Root callees are rendered
+// with refs too but deliberately NOT marked: marking them widens what a
+// later blast collapses, and that expansion has no motivating flow yet —
+// it should arrive with its own bench, not as a rider. Test callers
+// (segmented into their own bucket) and inherit/include/compose targets
+// are likewise not returned — blast enumerates those separately. IDs of 0
 // (unresolved-source view edges) are skipped: they carry no symbol a later
 // call could match.
-func renderedGraphIDs(resp *mcpio.GraphResponse) []int64 {
+func idsToMarkSeen(resp *mcpio.GraphResponse) []int64 {
 	ids := make([]int64, 0, len(resp.Edges.CalledBy))
 	appendEdgeIDs := func(edges []mcpio.CallEdgeRef) {
 		for _, c := range edges {
