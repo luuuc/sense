@@ -18,7 +18,7 @@
 # reach bench/scenarios/, bench/lib/, bench/global/docker/entrypoint.sh,
 # bench/PINNED_COMMITS.json.
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
