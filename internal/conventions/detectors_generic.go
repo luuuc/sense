@@ -159,20 +159,33 @@ func detectSymbolSuffixNaming(symbols []symbolRow, filePathByID map[int64]string
 		suffixExamples[ks] = append(suffixExamples[ks], Example{Name: s.name, Path: filePathByID[s.fileID]})
 	}
 
+	return emitGrouped(suffixCounts, suffixExamples,
+		func(ks kindSuffix) int { return kindCounts[ks.kind] },
+		CategoryNaming,
+		func(ks kindSuffix, ex []Example, count, total int) string {
+			return fmt.Sprintf("%s use *%s naming convention (%s — %d of %d)", pluralize(ks.kind), ks.suffix, topNames(ex), count, total)
+		})
+}
+
+// emitGrouped builds one Convention per grouped count that clears
+// minInstances, with strength measured against the group's kind total.
+// Examples are sorted before describe sees them.
+func emitGrouped[K comparable](counts map[K]int, examples map[K][]Example, totalFor func(K) int,
+	category Category, describe func(k K, ex []Example, count, total int) string) []Convention {
 	var out []Convention
-	for ks, count := range suffixCounts {
+	for k, count := range counts {
 		if count < minInstances {
 			continue
 		}
-		total := kindCounts[ks.kind]
+		total := totalFor(k)
 		if total == 0 {
 			continue
 		}
-		ex := suffixExamples[ks]
+		ex := examples[k]
 		sortExamples(ex)
 		out = append(out, Convention{
-			Category:    CategoryNaming,
-			Description: fmt.Sprintf("%s use *%s naming convention (%s — %d of %d)", pluralize(ks.kind), ks.suffix, topNames(ex), count, total),
+			Category:    category,
+			Description: describe(k, ex, count, total),
 			Instances:   count,
 			Total:       total,
 			Strength:    float64(count) / float64(total),
@@ -215,27 +228,12 @@ func detectFileSuffixNaming(symbols []symbolRow, filePathByID map[int64]string) 
 		fileSuffixExamples[kfs] = append(fileSuffixExamples[kfs], Example{Name: base, Path: fp})
 	}
 
-	var out []Convention
-	for kfs, count := range fileSuffixCounts {
-		if count < minInstances {
-			continue
-		}
-		total := kindFileCounts[kfs.kind]
-		if total == 0 {
-			continue
-		}
-		ex := fileSuffixExamples[kfs]
-		sortExamples(ex)
-		out = append(out, Convention{
-			Category:    CategoryNaming,
-			Description: fmt.Sprintf("%s files use *%s naming convention (%s — %d of %d)", kfs.kind, kfs.suffix, topNames(ex), count, total),
-			Instances:   count,
-			Total:       total,
-			Strength:    float64(count) / float64(total),
-			Examples:    ex,
+	return emitGrouped(fileSuffixCounts, fileSuffixExamples,
+		func(kfs kindFileSuffix) int { return kindFileCounts[kfs.kind] },
+		CategoryNaming,
+		func(kfs kindFileSuffix, ex []Example, count, total int) string {
+			return fmt.Sprintf("%s files use *%s naming convention (%s — %d of %d)", kfs.kind, kfs.suffix, topNames(ex), count, total)
 		})
-	}
-	return out
 }
 
 func detectStructure(symbols []symbolRow, filePathByID map[int64]string) []Convention {
@@ -265,27 +263,12 @@ func detectStructure(symbols []symbolRow, filePathByID map[int64]string) []Conve
 		dirExamples[kd] = append(dirExamples[kd], Example{Name: s.name, Path: fp})
 	}
 
-	var out []Convention
-	for kd, count := range dirCounts {
-		if count < minInstances {
-			continue
-		}
-		total := kindCounts[kd.kind]
-		if total == 0 {
-			continue
-		}
-		ex := dirExamples[kd]
-		sortExamples(ex)
-		out = append(out, Convention{
-			Category:    CategoryStructure,
-			Description: fmt.Sprintf("%s are grouped in %s/ (%s — %d of %d)", pluralize(kd.kind), kd.dir, topNames(ex), count, total),
-			Instances:   count,
-			Total:       total,
-			Strength:    float64(count) / float64(total),
-			Examples:    ex,
+	return emitGrouped(dirCounts, dirExamples,
+		func(kd kindDir) int { return kindCounts[kd.kind] },
+		CategoryStructure,
+		func(kd kindDir, ex []Example, count, total int) string {
+			return fmt.Sprintf("%s are grouped in %s/ (%s — %d of %d)", pluralize(kd.kind), kd.dir, topNames(ex), count, total)
 		})
-	}
-	return out
 }
 
 func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
