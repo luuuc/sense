@@ -23,6 +23,10 @@ jobs:
             os: darwin
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      # OIDC ID token for the tokenless Qlty coverage upload below.
+      id-token: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -89,6 +93,23 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.txt
+
+      # `-coverpkg=./...` records each file once per test package; Qlty's
+      # coverprofile parser does not sum duplicate blocks the way
+      # `go tool cover` does, so merge them before uploading. Main pushes
+      # only: the dashboard/badge track the default branch, and fork PRs
+      # can't mint the OIDC token anyway (codecov keeps the PR-diff view).
+      - name: Merge coverage profile for Qlty
+        if: matrix.os == 'linux' && github.event_name == 'push'
+        run: go run github.com/wadey/gocovmerge@b5bfa59ec0adc420475f97f89b58045c721d761c coverage.txt > coverage-merged.txt
+
+      - name: Upload coverage to Qlty
+        if: matrix.os == 'linux' && github.event_name == 'push'
+        uses: qltysh/qlty-action/coverage@fd52dc852530a708d68c3b7342f8d33d1df4cd55 # v2.2.1
+        with:
+          oidc: true
+          files: coverage-merged.txt
+          format: coverprofile
 
       - name: Smoke
         run: make smoke
