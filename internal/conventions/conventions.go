@@ -214,26 +214,36 @@ func resolveFileFilter(ctx context.Context, db *sql.DB, domain string) ([]int64,
 	return ids, rows.Err()
 }
 
-func loadSymbols(ctx context.Context, db *sql.DB, fileFilter []int64) ([]symbolRow, error) {
+// loadFiltered runs allQ when no file filter is given; otherwise it runs
+// filteredQ (which must end just before its IN list) once per filter chunk,
+// via query.
+func loadFiltered[T any](ctx context.Context, db *sql.DB, fileFilter []int64, allQ, filteredQ string,
+	query func(ctx context.Context, db *sql.DB, q string, args []any) ([]T, error)) ([]T, error) {
 	if len(fileFilter) == 0 {
-		return querySymbols(ctx, db, `SELECT id, file_id, name, qualified, kind, parent_id FROM sense_symbols`, nil)
+		return query(ctx, db, allQ, nil)
 	}
-	var out []symbolRow
+	var out []T
 	for _, chunk := range chunkIDs(fileFilter) {
 		placeholders := strings.Repeat("?,", len(chunk))
 		placeholders = placeholders[:len(placeholders)-1]
-		q := `SELECT id, file_id, name, qualified, kind, parent_id FROM sense_symbols WHERE file_id IN (` + placeholders + `)`
 		args := make([]any, len(chunk))
 		for i, id := range chunk {
 			args[i] = id
 		}
-		batch, err := querySymbols(ctx, db, q, args)
+		batch, err := query(ctx, db, filteredQ+` (`+placeholders+`)`, args)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, batch...)
 	}
 	return out, nil
+}
+
+func loadSymbols(ctx context.Context, db *sql.DB, fileFilter []int64) ([]symbolRow, error) {
+	return loadFiltered(ctx, db, fileFilter,
+		`SELECT id, file_id, name, qualified, kind, parent_id FROM sense_symbols`,
+		`SELECT id, file_id, name, qualified, kind, parent_id FROM sense_symbols WHERE file_id IN`,
+		querySymbols)
 }
 
 func querySymbols(ctx context.Context, db *sql.DB, q string, args []any) ([]symbolRow, error) {
@@ -262,25 +272,10 @@ func querySymbols(ctx context.Context, db *sql.DB, q string, args []any) ([]symb
 // files. Note: file_id on an edge is where the relationship was *found*, so
 // domain filtering captures edges whose source declaration lives in-domain.
 func loadEdges(ctx context.Context, db *sql.DB, fileFilter []int64) ([]edgeRow, error) {
-	if len(fileFilter) == 0 {
-		return queryEdges(ctx, db, `SELECT source_id, target_id, kind FROM sense_edges`, nil)
-	}
-	var out []edgeRow
-	for _, chunk := range chunkIDs(fileFilter) {
-		placeholders := strings.Repeat("?,", len(chunk))
-		placeholders = placeholders[:len(placeholders)-1]
-		q := `SELECT source_id, target_id, kind FROM sense_edges WHERE file_id IN (` + placeholders + `)`
-		args := make([]any, len(chunk))
-		for i, id := range chunk {
-			args[i] = id
-		}
-		batch, err := queryEdges(ctx, db, q, args)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, batch...)
-	}
-	return out, nil
+	return loadFiltered(ctx, db, fileFilter,
+		`SELECT source_id, target_id, kind FROM sense_edges`,
+		`SELECT source_id, target_id, kind FROM sense_edges WHERE file_id IN`,
+		queryEdges)
 }
 
 func queryEdges(ctx context.Context, db *sql.DB, q string, args []any) ([]edgeRow, error) {
@@ -305,25 +300,10 @@ func queryEdges(ctx context.Context, db *sql.DB, q string, args []any) ([]edgeRo
 }
 
 func loadFiles(ctx context.Context, db *sql.DB, fileFilter []int64) ([]fileRow, error) {
-	if len(fileFilter) == 0 {
-		return queryFiles(ctx, db, `SELECT id, path FROM sense_files`, nil)
-	}
-	var out []fileRow
-	for _, chunk := range chunkIDs(fileFilter) {
-		placeholders := strings.Repeat("?,", len(chunk))
-		placeholders = placeholders[:len(placeholders)-1]
-		q := `SELECT id, path FROM sense_files WHERE id IN (` + placeholders + `)`
-		args := make([]any, len(chunk))
-		for i, id := range chunk {
-			args[i] = id
-		}
-		batch, err := queryFiles(ctx, db, q, args)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, batch...)
-	}
-	return out, nil
+	return loadFiltered(ctx, db, fileFilter,
+		`SELECT id, path FROM sense_files`,
+		`SELECT id, path FROM sense_files WHERE id IN`,
+		queryFiles)
 }
 
 func queryFiles(ctx context.Context, db *sql.DB, q string, args []any) ([]fileRow, error) {

@@ -1,23 +1,13 @@
 package eval
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
-
-	_ "modernc.org/sqlite"
-
-	"github.com/luuuc/sense/internal/dead"
-	"github.com/luuuc/sense/internal/scan"
 )
 
 // The cargo oracle is the Rust voice's compiler-grade trust gate. rustc's
@@ -33,25 +23,16 @@ import (
 // anything it cannot prove (an unbound mention, an un-harvested language, a `pub`
 // item, a trait/derive/FFI/test idiom).
 
-// rustSymRef identifies a Rust symbol by repo-relative file and bare name — the
-// join key between Sense's `dead` set and cargo's dead_code findings. Keyed on
-// name+file rather than line/column so the two tools' slightly different position
-// reporting never causes a spurious mismatch.
-type rustSymRef struct {
-	File string
-	Name string
-}
+// rustSymRef identifies a Rust symbol by the shared join key (see symRef in
+// gate.go).
+type rustSymRef = symRef
 
 // DeadCodeSet is the set of symbols cargo flags as dead (the dead_code lint).
 type DeadCodeSet map[rustSymRef]struct{}
 
-// RustDead is one symbol Sense earns the `dead` verdict for, carrying the fields
-// needed to join against the oracle and to report a violation legibly.
-type RustDead struct {
-	Qualified string
-	File      string
-	Name      string
-}
+// RustDead is one Rust symbol Sense earns the `dead` verdict for (see
+// DeadSymbol in gate.go).
+type RustDead = DeadSymbol
 
 // deadCodeNameRe pulls the backtick-quoted identifier(s) out of a rustc dead_code
 // message, e.g. "function `foo` is never used", "associated function `new` is
@@ -162,36 +143,7 @@ func RunCargoDeadCode(ctx context.Context, repoRoot string) (DeadCodeSet, error)
 // RustDeadSymbols scans repoRoot with Sense and returns the Rust symbols it earns
 // the `dead` verdict for — the left side of the subset gate.
 func RustDeadSymbols(ctx context.Context, repoRoot, senseDir string) ([]RustDead, error) {
-	if _, err := scan.Run(ctx, scan.Options{
-		Root:     repoRoot,
-		Sense:    senseDir,
-		Output:   &bytes.Buffer{},
-		Warnings: io.Discard,
-	}); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", repoRoot, err)
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(senseDir, "index.db"))
-	if err != nil {
-		return nil, fmt.Errorf("open index: %w", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	res, err := dead.FindDead(ctx, db, dead.Options{Language: "rust", Limit: 1000000})
-	if err != nil {
-		return nil, fmt.Errorf("find dead: %w", err)
-	}
-	var out []RustDead
-	for _, f := range res.Findings {
-		if f.Verdict != dead.VerdictDead {
-			continue
-		}
-		out = append(out, RustDead{
-			Qualified: f.Symbol.Qualified,
-			File:      normalizeRel(f.Symbol.File),
-			Name:      f.Symbol.Name,
-		})
-	}
-	return out, nil
+	return deadSymbols(ctx, repoRoot, senseDir, "rust")
 }
 
 // RustFalseDeads returns the Sense `dead` Rust symbols absent from the cargo
@@ -199,17 +151,5 @@ func RustDeadSymbols(ctx context.Context, repoRoot, senseDir string) ([]RustDead
 // every symbol Sense called `dead` is one cargo independently agrees is unused.
 // Order is stable for legible reporting.
 func RustFalseDeads(senseDead []RustDead, oracle DeadCodeSet) []RustDead {
-	var out []RustDead
-	for _, d := range senseDead {
-		if _, ok := oracle[rustSymRef{File: d.File, Name: d.Name}]; !ok {
-			out = append(out, d)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].File != out[j].File {
-			return out[i].File < out[j].File
-		}
-		return out[i].Name < out[j].Name
-	})
-	return out
+	return falseDeads(senseDead, oracle)
 }

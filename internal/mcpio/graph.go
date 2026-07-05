@@ -231,55 +231,36 @@ func BuildGraphResponse(ctx context.Context, sc *model.SymbolContext, files File
 		resp.Edges.CalledBy = prod
 	}
 
-	// Temporal edges are bidirectional — collect from outbound to get one
-	// entry per partner, regardless of direction filter.
+	// Temporal edges are bidirectional — collect outbound first, deduping by
+	// partner, so each partner appears once regardless of direction filter.
 	temporalSeen := map[int64]struct{}{}
-	for _, e := range sc.Outbound {
-		if e.Edge.Kind != model.EdgeTemporal {
-			continue
+	collectTemporal := func(edges []model.EdgeRef) {
+		for _, e := range edges {
+			if e.Edge.Kind != model.EdgeTemporal {
+				continue
+			}
+			if _, dup := temporalSeen[e.Target.ID]; dup {
+				continue
+			}
+			temporalSeen[e.Target.ID] = struct{}{}
+			coChanges := 0
+			if e.Edge.Line != nil {
+				coChanges = *e.Edge.Line
+			}
+			fp := fileRefOrNil(e.Target.FileID, files)
+			resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
+				Symbol:    qualifiedOrName(e.Target),
+				File:      fp,
+				LineStart: e.Target.LineStart,
+				LineEnd:   e.Target.LineEnd,
+				Ref:       FormatRefPtr(fp, e.Target.LineStart),
+				CoChanges: coChanges,
+				Strength:  Confidence(e.Edge.Confidence),
+			})
 		}
-		if _, dup := temporalSeen[e.Target.ID]; dup {
-			continue
-		}
-		temporalSeen[e.Target.ID] = struct{}{}
-		coChanges := 0
-		if e.Edge.Line != nil {
-			coChanges = *e.Edge.Line
-		}
-		fp := fileRefOrNil(e.Target.FileID, files)
-		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
-			Symbol:    qualifiedOrName(e.Target),
-			File:      fp,
-			LineStart: e.Target.LineStart,
-			LineEnd:   e.Target.LineEnd,
-			Ref:       FormatRefPtr(fp, e.Target.LineStart),
-			CoChanges: coChanges,
-			Strength:  Confidence(e.Edge.Confidence),
-		})
 	}
-	for _, e := range sc.Inbound {
-		if e.Edge.Kind != model.EdgeTemporal {
-			continue
-		}
-		if _, dup := temporalSeen[e.Target.ID]; dup {
-			continue
-		}
-		temporalSeen[e.Target.ID] = struct{}{}
-		coChanges := 0
-		if e.Edge.Line != nil {
-			coChanges = *e.Edge.Line
-		}
-		fp := fileRefOrNil(e.Target.FileID, files)
-		resp.Edges.Temporal = append(resp.Edges.Temporal, TemporalEdgeRef{
-			Symbol:    qualifiedOrName(e.Target),
-			File:      fp,
-			LineStart: e.Target.LineStart,
-			LineEnd:   e.Target.LineEnd,
-			Ref:       FormatRefPtr(fp, e.Target.LineStart),
-			CoChanges: coChanges,
-			Strength:  Confidence(e.Edge.Confidence),
-		})
-	}
+	collectTemporal(sc.Outbound)
+	collectTemporal(sc.Inbound)
 
 	if len(testCallers) > 0 {
 		resp.TestCallerSummary = buildTestCallerSummary(testCallers)

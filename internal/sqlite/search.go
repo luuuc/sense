@@ -183,13 +183,12 @@ func blobToVector(blob []byte) []float32 {
 	return vec
 }
 
-// SymbolsByIDs returns symbol metadata for the given IDs, keyed by ID.
-// Used to hydrate vector-only search results with display metadata.
-func (a *Adapter) SymbolsByIDs(ctx context.Context, ids []int64) (map[int64]SearchResult, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	out := make(map[int64]SearchResult, len(ids))
+// queryIDChunks runs the query built by build over ids in chunks of 500
+// (staying within SQLite's bound-parameter limit), invoking scan once per
+// row. build receives the placeholder list for one chunk's IN clause.
+// Errors are wrapped as "sqlite <name>: …" / "sqlite <name> scan: …".
+func (a *Adapter) queryIDChunks(ctx context.Context, name string, ids []int64,
+	build func(in string) string, scan func(rows *sql.Rows) error) error {
 	const chunk = 500
 	for start := 0; start < len(ids); start += chunk {
 		end := start + chunk
@@ -206,29 +205,49 @@ func (a *Adapter) SymbolsByIDs(ctx context.Context, ids []int64) (map[int64]Sear
 			placeholders = append(placeholders, '?')
 			args[i] = id
 		}
-		q := `SELECT s.id, s.name, s.qualified, s.kind, s.file_id, s.line_start, s.snippet
-		      FROM sense_symbols s
-		      WHERE s.id IN (` + string(placeholders) + `)`
-		rows, err := a.db.QueryContext(ctx, q, args...)
+		rows, err := a.db.QueryContext(ctx, build(string(placeholders)), args...)
 		if err != nil {
-			return nil, fmt.Errorf("sqlite SymbolsByIDs: %w", err)
+			return fmt.Errorf("sqlite %s: %w", name, err)
 		}
 		for rows.Next() {
-			var r SearchResult
-			var snippet sql.NullString
-			if err := rows.Scan(&r.SymbolID, &r.Name, &r.Qualified, &r.Kind,
-				&r.FileID, &r.LineStart, &snippet); err != nil {
+			if err := scan(rows); err != nil {
 				_ = rows.Close()
-				return nil, fmt.Errorf("sqlite SymbolsByIDs scan: %w", err)
+				return fmt.Errorf("sqlite %s scan: %w", name, err)
 			}
-			r.Snippet = snippet.String
-			out[r.SymbolID] = r
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
-			return nil, err
+			return err
 		}
 		_ = rows.Close()
+	}
+	return nil
+}
+
+// SymbolsByIDs returns symbol metadata for the given IDs, keyed by ID.
+// Used to hydrate vector-only search results with display metadata.
+func (a *Adapter) SymbolsByIDs(ctx context.Context, ids []int64) (map[int64]SearchResult, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out := make(map[int64]SearchResult, len(ids))
+	err := a.queryIDChunks(ctx, "SymbolsByIDs", ids, func(in string) string {
+		return `SELECT s.id, s.name, s.qualified, s.kind, s.file_id, s.line_start, s.snippet
+		      FROM sense_symbols s
+		      WHERE s.id IN (` + in + `)`
+	}, func(rows *sql.Rows) error {
+		var r SearchResult
+		var snippet sql.NullString
+		if err := rows.Scan(&r.SymbolID, &r.Name, &r.Qualified, &r.Kind,
+			&r.FileID, &r.LineStart, &snippet); err != nil {
+			return err
+		}
+		r.Snippet = snippet.String
+		out[r.SymbolID] = r
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -242,43 +261,21 @@ func (a *Adapter) InboundEdgeCounts(ctx context.Context, symbolIDs []int64) (map
 		return nil, nil
 	}
 	out := make(map[int64]int, len(symbolIDs))
-	const chunk = 500
-	for start := 0; start < len(symbolIDs); start += chunk {
-		end := start + chunk
-		if end > len(symbolIDs) {
-			end = len(symbolIDs)
-		}
-		batch := symbolIDs[start:end]
-		placeholders := make([]byte, 0, len(batch)*2-1)
-		args := make([]any, len(batch))
-		for i, id := range batch {
-			if i > 0 {
-				placeholders = append(placeholders, ',')
-			}
-			placeholders = append(placeholders, '?')
-			args[i] = id
-		}
-		q := `SELECT target_id, COUNT(*) FROM sense_edges
-		      WHERE target_id IN (` + string(placeholders) + `)
+	err := a.queryIDChunks(ctx, "InboundEdgeCounts", symbolIDs, func(in string) string {
+		return `SELECT target_id, COUNT(*) FROM sense_edges
+		      WHERE target_id IN (` + in + `)
 		      GROUP BY target_id`
-		rows, err := a.db.QueryContext(ctx, q, args...)
-		if err != nil {
-			return nil, fmt.Errorf("sqlite InboundEdgeCounts: %w", err)
+	}, func(rows *sql.Rows) error {
+		var id int64
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return err
 		}
-		for rows.Next() {
-			var id int64
-			var count int
-			if err := rows.Scan(&id, &count); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("sqlite InboundEdgeCounts scan: %w", err)
-			}
-			out[id] = count
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		_ = rows.Close()
+		out[id] = count
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -323,41 +320,19 @@ func (a *Adapter) FilePathsByIDs(ctx context.Context, fileIDs []int64) (map[int6
 	if len(fileIDs) == 0 {
 		return out, nil
 	}
-	const chunk = 500
-	for start := 0; start < len(fileIDs); start += chunk {
-		end := start + chunk
-		if end > len(fileIDs) {
-			end = len(fileIDs)
+	err := a.queryIDChunks(ctx, "FilePathsByIDs", fileIDs, func(in string) string {
+		return `SELECT id, path FROM sense_files WHERE id IN (` + in + `)`
+	}, func(rows *sql.Rows) error {
+		var id int64
+		var path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return err
 		}
-		batch := fileIDs[start:end]
-		placeholders := make([]byte, 0, len(batch)*2-1)
-		args := make([]any, len(batch))
-		for i, id := range batch {
-			if i > 0 {
-				placeholders = append(placeholders, ',')
-			}
-			placeholders = append(placeholders, '?')
-			args[i] = id
-		}
-		q := `SELECT id, path FROM sense_files WHERE id IN (` + string(placeholders) + `)`
-		rows, err := a.db.QueryContext(ctx, q, args...)
-		if err != nil {
-			return nil, fmt.Errorf("sqlite FilePathsByIDs: %w", err)
-		}
-		for rows.Next() {
-			var id int64
-			var path string
-			if err := rows.Scan(&id, &path); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("sqlite FilePathsByIDs scan: %w", err)
-			}
-			out[id] = path
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		_ = rows.Close()
+		out[id] = path
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

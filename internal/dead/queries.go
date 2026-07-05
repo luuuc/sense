@@ -106,23 +106,28 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 	return out, rows.Err()
 }
 
-func queryTestsTargets(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
-	rows, err := db.QueryContext(ctx,
-		`SELECT DISTINCT target_id FROM sense_edges WHERE kind = 'tests'`)
+// querySet runs a single-column query and collects the values into a set.
+func querySet[T comparable](ctx context.Context, db *sql.DB, q string, args ...any) (map[T]struct{}, error) {
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make(map[int64]struct{})
+	out := make(map[T]struct{})
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var v T
+		if err := rows.Scan(&v); err != nil {
 			return nil, err
 		}
-		out[id] = struct{}{}
+		out[v] = struct{}{}
 	}
 	return out, rows.Err()
+}
+
+func queryTestsTargets(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
+	return querySet[int64](ctx, db,
+		`SELECT DISTINCT target_id FROM sense_edges WHERE kind = 'tests'`)
 }
 
 // queryControllerConcernModuleIDs returns IDs of modules included into a
@@ -130,23 +135,10 @@ func queryTestsTargets(ctx context.Context, db *sql.DB) (map[int64]struct{}, err
 // routed controller actions (ActiveSupport::Concern mixed into a
 // controller), so they are framework entry points, not dead code.
 func queryControllerConcernModuleIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
-	rows, err := db.QueryContext(ctx, `
+	return querySet[int64](ctx, db, `
 		SELECT DISTINCT e.target_id FROM sense_edges e
 		JOIN sense_symbols s ON s.id = e.source_id
 		WHERE e.kind = 'includes' AND e.target_id IS NOT NULL AND s.name LIKE '%Controller'`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[int64]struct{})
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out[id] = struct{}{}
-	}
-	return out, rows.Err()
 }
 
 // queryInterfaceMethodNames returns the set of method names declared on any
@@ -157,23 +149,10 @@ func queryControllerConcernModuleIDs(ctx context.Context, db *sql.DB) (map[int64
 // interface satisfaction is structural (no `implements` keyword), so name match
 // is the soundest signal the index carries without recomputing satisfaction.
 func queryInterfaceMethodNames(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
-	rows, err := db.QueryContext(ctx, `
+	return querySet[string](ctx, db, `
 		SELECT DISTINCT s.name FROM sense_symbols s
 		JOIN sense_symbols p ON p.id = s.parent_id
 		WHERE s.kind = 'method' AND p.kind = 'interface'`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[string]struct{})
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		out[name] = struct{}{}
-	}
-	return out, rows.Err()
 }
 
 // queryIncludedModuleIDs returns IDs of modules included anywhere (any
@@ -181,21 +160,8 @@ func queryInterfaceMethodNames(ctx context.Context, db *sql.DB) (map[string]stru
 // the including type, so a zero-caller verdict is uncertain rather than
 // dead.
 func queryIncludedModuleIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
-	rows, err := db.QueryContext(ctx,
+	return querySet[int64](ctx, db,
 		`SELECT DISTINCT target_id FROM sense_edges WHERE kind = 'includes' AND target_id IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[int64]struct{})
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out[id] = struct{}{}
-	}
-	return out, rows.Err()
 }
 
 // queryValueObjectClassIDs returns IDs of classes that carry an
@@ -207,25 +173,12 @@ func queryIncludedModuleIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}
 // uncertain, not dead. Keying on the structural inherits edge (not a
 // `*Result` name suffix) is the whole point of the synthetic base.
 func queryValueObjectClassIDs(ctx context.Context, db *sql.DB) (map[int64]struct{}, error) {
-	rows, err := db.QueryContext(ctx, `
+	return querySet[int64](ctx, db, `
 		SELECT DISTINCT e.source_id FROM sense_edges e
 		JOIN sense_symbols t ON t.id = e.target_id
 		WHERE e.kind = 'inherits' AND e.source_id IS NOT NULL
 		  AND t.qualified IN (?, ?)`,
 		extract.RubyCoreStruct, extract.RubyCoreData)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[int64]struct{})
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out[id] = struct{}{}
-	}
-	return out, rows.Err()
 }
 
 // populateFindingNameOccurrences fills NameOccurrences on each finding's

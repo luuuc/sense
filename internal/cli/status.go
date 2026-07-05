@@ -122,7 +122,7 @@ func buildCLIStatusResponse(ctx context.Context, cio IO) (mcpio.StatusResponse, 
 
 	resp.Languages = queryLangBreakdown(ctx, db)
 	resp.Freshness = computeCLIFreshness(ctx, db, cio.Dir)
-	resp.Version = buildVersionInfo(ctx, db)
+	resp.Version = BuildVersionInfo(ctx, db)
 	resp.Lifetime = queryLifetimeCounters(ctx, db)
 
 	if prof := profile.Load(ctx, db); prof != nil {
@@ -308,7 +308,11 @@ func countStaleFilesCLI(ctx context.Context, db *sql.DB, dir string) int {
 	return stale
 }
 
-func buildVersionInfo(ctx context.Context, db *sql.DB) *mcpio.StatusVersion {
+// BuildVersionInfo reports the schema and embedding-model versions, comparing
+// each to the binary's current values. It returns nil when the schema version
+// pragma cannot be read. Shared by the status command and the MCP
+// sense_status handler.
+func BuildVersionInfo(ctx context.Context, db *sql.DB) *mcpio.StatusVersion {
 	var schemaVer int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVer); err != nil {
 		return nil

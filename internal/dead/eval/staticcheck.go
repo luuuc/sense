@@ -1,22 +1,13 @@
 package eval
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
-
-	_ "modernc.org/sqlite"
-
-	"github.com/luuuc/sense/internal/dead"
-	"github.com/luuuc/sense/internal/scan"
 )
 
 // The staticcheck oracle is the Go voice's compiler-grade trust gate. `staticcheck
@@ -32,26 +23,16 @@ import (
 // Sense fails closed on anything it cannot prove (an unbound mention, an
 // un-harvested language, a const/var, an interface name).
 
-// goSymRef identifies a Go symbol by repo-relative file and bare name. It is the
-// join key between Sense's `dead` set and staticcheck's U1000 findings — keyed on
-// name+file rather than line/column so the two tools' slightly different position
-// reporting (Sense: declaration start; staticcheck: the name token) never causes a
-// spurious mismatch.
-type goSymRef struct {
-	File string
-	Name string
-}
+// goSymRef identifies a Go symbol by the shared join key (see symRef in
+// gate.go).
+type goSymRef = symRef
 
 // U1000Set is the set of symbols staticcheck flags as unused (U1000).
 type U1000Set map[goSymRef]struct{}
 
-// GoDead is one symbol Sense earns the `dead` verdict for, carrying the fields
-// needed to join against the oracle and to report a violation legibly.
-type GoDead struct {
-	Qualified string
-	File      string
-	Name      string
-}
+// GoDead is one Go symbol Sense earns the `dead` verdict for (see DeadSymbol in
+// gate.go).
+type GoDead = DeadSymbol
 
 // staticcheckU1000Re matches one U1000 finding line, e.g.
 //
@@ -129,36 +110,7 @@ func RunStaticcheckU1000(ctx context.Context, repoRoot string) (U1000Set, error)
 // GoDeadSymbols scans repoRoot with Sense and returns the Go symbols it earns the
 // `dead` verdict for — the left side of the subset gate.
 func GoDeadSymbols(ctx context.Context, repoRoot, senseDir string) ([]GoDead, error) {
-	if _, err := scan.Run(ctx, scan.Options{
-		Root:     repoRoot,
-		Sense:    senseDir,
-		Output:   &bytes.Buffer{},
-		Warnings: io.Discard,
-	}); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", repoRoot, err)
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(senseDir, "index.db"))
-	if err != nil {
-		return nil, fmt.Errorf("open index: %w", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	res, err := dead.FindDead(ctx, db, dead.Options{Language: "go", Limit: 1000000})
-	if err != nil {
-		return nil, fmt.Errorf("find dead: %w", err)
-	}
-	var out []GoDead
-	for _, f := range res.Findings {
-		if f.Verdict != dead.VerdictDead {
-			continue
-		}
-		out = append(out, GoDead{
-			Qualified: f.Symbol.Qualified,
-			File:      normalizeRel(f.Symbol.File),
-			Name:      f.Symbol.Name,
-		})
-	}
-	return out, nil
+	return deadSymbols(ctx, repoRoot, senseDir, "go")
 }
 
 // GoFalseDeads returns the Sense `dead` Go symbols absent from the staticcheck
@@ -166,17 +118,5 @@ func GoDeadSymbols(ctx context.Context, repoRoot, senseDir string) ([]GoDead, er
 // means every symbol Sense called `dead` is one staticcheck independently agrees
 // is unused. Order is stable for legible reporting.
 func GoFalseDeads(senseDead []GoDead, oracle U1000Set) []GoDead {
-	var out []GoDead
-	for _, d := range senseDead {
-		if _, ok := oracle[goSymRef{File: d.File, Name: d.Name}]; !ok {
-			out = append(out, d)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].File != out[j].File {
-			return out[i].File < out[j].File
-		}
-		return out[i].Name < out[j].Name
-	})
-	return out
+	return falseDeads(senseDead, oracle)
 }

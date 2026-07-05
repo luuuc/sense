@@ -131,50 +131,6 @@ func TestQueryEntryPointsDedupesSymbolAndFileMain(t *testing.T) {
 	}
 }
 
-// TestQueryVersionReturnsNilOnClosedDB covers queryVersion's guard: when the
-// user_version pragma cannot be read it returns nil rather than a partial
-// version block.
-func TestQueryVersionReturnsNilOnClosedDB(t *testing.T) {
-	dir := t.TempDir()
-	senseDir := filepath.Join(dir, ".sense")
-	if err := os.MkdirAll(senseDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "ver_err.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := adapter.DB()
-	_ = adapter.Close()
-
-	if v := queryVersion(ctx, db); v != nil {
-		t.Errorf("expected nil version when the pragma cannot be read, got %+v", v)
-	}
-}
-
-// TestQueryVersionReportsStoredModel covers the stored-model branch: when the
-// index records an embedding_model meta value, queryVersion reports it (rather
-// than defaulting to the binary's) and flags whether it is current.
-func TestQueryVersionReportsStoredModel(t *testing.T) {
-	adapter, _ := seedIndexWith(t, func(ctx context.Context, a *sqlite.Adapter) {
-		if err := a.WriteMeta(ctx, "embedding_model", "some-stored-model"); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	v := queryVersion(context.Background(), adapter.DB())
-	if v == nil {
-		t.Fatal("expected a version block")
-	}
-	if v.EmbeddingModel != "some-stored-model" {
-		t.Errorf("EmbeddingModel = %q, want some-stored-model", v.EmbeddingModel)
-	}
-	if v.EmbeddingModelCurrent {
-		t.Error("a stored model differing from the binary must not be reported current")
-	}
-}
-
 // TestBuildStatusResponsePropagatesLanguageError covers the early return in
 // buildStatusResponse when the language breakdown query fails (closed DB after
 // the index counts succeeded is not possible; instead we close before any
