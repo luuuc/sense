@@ -17,6 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Keyless cosign signing and build provenance attestations both
+      # authenticate through the job's OIDC identity.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -31,6 +35,19 @@ jobs:
       - name: Clean git-cliff artifacts
         run: rm -rf git-cliff/
 
+      # quill stamps the darwin binaries with a stable code-signing
+      # identifier (scripts/sign-darwin.sh, wired as a GoReleaser post-build
+      # hook). Installed to RUNNER_TEMP so the repo stays git-clean for
+      # `goreleaser release --clean`, then mounted into the container.
+      - name: Install quill (darwin binary signing)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "${RUNNER_TEMP}/quill.tar.gz" \
+            https://github.com/anchore/quill/releases/download/v0.7.1/quill_0.7.1_linux_amd64.tar.gz
+          echo "e58c6f86378a22507c1123e24412afd4ee2d3bb32ebd94d6059827dc0c1b3fbf  ${RUNNER_TEMP}/quill.tar.gz" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/quill"
+          tar -xzf "${RUNNER_TEMP}/quill.tar.gz" -C "${RUNNER_TEMP}/quill" quill
+
       # Tree-sitter bindings require CGO, and we ship darwin + linux for both
       # amd64 and arm64. goreleaser-cross bundles osxcross and the gcc
       # cross-toolchains the .goreleaser.yml overrides reference (o64-clang,
@@ -41,11 +58,33 @@ jobs:
           docker run --rm \
             -e GITHUB_TOKEN \
             -v "$PWD":/src \
+            -v "${RUNNER_TEMP}/quill/quill":/usr/local/bin/quill:ro \
             -w /src \
             ghcr.io/goreleaser/goreleaser-cross:v1.25.5 \
             release --clean --release-notes release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Keyless (Sigstore) signature over the checksums file: the ephemeral
+      # certificate is bound to this workflow's OIDC identity and logged in
+      # Rekor, so verifying checksums.txt.sig transitively verifies every
+      # artifact listed in it. smoke.yml verifies this on each release.
+      # dist/ is root-owned until the MCPB chown below, so the signature
+      # files are written to the workspace instead.
+      - name: Sign checksums file (Sigstore keyless)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          CHECKSUMS="sense_${GITHUB_REF_NAME#v}_checksums.txt"
+          cosign sign-blob --yes \
+            --output-signature "${CHECKSUMS}.sig" \
+            --output-certificate "${CHECKSUMS}.pem" \
+            "dist/${CHECKSUMS}"
+          gh release upload "$GITHUB_REF_NAME" "${CHECKSUMS}.sig" "${CHECKSUMS}.pem" --clobber
 
       - name: Build MCPB bundles
         run: |
@@ -70,3 +109,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" mcpb-dist/*.mcpb --clobber
+
+      # SLSA build provenance for every shipped artifact, verifiable with
+      # `gh attestation verify <file> --owner luuuc`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/sense_*.tar.gz
+            dist/sense_*_checksums.txt
+            mcpb-dist/*.mcpb
