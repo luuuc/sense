@@ -1,16 +1,6 @@
 package setup
 
-import (
-	"os"
-	"path/filepath"
-)
-
-type agent struct {
-	filename string
-	content  string
-}
-
-var agents = []agent{
+var agents = []templateFile{
 	{
 		filename: "deep-explore.md",
 		content: `---
@@ -52,18 +42,5 @@ Load Sense tools:
 // writeAgents creates agent files in .claude/agents/. Existing files
 // are overwritten to pick up template changes on re-run.
 func writeAgents(root string) (int, error) {
-	dir := filepath.Join(root, ".claude", "agents")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return 0, err
-	}
-
-	written := 0
-	for _, a := range agents {
-		path := filepath.Join(dir, a.filename)
-		if err := os.WriteFile(path, []byte(a.content), 0o644); err != nil {
-			return written, err
-		}
-		written++
-	}
-	return written, nil
+	return writeTemplateFiles(root, "agents", agents)
 }

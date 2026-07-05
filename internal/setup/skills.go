@@ -1,16 +1,6 @@
 package setup
 
-import (
-	"os"
-	"path/filepath"
-)
-
-type skill struct {
-	filename string
-	content  string
-}
-
-var skills = []skill{
+var skills = []templateFile{
 	{
 		filename: "sense-explore.md",
 		content: `---
@@ -74,18 +64,5 @@ Use Sense conventions to understand project patterns before writing new code.
 // writeSkills creates skill files in .claude/skills/. Existing files
 // are overwritten to pick up template changes on --init.
 func writeSkills(root string) (int, error) {
-	dir := filepath.Join(root, ".claude", "skills")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return 0, err
-	}
-
-	written := 0
-	for _, s := range skills {
-		path := filepath.Join(dir, s.filename)
-		if err := os.WriteFile(path, []byte(s.content), 0o644); err != nil {
-			return written, err
-		}
-		written++
-	}
-	return written, nil
+	return writeTemplateFiles(root, "skills", skills)
 }
