@@ -52,6 +52,41 @@ jobs:
           tar -xzf "${ARCHIVE}"
           chmod +x ./sense
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Regression gate for release signing: verifies the keyless signature
+      # release.yml attached to the checksums file, pinned to this repo's
+      # release workflow identity. Catches cosign CLI breaks, identity
+      # drift, and signing regressions on every release.
+      - name: Verify checksums signature (Sigstore keyless)
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CHECKSUMS="sense_${VERSION}_checksums.txt"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
+          # The "published" event fires when GoReleaser creates the release;
+          # release.yml uploads the signature a few minutes later. Poll.
+          for i in $(seq 1 30); do
+            if curl -fsSL -o "${CHECKSUMS}.sig" "${BASE}/${CHECKSUMS}.sig" &&
+               curl -fsSL -o "${CHECKSUMS}.pem" "${BASE}/${CHECKSUMS}.pem"; then
+              break
+            fi
+            echo "signature assets not published yet (attempt ${i}/30)"
+            sleep 10
+          done
+          test -s "${CHECKSUMS}.sig" && test -s "${CHECKSUMS}.pem"
+
+          cosign verify-blob \
+            --certificate-identity-regexp "^https://github.com/${REPO}/\.github/workflows/release\.yml@refs/tags/v.+$" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate "${CHECKSUMS}.pem" \
+            --signature "${CHECKSUMS}.sig" \
+            "${CHECKSUMS}"
+
       - name: sense version reports the tagged version
         run: |
           set -euo pipefail
