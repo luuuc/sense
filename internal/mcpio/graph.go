@@ -11,6 +11,55 @@ import (
 
 const testCallerCollapseThreshold = 20
 
+// CollapseSeenLayerEdges collapses deeper-layer call edges whose target the
+// session already received — from an earlier graph or blast response, or a
+// search result — replacing them with a per-layer seen_elsewhere count +
+// note. Deduplication, not truncation: every collapsed target was already
+// delivered with a citable location, and the magnitude fields are
+// untouched. What is not re-delivered is the edge's membership in this
+// radius (and, for targets first seen only via search, the relationship
+// itself); the note names the recovery — a root's own edges never
+// collapse, so re-querying a specific symbol re-enumerates in full. Only
+// the BFS layers collapse; the root's depth-1 edges are the direct answer
+// to the question asked and always render whole. Entries with no symbol
+// id (unresolved view edges) never collapse; a nil SeenFunc disables the
+// pass.
+//
+// Applied on the MCP path only, matching ApplyGraphBudget: the CLI has no
+// session, so it always emits the full response.
+func CollapseSeenLayerEdges(resp *GraphResponse, seen SeenFunc) {
+	if seen == nil {
+		return
+	}
+	for i := range resp.Layers {
+		l := &resp.Layers[i]
+		total := len(l.Edges.CalledBy) + len(l.Edges.Calls)
+		collapsed := collapseSeenEdges(&l.Edges.CalledBy, seen) + collapseSeenEdges(&l.Edges.Calls, seen)
+		if collapsed > 0 {
+			l.SeenElsewhere = &SeenSummary{
+				Count: collapsed,
+				Note: fmt.Sprintf("%d of %d depth-%d targets were already returned to this session by an earlier call; only new targets are listed. A root's own edges never collapse — run sense_graph on a specific symbol to re-enumerate its edges in full.",
+					collapsed, total, l.Depth),
+			}
+		}
+	}
+}
+
+// collapseSeenEdges filters a call-edge slice in place to the entries whose
+// target the session has not seen, returning how many were collapsed.
+func collapseSeenEdges(edges *[]CallEdgeRef, seen SeenFunc) int {
+	kept := (*edges)[:0]
+	for _, e := range *edges {
+		if e.ID != 0 && seen.seen(e.ID) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	collapsed := len(*edges) - len(kept)
+	*edges = kept
+	return collapsed
+}
+
 // ApplyGraphBudget trims a graph response until its estimated token count
 // fits within budget. It sheds the least-relevant content first — deeper
 // BFS layers, then the longest edge list one chunk at a time — keeping

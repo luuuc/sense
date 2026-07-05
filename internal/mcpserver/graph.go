@@ -191,18 +191,27 @@ func (h *handlers) shapeGraphResponse(ctx context.Context, resp *mcpio.GraphResp
 	resp.Freshness = computeFreshness(ctx, h.db, h.dir, false, h.watchState, snap)
 	resp.NextSteps = graphHints(*resp, p.direction)
 
+	// Collapse deeper-layer edges the session already received — runs
+	// before the budget so freed room keeps real content instead of being
+	// re-trimmed. Sibling fan-walks (one graph call per subclass of a
+	// shared parent) repeat the same hub callers at depth 2 on every call;
+	// this is where that repetition stops costing tokens.
+	mcpio.CollapseSeenLayerEdges(resp, h.seenPredicate())
+
 	// Keep hub responses within the MCP token budget — sheds deeper layers
 	// and trims the longest edge list, recording the count in OmittedEdges.
 	mcpio.ApplyGraphBudget(resp, h.defaults.GraphTokenBudget)
 
-	// Mark the root AND the FINAL rendered called_by callers seen — AFTER the
-	// budget trim, so a later sense_blast collapses ONLY callers the model
-	// actually received, never ones the budget dropped (collapsing an unshown
-	// caller would silently lose it). The rendered called_by set is exactly
-	// blast's depth-1 direct-caller set; inherit/include/compose and indirect
-	// callers are not marked — blast lists those separately. Test callers,
-	// segmented into their own bucket, are intentionally left un-collapsed.
-	h.markSeen(append(renderedCallerIDs(resp), gr.Root.Symbol.ID))
+	// Mark the root, the FINAL rendered called_by callers, and the rendered
+	// layer call-edge targets seen — AFTER the budget trim, so later calls
+	// collapse ONLY entries the model actually received, never ones the
+	// budget dropped (collapsing an unshown entry would silently lose it).
+	// The rendered called_by set is exactly blast's depth-1 direct-caller
+	// set; layer targets feed the layer collapse above. Marking layer
+	// targets also means a later blast collapses direct callers the session
+	// first saw as a layer entry — deliberate, they were delivered with
+	// refs. See idsToMarkSeen for what is deliberately NOT marked.
+	h.markSeen(append(idsToMarkSeen(resp), gr.Root.Symbol.ID))
 }
 
 const (
@@ -342,21 +351,32 @@ func appendDispatchCallers(inferred []mcpio.DispatchInferredRef, ids *[]int64, i
 	return inferred
 }
 
-// renderedCallerIDs collects the symbol ids of the callers the graph response
-// ACTUALLY rendered in its
-// called_by bucket, read after segmentation and the budget trim. These are
-// exactly the depth-1 callers the model received and exactly blast's direct-
-// caller set, so a later sense_blast can collapse them with no risk of hiding
-// a caller that was never shown. Test callers (segmented into their own
-// bucket) and indirect/inherit/include/compose targets are deliberately not
-// returned — blast enumerates those separately. IDs of 0 (unresolved-source
-// view edges) are skipped: they carry no symbol blast could match.
-func renderedCallerIDs(resp *mcpio.GraphResponse) []int64 {
+// idsToMarkSeen collects the symbol ids of the call-edge targets the graph
+// response ACTUALLY rendered, read after segmentation and the budget trim:
+// the depth-1 called_by callers (exactly blast's direct-caller set, so a
+// later sense_blast can collapse them with no risk of hiding a caller that
+// was never shown) plus the deeper layers' called_by/calls targets (feeding
+// the layer seen-collapse on later graph calls). Root callees are rendered
+// with refs too but deliberately NOT marked: marking them widens what a
+// later blast collapses, and that expansion has no motivating flow yet —
+// it should arrive with its own bench, not as a rider. Test callers
+// (segmented into their own bucket) and inherit/include/compose targets
+// are likewise not returned — blast enumerates those separately. IDs of 0
+// (unresolved-source view edges) are skipped: they carry no symbol a later
+// call could match.
+func idsToMarkSeen(resp *mcpio.GraphResponse) []int64 {
 	ids := make([]int64, 0, len(resp.Edges.CalledBy))
-	for _, c := range resp.Edges.CalledBy {
-		if c.ID != 0 {
-			ids = append(ids, c.ID)
+	appendEdgeIDs := func(edges []mcpio.CallEdgeRef) {
+		for _, c := range edges {
+			if c.ID != 0 {
+				ids = append(ids, c.ID)
+			}
 		}
+	}
+	appendEdgeIDs(resp.Edges.CalledBy)
+	for i := range resp.Layers {
+		appendEdgeIDs(resp.Layers[i].Edges.CalledBy)
+		appendEdgeIDs(resp.Layers[i].Edges.Calls)
 	}
 	return ids
 }
