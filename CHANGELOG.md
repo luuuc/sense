@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.14] - 2026-07-05
+
+### Refactoring
+
+- extract shared oracle-gate and set-query helpers
+- share chunked IN-list query machinery
+- share the version-info builder between CLI and MCP
+- unify filtered loaders and convention emitters
+- collect temporal graph edges with a single helper
+- share the template file writer
 ## [1.11.13] - 2026-07-05
 
 ### Bug Fixes
