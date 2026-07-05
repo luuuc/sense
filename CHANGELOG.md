@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.13] - 2026-07-05
+
+### Bug Fixes
+
+- collapse already-seen targets in graph BFS layers
+- review follow-ups on graph layer session dedup
 ## [1.11.12] - 2026-07-05
 
 ### Bug Fixes
