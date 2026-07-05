@@ -80,6 +80,21 @@ curl -fsSL https://luuuc.github.io/sense/install.sh | sh
 
 Or download the binary for your OS from the [latest release](https://github.com/luuuc/sense/releases/latest), unzip, and move `sense` somewhere on your `PATH`.
 
+### Verify a release (optional)
+
+Every release's checksums file is signed with [Sigstore](https://www.sigstore.dev/) (keyless, bound to this repository's release workflow). With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) installed:
+
+```bash
+cosign verify-blob \
+  --certificate-identity-regexp '^https://github.com/luuuc/sense/\.github/workflows/release\.yml@refs/tags/v.+$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate sense_<version>_checksums.txt.pem \
+  --signature sense_<version>_checksums.txt.sig \
+  sense_<version>_checksums.txt
+```
+
+Artifacts also carry [build provenance attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations): `gh attestation verify sense_<version>_<os>_<arch>.tar.gz --owner luuuc`.
+
 ### With Go (1.25+)
 
 ```bash
