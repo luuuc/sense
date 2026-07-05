@@ -24,13 +24,15 @@ func (h *handlers) seenPredicate() mcpio.SeenFunc {
 }
 
 // markSeen records ids as returned to this session so a later collapsing tool
-// dedups against them. The dedup is directional: sense_graph and sense_blast
-// MARK what they return, but only sense_blast COLLAPSES already-seen direct
-// callers (and sense_search blanks already-seen snippets) — graph never
-// collapses. So the practical flows are graph→blast and blast→blast; a blast
-// after a graph is the common one. A nil seenSymbols map (a handler built
-// without session tracking) disables the dedup rather than panicking — the
-// zero value is "track nothing".
+// dedups against them. sense_graph and sense_blast MARK what they render;
+// sense_blast COLLAPSES already-seen direct callers, sense_search blanks
+// already-seen snippets, and sense_graph collapses already-seen targets in
+// its deeper BFS layers (never in the root's depth-1 edges — those are the
+// direct answer to the question asked). The practical flows are graph→blast,
+// blast→blast, and the sibling fan-walk graph→graph, where each call's
+// depth-2 layer repeats the same hub callers. A nil seenSymbols map (a
+// handler built without session tracking) disables the dedup rather than
+// panicking — the zero value is "track nothing".
 func (h *handlers) markSeen(ids []int64) {
 	if len(ids) == 0 {
 		return

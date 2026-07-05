@@ -11,6 +11,47 @@ import (
 
 const testCallerCollapseThreshold = 20
 
+// CollapseSeenLayers collapses deeper-layer call edges whose target the
+// session has already received from an earlier sense_graph/sense_blast
+// call, replacing them with a per-layer seen_elsewhere count + note.
+// Token-saving deduplication, not truncation: every collapsed target was
+// already delivered with its ref, so magnitude and completeness are
+// unaffected. Only the BFS layers collapse — the root's depth-1 edges
+// are the direct answer to the question asked and always render in
+// full. Entries with no symbol id (unresolved view edges) never
+// collapse; a nil SeenFunc disables the pass.
+func CollapseSeenLayers(resp *GraphResponse, seen SeenFunc) {
+	if seen == nil {
+		return
+	}
+	for i := range resp.Layers {
+		l := &resp.Layers[i]
+		collapsed := keepUnseenEdges(&l.Edges.CalledBy, seen) + keepUnseenEdges(&l.Edges.Calls, seen)
+		if collapsed > 0 {
+			l.SeenElsewhere = &BlastSeenSummary{
+				Count: collapsed,
+				Note: fmt.Sprintf("%d depth-%d edges collapsed — their targets were already returned to this session by an earlier call; see those responses for the refs.",
+					collapsed, l.Depth),
+			}
+		}
+	}
+}
+
+// keepUnseenEdges filters a call-edge slice in place to the entries whose
+// target the session has not seen, returning how many were collapsed.
+func keepUnseenEdges(edges *[]CallEdgeRef, seen SeenFunc) int {
+	kept := (*edges)[:0]
+	for _, e := range *edges {
+		if e.ID != 0 && seen.seen(e.ID) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	collapsed := len(*edges) - len(kept)
+	*edges = kept
+	return collapsed
+}
+
 // ApplyGraphBudget trims a graph response until its estimated token count
 // fits within budget. It sheds the least-relevant content first — deeper
 // BFS layers, then the longest edge list one chunk at a time — keeping

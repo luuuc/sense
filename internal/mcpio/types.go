@@ -142,10 +142,16 @@ type DispatchInferredRef struct {
 
 // GraphLayer holds edges discovered at one BFS hop beyond the root.
 // Depth is the hop number (2, 3, …). Edges use the same shape as the
-// root's edges so the LLM can process them uniformly.
+// root's edges so the LLM can process them uniformly. SeenElsewhere
+// summarises layer entries collapsed because an earlier call already
+// returned them to this session — a token-saving deduplication, not a
+// truncation: the data is already in the agent's context. The root's
+// depth-1 edges never collapse; they are the direct answer to the
+// question asked.
 type GraphLayer struct {
-	Depth int        `json:"depth"`
-	Edges GraphEdges `json:"edges"`
+	Depth         int               `json:"depth"`
+	Edges         GraphEdges        `json:"edges"`
+	SeenElsewhere *BlastSeenSummary `json:"seen_elsewhere,omitempty"`
 }
 
 // TestCallerSummary segments test callers out of the main called_by

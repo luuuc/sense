@@ -83,10 +83,70 @@ func TestSeenDedupCollapsesOnlyRenderedCallers(t *testing.T) {
 	}
 }
 
-// TestRenderedCallerIDs pins that only the callers the graph response actually
-// rendered in called_by are collected (so blast collapses only what the model
-// received), and that unresolved-source view edges (ID 0) are skipped.
-func TestRenderedCallerIDs(t *testing.T) {
+// TestGraphFanWalkCollapsesSharedLayer is the sibling fan-walk regression:
+// two callers-direction graph calls on siblings sharing a depth-2 hub
+// (HandleRequest calls both Verify and FindUser; main.main calls
+// HandleRequest). The first call renders the hub in its layer; the second
+// must collapse it into the layer's seen_elsewhere instead of re-sending
+// it — while its own depth-1 called_by renders in full even though the
+// caller was already seen (the root's edges are the direct answer).
+func TestGraphFanWalkCollapsesSharedLayer(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	graph := func(symbol string) map[string]any {
+		result, err := ts.handlers.handleGraph(ctx, toolReq(map[string]any{
+			"symbol": symbol, "direction": "callers",
+		}))
+		if err != nil {
+			t.Fatalf("handleGraph(%s): %v", symbol, err)
+		}
+		var resp map[string]any
+		if err := json.Unmarshal([]byte(resultText(t, result)), &resp); err != nil {
+			t.Fatalf("unmarshal %s: %v", symbol, err)
+		}
+		return resp
+	}
+	layerOf := func(resp map[string]any) map[string]any {
+		layers, _ := resp["layers"].([]any)
+		if len(layers) == 0 {
+			t.Fatalf("expected a depth-2 layer, got %v", resp["layers"])
+		}
+		return layers[0].(map[string]any)
+	}
+
+	// First sibling: the shared hub (main.main) renders in the layer.
+	first := layerOf(graph("auth.Verify"))
+	if _, collapsed := first["seen_elsewhere"]; collapsed {
+		t.Errorf("first call has nothing to collapse, got %v", first["seen_elsewhere"])
+	}
+	firstCallers, _ := first["edges"].(map[string]any)["called_by"].([]any)
+	if len(firstCallers) == 0 {
+		t.Fatal("fixture should render main.main in the first call's layer")
+	}
+
+	// Second sibling: same depth-2 hub — must collapse, not re-send.
+	second := graph("model.FindUser")
+	rootCallers, _ := second["edges"].(map[string]any)["called_by"].([]any)
+	if len(rootCallers) == 0 {
+		t.Error("root depth-1 called_by must render in full even when already seen")
+	}
+	l2 := layerOf(second)
+	se, ok := l2["seen_elsewhere"].(map[string]any)
+	if !ok || se["count"].(float64) < 1 {
+		t.Fatalf("expected the shared depth-2 hub collapsed into seen_elsewhere, got %v", l2)
+	}
+	l2Callers, _ := l2["edges"].(map[string]any)["called_by"].([]any)
+	if len(l2Callers) != 0 {
+		t.Errorf("collapsed layer should not re-enumerate the seen hub, got %v", l2Callers)
+	}
+}
+
+// TestRenderedGraphIDs pins what the graph response marks seen: the rendered
+// depth-1 called_by callers (blast's direct-caller set) plus the rendered
+// layer call-edge targets (feeding the layer seen-collapse) — never the
+// root's callees, and never unresolved view edges (ID 0).
+func TestRenderedGraphIDs(t *testing.T) {
 	resp := &mcpio.GraphResponse{
 		Edges: mcpio.GraphEdges{
 			CalledBy: []mcpio.CallEdgeRef{
@@ -95,20 +155,27 @@ func TestRenderedCallerIDs(t *testing.T) {
 				{ID: 0, Symbol: "app/views/x.erb"}, // unresolved view edge — skip
 				{ID: 3, Symbol: "C#o"},
 			},
-			// Calls (callees) and other buckets must NOT be collected — they are
-			// not blast direct callers.
+			// Root callees must NOT be collected — they are not blast direct
+			// callers and the root's edges never collapse.
 			Calls: []mcpio.CallEdgeRef{{ID: 88, Symbol: "callee"}},
 		},
+		Layers: []mcpio.GraphLayer{{
+			Depth: 2,
+			Edges: mcpio.GraphEdges{
+				CalledBy: []mcpio.CallEdgeRef{{ID: 4, Symbol: "D#p"}, {ID: 0, Symbol: "view"}},
+				Calls:    []mcpio.CallEdgeRef{{ID: 5, Symbol: "E#q"}},
+			},
+		}},
 	}
 
-	got := renderedCallerIDs(resp)
-	want := map[int64]bool{1: true, 2: true, 3: true}
+	got := renderedGraphIDs(resp)
+	want := map[int64]bool{1: true, 2: true, 3: true, 4: true, 5: true}
 	if len(got) != len(want) {
-		t.Fatalf("renderedCallerIDs = %v, want the 3 rendered called_by ids {1,2,3}", got)
+		t.Fatalf("renderedGraphIDs = %v, want called_by {1,2,3} + layer targets {4,5}", got)
 	}
 	for _, id := range got {
 		if !want[id] {
-			t.Errorf("collected id %d — only rendered called_by ids should be marked seen", id)
+			t.Errorf("collected id %d — root callees must not be marked seen", id)
 		}
 	}
 }

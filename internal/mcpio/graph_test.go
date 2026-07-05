@@ -29,6 +29,60 @@ func bigGraphResponse(callers, layers int) GraphResponse {
 	return r
 }
 
+// TestCollapseSeenLayers pins the layer seen-collapse contract: already-seen
+// layer targets are replaced by a per-layer seen_elsewhere count, the root's
+// depth-1 edges never collapse, id-0 entries never collapse, and a nil
+// SeenFunc disables the pass entirely.
+func TestCollapseSeenLayers(t *testing.T) {
+	build := func() GraphResponse {
+		r := GraphResponse{Symbol: GraphSymbol{Name: "A", Qualified: "pkg.A"}}
+		r.Edges.CalledBy = []CallEdgeRef{{ID: 1, Symbol: "pkg.M"}}
+		r.Layers = []GraphLayer{{
+			Depth: 2,
+			Edges: GraphEdges{
+				CalledBy: []CallEdgeRef{
+					{ID: 10, Symbol: "pkg.Hub"},    // seen — collapses
+					{ID: 11, Symbol: "pkg.Fresh"},  // unseen — stays
+					{ID: 0, Symbol: "views/x.erb"}, // no identity — stays
+				},
+				Calls: []CallEdgeRef{{ID: 12, Symbol: "pkg.Helper"}}, // seen — collapses
+			},
+		}}
+		return r
+	}
+	seen := SeenFunc(func(id int64) bool { return id == 1 || id == 10 || id == 12 })
+
+	r := build()
+	CollapseSeenLayers(&r, seen)
+	if len(r.Edges.CalledBy) != 1 {
+		t.Errorf("root depth-1 edges must never collapse, got %+v", r.Edges.CalledBy)
+	}
+	l := r.Layers[0]
+	if len(l.Edges.CalledBy) != 2 || l.Edges.CalledBy[0].Symbol != "pkg.Fresh" {
+		t.Errorf("layer called_by should keep Fresh + the id-0 entry, got %+v", l.Edges.CalledBy)
+	}
+	if len(l.Edges.Calls) != 0 {
+		t.Errorf("seen layer callee should collapse, got %+v", l.Edges.Calls)
+	}
+	if l.SeenElsewhere == nil || l.SeenElsewhere.Count != 2 {
+		t.Fatalf("expected seen_elsewhere count 2, got %+v", l.SeenElsewhere)
+	}
+
+	// Nothing seen: no summary, nothing removed.
+	r2 := build()
+	CollapseSeenLayers(&r2, func(int64) bool { return false })
+	if r2.Layers[0].SeenElsewhere != nil || len(r2.Layers[0].Edges.CalledBy) != 3 {
+		t.Errorf("no-seen pass must be a no-op, got %+v", r2.Layers[0])
+	}
+
+	// Nil predicate disables the pass.
+	r3 := build()
+	CollapseSeenLayers(&r3, nil)
+	if r3.Layers[0].SeenElsewhere != nil || len(r3.Layers[0].Edges.CalledBy) != 3 {
+		t.Errorf("nil SeenFunc must disable the pass, got %+v", r3.Layers[0])
+	}
+}
+
 func TestApplyGraphBudgetNoopAndDisabled(t *testing.T) {
 	r := bigGraphResponse(3, 0)
 	ApplyGraphBudget(&r, 1_000_000)
