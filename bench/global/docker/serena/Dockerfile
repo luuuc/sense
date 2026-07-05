@@ -16,7 +16,7 @@ ARG BASE_TAG=dev
 # and ruby-lsp runs `bundle install` against the project which then refuses on
 # version mismatch. Carrying Ruby 3.4 alongside Debian's interpreter (in /opt,
 # not /usr/local, to avoid colliding with rust-analyzer / go we install later).
-FROM ruby:3.4-slim-bookworm AS ruby34
+FROM ruby:3.4-slim-bookworm@sha256:6760b6e46941fb77f8229f52d1745a629a20f148c8685226d76758fcb6e33766 AS ruby34
 
 # ── Stage 2: serena runtime ────────────────────────────────────────────────
 FROM bench-baseline:${BASE_TAG}

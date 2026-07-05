@@ -5,18 +5,20 @@ on: workflow_dispatch
 #     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
-  models: read
-  pull-requests: write
   contents: read
-  checks: write
 
 jobs:
   review:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    permissions:
+      models: read
+      pull-requests: write
+      contents: read
+      checks: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: luuuc/council/action@main
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: luuuc/council/action@24b23e66c1611a4881f3f68b0c6bc013f69b3661 # main 2026-07-05
         with:
           pack: go
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

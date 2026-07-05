@@ -7,8 +7,7 @@ on:
     types: [completed]
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
   group: auto-release
@@ -18,8 +17,11 @@ jobs:
   tag:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
@@ -27,7 +29,7 @@ jobs:
       # plain `run:` steps below. orhun/git-cliff-action only runs git-cliff
       # inside its own sandbox, so bare `git-cliff` calls would not resolve.
       - name: Install git-cliff
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
         with:
           tool: git-cliff
 
