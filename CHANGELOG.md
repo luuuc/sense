@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.12] - 2026-07-05
+
+### Bug Fixes
+
+- make the file param constrain resolution and not-found steer
+- review follow-ups on resolution steering
 ## [1.11.11] - 2026-07-04
 
 ### Bug Fixes
