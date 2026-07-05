@@ -59,47 +59,51 @@ type Match struct {
 //   - len(matches) > 1  → ambiguous; render disambiguation
 //   - Resolution == ResFuzzy → suggestions, not resolved matches
 func Lookup(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
+	return lookupCascade(ctx, db, query, "")
+}
+
+// LookupInFile runs the same tier cascade as Lookup with a file-path
+// substring constraint applied inside every tier: a lower-tier match in
+// the pinned file beats a higher-tier match elsewhere. When no tier
+// yields a file-matching candidate it returns no matches — it never
+// falls back to a candidate outside the file, so callers can surface
+// the conflict instead of a silently unconstrained winner. An empty
+// file degrades to plain Lookup.
+func LookupInFile(ctx context.Context, db *sql.DB, query, file string) ([]Match, error) {
+	return lookupCascade(ctx, db, query, file)
+}
+
+// lookupCascade walks the five tiers in order and returns the first
+// tier that produces a match surviving the optional file filter.
+func lookupCascade(ctx context.Context, db *sql.DB, query, file string) ([]Match, error) {
 	if query == "" {
 		return nil, nil
 	}
 
-	matches, err := lookupByQualified(ctx, db, query)
-	if err != nil {
-		return nil, err
+	fuzzy := func(ctx context.Context, db *sql.DB, q string) ([]Match, error) {
+		return lookupFuzzy(ctx, db, q, file)
 	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResExactQualified), nil
+	tiers := []struct {
+		fn  func(context.Context, *sql.DB, string) ([]Match, error)
+		res Resolution
+	}{
+		{lookupByQualified, ResExactQualified},
+		{lookupByName, ResExactName},
+		{lookupBySuffix, ResSuffix},
+		{lookupByContainment, ResContainment},
+		{fuzzy, ResFuzzy},
 	}
-
-	matches, err = lookupByName(ctx, db, query)
-	if err != nil {
-		return nil, err
+	for _, t := range tiers {
+		matches, err := t.fn(ctx, db, query)
+		if err != nil {
+			return nil, err
+		}
+		matches = FilterMatches(matches, file, "")
+		if len(matches) > 0 {
+			return setResolution(matches, t.res), nil
+		}
 	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResExactName), nil
-	}
-
-	matches, err = lookupBySuffix(ctx, db, query)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResSuffix), nil
-	}
-
-	matches, err = lookupByContainment(ctx, db, query)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) > 0 {
-		return setResolution(matches, ResContainment), nil
-	}
-
-	matches, err = lookupFuzzy(ctx, db, query)
-	if err != nil {
-		return nil, err
-	}
-	return setResolution(matches, ResFuzzy), nil
+	return nil, nil
 }
 
 func setResolution(matches []Match, r Resolution) []Match {
@@ -205,7 +209,13 @@ func escapeLike(s string) string {
 //
 // Results are capped at fuzzyMaxResults, sorted by distance then
 // alphabetically. Only matches within fuzzyMaxDistance are returned.
-func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error) {
+//
+// A non-empty file skips rows outside that path before the distance
+// computation: this tier streams every symbol, and a file-constrained
+// cascade reaches it whenever the symbol exists only outside the pinned
+// file — without the skip, that common miss pays a whole-index
+// Levenshtein scan whose results the filter then discards anyway.
+func lookupFuzzy(ctx context.Context, db *sql.DB, query, file string) ([]Match, error) {
 	if len(query) < fuzzyMinQueryLen {
 		return nil, nil
 	}
@@ -227,6 +237,9 @@ func lookupFuzzy(ctx context.Context, db *sql.DB, query string) ([]Match, error)
 		var m Match
 		if err := rows.Scan(&m.ID, &m.Name, &m.Qualified, &m.Kind, &m.File, &m.Language, &m.LineStart); err != nil {
 			return nil, fmt.Errorf("lookup fuzzy scan: %w", err)
+		}
+		if file != "" && !strings.Contains(m.File, file) {
+			continue
 		}
 		d := bestLevenshtein(query, m.Name, m.Qualified)
 		if d <= fuzzyMaxDistance {

@@ -191,7 +191,11 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // composed_by split, so every graph response gained an empty `inherited_by`
 // field; callers-direction responses drop `inherits` and callees drop
 // `inherited_by` — digest moved. No edge content changed.
-const oracleGolden = "e48785ad58f92c14e3885935ce38124825dc0850a6d1879c02ca698400f421c0"
+// The not-found response now steers instead of dead-ending: it carries the
+// nearest indexed candidates (when the search engine finds any) and a
+// next_steps pointer at sense_search, so graph/not_found gained a next_steps
+// entry — digest moved. The "error" key is unchanged.
+const oracleGolden = "1738ff2d7e6165730e89aa9f19d605524ccd9a3111130b8f5917bd24dc2c0c15"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))

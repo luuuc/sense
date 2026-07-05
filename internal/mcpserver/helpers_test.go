@@ -106,12 +106,45 @@ func TestSuggestionsResult(t *testing.T) {
 }
 
 func TestNotFoundResult(t *testing.T) {
-	result := notFoundResult("SomeSymbol")
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	result := ts.handlers.notFoundResult(ctx, "SomeSymbol")
 	if result == nil {
 		t.Fatal("notFoundResult returned nil")
 	}
 	if len(result.Content) == 0 {
 		t.Fatal("notFoundResult returned empty content")
+	}
+	tc, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content is %T, want mcp.TextContent", result.Content[0])
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &resp); err != nil {
+		t.Fatalf("unmarshal not-found: %v", err)
+	}
+	// Agents may key on the error string — it must stay stable.
+	if resp["error"] != "symbol not found" {
+		t.Errorf("error = %v, want the stable \"symbol not found\"", resp["error"])
+	}
+	if _, ok := resp["next_steps"]; !ok {
+		t.Errorf("expected a next_steps pointer at sense_search, got %v", resp)
+	}
+	// A query nothing matches must not fabricate candidates.
+	if _, ok := resp["candidates"]; ok {
+		t.Errorf("expected no candidates for an unmatchable query, got %v", resp["candidates"])
+	}
+
+	// A query the search engine does match carries the steering payload.
+	result = ts.handlers.notFoundResult(ctx, "auth")
+	var withHits map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &withHits); err != nil {
+		t.Fatalf("unmarshal not-found with hits: %v", err)
+	}
+	candidates, ok := withHits["candidates"].([]any)
+	if !ok || len(candidates) == 0 {
+		t.Errorf("expected nearest candidates for a search-matchable query, got %v", withHits["candidates"])
 	}
 }
 

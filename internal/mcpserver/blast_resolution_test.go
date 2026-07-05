@@ -492,12 +492,145 @@ func TestResolveSymbolFileHintDisambiguates(t *testing.T) {
 		t.Errorf("expected *resolveError, got %T", err)
 	}
 
-	// A hint that matches no candidate is ignored, so it stays ambiguous
-	// rather than collapsing to not-found.
-	if _, err := h.resolveSymbol(ctx, "sense_blast", "Widget", "nonexistent/path.rb"); err == nil {
-		t.Error("expected ambiguity to remain when the file hint matches nothing")
-	} else if _, ok := err.(*resolveError); !ok {
-		t.Errorf("expected *resolveError for a non-matching hint, got %T", err)
+	// A hint that matches no candidate is a hard constraint: the response
+	// names the file conflict and lists where the symbol does resolve,
+	// never falling back to an unconstrained winner.
+	_, err = h.resolveSymbol(ctx, "sense_blast", "Widget", "nonexistent/path.rb")
+	if err == nil {
+		t.Fatal("expected a not-found-in-file resolveError for a non-matching hint")
+	}
+	re, ok := err.(*resolveError)
+	if !ok {
+		t.Fatalf("expected *resolveError for a non-matching hint, got %T", err)
+	}
+	var resp map[string]any
+	text := re.result.Content[0].(mcp.TextContent).Text
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal not-found-in-file: %v", err)
+	}
+	if resp["error"] != "symbol not found in file" {
+		t.Errorf("error = %v, want \"symbol not found in file\"", resp["error"])
+	}
+	if resp["file"] != "nonexistent/path.rb" {
+		t.Errorf("file = %v, want the failing hint echoed back", resp["file"])
+	}
+	elsewhere, ok := resp["elsewhere"].([]any)
+	if !ok || len(elsewhere) == 0 {
+		t.Errorf("expected cross-file matches under elsewhere, got %v", resp["elsewhere"])
+	}
+	if _, ok := resp["next_steps"]; !ok {
+		t.Errorf("expected a retry pointer in next_steps alongside elsewhere, got %v", resp)
+	}
+}
+
+// TestResolveSymbolFileHintConstrainsAcrossTiers reproduces the Finding-9
+// shape: the bare name resolves at the exact-name tier to a symbol in one
+// file, while the pinned file's symbol only matches at the suffix tier.
+// The file hint must reach the lower tier instead of being silently
+// dropped when it filters the winning tier to zero.
+func TestResolveSymbolFileHintConstrainsAcrossTiers(t *testing.T) {
+	dir := t.TempDir()
+	senseDir := filepath.Join(dir, ".sense")
+	if err := os.MkdirAll(senseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(senseDir, "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+
+	now := time.Now()
+	// The template filter: bare name "join" wins the exact-name tier here.
+	fidT, _ := adapter.WriteFile(ctx, &model.File{Path: "template/defaultfilters.py", Language: "python", Hash: "ht", Symbols: 1, IndexedAt: now})
+	_, _ = adapter.WriteSymbol(ctx, &model.Symbol{FileID: fidT, Name: "join", Qualified: "join", Kind: "function", LineStart: 612, LineEnd: 620})
+	// The query method: only reachable via the suffix tier for "join".
+	fidQ, _ := adapter.WriteFile(ctx, &model.File{Path: "db/models/sql/query.py", Language: "python", Hash: "hq", Symbols: 1, IndexedAt: now})
+	_, _ = adapter.WriteSymbol(ctx, &model.Symbol{FileID: fidQ, Name: "Query.join", Qualified: "Query.join", Kind: "method", LineStart: 1135, LineEnd: 1187})
+
+	tracker := metrics.NewTracker(adapter.DB())
+	defer tracker.Close()
+	h := &handlers{
+		adapter: adapter, db: adapter.DB(), dir: dir,
+		search:      search.NewEngine(adapter, nil, nil),
+		tracker:     tracker,
+		defaults:    profile.DefaultParams(),
+		seenSymbols: make(map[int64]bool),
+	}
+
+	got, err := h.resolveSymbol(ctx, "sense_graph", "join", "db/models/sql/query.py")
+	if err != nil {
+		t.Fatalf("file-pinned lower-tier symbol should resolve, got: %v", err)
+	}
+	if got.Qualified != "Query.join" {
+		t.Errorf("resolved %q, want the pinned file's Query.join, not the cross-file winner", got.Qualified)
+	}
+
+	// Without the hint, the exact-name tier still wins as before.
+	bare, err := h.resolveSymbol(ctx, "sense_graph", "join", "")
+	if err != nil {
+		t.Fatalf("bare lookup: %v", err)
+	}
+	if bare.Qualified != "join" {
+		t.Errorf("bare resolution = %q, want the exact-name winner", bare.Qualified)
+	}
+}
+
+// TestNotFoundInFileResultOmitsFuzzyElsewhere covers the elsewhere guard
+// and the steering floor: when the symbol only fuzzy-matches cross-file,
+// the not-found-in-file response carries no elsewhere list (suggestions
+// are not locations) but still steers — the double failure (bad name AND
+// pinned file) must never be a bare dead end.
+func TestNotFoundInFileResultOmitsFuzzyElsewhere(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	// "Verfiy" fuzzy-matches the fixture's "Verify" but no exact tier hits.
+	result := ts.handlers.notFoundInFileResult(ctx, "sense_graph", "Verfiy", "some/file.go")
+	var resp map[string]any
+	text := result.Content[0].(mcp.TextContent).Text
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["error"] != "symbol not found in file" {
+		t.Errorf("error = %v, want \"symbol not found in file\"", resp["error"])
+	}
+	if _, ok := resp["elsewhere"]; ok {
+		t.Errorf("fuzzy-only matches must not be presented as elsewhere locations, got %v", resp["elsewhere"])
+	}
+	if _, ok := resp["next_steps"]; !ok {
+		t.Errorf("the double failure must still steer via next_steps, got %v", resp)
+	}
+}
+
+// TestNearestCandidates covers the not-found steering source: the search
+// engine's top hits come back as "qualified (kind) file:line" strings, a
+// nil engine degrades to none, and a query nothing matches returns none.
+func TestNearestCandidates(t *testing.T) {
+	ts := setupTestServer(t)
+	ctx := context.Background()
+
+	candidates := ts.handlers.nearestCandidates(ctx, "auth")
+	if len(candidates) == 0 {
+		t.Fatal("expected candidates for a query the search engine matches")
+	}
+	if len(candidates) > notFoundSteeringCap {
+		t.Errorf("got %d candidates, cap is %d", len(candidates), notFoundSteeringCap)
+	}
+	for _, c := range candidates {
+		if !strings.Contains(c, "(") || !strings.Contains(c, ":") {
+			t.Errorf("candidate %q missing kind or file:line", c)
+		}
+	}
+
+	if got := ts.handlers.nearestCandidates(ctx, "zzqqxxnothing"); len(got) != 0 {
+		t.Errorf("expected no candidates for an unmatchable query, got %v", got)
+	}
+
+	bare := &handlers{}
+	if got := bare.nearestCandidates(ctx, "auth"); got != nil {
+		t.Errorf("nil search engine must yield no candidates, got %v", got)
 	}
 }
 
