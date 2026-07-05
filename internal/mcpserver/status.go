@@ -15,12 +15,10 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/luuuc/sense/internal/embed"
+	"github.com/luuuc/sense/internal/cli"
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/mcpio"
 	"github.com/luuuc/sense/internal/profile"
-	"github.com/luuuc/sense/internal/sqlite"
-	"github.com/luuuc/sense/internal/version"
 )
 
 func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -110,7 +108,7 @@ func buildStatusResponse(ctx context.Context, db *sql.DB, dir string, ws *mcpio.
 		resp.Freshness = *freshness
 	}
 
-	resp.Version = queryVersion(ctx, db)
+	resp.Version = cli.BuildVersionInfo(ctx, db)
 
 	structure, err := buildStructure(ctx, db, resp, langs)
 	if err != nil {
@@ -180,27 +178,6 @@ func queryIndexCounts(ctx context.Context, db *sql.DB, dir string) (mcpio.Status
 	}
 
 	return index, progress, nil
-}
-
-// queryVersion reports the schema and embedding-model versions, comparing each
-// to the binary's current values. It returns nil when the schema version
-// pragma cannot be read.
-func queryVersion(ctx context.Context, db *sql.DB) *mcpio.StatusVersion {
-	var schemaVer int
-	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVer); err != nil {
-		return nil
-	}
-	storedModel := readMeta(ctx, db, "embedding_model")
-	if storedModel == "" {
-		storedModel = embed.ModelID
-	}
-	return &mcpio.StatusVersion{
-		Binary:                version.Version,
-		Schema:                schemaVer,
-		SchemaCurrent:         schemaVer == sqlite.SchemaVersion,
-		EmbeddingModel:        storedModel,
-		EmbeddingModelCurrent: storedModel == embed.ModelID,
-	}
 }
 
 // ---------------------------------------------------------------

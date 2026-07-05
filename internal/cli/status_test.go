@@ -286,8 +286,34 @@ func TestCountStaleFilesCLIUnparseableTimestamp(t *testing.T) {
 }
 
 func TestBuildVersionInfoError(t *testing.T) {
-	if got := buildVersionInfo(context.Background(), closedQueryDB(t)); got != nil {
-		t.Errorf("buildVersionInfo on closed DB = %+v, want nil", got)
+	if got := BuildVersionInfo(context.Background(), closedQueryDB(t)); got != nil {
+		t.Errorf("BuildVersionInfo on closed DB = %+v, want nil", got)
+	}
+}
+
+// TestBuildVersionInfoReportsStoredModel covers the stored-model branch: when
+// the index records an embedding_model meta value, BuildVersionInfo reports it
+// (rather than defaulting to the binary's) and flags whether it is current.
+func TestBuildVersionInfoReportsStoredModel(t *testing.T) {
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "ver.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+	if err := adapter.WriteMeta(ctx, "embedding_model", "some-stored-model"); err != nil {
+		t.Fatal(err)
+	}
+
+	v := BuildVersionInfo(ctx, adapter.DB())
+	if v == nil {
+		t.Fatal("expected a version block")
+	}
+	if v.EmbeddingModel != "some-stored-model" {
+		t.Errorf("EmbeddingModel = %q, want some-stored-model", v.EmbeddingModel)
+	}
+	if v.EmbeddingModelCurrent {
+		t.Error("a stored model differing from the binary must not be reported current")
 	}
 }
 
