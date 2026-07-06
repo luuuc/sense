@@ -377,6 +377,22 @@ func (w *walker) emitCall(call *sitter.Node, source string, localTypes map[strin
 			return err
 		}
 		if typed, ok := typedReceiverTarget(fn, w.source, localTypes); ok {
+			// A chain rooted at a literal `<Model>.objects` also depends on the
+			// model class itself, not only on the QuerySet method it resolves to.
+			// A multi-hop chain re-roots at every call node, emitting this edge
+			// once per hop; the sqlite unique index (source, target, kind, file)
+			// collapses the duplicates at persistence.
+			if root, ok := managerChainModelRoot(fn.ChildByFieldName("object"), w.source); ok {
+				if err := w.emit.Edge(extract.EmittedEdge{
+					SourceQualified: source,
+					TargetQualified: root,
+					Kind:            model.EdgeCalls,
+					Line:            &line,
+					Confidence:      extract.ConfidenceConvention,
+				}); err != nil {
+					return err
+				}
+			}
 			// ConfidenceDynamic here means "receiver type proven from local
 			// context", not dispatch heuristics — the same tier Ruby's typed
 			// locals use, below self/static (1.0), above unverified (0.5).
