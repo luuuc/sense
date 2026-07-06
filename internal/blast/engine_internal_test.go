@@ -239,6 +239,163 @@ func TestSiblingSymbolIDsNonExistent(t *testing.T) {
 	}
 }
 
+// capResults must keep production callers over test-file callers when the cap
+// bites: a test fixture constructing the subject rides a 1.0 call edge and
+// would otherwise evict every 0.9 production dependent — the callers an
+// impact audit actually needs (netbox Device: 49 setUpTestData callers vs the
+// scattered ipam/virtualization dependents).
+func TestCapResultsPrefersProductionOverTests(t *testing.T) {
+	const prodID, testID = int64(1), int64(2)
+	s := &bfsState{pathConf: map[int64]float64{prodID: 0.9, testID: 1.0}}
+	flags := map[int64]bool{prodID: false, testID: true}
+
+	direct, indirect := s.capResults([]int64{prodID, testID}, nil, flags, 1)
+	if len(indirect) != 0 {
+		t.Fatalf("expected no indirect callers, got %v", indirect)
+	}
+	if len(direct) != 1 || direct[0] != prodID {
+		t.Errorf("cap must keep the production caller over the higher-confidence test caller: got %v, want [%d]", direct, prodID)
+	}
+
+	// Under the cap nothing is trimmed or reordered.
+	direct, _ = s.capResults([]int64{prodID, testID}, nil, flags, 10)
+	if len(direct) != 2 {
+		t.Errorf("no-cap path must return all callers, got %v", direct)
+	}
+}
+
+// Production-over-test is the PRIMARY sort key — above confidence AND above
+// direct-over-indirect. An indirect production caller at 0.3 must evict a
+// direct test caller at 1.0. If a future edit reorders the keys, this test is
+// what notices.
+func TestCapResultsProductionOutranksConfidenceAndDirectness(t *testing.T) {
+	const testDirectID, prodIndirectID = int64(1), int64(2)
+	s := &bfsState{pathConf: map[int64]float64{testDirectID: 1.0, prodIndirectID: 0.3}}
+	flags := map[int64]bool{testDirectID: true, prodIndirectID: false}
+
+	direct, indirect := s.capResults([]int64{testDirectID}, []int64{prodIndirectID}, flags, 1)
+	if len(direct) != 0 {
+		t.Errorf("direct test caller must be evicted, got %v", direct)
+	}
+	if len(indirect) != 1 || indirect[0] != prodIndirectID {
+		t.Errorf("indirect production caller must survive the cap: got %v, want [%d]", indirect, prodIndirectID)
+	}
+}
+
+// A nil flag map is the documented degradation contract (testFileFlags returns
+// nil on query failure): every caller reads as production and the ranking
+// falls back to the previous confidence-only order.
+func TestCapResultsNilFlagsKeepsConfidenceOrder(t *testing.T) {
+	const prodID, testID = int64(1), int64(2)
+	s := &bfsState{pathConf: map[int64]float64{prodID: 0.9, testID: 1.0}}
+
+	direct, _ := s.capResults([]int64{prodID, testID}, nil, nil, 1)
+	if len(direct) != 1 || direct[0] != testID {
+		t.Errorf("nil flags must degrade to confidence-only order (test caller at 1.0 kept): got %v, want [%d]", direct, testID)
+	}
+}
+
+func TestTestFileFlags(t *testing.T) {
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close() })
+	db := adapter.DB()
+	t.Cleanup(func() { _ = db.Close() })
+
+	var prodID, testID int64
+	err = adapter.InTx(ctx, func() error {
+		fProd, err := adapter.WriteFile(ctx, &model.File{
+			Path: "app/filters.py", Language: "python", Hash: "h1",
+			Symbols: 1, IndexedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		fTest, err := adapter.WriteFile(ctx, &model.File{
+			Path: "app/tests/test_api.py", Language: "python", Hash: "h2",
+			Symbols: 1, IndexedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		prodID, err = adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fProd, Name: "filter_device", Qualified: "F.filter_device",
+			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+		})
+		if err != nil {
+			return err
+		}
+		testID, err = adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fTest, Name: "setUpTestData", Qualified: "T.setUpTestData",
+			Kind: model.KindMethod, LineStart: 1, LineEnd: 5,
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	flags := testFileFlags(ctx, db, []int64{prodID, testID})
+	if flags == nil {
+		t.Fatal("expected a flag map from a healthy index, got nil")
+	}
+	if flags[prodID] {
+		t.Errorf("production symbol flagged as test")
+	}
+	if !flags[testID] {
+		t.Errorf("test-file symbol not flagged")
+	}
+}
+
+// A database without the sense schema exercises the best-effort contract:
+// testFileFlags returns nil rather than failing, and the caller's nil-map
+// reads degrade the ranking to confidence-only (covered above).
+func TestTestFileFlagsNoSchemaReturnsNil(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if flags := testFileFlags(context.Background(), db, []int64{1, 2}); flags != nil {
+		t.Errorf("expected nil flags on a schema-less database, got %v", flags)
+	}
+}
+
+// Mirrors mcpio's TestIsTestPath table: the blast copy must agree with
+// mcpio.IsTestPath (the presentation layer buckets the same paths), and the
+// import cycle rules out asserting parity directly.
+func TestIsTestPathLocalCopy(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"internal/foo/foo_test.go", true},
+		{"src/app.test.ts", true},
+		{"test/helpers.rb", true},
+		{"tests/unit/auth.py", true},
+		{"spec/models/user_spec.rb", true},
+		{"internal/testdata/fixture.json", true},
+		{"src/main/java/com/example/UserTest.java", true},
+		{"src/test/kotlin/TestUser.kt", true},
+		{"src/test/java/UserTests.java", true},
+		{"lib/test_auth.py", true},
+		{"src/main/java/com/example/User.java", false},
+		{"src/main/java/com/example/TestUtils.java", false},
+		{"src/main/java/com/example/Contest.java", false},
+		{"internal/foo/foo.go", false},
+		{"lib/auth.rb", false},
+	}
+	for _, tt := range tests {
+		if got := isTestPath(tt.path); got != tt.want {
+			t.Errorf("isTestPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
 // hasTemporal reports temporal coupling from either a direct temporal caller
 // or an indirect (multi-hop) one; the indirect path is the branch the full
 // Compute tests rarely exercise on its own.

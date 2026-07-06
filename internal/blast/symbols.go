@@ -237,6 +237,86 @@ func inboundComposers(ctx context.Context, db *sql.DB, ids []int64) ([]int64, er
 	return out, nil
 }
 
+// testFileFlags reports, for each symbol id, whether the symbol lives in a
+// test file. Used by capResults to keep production callers ahead of test
+// fixtures at the result-cap boundary. Best-effort: on query failure it
+// returns nil, which the caller treats as "no symbol is a test" — the ranking
+// degrades to the previous confidence-only order instead of failing the blast.
+func testFileFlags(ctx context.Context, db *sql.DB, ids []int64) map[int64]bool {
+	out := make(map[int64]bool, len(ids))
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		q := `SELECT s.id, f.path FROM sense_symbols s
+		      JOIN sense_files f ON f.id = s.file_id
+		      WHERE s.id IN (` + placeholders + `)`
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := db.QueryContext(ctx, q, args...)
+		if err != nil {
+			return nil
+		}
+		for rows.Next() {
+			var id int64
+			var path string
+			if err := rows.Scan(&id, &path); err != nil {
+				_ = rows.Close()
+				return nil
+			}
+			out[id] = isTestPath(path)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil
+		}
+		_ = rows.Close()
+	}
+	return out
+}
+
+// isTestPath reports whether a file path matches common test directory or
+// filename conventions. A verbatim copy of mcpio.IsTestPath, which buckets the
+// SAME paths at presentation time (segmentBlastCallers), so the two MUST agree;
+// the copy exists because mcpio imports blast (a cycle). This is the fourth
+// copy of the heuristic (mcpio, resolve, search each carry one, and they have
+// already drifted) — consolidation into a shared leaf package is tracked as a
+// follow-up, not done here.
+func isTestPath(path string) bool {
+	if strings.Contains(path, "_test.") ||
+		strings.Contains(path, ".test.") ||
+		strings.Contains(path, "/test/") ||
+		strings.Contains(path, "/tests/") ||
+		strings.Contains(path, "/testdata/") ||
+		strings.Contains(path, "/spec/") ||
+		strings.HasPrefix(path, "test/") ||
+		strings.HasPrefix(path, "tests/") ||
+		strings.HasPrefix(path, "spec/") {
+		return true
+	}
+	base := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		base = path[i+1:]
+	}
+	if strings.HasPrefix(base, "test_") {
+		return true
+	}
+	if dot := strings.LastIndex(base, "."); dot > 0 {
+		name := base[:dot]
+		if strings.HasSuffix(name, "Test") || strings.HasSuffix(name, "Tests") {
+			return true
+		}
+	}
+	return false
+}
+
 func filterIDs(ids []int64, keep map[int64]struct{}) []int64 {
 	out := make([]int64, 0, len(ids))
 	for _, id := range ids {
