@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.16] - 2026-07-06
+
+### Bug Fixes
+
+- resolve Django reverse-related-manager accessors
+- span enumerated indirect callers across files
 ## [1.11.15] - 2026-07-06
 
 ### Bug Fixes
