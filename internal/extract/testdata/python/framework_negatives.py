@@ -7,9 +7,9 @@ from fastapi import Depends
 Order = apps.get_model("orders", "Order")
 
 
-# ForeignKey with keyword-only target — no positional arg, no edge.
+# ForeignKey with keyword args but no target (no positional, no `to=`) — no edge.
 class Config(models.Model):
-    owner = models.ForeignKey(to=Account, on_delete=models.CASCADE)
+    owner = models.ForeignKey(on_delete=models.CASCADE)
 
 
 # Depends with lambda — unresolvable, no edge.

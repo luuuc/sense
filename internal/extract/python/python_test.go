@@ -318,6 +318,126 @@ func TestDjangoForeignKeyStringTarget(t *testing.T) {
 	}
 }
 
+func TestDjangoForeignKeyKeywordToString(t *testing.T) {
+	r := parse(t, `class Interface:
+    device = models.ForeignKey(
+        to='dcim.Device',
+        on_delete=models.CASCADE,
+        related_name='interfaces',
+    )
+`)
+	e := findEdge(r, "Interface", "Device", "composes")
+	if e == nil {
+		t.Fatal("missing composes edge Interface -> Device from ForeignKey(to='dcim.Device')")
+	}
+	if e.Confidence != extract.ConfidenceAmbiguous {
+		t.Errorf("ForeignKey to= string confidence = %v, want %v", e.Confidence, extract.ConfidenceAmbiguous)
+	}
+}
+
+func TestDjangoForeignKeyKeywordToIdentifier(t *testing.T) {
+	r := parse(t, `class Profile:
+    user = OneToOneField(to=User, on_delete=CASCADE)
+`)
+	e := findEdge(r, "Profile", "User", "composes")
+	if e == nil {
+		t.Fatal("missing composes edge Profile -> User from OneToOneField(to=User)")
+	}
+	if e.Confidence != extract.ConfidenceConvention {
+		t.Errorf("OneToOneField to= identifier confidence = %v, want %v", e.Confidence, extract.ConfidenceConvention)
+	}
+}
+
+func TestDjangoForeignKeyKeywordsWithoutTo(t *testing.T) {
+	r := parse(t, `class Order:
+    customer = models.ForeignKey(on_delete=models.CASCADE)
+`)
+	for _, e := range r.edges {
+		if string(e.Kind) == "composes" && e.SourceQualified == "Order" {
+			t.Errorf("unexpected composes edge from ForeignKey without a target: Order -> %s", e.TargetQualified)
+		}
+	}
+}
+
+func TestDjangoManagerChainEmitsModelEdge(t *testing.T) {
+	r := parse(t, `class IPAddressFilterSet:
+    def filter_device(self, queryset, name, value):
+        return Device.objects.filter(name__in=value)
+`)
+	e := findEdge(r, "IPAddressFilterSet.filter_device", "Device", "calls")
+	if e == nil {
+		t.Fatal("missing calls edge IPAddressFilterSet.filter_device -> Device from manager chain root")
+	}
+	if e.Confidence != extract.ConfidenceConvention {
+		t.Errorf("manager-chain model edge confidence = %v, want %v", e.Confidence, extract.ConfidenceConvention)
+	}
+	if findEdge(r, "IPAddressFilterSet.filter_device", "QuerySet.filter", "calls") == nil {
+		t.Error("manager-chain model edge must not replace the QuerySet.filter chain edge")
+	}
+}
+
+func TestDjangoManagerTerminalEmitsModelEdge(t *testing.T) {
+	r := parse(t, `def lookup(pk):
+    return Device.objects.get(pk=pk)
+`)
+	if findEdge(r, "lookup", "Device", "calls") == nil {
+		t.Fatal("missing calls edge lookup -> Device from terminal manager call")
+	}
+}
+
+func TestDjangoManagerChainedHopsEmitModelEdge(t *testing.T) {
+	r := parse(t, `def actives():
+    return Device.objects.filter(active=True).exclude(role=None)
+`)
+	// Each hop's call node re-roots the walk, so a 2-hop chain emits the model
+	// edge exactly twice; the sqlite unique index (source, target, kind, file)
+	// collapses the duplicates at persistence. This pins the emission contract
+	// so a change in either direction (dedup at emit, or a third copy) is
+	// deliberate.
+	count := 0
+	for _, e := range r.edges {
+		if string(e.Kind) == "calls" && e.SourceQualified == "actives" && e.TargetQualified == "Device" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("chained manager hops: got %d actives -> Device calls edges, want 2 (one per hop)", count)
+	}
+}
+
+func TestDjangoCustomManagerMethodEmitsNoModelEdge(t *testing.T) {
+	// A chain ending in a CUSTOM manager method never passes the QuerySet
+	// whitelist gate (typedReceiverTarget), so no model edge is emitted — the
+	// deliberate false-positive bound documented on managerChainModelRoot.
+	// Extending the edge to custom-manager chains is a bench-gated decision;
+	// this test makes the boundary intent, not accident.
+	r := parse(t, `def actives():
+    return Device.objects.get_active()
+`)
+	if findEdge(r, "actives", "Device", "calls") != nil {
+		t.Error("custom manager method must not emit a model edge (unvetted chain)")
+	}
+}
+
+func TestDjangoPrivateManagerRootEmitsModelEdge(t *testing.T) {
+	r := parse(t, `def visible():
+    return Device._default_manager.filter(hidden=False)
+`)
+	if findEdge(r, "visible", "Device", "calls") == nil {
+		t.Fatal("missing calls edge visible -> Device from _default_manager chain root")
+	}
+}
+
+func TestDjangoSelfModelManagerEmitsNoModelEdge(t *testing.T) {
+	r := parse(t, `class Manager:
+    def visible(self):
+        return self.model.objects.filter(hidden=False)
+`)
+	if findEdge(r, "Manager.visible", "model", "calls") != nil {
+		t.Error("self.model manager chain must not emit a model edge (model class unknown)")
+	}
+}
+
 func TestFastapiRouteDecorator(t *testing.T) {
 	r := parse(t, `@app.post("/orders")
 def create_order():

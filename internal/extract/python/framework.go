@@ -176,6 +176,24 @@ func firstPositionalArg(args *sitter.Node) *sitter.Node {
 	return nil
 }
 
+// keywordArgValue returns the value node of the named keyword argument from an
+// argument_list node, or nil when the keyword is absent.
+func keywordArgValue(args *sitter.Node, name string, source []byte) *sitter.Node {
+	count := args.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		arg := args.NamedChild(i)
+		if arg == nil || arg.Kind() != "keyword_argument" {
+			continue
+		}
+		key := arg.ChildByFieldName("name")
+		if key == nil || extract.Text(key, source) != name {
+			continue
+		}
+		return arg.ChildByFieldName("value")
+	}
+	return nil
+}
+
 // positionalArgs returns all non-keyword arguments from an argument_list.
 func positionalArgs(args *sitter.Node) []*sitter.Node {
 	var result []*sitter.Node

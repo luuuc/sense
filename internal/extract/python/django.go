@@ -130,9 +130,14 @@ func isQuerySetExprDepth(n *sitter.Node, src []byte, types map[string]string, de
 
 // djangoManagerLeafNames are the attribute names that root a manager chain:
 // the public `objects` plus the private accessors Django's own plumbing uses
-// (`Model._default_manager` / `Model._base_manager`). The exposure bound is
-// the same as the name convention: a wrong guess emits a QuerySet.* target
-// that only resolves in a repo defining a QuerySet class.
+// (`Model._default_manager` / `Model._base_manager`). Two edges root here with
+// different exposure bounds: the QuerySet-method edge's wrong guesses emit a
+// QuerySet.* target that only resolves in a repo defining a QuerySet class,
+// while the model edge (managerChainModelRoot) targets the PascalCase root
+// name itself, which resolves against any same-named class — its bound is the
+// gate stack (literal PascalCase receiver + exact manager attr + whitelisted
+// method), and a rare wrong guess (`Config.objects.get(k)` on a class-level
+// dict) still encodes a true textual reference to that class.
 var djangoManagerLeafNames = map[string]bool{
 	"objects":          true,
 	"_default_manager": true,
@@ -179,6 +184,49 @@ func isSelfModelRef(n *sitter.Node, src []byte) bool {
 	return false
 }
 
+// managerChainModelRoot walks a manager-chain receiver expression
+// (`Device.objects`, `Device.objects.filter(…).exclude(…)`) to its root and
+// returns the literal model identifier it is anchored on. The caller emits a
+// dependency edge to the model itself — code querying `Device.objects` depends
+// on Device even though the resolved method target is QuerySet API. Chains
+// rooted on self-attribute idioms (`self.model.objects`) or conventionally
+// named locals (`qs.filter(…)`) carry no literal model name and return false.
+//
+// PRECONDITION: the walk does NOT re-verify hop method names, so it is only
+// valid on a chain typedReceiverTarget has already vetted as QuerySet API —
+// its sole call site. Consequently a chain ending in a CUSTOM manager method
+// (`Device.objects.restrict()`) never reaches this function and emits no model
+// edge: a deliberate false-positive bound, not an oversight. Extending the
+// edge to custom-manager chains is a separate, bench-gated decision.
+func managerChainModelRoot(n *sitter.Node, src []byte) (string, bool) {
+	return managerChainModelRootDepth(n, src, 0)
+}
+
+func managerChainModelRootDepth(n *sitter.Node, src []byte, depth int) (string, bool) {
+	if n == nil || depth > maxQuerySetChainDepth {
+		return "", false
+	}
+	switch n.Kind() {
+	case "attribute":
+		leaf := n.ChildByFieldName("attribute")
+		obj := n.ChildByFieldName("object")
+		if leaf == nil || obj == nil || !djangoManagerLeafNames[extract.Text(leaf, src)] {
+			return "", false
+		}
+		if obj.Kind() == "identifier" && isPascalCase(extract.Text(obj, src)) {
+			return extract.Text(obj, src), true
+		}
+		return "", false
+	case "call":
+		fn := n.ChildByFieldName("function")
+		if fn == nil || fn.Kind() != "attribute" {
+			return "", false
+		}
+		return managerChainModelRootDepth(fn.ChildByFieldName("object"), src, depth+1)
+	}
+	return "", false
+}
+
 // isQuerySetChainCall matches a chain hop: a conventionally QuerySet-returning
 // method regardless of receiver (self.get_queryset(), self._chain()), or a
 // chainable QuerySet method whose receiver is itself a queryset expression.
@@ -204,7 +252,8 @@ func isQuerySetChainCall(n *sitter.Node, src []byte, types map[string]string, de
 // emitDjangoModelField checks if an assignment's RHS is a Django relational field
 // call (e.g. `models.ForeignKey(User)`). If so, it emits a composes edge from the
 // enclosing class to the target model. The call can be bare (`ForeignKey(User)`)
-// or attribute-qualified (`models.ForeignKey(User)`).
+// or attribute-qualified (`models.ForeignKey(User)`), and the target model can be
+// the first positional argument or the `to=` keyword (`ForeignKey(to='dcim.Device')`).
 func (w *walker) emitDjangoModelField(assign *sitter.Node, scope []string) error {
 	if len(scope) == 0 {
 		return nil
@@ -225,6 +274,9 @@ func (w *walker) emitDjangoModelField(assign *sitter.Node, scope []string) error
 		return nil
 	}
 	first := firstPositionalArg(args)
+	if first == nil {
+		first = keywordArgValue(args, "to", w.source)
+	}
 	if first == nil {
 		return nil
 	}
