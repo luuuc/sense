@@ -689,6 +689,114 @@ func TestBuildBlastResponseIndirectTier2(t *testing.T) {
 	}
 }
 
+// The enumerated indirect list must SPAN files, not sample one corner: on a
+// hub whose first 20+ tier-1 hops are intra-file decomposition chains (same
+// file as a direct caller), the cross-file hops past the cap are the only
+// reach the indirect tier adds and must surface — one exemplar per new file
+// first, then the rest in order (pretix reverse-manager dependents lost every
+// slot to same-file 1.0 hops before this).
+func TestBuildBlastResponseIndirectSpansNewFiles(t *testing.T) {
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:          blast.RiskLow,
+		RiskReasons:   []string{"x"},
+		DirectCallers: []model.Symbol{{ID: 1, Qualified: "Direct", FileID: 1}},
+		AffectedTests: []string{},
+	}
+	// 22 intra-file hops in the direct caller's file…
+	for i := int64(10); i < 32; i++ {
+		r.IndirectCallers = append(r.IndirectCallers, blast.CallerHop{
+			Symbol: model.Symbol{ID: i, Qualified: fmt.Sprintf("SameFile%d", i), FileID: 1},
+			Via:    model.Symbol{ID: 1, Qualified: "Direct"},
+			Hops:   2,
+		})
+	}
+	// …then three cross-file dependents past the enumeration cap.
+	for i := int64(40); i < 43; i++ {
+		r.IndirectCallers = append(r.IndirectCallers, blast.CallerHop{
+			Symbol: model.Symbol{ID: i, Qualified: fmt.Sprintf("CrossFile%d", i), FileID: i},
+			Via:    model.Symbol{ID: 1, Qualified: "Direct"},
+			Hops:   2,
+		})
+	}
+	r.TotalAffected = len(r.IndirectCallers) + 1
+
+	files := func(id int64) (string, bool) {
+		if id == 1 {
+			return "hub.py", true
+		}
+		return fmt.Sprintf("area%d/dep.py", id), true
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	got := map[string]bool{}
+	for _, h := range resp.IndirectCallers {
+		got[h.Symbol] = true
+	}
+	for i := int64(40); i < 43; i++ {
+		if !got[fmt.Sprintf("CrossFile%d", i)] {
+			t.Errorf("cross-file dependent CrossFile%d must be enumerated (new file beats same-file duplicates)", i)
+		}
+	}
+	if len(resp.IndirectCallers) != 20 {
+		t.Errorf("enumerated indirect = %d, want the full cap of 20", len(resp.IndirectCallers))
+	}
+}
+
+// The span pass must reorder ONLY tier-1 hops: tier-2 indirect hops still
+// flow to references untouched and never consume indirect enumeration slots,
+// regardless of their file. And a zero FileID (unknown file) always counts as
+// a new file — the first unknown-file hop must not shadow later ones.
+func TestBuildBlastResponseSpanTierAndUnknownFileInteraction(t *testing.T) {
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 0, Qualified: "Subject"},
+		Risk:          blast.RiskLow,
+		RiskReasons:   []string{"x"},
+		DirectCallers: []model.Symbol{{ID: 1, Qualified: "Direct", FileID: 1}},
+		AffectedTests: []string{},
+		IndirectCallers: []blast.CallerHop{
+			{Symbol: model.Symbol{ID: 10, Qualified: "SameFileT1", FileID: 1}, Via: model.Symbol{ID: 1, Qualified: "Direct"}, Hops: 2},
+			{Symbol: model.Symbol{ID: 11, Qualified: "Tier2Hop", FileID: 99}, Via: model.Symbol{ID: 1, Qualified: "Direct"}, Hops: 2},
+			{Symbol: model.Symbol{ID: 12, Qualified: "UnknownA", FileID: 0}, Via: model.Symbol{ID: 1, Qualified: "Direct"}, Hops: 2},
+			{Symbol: model.Symbol{ID: 13, Qualified: "UnknownB", FileID: 0}, Via: model.Symbol{ID: 1, Qualified: "Direct"}, Hops: 2},
+		},
+		TotalAffected: 5,
+		SymbolTiers: map[int64]blast.Tier{
+			1:  blast.TierBreaks,
+			10: blast.TierBreaks,
+			11: blast.TierReferences,
+			12: blast.TierBreaks,
+			13: blast.TierBreaks,
+		},
+	}
+	files := func(id int64) (string, bool) {
+		if id == 0 {
+			return "", false
+		}
+		return fmt.Sprintf("f%d.py", id), true
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	got := map[string]bool{}
+	for _, h := range resp.IndirectCallers {
+		got[h.Symbol] = true
+	}
+	if got["Tier2Hop"] {
+		t.Error("tier-2 hop must not be enumerated as an indirect caller")
+	}
+	if resp.References.Count != 1 {
+		t.Errorf("References.Count = %d, want 1 (the tier-2 hop)", resp.References.Count)
+	}
+	if !got["UnknownA"] || !got["UnknownB"] {
+		t.Errorf("unknown-file hops must both count as new files, got %v", got)
+	}
+	if !got["SameFileT1"] {
+		t.Error("with free slots, the deferred same-file hop must backfill")
+	}
+}
+
 func TestBuildBlastResponseTier2ExamplesCap(t *testing.T) {
 	var directCallers []model.Symbol
 	tiers := make(map[int64]blast.Tier)
