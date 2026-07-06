@@ -71,9 +71,12 @@ func (Extractor) Extensions() []string      { return []string{".py", ".pyi"} }
 func (Extractor) Tier() extract.Tier        { return extract.TierBasic }
 
 func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extract.Emitter) error {
-	w := &walker{source: source, emit: emit, pkgBindings: map[string]string{}}
+	w := &walker{source: source, emit: emit, pkgBindings: map[string]string{}, relatedNames: map[string]*relatedNameDecl{}}
 	w.collectModuleConstants(tree.RootNode())
 	if err := w.walk(tree.RootNode(), nil); err != nil {
+		return err
+	}
+	if err := w.flushRelatedNameAccessors(); err != nil {
 		return err
 	}
 	return emitHarvest(tree.RootNode(), source, emit)
@@ -87,6 +90,15 @@ type walker struct {
 	source      []byte
 	emit        extract.Emitter
 	pkgBindings map[string]string // unqualified name → qualified name for module-level constants
+	// relatedNames accumulates the file's Django related_name declarations
+	// (accessor name → first declaring class + line + ambiguity flag) for the
+	// end-of-file flush. Several FKs on the SAME class may share a spelling
+	// (pretix's Item.event/Item.category both declare "items") — one
+	// synthetic, one anchor. The same spelling on DIFFERENT classes is
+	// unprovable within one file (same-file symbol emissions collapse to one
+	// row at persistence, so the resolver's cross-file ambiguity gate could
+	// never see it) and is skipped entirely at flush.
+	relatedNames map[string]*relatedNameDecl
 }
 
 // collectModuleConstants pre-scans the module for ALL_CAPS assignments
@@ -403,6 +415,13 @@ func (w *walker) emitCall(call *sitter.Node, source string, localTypes map[strin
 				Line:            &line,
 				Confidence:      extract.ConfidenceDynamic,
 			})
+		}
+		// A chain the typed rules could not vet may still be a reverse-
+		// related-manager accessor (`order.positions.filter(…)`) — emit its
+		// django-related:* candidate edge alongside the ordinary bare-method
+		// edge below.
+		if err := w.emitRelatedManagerEdge(fn, source, line); err != nil {
+			return err
 		}
 		conf = attrReceiverConfidence(fn, w.source)
 	}

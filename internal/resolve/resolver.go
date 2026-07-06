@@ -366,7 +366,11 @@ func (ix *Index) resolveQualified(target string, req Request, gatedKind bool) (R
 	}
 	if len(matches) > 0 {
 		matches = ix.preferDjangoModelComposes(matches, req)
-		return pickBest(matches, req.SourceFileID, req.BaseConfidence), true, true
+		r := pickBest(matches, req.SourceFileID, req.BaseConfidence)
+		if isAmbiguousDjangoRelated(target, r) {
+			return Result{}, false, true
+		}
+		return r, true, true
 	}
 	// The qualified name matched only cross-language or test-only symbols: a
 	// coincidence, not a real edge. Drop it rather than leaf-fallback into more

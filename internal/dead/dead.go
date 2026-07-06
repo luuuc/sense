@@ -26,6 +26,14 @@ const syntheticPrefixPattern = extract.PrefixRubyCore + "%"
 // dead Ruby constant, so it is excluded from dead-code analysis like ruby-core.
 const routePrefixPattern = extract.PrefixRoute + "%"
 
+// djangoRelatedPrefixPattern matches the synthetic django-related:* reverse-
+// manager accessors (django-related:teams → Team). They are plumbing for the
+// consumer → accessor → model chain; one whose accessor is only used via
+// excluded verbs (or not at all) has no incoming edge and would otherwise
+// surface as a dead public constant named after a common noun (items, orders),
+// wallpapering `sense dead` on Django repos.
+const djangoRelatedPrefixPattern = extract.PrefixDjangoRelated + "%"
+
 type Options struct {
 	Language        string
 	Domain          string
