@@ -42,6 +42,17 @@ mode = "comment"
 [smells.return_statements]
 enabled = false
 
+# Aligned with the CI-enforced gocognit <= 30 ledger gate (make ledger);
+# qlty's default of 15 flags functions the project's policy accepts.
+[smells.function_complexity]
+threshold = 30
+
+# Per-file TOTAL complexity mostly tracks file length, and funlen is
+# deliberately off (raw length is fine). Per-function complexity is already
+# gated twice: the CI ledger and function_complexity above.
+[smells.file_complexity]
+enabled = false
+
 [[source]]
 name = "default"
 default = true
@@ -49,11 +60,11 @@ default = true
 # The dead-code voices each register a per-language reason table in init()
 # (priority/hint/verify string literals). Structural similarity between those
 # data tables is by design — per-language logic stays namespaced, never
-# generalized (see CONTRIBUTING.md) — so duplication findings there are noise.
-[[triage]]
-match.rules = ["qlty:similar-code", "qlty:identical-code"]
-match.file_patterns = ["internal/dead/voice_*.go"]
-set.ignored = true
+# generalized (see CONTRIBUTING.md) — so the 5 similar-code findings there are
+# noise. No config knob reaches them: the smells engine honors only the
+# top-level exclude_patterns, not [[triage]]/[[exclude]] (verified locally,
+# 2026-07). Suppressing them needs inline qlty-ignore directives in the
+# source files; left visible until that trade-off is decided.
 
 
 # Go linting/formatting is intentionally NOT duplicated here — `make ci`
