@@ -256,7 +256,14 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	// pruned by confidence (surfaced below from the edge table) can be reconciled
 	// into total_affected rather than appearing only in the composition list.
 	affectedSet := idSet(directIDs, indirectIDs)
-	directIDs, indirectIDs = state.capResults(directIDs, indirectIDs, opts.MaxResults)
+	// Test-file flags feed the cap's production-first ranking. Fetched here —
+	// only when the cap will actually bite — so capResults stays a pure sort
+	// over maps and the common under-cap blast never pays the lookup.
+	var testFlags map[int64]bool
+	if totalAffectedCount > opts.MaxResults {
+		testFlags = testFileFlags(ctx, db, append(append(make([]int64, 0, totalAffectedCount), directIDs...), indirectIDs...))
+	}
+	directIDs, indirectIDs = state.capResults(directIDs, indirectIDs, testFlags, opts.MaxResults)
 
 	symbolsByID, err := state.hydrate(ctx, db, subject, directIDs, indirectIDs)
 	if err != nil {
@@ -540,29 +547,35 @@ func (s *bfsState) partition(seedSet map[int64]struct{}) (direct, indirect []int
 	return direct, indirect
 }
 
-// capResults trims the caller sets to maxResults total, keeping the
-// highest-confidence callers across both sets.
-func (s *bfsState) capResults(directIDs, indirectIDs []int64, maxResults int) ([]int64, []int64) {
+// capResults trims the caller sets to maxResults total, keeping production
+// callers first and the highest-confidence callers within each group.
+// testFlags marks callers living in test files (see testFileFlags); a nil map
+// treats every caller as production, degrading to the confidence-only order.
+func (s *bfsState) capResults(directIDs, indirectIDs []int64, testFlags map[int64]bool, maxResults int) ([]int64, []int64) {
 	callerCount := len(directIDs) + len(indirectIDs)
 	if callerCount <= maxResults {
 		return directIDs, indirectIDs
 	}
 	type ranked struct {
 		id     int64
+		test   bool
 		conf   float64
 		direct bool
 	}
 	all := make([]ranked, 0, callerCount)
 	for _, id := range directIDs {
-		all = append(all, ranked{id, s.pathConf[id], true})
+		all = append(all, ranked{id: id, test: testFlags[id], conf: s.pathConf[id], direct: true})
 	}
 	for _, id := range indirectIDs {
-		all = append(all, ranked{id, s.pathConf[id], false})
+		all = append(all, ranked{id: id, test: testFlags[id], conf: s.pathConf[id], direct: false})
 	}
-	// Rank by confidence, then prefer direct callers, then break ties on
-	// symbol ID. The two tie-breakers matter on high-fan-out hubs where
-	// almost every path is a 1.0 call edge, so callers cluster at one
-	// confidence and the cap cutoff lands among the ties:
+	// Rank production callers over test-file callers, then by confidence,
+	// then prefer direct callers, then break ties on symbol ID. Each key
+	// matters on high-fan-out hubs where the cap cutoff lands among ties:
+	//   - production-over-test keeps the impact audit's real dependents — a
+	//     test fixture constructing the subject rides a 1.0 call edge and
+	//     would otherwise evict every 0.9 production dependent (netbox
+	//     Device: 49 setUpTestData callers vs the scattered cross-app ones);
 	//   - direct-over-indirect keeps the "what breaks?" signal — a direct
 	//     caller must not be evicted to make room for a weaker indirect one;
 	//   - the ID tie-break makes the kept set deterministic, so repeated
@@ -570,6 +583,9 @@ func (s *bfsState) capResults(directIDs, indirectIDs []int64, maxResults int) ([
 	//     unstable sort keeps an arbitrary subset that varies run to run and
 	//     "audit every dependent" is unreproducible).
 	sort.Slice(all, func(i, j int) bool {
+		if all[i].test != all[j].test {
+			return !all[i].test
+		}
 		if all[i].conf != all[j].conf {
 			return all[i].conf > all[j].conf
 		}
