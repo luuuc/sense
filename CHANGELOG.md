@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.15] - 2026-07-06
+
+### Bug Fixes
+
+- capture Django to= targets and manager-chain model deps
+- rank production callers above test files at the cap
 ## [1.11.14] - 2026-07-05
 
 ### Refactoring
