@@ -21,7 +21,8 @@ func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
 		JOIN sense_files f ON s.file_id = f.id
 		WHERE s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')
 		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'
-		AND s.qualified NOT LIKE '` + routePrefixPattern + `'`
+		AND s.qualified NOT LIKE '` + routePrefixPattern + `'
+		AND s.qualified NOT LIKE '` + djangoRelatedPrefixPattern + `'`
 	var args []any
 
 	if opts.Language != "" {
@@ -67,6 +68,7 @@ func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, e
 		AND s.kind IN ('function', 'method', 'class', 'module', 'type', 'interface', 'constant')
 		AND s.qualified NOT LIKE '` + syntheticPrefixPattern + `'
 		AND s.qualified NOT LIKE '` + routePrefixPattern + `'
+		AND s.qualified NOT LIKE '` + djangoRelatedPrefixPattern + `'
 		AND f.path NOT LIKE '%.d.ts'`
 	var args []any
 

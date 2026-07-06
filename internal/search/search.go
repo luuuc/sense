@@ -408,9 +408,11 @@ func (e *Engine) enrichResults(ctx context.Context, opts Options, fused []Result
 }
 
 // finalizeResults applies the min_score filter and limit, dropping synthetic
-// plumbing symbols (ruby-core:Struct / ruby-core:Data and route helpers,
-// emitted only so edges resolve) here — the single chokepoint every retrieval
-// leg funnels through, so they are never user-facing.
+// plumbing symbols (ruby-core:Struct / ruby-core:Data, route helpers, and
+// django-related:* accessors, emitted only so edges resolve) here — the
+// single chokepoint every retrieval leg funnels through, so they are never
+// user-facing. Deliberately NOT the full IsSyntheticQualified set: i18n:*
+// (and partial/turbo) symbols exist precisely to be searchable.
 func finalizeResults(opts Options, fused []Result) []Result {
 	var results []Result
 	for _, r := range fused {
@@ -418,7 +420,8 @@ func finalizeResults(opts Options, fused []Result) []Result {
 			continue
 		}
 		if strings.HasPrefix(r.Qualified, extract.PrefixRubyCore) ||
-			strings.HasPrefix(r.Qualified, extract.PrefixRoute) {
+			strings.HasPrefix(r.Qualified, extract.PrefixRoute) ||
+			strings.HasPrefix(r.Qualified, extract.PrefixDjangoRelated) {
 			continue
 		}
 		results = append(results, r)

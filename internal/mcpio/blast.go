@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/luuuc/sense/internal/blast"
+	"github.com/luuuc/sense/internal/model"
 )
 
 const (
@@ -42,6 +43,40 @@ const (
 	// still reports the true total.
 	blastTestExamplesCap = 10
 )
+
+// spanIndirectByFile reorders tier-1 indirect hops so the enumerated subset
+// SPANS files instead of sampling one corner — the indirect analog of
+// enumerateByArea (which keys on AREA; this keys on the caller's DEFINING
+// file, because the enemy here is intra-file decomposition chains — the
+// engine's capResults analog keys on the call-site file, equivalent in
+// practice). Pass 1 keeps, in original order, each hop whose file is not
+// already represented (by ANY direct caller — a coarse seed: some of those
+// files may themselves fall past the direct enumeration cap — or an earlier
+// pick); pass 2 appends the deferred same-file hops in original order. On a
+// hub whose traversal yields 20+ intra-file decomposition chains (Foo.run
+// via Foo._helper, the direct caller's own file) before any cross-file
+// dependent, the cross-file hops are the only reach the indirect tier adds
+// and must not lose every enumeration slot to duplicates (pretix's
+// reverse-manager dependents before this). A zero FileID (unknown file)
+// always counts as new, mirroring the engine's nil-FileID policy.
+// Deterministic: both passes preserve the engine's order.
+func spanIndirectByFile(hops []blast.CallerHop, directCallers []model.Symbol) []blast.CallerHop {
+	seen := make(map[int64]bool, len(directCallers)+len(hops))
+	for _, d := range directCallers {
+		seen[d.FileID] = true
+	}
+	ordered := make([]blast.CallerHop, 0, len(hops))
+	var deferred []blast.CallerHop
+	for _, hop := range hops {
+		if hop.Symbol.FileID != 0 && seen[hop.Symbol.FileID] {
+			deferred = append(deferred, hop)
+			continue
+		}
+		seen[hop.Symbol.FileID] = true
+		ordered = append(ordered, hop)
+	}
+	return append(ordered, deferred...)
+}
 
 // ApplyBlastBudget trims a blast response in least-relevant-first order
 // until its estimated token count fits within budget. Summary counts
@@ -227,24 +262,10 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 	// must not expand to fill the room freed by capping the direct list, or
 	// the response stays large for the weakest signal.
 	tier1Count = directTier1
+	tier1Hops := make([]blast.CallerHop, 0, len(r.IndirectCallers))
 	for _, hop := range r.IndirectCallers {
 		if !hasTiers || r.SymbolTiers[hop.Symbol.ID] == blast.TierBreaks {
-			if tier1Count < tier1Cap && len(resp.IndirectCallers) < indirectEnumCap {
-				var file string
-				if path, ok := files(hop.Symbol.FileID); ok {
-					file = path
-				}
-				resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
-					Symbol:      qualifiedOrName(hop.Symbol),
-					Via:         qualifiedOrName(hop.Via),
-					Hops:        hop.Hops,
-					LineStart:   hop.Symbol.LineStart,
-					LineEnd:     hop.Symbol.LineEnd,
-					Ref:         FormatRef(file, hop.Symbol.LineStart),
-					ViaTemporal: hop.ViaTemporal,
-				})
-				tier1Count++
-			}
+			tier1Hops = append(tier1Hops, hop)
 		} else {
 			var file string
 			if path, ok := files(hop.Symbol.FileID); ok {
@@ -258,6 +279,25 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 				Ref:       FormatRef(file, hop.Symbol.LineStart),
 			})
 		}
+	}
+	for _, hop := range spanIndirectByFile(tier1Hops, r.DirectCallers) {
+		if tier1Count >= tier1Cap || len(resp.IndirectCallers) >= indirectEnumCap {
+			break
+		}
+		var file string
+		if path, ok := files(hop.Symbol.FileID); ok {
+			file = path
+		}
+		resp.IndirectCallers = append(resp.IndirectCallers, BlastIndirect{
+			Symbol:      qualifiedOrName(hop.Symbol),
+			Via:         qualifiedOrName(hop.Via),
+			Hops:        hop.Hops,
+			LineStart:   hop.Symbol.LineStart,
+			LineEnd:     hop.Symbol.LineEnd,
+			Ref:         FormatRef(file, hop.Symbol.LineStart),
+			ViaTemporal: hop.ViaTemporal,
+		})
+		tier1Count++
 	}
 
 	for _, s := range r.AffectedSubclasses {

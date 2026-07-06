@@ -153,16 +153,39 @@ const (
 	// dropped at write time, so the target must be a real emitted row. These
 	// symbols are plumbing — filtered out of dead-code and search output.
 	PrefixRubyCore = "ruby-core:"
+	// PrefixDjangoRelated qualifies a Django reverse-related-manager accessor
+	// (e.g. "django-related:all_positions" for
+	// `ForeignKey(Order, related_name='all_positions')`). The FK declaration
+	// emits the synthetic symbol plus a calls edge to the DECLARING (child)
+	// model; an ORM-verb-chained accessor call elsewhere
+	// (`order.all_positions.filter(…)`) emits a calls edge to the prefixed
+	// name, so Consumer → django-related:accessor → ChildModel is a connected
+	// chain even though the consumer never names the child class. The reserved
+	// prefix guarantees accessor edges can never collide with a same-named
+	// application symbol. Duplicated related_names are unprovable and get NO
+	// confident binding, via two gates: two classes sharing a spelling in ONE
+	// file are skipped at extract (flushRelatedNameAccessors — same-file
+	// emissions would collapse to one row at persistence), and duplicates
+	// across files are dropped by the resolver (isAmbiguousDjangoRelated).
+	// Like route:*, these symbols are plumbing — filtered out of dead-code
+	// and search output.
+	PrefixDjangoRelated = "django-related:"
 )
 
 // syntheticPrefixes is the canonical set of reserved qualified-name prefixes for
 // the synthetic symbols the extractors emit for cross-language and framework
 // resolution (turbo channels/frames, importmap entries, view partials, i18n
-// keys, route helpers, ruby-core shims). They are plumbing, not project
-// declarations, so query-side consumers (search, dead-code, conventions, the
-// resolver's cross-language gate) exclude or special-case them. It is the single
-// source of truth, kept unexported and reached only through IsSyntheticQualified
-// so no caller can mutate the set.
+// keys, route helpers, ruby-core shims, django reverse-manager accessors).
+// They are plumbing, not project declarations, so query-side consumers
+// (search, dead-code, conventions, the resolver's cross-language gate) exclude
+// or special-case them. It is the single source of truth, kept unexported and
+// reached only through IsSyntheticQualified so no caller can mutate the set.
+//
+// Adding a prefix? The per-consumer filters are deliberately hand-picked (i18n
+// keys are MEANT to be searchable), so visit each chokepoint and decide:
+//   - search: finalizeResults (internal/search/search.go)
+//   - dead:   the two NOT LIKE lists (internal/dead/dead.go + queries.go)
+//   - conventions: dropSyntheticSymbols uses IsSyntheticQualified (automatic)
 var syntheticPrefixes = []string{
 	PrefixTurboChannel,
 	PrefixTurboFrame,
@@ -171,6 +194,7 @@ var syntheticPrefixes = []string{
 	PrefixI18n,
 	PrefixRoute,
 	PrefixRubyCore,
+	PrefixDjangoRelated,
 }
 
 // IsSyntheticQualified reports whether a fully-qualified name belongs to a

@@ -109,12 +109,23 @@ def run_sense(clone, args):
 
 
 def harvest_files(obj):
-    """Recursively collect every value under a 'file' key (repo-relative paths)."""
+    """Recursively collect every value under a 'file' key (repo-relative paths).
+
+    Also parses 'ref' values ("path:line"): indirect_callers entries carry only
+    a ref, so a dependent reached via a multi-hop path (e.g. the Django
+    reverse-related-manager synthetics) would otherwise read as a resolver miss
+    when it is present in the agent-facing output.
+    """
     found = set()
     if isinstance(obj, dict):
         f = obj.get("file")
         if isinstance(f, str) and "." in f:
             found.add(f)
+        r = obj.get("ref")
+        if isinstance(r, str) and ":" in r:
+            path = r.rsplit(":", 1)[0]
+            if "." in path:
+                found.add(path)
         for v in obj.values():
             found |= harvest_files(v)
     elif isinstance(obj, list):

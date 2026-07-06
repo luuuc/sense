@@ -97,3 +97,53 @@ func TestResolveComposesModelPreferenceNoOps(t *testing.T) {
 		})
 	}
 }
+
+func TestDjangoRelatedSyntheticUniquenessGate(t *testing.T) {
+	// Two files declaring the same related_name emit two synthetics with the
+	// same qualified name; an accessor edge to it proves nothing about WHICH
+	// model anchors, so resolution must DROP it (closed-world), never bind one
+	// at the confident tier. A repo-unique related_name resolves normally.
+	// The index also carries a bare application symbol named like an accessor
+	// ("addons") to prove the drop is terminal: resolveQualified must not fall
+	// through to the leaf fallback and bind the bare name at a demoted tier.
+	ix := resolve.NewIndex([]model.SymbolRef{
+		{ID: 80, Qualified: "django-related:addons", FileID: 80, Language: "python", Path: "src/pretix/base/models/items.py"},
+		{ID: 81, Qualified: "django-related:addons", FileID: 81, Language: "python", Path: "src/pretix/base/models/orders.py"},
+		{ID: 82, Qualified: "django-related:all_positions", FileID: 81, Language: "python", Path: "src/pretix/base/models/orders.py"},
+		{ID: 83, Qualified: "orders.addons", FileID: 85, Language: "python", Path: "src/pretix/base/decoys.py"},
+	})
+
+	if r, ok := ix.Resolve(resolve.Request{
+		Target:         "django-related:addons",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   90,
+		BaseConfidence: 0.8,
+	}); ok {
+		t.Errorf("ambiguous django-related target must not resolve (got id=%d conf=%v)", r.SymbolID, r.Confidence)
+	}
+
+	// Same-file preference must not defeat the gate: a source file that IS one
+	// of the synthetics' files still gets the drop — pickBest's same-file pick
+	// among several candidates stays flagged Ambiguous.
+	if r, ok := ix.Resolve(resolve.Request{
+		Target:         "django-related:addons",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   81,
+		BaseConfidence: 0.8,
+	}); ok {
+		t.Errorf("same-file source must not defeat the ambiguity drop (got id=%d)", r.SymbolID)
+	}
+
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "django-related:all_positions",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   90,
+		BaseConfidence: 0.8,
+	})
+	if !ok {
+		t.Fatal("unique django-related target must resolve")
+	}
+	if r.SymbolID != 82 || r.Confidence != 0.8 || r.Ambiguous {
+		t.Errorf("unique synthetic: got id=%d conf=%v ambiguous=%v, want 82/0.8/false", r.SymbolID, r.Confidence, r.Ambiguous)
+	}
+}

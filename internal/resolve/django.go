@@ -3,6 +3,7 @@ package resolve
 import (
 	"strings"
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/model"
 )
 
@@ -73,4 +74,18 @@ func (ix *Index) preferDjangoModelComposes(matches []model.SymbolRef, req Reques
 	// models was allocated with cap len(matches), but rest holds the remaining
 	// elements, so this append cannot alias or overwrite the input slice.
 	return append(models, rest...)
+}
+
+// isAmbiguousDjangoRelated reports whether a resolution bound a
+// django-related:* reverse-manager accessor among MULTIPLE same-qualified
+// synthetics — two FKs in DIFFERENT files declared the same related_name, so
+// the accessor name proves nothing about which model anchors it. (The
+// same-file case never reaches the resolver: the extractor skips collided
+// names at flush.) The caller drops the edge (closed-world: a wrong anchor
+// misleads blast worse than a gap).
+// This is the uniqueness gate the seam's design requires: pickBest's ambiguity
+// clamp ceiling equals the accessor edges' emitted confidence (0.8), so
+// without this check an ambiguous binding would ride at the confident tier.
+func isAmbiguousDjangoRelated(target string, r Result) bool {
+	return r.Ambiguous && strings.HasPrefix(target, extract.PrefixDjangoRelated)
 }

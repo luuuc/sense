@@ -1,7 +1,9 @@
 package python
 
 import (
+	"slices"
 	"strings"
+	"unicode"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
@@ -282,7 +284,226 @@ func (w *walker) emitDjangoModelField(assign *sitter.Node, scope []string) error
 	}
 	ownerQualified := strings.Join(scope, ".")
 	line := extract.Line(assign.StartPosition())
+	w.collectRelatedNameAccessor(args, ownerQualified, line)
 	return w.emitModelRelationTarget(first, ownerQualified, line)
+}
+
+// collectRelatedNameAccessor records a relational field's `related_name` for
+// the end-of-file flush (flushRelatedNameAccessors). Collection, not emission:
+// whether an accessor name is unambiguous WITHIN this file is only known after
+// the whole module is walked — symbols upsert on (file_id, qualified), so two
+// same-file emissions could never reach the resolver as two candidates, and
+// the cross-file ambiguity gate cannot see a same-file collision at all.
+// Skipped as unprovable (closed-world): `related_name='+'` (reverse accessor
+// disabled), `%(class)s` templates (expand per concrete subclass), f-strings
+// and any other interpolated/dynamic value, and names that are not plain
+// identifiers (Django would reject them; a truncated f-string fragment must
+// never poison a real accessor name).
+func (w *walker) collectRelatedNameAccessor(args *sitter.Node, ownerQualified string, line int) {
+	val := keywordArgValue(args, "related_name", w.source)
+	if val == nil || val.Kind() != "string" || hasInterpolation(val) {
+		return
+	}
+	name := stringContent(val, w.source)
+	if !isPlainIdentifier(name) {
+		return
+	}
+	decl, seen := w.relatedNames[name]
+	if !seen {
+		w.relatedNames[name] = &relatedNameDecl{owner: ownerQualified, line: line}
+		return
+	}
+	if decl.owner != ownerQualified {
+		decl.ambiguous = true
+	}
+}
+
+// hasInterpolation reports whether a string node contains an f-string
+// interpolation child (`f"{prefix}_items"`): tree-sitter classifies f-strings
+// as plain `string` nodes, and stringContent would return only the first
+// literal fragment — a truncated name that could collide with a real
+// related_name elsewhere.
+func hasInterpolation(strNode *sitter.Node) bool {
+	count := strNode.NamedChildCount()
+	for i := uint(0); i < count; i++ {
+		if c := strNode.NamedChild(i); c != nil && c.Kind() == "interpolation" {
+			return true
+		}
+	}
+	return false
+}
+
+// isPlainIdentifier reports whether a related_name is a plain Python
+// identifier (unicode letters/digits/underscore, not starting with a digit).
+// Anything else — empty, '+', '%(class)s' templates, spaces — is either a
+// Django error or a dynamic form this extractor cannot prove.
+func isPlainIdentifier(name string) bool {
+	for i, r := range name {
+		switch {
+		case r == '_' || unicode.IsLetter(r):
+		case unicode.IsDigit(r) && i > 0:
+		default:
+			return false
+		}
+	}
+	return name != ""
+}
+
+// relatedNameDecl accumulates one accessor name's declarations within a file:
+// the first declaring class and line, and whether a SECOND class also claimed
+// the same spelling (two FKs on different models sharing a related_name is
+// legal Django when their targets differ).
+type relatedNameDecl struct {
+	owner     string
+	line      int
+	ambiguous bool
+}
+
+// flushRelatedNameAccessors emits, at end of file, one django-related:*
+// synthetic symbol per accessor name whose in-file declarations all agree on
+// the declaring class, plus a calls edge from the accessor to that model —
+// the reverse manager yields child instances, so code reaching
+// `parent.<related_name>` depends on the child model's contract. A name two
+// classes claim is skipped entirely: a wrong anchor misleads blast worse than
+// a gap, and the resolver could never tell (same-file emissions collapse to
+// one row at persistence). Cross-file collisions are the resolver's job — two
+// files each emit their synthetic and the ambiguity gate drops accessor edges
+// to the duplicated name. Names are flushed in sorted order so the emission
+// stream is deterministic.
+func (w *walker) flushRelatedNameAccessors() error {
+	names := make([]string, 0, len(w.relatedNames))
+	for name, decl := range w.relatedNames {
+		if !decl.ambiguous {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		decl := w.relatedNames[name]
+		qualified := extract.PrefixDjangoRelated + name
+		if err := w.emit.Symbol(extract.EmittedSymbol{
+			Name:       name,
+			Qualified:  qualified,
+			Kind:       model.KindConstant,
+			Visibility: "public",
+			LineStart:  decl.line,
+			LineEnd:    decl.line,
+		}); err != nil {
+			return err
+		}
+		line := decl.line
+		if err := w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: qualified,
+			TargetQualified: decl.owner,
+			Kind:            model.EdgeCalls,
+			Line:            &line,
+			Confidence:      extract.ConfidenceConvention,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ormAccessorVerbs are the QuerySet methods distinctive enough to key the
+// reverse-related-manager accessor rule: seeing `<expr>.<name>.<verb>(…)` with
+// one of these verbs treats <name> as a queryset accessor. Deliberately
+// narrower than the QuerySet API tables above — verbs that collide with
+// stdlib/common APIs (get, count, values, values_list, create, exists, first,
+// last, none, reverse, using) are excluded so `self.config.get(…)` or
+// `x.data.values()` never fires the rule (the Finding-12 over-attribution
+// family). Relationship to the sibling tables: the LEAF verb here must be
+// collision-safe on its own (it anchors the proof), while intermediate hops
+// (relatedManagerAccessorRoot's call arm) only need querySetChainMethods —
+// the leaf already anchored. Do not merge the two maps: that would silently
+// widen the leaf key. Precision-first: widening any verb back in is a
+// bench-gated call.
+var ormAccessorVerbs = map[string]bool{
+	"filter": true, "exclude": true, "annotate": true, "alias": true,
+	"order_by": true, "distinct": true, "all": true,
+	"select_related": true, "prefetch_related": true,
+	"only": true, "defer": true, "select_for_update": true,
+	"union": true, "intersection": true, "difference": true,
+	"complex_filter": true, "aggregate": true,
+	"earliest": true, "latest": true, "in_bulk": true,
+	"get_or_create": true, "update_or_create": true,
+	"bulk_create": true, "bulk_update": true,
+}
+
+// relatedManagerAccessor walks an ORM-verb call's receiver chain
+// (`order.positions.filter(…)`, `self.all_positions.filter(…).exclude(…)`) to
+// its attribute root and returns the accessor name — the leaf attribute the
+// chain is rooted on. Roots already owned by the manager-chain rule (objects /
+// _default_manager / _base_manager) return false, as do non-attribute roots
+// (identifier receivers are the typed/convention rules' turf). The METHOD key
+// (an ormAccessorVerbs verb) is checked by the caller; this walk supplies the
+// NAME key. Hops are re-verified against querySetChainMethods here because,
+// unlike managerChainModelRoot, this chain was never vetted by
+// typedReceiverTarget. Exposure bound: the emitted target is ONLY the
+// django-related:* candidate, which resolves exclusively against a declared
+// related_name — in repos without one, the edge drops at write time.
+func relatedManagerAccessor(fn *sitter.Node, src []byte) (string, bool) {
+	leaf := fn.ChildByFieldName("attribute")
+	if leaf == nil || !ormAccessorVerbs[extract.Text(leaf, src)] {
+		return "", false
+	}
+	return relatedManagerAccessorRoot(fn.ChildByFieldName("object"), src, 0)
+}
+
+func relatedManagerAccessorRoot(n *sitter.Node, src []byte, depth int) (string, bool) {
+	if n == nil || depth > maxQuerySetChainDepth {
+		return "", false
+	}
+	switch n.Kind() {
+	case "attribute":
+		leaf := n.ChildByFieldName("attribute")
+		if leaf == nil {
+			return "", false
+		}
+		name := extract.Text(leaf, src)
+		if name == "" || djangoManagerLeafNames[name] {
+			return "", false
+		}
+		return name, true
+	case "call":
+		fn := n.ChildByFieldName("function")
+		if fn == nil || fn.Kind() != "attribute" {
+			return "", false
+		}
+		hop := fn.ChildByFieldName("attribute")
+		if hop == nil || !querySetChainMethods[extract.Text(hop, src)] {
+			return "", false
+		}
+		return relatedManagerAccessorRoot(fn.ChildByFieldName("object"), src, depth+1)
+	}
+	return "", false
+}
+
+// emitRelatedManagerEdge emits the calls edge for an ORM-verb accessor chain
+// to the django-related:* synthetic its FK declaration emitted. The target is
+// ONLY the prefixed candidate, never the bare accessor name: a bare name would
+// bind single-candidate same-named symbols at the confident tier in ANY Python
+// repo (`self.opts.filter(…)` reaching a lone `opts` — the Finding-12
+// over-attribution family), while the prefixed target resolves exclusively
+// against declared related_names and drops everywhere else. Property-mediated
+// accessors (a queryset-returning `def positions` property) are deliberately
+// NOT wired — that needs receiver typing, a separate bench-gated decision.
+// Rides ConfidenceAmbiguous — receiver unproven, gated by the accessor-name +
+// ORM-verb double key plus two uniqueness gates: same-file collisions are
+// skipped at flush (flushRelatedNameAccessors), cross-file collisions are
+// dropped by the resolver (isAmbiguousDjangoRelated).
+func (w *walker) emitRelatedManagerEdge(fn *sitter.Node, source string, line int) error {
+	name, ok := relatedManagerAccessor(fn, w.source)
+	if !ok {
+		return nil
+	}
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: source,
+		TargetQualified: extract.PrefixDjangoRelated + name,
+		Kind:            model.EdgeCalls,
+		Line:            &line,
+		Confidence:      extract.ConfidenceAmbiguous,
+	})
 }
 
 // djangoFieldName returns the field constructor's name from a bare
