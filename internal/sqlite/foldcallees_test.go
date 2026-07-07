@@ -188,3 +188,41 @@ func TestReadSymbolGraphMemberCalleesDedupSkipsTemporalKeepsStructural(t *testin
 		t.Error("temporal member edge should not be folded as a callee")
 	}
 }
+
+// The symmetric callee gate: a synthetic outbound target (route:*, i18n:*, …)
+// is plumbing, not a real dependency — it must not suppress the member-callee
+// fold that shows what the class actually reaches through its methods.
+func TestReadSymbolGraphSyntheticCalleeDoesNotSuppressFold(t *testing.T) {
+	a, fileID := newFoldAdapter(t)
+	ctx := context.Background()
+
+	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Portal", Qualified: "Portal", Kind: model.KindClass, LineStart: 1, LineEnd: 40})
+	methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "render", Qualified: "Portal#render", Kind: model.KindMethod, ParentID: &classID, LineStart: 3, LineEnd: 6})
+	routeID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "portal_path", Qualified: "route:portal_path", Kind: model.KindConstant, LineStart: 8, LineEnd: 8})
+	depID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Format", Qualified: "Format", Kind: model.KindFunction, LineStart: 10, LineEnd: 20})
+
+	// The class "calls" a synthetic route helper directly…
+	mustEdge(t, a, &model.Edge{SourceID: &classID, TargetID: routeID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.8})
+	// …while its real dependency is reached through a method.
+	mustEdge(t, a, &model.Edge{SourceID: &methodID, TargetID: depID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+
+	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallees, 0)
+	if err != nil {
+		t.Fatalf("ReadSymbolGraph: %v", err)
+	}
+	var synthetic, folded bool
+	for _, e := range gr.Root.Outbound {
+		if e.Target.ID == routeID {
+			synthetic = true
+		}
+		if e.Target.ID == depID {
+			folded = true
+		}
+	}
+	if !synthetic {
+		t.Error("synthetic route edge should still be listed among callees")
+	}
+	if !folded {
+		t.Error("member-callee fold must fire despite the synthetic outbound edge")
+	}
+}

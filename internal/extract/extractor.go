@@ -186,6 +186,7 @@ const (
 //   - search: finalizeResults (internal/search/search.go)
 //   - dead:   the two NOT LIKE lists (internal/dead/dead.go + queries.go)
 //   - conventions: dropSyntheticSymbols uses IsSyntheticQualified (automatic)
+//   - graph fold: hasUsageEdge (internal/sqlite/graph.go) uses IsSyntheticQualified (automatic)
 var syntheticPrefixes = []string{
 	PrefixTurboChannel,
 	PrefixTurboFrame,
