@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.17] - 2026-07-07
+
+### Bug Fixes
+
+- keep member fold when only synthetic edges name a class
 ## [1.11.16] - 2026-07-06
 
 ### Bug Fixes
