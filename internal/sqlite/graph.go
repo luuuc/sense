@@ -209,10 +209,14 @@ func isUsageEdge(k model.EdgeKind) bool {
 // usage edge — a real call/reference signal, as opposed to a structural
 // edge or a low-confidence resolution guess. Used by both fold paths:
 // against Inbound it means "has a real caller", against Outbound it means
-// "has a real callee".
+// "has a real callee". A synthetic counterpart (django-related:*, route:*,
+// i18n:*, …) is declaration-site plumbing, not real usage, so it neither
+// counts as a caller nor as a callee here — one such edge must not starve
+// the fold of every method-derived caller.
 func hasUsageEdge(edges []model.EdgeRef) bool {
 	for _, e := range edges {
-		if isUsageEdge(e.Edge.Kind) && e.Edge.Confidence >= extract.ConfidenceUnresolved {
+		if isUsageEdge(e.Edge.Kind) && e.Edge.Confidence >= extract.ConfidenceUnresolved &&
+			!extract.IsSyntheticQualified(e.Target.Qualified) {
 			return true
 		}
 	}

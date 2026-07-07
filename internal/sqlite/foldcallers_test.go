@@ -196,3 +196,80 @@ func TestReadSymbolGraphMethodRootNotFolded(t *testing.T) {
 		t.Errorf("method root inbound = %d, want 0 (no folding for non-containers)", len(gr.Root.Inbound))
 	}
 }
+
+// A synthetic accessor caller (django-related:*, route:*, …) is declaration-site
+// plumbing, not a real direct caller — it must not suppress the member-caller
+// fold. Regression: saleor's ProductVariant gained ONE django-related:variants
+// edge (0.8) and graph lost all 125 method-derived callers.
+func TestReadSymbolGraphSyntheticCallerDoesNotSuppressFold(t *testing.T) {
+	a, fileID := newFoldAdapter(t)
+	ctx := context.Background()
+
+	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Variant", Qualified: "Variant", Kind: model.KindClass, LineStart: 1, LineEnd: 40})
+	methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "sku", Qualified: "Variant#sku", Kind: model.KindMethod, ParentID: &classID, LineStart: 3, LineEnd: 6})
+	accessorID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "variants", Qualified: "django-related:variants", Kind: model.KindConstant, LineStart: 8, LineEnd: 8})
+	realCallerID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Payload", Qualified: "Payload", Kind: model.KindFunction, LineStart: 10, LineEnd: 20})
+
+	// The synthetic accessor "calls" the class at convention confidence…
+	mustEdge(t, a, &model.Edge{SourceID: &accessorID, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.8})
+	// …while the real consumer reaches it through a method.
+	mustEdge(t, a, &model.Edge{SourceID: &realCallerID, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.7})
+
+	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
+	if err != nil {
+		t.Fatalf("ReadSymbolGraph: %v", err)
+	}
+	var synthetic, folded bool
+	for _, e := range gr.Root.Inbound {
+		if e.Target.ID == accessorID {
+			synthetic = true
+		}
+		if e.Target.ID == realCallerID {
+			folded = true
+		}
+	}
+	if !synthetic {
+		t.Error("synthetic accessor edge should still be listed among callers")
+	}
+	if !folded {
+		t.Error("method-caller fold must fire despite the synthetic caller: plumbing is not a real direct caller")
+	}
+}
+
+// A real (non-synthetic) direct caller still suppresses the fold when it
+// arrives alongside a synthetic one — the synthetic edge neither suppresses
+// nor un-suppresses; only genuine usage does.
+func TestReadSymbolGraphRealCallerStillSuppressesFoldBesideSynthetic(t *testing.T) {
+	a, fileID := newFoldAdapter(t)
+	ctx := context.Background()
+
+	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Device", Qualified: "Device", Kind: model.KindClass, LineStart: 1, LineEnd: 40})
+	methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "save", Qualified: "Device#save", Kind: model.KindMethod, ParentID: &classID, LineStart: 3, LineEnd: 6})
+	accessorID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "devices", Qualified: "django-related:devices", Kind: model.KindConstant, LineStart: 8, LineEnd: 8})
+	directID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Filter", Qualified: "Filter", Kind: model.KindFunction, LineStart: 10, LineEnd: 20})
+	methodCallerID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Task", Qualified: "Task", Kind: model.KindFunction, LineStart: 22, LineEnd: 30})
+
+	mustEdge(t, a, &model.Edge{SourceID: &accessorID, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.8})
+	mustEdge(t, a, &model.Edge{SourceID: &directID, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.9})
+	mustEdge(t, a, &model.Edge{SourceID: &methodCallerID, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+
+	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
+	if err != nil {
+		t.Fatalf("ReadSymbolGraph: %v", err)
+	}
+	var direct, folded bool
+	for _, e := range gr.Root.Inbound {
+		if e.Target.ID == directID {
+			direct = true
+		}
+		if e.Target.ID == methodCallerID {
+			folded = true
+		}
+	}
+	if !direct {
+		t.Error("the genuine direct caller must be listed")
+	}
+	if folded {
+		t.Error("a genuine direct caller must still suppress the method-caller fold")
+	}
+}

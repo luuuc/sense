@@ -142,6 +142,7 @@ func TestIsSyntheticQualified(t *testing.T) {
 		PrefixImportmap + "stimulus",
 		PrefixPartial + "users/profile",
 		PrefixRubyCore + "Struct",
+		PrefixDjangoRelated + "variants",
 	}
 	for _, q := range synthetic {
 		if !IsSyntheticQualified(q) {
