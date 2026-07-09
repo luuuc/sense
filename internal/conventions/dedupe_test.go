@@ -192,6 +192,46 @@ func TestDedupeMergeIsDeterministic(t *testing.T) {
 	}
 }
 
+// TestDedupeTripleCollision pins the group shapes beyond a pair: four rows
+// rendering identically, two of them one twin population — the twins merge
+// to the smallest-definingPath survivor, and each of the three surviving
+// populations is qualified against BOTH siblings, escalating past the shared
+// basename to the distinguishing directory.
+func TestDedupeTripleCollision(t *testing.T) {
+	base := Convention{Category: CategoryFramework, Description: "y", Instances: 2}
+	twin1, twin2, third, fourth := base, base, base, base
+	twin1.Examples = []Example{{Name: "A", Path: "p"}, {Name: "B", Path: "q"}}
+	twin1.definingPath = "pkg/v1/base.go"
+	twin2.Examples = twin1.Examples
+	twin2.definingPath = "pkg/v2/base.go"
+	third.Examples = []Example{{Name: "A", Path: "p"}, {Name: "C", Path: "r"}}
+	third.definingPath = "other/base.go"
+	fourth.Examples = []Example{{Name: "D", Path: "s"}, {Name: "E", Path: "t"}}
+	fourth.definingPath = "third/base.go"
+
+	deduped := dedupeRenderedRows([]Convention{twin2, third, twin1, fourth})
+	if len(deduped) != 3 {
+		t.Fatalf("expected twins merged and true differences kept, got %d: %+v", len(deduped), deduped)
+	}
+	want := map[string]bool{
+		"y (defined in v1/base.go)":    false,
+		"y (defined in other/base.go)": false,
+		"y (defined in third/base.go)": false,
+	}
+	for _, c := range deduped {
+		if _, ok := want[c.Description]; !ok {
+			t.Errorf("unexpected qualified description %q", c.Description)
+			continue
+		}
+		want[c.Description] = true
+	}
+	for desc, found := range want {
+		if !found {
+			t.Errorf("missing qualified row %q in %+v", desc, deduped)
+		}
+	}
+}
+
 // TestDedupeQualifyWithoutProvenance pins the fallback: colliding
 // true-difference rows whose detector recorded no defining file are left
 // as-is rather than qualified with a fabricated path.
