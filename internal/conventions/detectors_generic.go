@@ -70,6 +70,13 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		if !ok {
 			continue
 		}
+		// Go interface satisfaction is owned by the framework
+		// interface-contract row; reporting it here as inheritance would state
+		// the same fact twice, in the wrong vocabulary (Go has no classes and
+		// nothing extends).
+		if isGoInterfaceSatisfaction(tgt, filePathByID) {
+			continue
+		}
 		key := groupKey{targetID: e.targetID, sourceKind: src.kind}
 		if g, exists := groups[key]; exists {
 			g.count++
@@ -370,9 +377,15 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 			continue
 		}
 		label := baseLabel(g.targetName, g.targetQualified, ambiguous)
+		var desc string
+		if isGoDeclared(symbolByID[g.targetID], filePathByID) {
+			desc = goEmbedDescription(g.count, label, topNames(g.examples))
+		} else {
+			desc = fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples))
+		}
 		out = append(out, Convention{
 			Category:     CategoryComposition,
-			Description:  fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples)),
+			Description:  desc,
 			Instances:    g.count,
 			Total:        total,
 			Strength:     safeStrength(g.count, total),

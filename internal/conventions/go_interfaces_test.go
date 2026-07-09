@@ -81,7 +81,7 @@ func TestDetectGoInterfaces(t *testing.T) {
 	if c.Strength != wantStrength {
 		t.Errorf("strength = %v, want %v", c.Strength, wantStrength)
 	}
-	if !strings.Contains(c.Description, "Interface contract: Reader is satisfied by 3 types") {
+	if !strings.Contains(c.Description, "Interface contract: 3 types implement Reader") {
 		t.Errorf("description = %q, missing interface-contract phrasing", c.Description)
 	}
 	if !strings.Contains(c.Description, "polymorphic dispatch point") {

@@ -6,6 +6,30 @@ import (
 	"strings"
 )
 
+// isGoDeclared reports whether the symbol is declared in a Go file — the
+// structural language gate the routing and wording decisions share.
+func isGoDeclared(s symbolRow, filePathByID map[int64]string) bool {
+	return strings.HasSuffix(filePathByID[s.fileID], ".go")
+}
+
+// isGoInterfaceSatisfaction reports whether an inherits-edge target marks Go
+// interface satisfaction: the only inherits edges over Go code are the ones
+// the scanner writes into interface targets, so an interface-kind target
+// declared in a Go file IS satisfaction, and the framework interface-contract
+// row is its one owner. The discriminator is structural (target kind +
+// language), never the confidence stamp, which every language shares.
+func isGoInterfaceSatisfaction(tgt symbolRow, filePathByID map[int64]string) bool {
+	return tgt.kind == "interface" && isGoDeclared(tgt, filePathByID)
+}
+
+// goEmbedDescription is the wording for a Go embedding group. Go embedders
+// are structs whatever kind the index stores them under (the extractor files
+// them as class), and embedding promotes the embedded type's members —
+// nothing is mixed in.
+func goEmbedDescription(count int, label, names string) string {
+	return fmt.Sprintf("%d structs embed %s (methods promoted) (%s)", count, label, names)
+}
+
 func detectGoInterfaces(symbols []symbolRow, edges []edgeRow, symbolByID map[int64]symbolRow, filePathByID map[int64]string) []Convention {
 	type ifaceGroup struct {
 		iface        symbolRow
@@ -24,6 +48,9 @@ func detectGoInterfaces(symbols []symbolRow, edges []edgeRow, symbolByID map[int
 		if !ok || (src.kind != "struct" && src.kind != "class") {
 			continue
 		}
+		if isTestFile(filePathByID, src.fileID) {
+			continue
+		}
 		g, exists := ifaces[e.targetID]
 		if !exists {
 			g = &ifaceGroup{iface: tgt}
@@ -31,19 +58,24 @@ func detectGoInterfaces(symbols []symbolRow, edges []edgeRow, symbolByID map[int
 		}
 		g.implementors = append(g.implementors, Example{Name: src.name, Path: filePathByID[src.fileID]})
 	}
+	// Same test-source exclusion and denominator discipline as
+	// detectInheritance (domainKindCounts), so the two detectors can never
+	// drift on the population they describe: "N types" counts non-test
+	// struct/class types.
+	kindCounts := domainKindCounts(symbols, filePathByID)
+	totalTypes := kindCounts["struct"] + kindCounts["class"]
 	var out []Convention
 	for _, g := range ifaces {
 		if len(g.implementors) < minInterfaceInstances {
 			continue
 		}
 		sortExamples(g.implementors)
-		totalStructs := countByKind(symbols, "struct", "class")
 		out = append(out, Convention{
 			Category:     CategoryFramework,
-			Description:  fmt.Sprintf("Interface contract: %s is satisfied by %d types (%s) — polymorphic dispatch point", g.iface.name, len(g.implementors), topNames(g.implementors)),
+			Description:  fmt.Sprintf("Interface contract: %d types implement %s (%s) — polymorphic dispatch point", len(g.implementors), g.iface.name, topNames(g.implementors)),
 			Instances:    len(g.implementors),
-			Total:        totalStructs,
-			Strength:     safeStrength(len(g.implementors), totalStructs),
+			Total:        totalTypes,
+			Strength:     safeStrength(len(g.implementors), totalTypes),
 			Examples:     g.implementors,
 			KeySymbol:    g.iface.name,
 			definingPath: filePathByID[g.iface.fileID],

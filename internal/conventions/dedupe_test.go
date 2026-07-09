@@ -35,10 +35,11 @@ func twinFixture(firstImpls []string, firstDir string, secondImpls []string, sec
 	return symbols, edges, indexSymbols(symbols), filePathByID
 }
 
-// TestDedupeMergesTwinRows pins the A1 fix end-to-end at the detector level:
-// two same-qualified-name interfaces with identical implementor sets emit two
-// byte-identical rows per category, and dedupeRenderedRows merges each pair
-// down to one row with the counts of one population, never summed.
+// TestDedupeMergesTwinRows pins the twin-file merge end-to-end at the
+// detector level: two same-qualified-name interfaces with identical
+// implementor sets emit two byte-identical framework rows (inheritance
+// routes Go satisfaction away entirely), and dedupeRenderedRows merges the
+// pair down to one row with the counts of one population, never summed.
 func TestDedupeMergesTwinRows(t *testing.T) {
 	impls := []string{"bsonBinding", "formBinding", "jsonBinding"}
 	symbols, edges, symbolByID, filePathByID := twinFixture(impls, "binding/", nil, "")
@@ -52,27 +53,56 @@ func TestDedupeMergesTwinRows(t *testing.T) {
 	var conventions []Convention
 	conventions = append(conventions, detectInheritance(symbols, edges, symbolByID, filePathByID)...)
 	conventions = append(conventions, detectGoInterfaces(symbols, edges, symbolByID, filePathByID)...)
-	if len(conventions) != 4 {
-		t.Fatalf("fixture must reproduce the defect (2 inheritance + 2 framework rows), got %d: %+v", len(conventions), conventions)
+	if len(conventions) != 2 {
+		t.Fatalf("fixture must reproduce the defect (2 identical framework rows, 0 inheritance), got %d: %+v", len(conventions), conventions)
 	}
 
 	deduped := dedupeRenderedRows(conventions)
-	if len(deduped) != 2 {
-		t.Fatalf("expected twin rows merged to 1 per category, got %d: %+v", len(deduped), deduped)
+	if len(deduped) != 1 {
+		t.Fatalf("expected twin framework rows merged to 1, got %d: %+v", len(deduped), deduped)
 	}
-	seen := map[string]bool{}
-	for _, c := range deduped {
-		key := string(c.Category) + "\x00" + c.Description
-		if seen[key] {
-			t.Errorf("duplicate rendered row survived dedupe: %s", c.Description)
-		}
-		seen[key] = true
-		if c.Instances != 3 {
-			t.Errorf("merged row counts must come from one population, got Instances=%d, want 3", c.Instances)
-		}
-		if strings.Contains(c.Description, "defined in") {
-			t.Errorf("merged row must not be file-qualified: %s", c.Description)
-		}
+	c := deduped[0]
+	if c.Instances != 3 {
+		t.Errorf("merged row counts must come from one population, got Instances=%d, want 3", c.Instances)
+	}
+	if strings.Contains(c.Description, "defined in") {
+		t.Errorf("merged row must not be file-qualified: %s", c.Description)
+	}
+}
+
+// TestDedupeMergesRubyTwinRows pins the inheritance-category merge with the
+// re-opened-class shape: one Ruby class defined in two files (the same
+// qualified name twice), the same three subclasses — two byte-identical
+// inheritance rows merge to one.
+func TestDedupeMergesRubyTwinRows(t *testing.T) {
+	twin1 := symbolRow{id: 1, fileID: 10, name: "Base", qualified: "Billing::Base", kind: "class"}
+	twin2 := symbolRow{id: 2, fileID: 11, name: "Base", qualified: "Billing::Base", kind: "class"}
+	symbols := []symbolRow{twin1, twin2,
+		{id: 3, fileID: 12, name: "Invoice", kind: "class"},
+		{id: 4, fileID: 13, name: "Receipt", kind: "class"},
+		{id: 5, fileID: 14, name: "Refund", kind: "class"},
+	}
+	filePathByID := map[int64]string{
+		10: "app/models/billing/base.rb", 11: "lib/billing/base.rb",
+		12: "app/models/invoice.rb", 13: "app/models/receipt.rb", 14: "app/models/refund.rb",
+	}
+	var edges []edgeRow
+	for _, src := range []int64{3, 4, 5} {
+		edges = append(edges,
+			edgeRow{sourceID: src, targetID: 1, kind: "inherits"},
+			edgeRow{sourceID: src, targetID: 2, kind: "inherits"})
+	}
+
+	conventions := detectInheritance(symbols, edges, indexSymbols(symbols), filePathByID)
+	if len(conventions) != 2 || conventions[0].Description != conventions[1].Description {
+		t.Fatalf("fixture must reproduce two identical inheritance rows, got: %+v", conventions)
+	}
+	deduped := dedupeRenderedRows(conventions)
+	if len(deduped) != 1 {
+		t.Fatalf("expected twin inheritance rows merged to 1, got %d: %+v", len(deduped), deduped)
+	}
+	if deduped[0].Instances != 3 {
+		t.Errorf("merged row counts must come from one population, got %d", deduped[0].Instances)
 	}
 }
 
