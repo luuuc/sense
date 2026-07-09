@@ -108,13 +108,14 @@ func detectInheritance(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		sortExamples(g.examples)
 		label := baseLabel(g.targetName, g.targetQualified, ambiguous)
 		out = append(out, Convention{
-			Category:    CategoryInheritance,
-			Description: fmt.Sprintf("%d %s extend %s as a base class (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples)),
-			Instances:   g.count,
-			Total:       total,
-			Strength:    safeStrength(g.count, total),
-			Examples:    g.examples,
-			KeySymbol:   g.targetQualified,
+			Category:     CategoryInheritance,
+			Description:  fmt.Sprintf("%d %s extend %s as a base class (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples)),
+			Instances:    g.count,
+			Total:        total,
+			Strength:     safeStrength(g.count, total),
+			Examples:     g.examples,
+			KeySymbol:    g.targetQualified,
+			definingPath: filePathByID[symbolByID[g.targetID].fileID],
 		})
 	}
 	return out
@@ -344,13 +345,14 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		}
 		label := baseLabel(g.targetName, g.targetQualified, ambiguous)
 		out = append(out, Convention{
-			Category:    CategoryComposition,
-			Description: fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples)),
-			Instances:   g.count,
-			Total:       total,
-			Strength:    safeStrength(g.count, total),
-			Examples:    g.examples,
-			KeySymbol:   g.targetQualified,
+			Category:     CategoryComposition,
+			Description:  fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples)),
+			Instances:    g.count,
+			Total:        total,
+			Strength:     safeStrength(g.count, total),
+			Examples:     g.examples,
+			KeySymbol:    g.targetQualified,
+			definingPath: filePathByID[symbolByID[g.targetID].fileID],
 		})
 	}
 	if len(serializerExamples) >= minInstances {
