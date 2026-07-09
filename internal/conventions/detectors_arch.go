@@ -97,12 +97,18 @@ func detectArchitectureLayers(symbols []symbolRow, edges []edgeRow, symbolByID m
 	return out
 }
 
-// mapSymbolsToLayers assigns each symbol the module-level directory of its file.
+// mapSymbolsToLayers assigns each symbol the module-level directory of its
+// file, excluding test files: test scaffolding is not architecture. The one
+// guard covers counting and examples alike — an endpoint without a layer
+// never crosses a boundary.
 func mapSymbolsToLayers(symbols []symbolRow, filePathByID map[int64]string) map[int64]string {
 	symbolDir := map[int64]string{}
 	for _, s := range symbols {
 		fp, ok := filePathByID[s.fileID]
 		if !ok {
+			continue
+		}
+		if isTestFile(filePathByID, s.fileID) {
 			continue
 		}
 		symbolDir[s.id] = layerName(fp)
