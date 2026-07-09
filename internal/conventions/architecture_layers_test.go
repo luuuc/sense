@@ -81,6 +81,8 @@ func TestArchitectureLayersProductionOnlyUnchanged(t *testing.T) {
 		{id: 2, fileID: 10, name: "B", kind: "function"},
 		{id: 3, fileID: 10, name: "C", kind: "function"},
 		{id: 4, fileID: 11, name: "D", kind: "function"},
+		// A symbol whose file is unknown maps no layer and changes nothing.
+		{id: 5, fileID: 99, name: "Orphan", kind: "function"},
 	}
 	filePathByID := map[int64]string{10: "web/handlers.go", 11: "store/store.go"}
 	edges := []edgeRow{

@@ -169,8 +169,11 @@ func TestDedupeLeavesDistinctRowsAlone(t *testing.T) {
 // order the twins arrive in, the merged row is the one with the smallest
 // definingPath, so repeated runs render identically.
 func TestDedupeMergeIsDeterministic(t *testing.T) {
+	// The duplicated {A, p} entry pins set semantics: repeated members
+	// collapse in the signature, so a detector emitting the same example
+	// twice still merges with its twin.
 	rowA := Convention{Category: CategoryFramework, Description: "x", Instances: 2,
-		Examples:     []Example{{Name: "A", Path: "p"}, {Name: "B", Path: "q"}},
+		Examples:     []Example{{Name: "A", Path: "p"}, {Name: "A", Path: "p"}, {Name: "B", Path: "q"}},
 		definingPath: "pkg/a.go"}
 	rowB := rowA
 	rowB.definingPath = "pkg/b.go"
