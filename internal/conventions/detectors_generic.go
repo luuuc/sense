@@ -152,7 +152,7 @@ func detectSymbolSuffixNaming(symbols []symbolRow, filePathByID map[int64]string
 		kindCounts[s.kind]++
 
 		suffix := extractSuffix(s.name)
-		if suffix == "" {
+		if !isWordShapedSuffix(suffix) {
 			continue
 		}
 		ks := kindSuffix{kind: s.kind, suffix: suffix}
@@ -197,15 +197,19 @@ func emitGrouped[K comparable](counts map[K]int, examples map[K][]Example, total
 }
 
 // detectFileSuffixNaming finds top-level symbols whose file basenames share a
-// suffix (e.g. *_controller.rb), excluding test files.
+// suffix (e.g. *_controller.rb), excluding test files. The sentence is about
+// file naming, so both tallies count distinct FILES — the numerator is files
+// with the suffix holding at least one symbol of the kind, the denominator
+// files holding at least one symbol of the kind — never symbols, however
+// many a file declares.
 func detectFileSuffixNaming(symbols []symbolRow, filePathByID map[int64]string) []Convention {
 	type kindFileSuffix struct {
 		kind   string
 		suffix string
 	}
-	fileSuffixCounts := map[kindFileSuffix]int{}
+	suffixFiles := map[kindFileSuffix]map[int64]bool{}
 	fileSuffixExamples := map[kindFileSuffix][]Example{}
-	kindFileCounts := map[string]int{}
+	kindFiles := map[string]map[int64]bool{}
 
 	for _, s := range symbols {
 		if s.parentID != nil {
@@ -219,22 +223,44 @@ func detectFileSuffixNaming(symbols []symbolRow, filePathByID map[int64]string) 
 			continue
 		}
 		base := path.Base(fp)
-		kindFileCounts[s.kind]++
+		addFile(kindFiles, s.kind, s.fileID)
 		fileSuffix := extractFileSuffix(base)
 		if fileSuffix == "" {
 			continue
 		}
 		kfs := kindFileSuffix{kind: s.kind, suffix: fileSuffix}
-		fileSuffixCounts[kfs]++
+		if !addFile(suffixFiles, kfs, s.fileID) {
+			continue
+		}
 		fileSuffixExamples[kfs] = append(fileSuffixExamples[kfs], Example{Name: base, Path: fp})
 	}
 
+	fileSuffixCounts := make(map[kindFileSuffix]int, len(suffixFiles))
+	for kfs, files := range suffixFiles {
+		fileSuffixCounts[kfs] = len(files)
+	}
+
 	return emitGrouped(fileSuffixCounts, fileSuffixExamples,
-		func(kfs kindFileSuffix) int { return kindFileCounts[kfs.kind] },
+		func(kfs kindFileSuffix) int { return len(kindFiles[kfs.kind]) },
 		CategoryNaming,
 		func(kfs kindFileSuffix, ex []Example, count, total int) string {
 			return fmt.Sprintf("%s files use *%s naming convention (%s — %d of %d)", kfs.kind, kfs.suffix, topNames(ex), count, total)
 		})
+}
+
+// addFile inserts fileID into the set at key, allocating the set on first
+// use, and reports whether fileID was newly inserted.
+func addFile[K comparable](sets map[K]map[int64]bool, key K, fileID int64) bool {
+	set := sets[key]
+	if set == nil {
+		set = map[int64]bool{}
+		sets[key] = set
+	}
+	if set[fileID] {
+		return false
+	}
+	set[fileID] = true
+	return true
 }
 
 func detectStructure(symbols []symbolRow, filePathByID map[int64]string) []Convention {

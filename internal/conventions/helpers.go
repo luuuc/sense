@@ -55,6 +55,27 @@ func extractSuffix(name string) string {
 	return ""
 }
 
+// isWordShapedSuffix reports whether a suffix extracted by extractSuffix
+// reads as a word and can therefore name a convention: a CamelCase suffix
+// must be an uppercase letter followed by at least one lowercase letter
+// (Binding, Func, Mode), a snake_case suffix must carry a token of at least
+// two characters including a letter (_service, _KEY, _v2 — never _42). The
+// underscore is an author-typed word boundary, so the token's case is free.
+// Bare capitals and capital+digit tails (N, L, L2) are acronym fragments —
+// the last letter of AsciiJSON is not a naming pattern. No stemming, no
+// dictionaries: ASCII word shape only, matching extractSuffix upstream.
+func isWordShapedSuffix(suffix string) bool {
+	if strings.HasPrefix(suffix, "_") {
+		return len(suffix) >= 3 && strings.ContainsFunc(suffix[1:], func(r rune) bool {
+			return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		})
+	}
+	if len(suffix) < 2 {
+		return false
+	}
+	return suffix[0] >= 'A' && suffix[0] <= 'Z' && suffix[1] >= 'a' && suffix[1] <= 'z'
+}
+
 // ambiguousTargetNames returns the bare names shared by more than one distinct
 // target id. Such names need qualifying so the rendered conventions do not read
 // as duplicate lines (e.g. several "Base" classes in different namespaces each
