@@ -1,6 +1,14 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.18] - 2026-07-09
+
+### Bug Fixes
+
+- dedupe identically rendered convention rows
+- reject non-word suffixes and count files as files
+- one category owns Go satisfaction, in Go words
+- exclude test-origin edges from architecture laws
 ## [1.11.17] - 2026-07-07
 
 ### Bug Fixes
