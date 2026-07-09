@@ -78,8 +78,9 @@ func ambiguousTargetNames(nameByID map[int64]string) map[string]bool {
 // name is available. This keeps the common case terse while disambiguating
 // collisions, so "extend Base" lines do not read as duplicates. In the rare case
 // where the qualified names also collide (two "Foo::Base" in different files), it
-// falls back to the bare name rather than render a misleading partial path; that
-// residual duplicate is accepted as not worth a path-suffix escalation here.
+// falls back to the bare name rather than render a misleading partial path; the
+// resulting identical rows are resolved downstream by dedupeRenderedRows, which
+// merges identical populations and file-qualifies genuinely different ones.
 func baseLabel(name, qualified string, ambiguous map[string]bool) string {
 	if ambiguous[name] && qualified != "" && qualified != name {
 		return qualified
@@ -257,12 +258,23 @@ func siblingPaths(picked []Example, group []int, i int) []string {
 // only dir suffix is shared by a deeper sibling, or a sibling differs only in
 // basename — the full target Path is returned as the fallback.
 func uniqueDirSuffix(target string, siblings []string) string {
-	segs := dirSegments(target)
+	sibSegs := make([][]string, len(siblings))
+	for i, s := range siblings {
+		sibSegs[i] = dirSegments(s)
+	}
+	return shortestUniqueSuffix(dirSegments(target), sibSegs, target)
+}
+
+// shortestUniqueSuffix is the shared grow-one-segment loop behind
+// uniqueDirSuffix (directory segments) and distinguishingPathSuffix (full
+// path segments): the shortest join of trailing segs that no sibling shares
+// at the same depth, or fallback when every depth collides — including when
+// segs is empty.
+func shortestUniqueSuffix(segs []string, siblings [][]string, fallback string) string {
 	for k := 1; k <= len(segs); k++ {
 		cand := suffixOf(segs, k)
 		collision := false
-		for _, s := range siblings {
-			other := dirSegments(s)
+		for _, other := range siblings {
 			if len(other) >= k && suffixOf(other, k) == cand {
 				collision = true
 				break
@@ -272,7 +284,7 @@ func uniqueDirSuffix(target string, siblings []string) string {
 			return cand
 		}
 	}
-	return target
+	return fallback
 }
 
 // escalateColliding is the airtight backstop. A dir-suffix label and a full-Path

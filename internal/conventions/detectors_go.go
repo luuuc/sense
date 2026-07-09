@@ -39,13 +39,14 @@ func detectGoInterfaces(symbols []symbolRow, edges []edgeRow, symbolByID map[int
 		sortExamples(g.implementors)
 		totalStructs := countByKind(symbols, "struct", "class")
 		out = append(out, Convention{
-			Category:    CategoryFramework,
-			Description: fmt.Sprintf("Interface contract: %s is satisfied by %d types (%s) — polymorphic dispatch point", g.iface.name, len(g.implementors), topNames(g.implementors)),
-			Instances:   len(g.implementors),
-			Total:       totalStructs,
-			Strength:    safeStrength(len(g.implementors), totalStructs),
-			Examples:    g.implementors,
-			KeySymbol:   g.iface.name,
+			Category:     CategoryFramework,
+			Description:  fmt.Sprintf("Interface contract: %s is satisfied by %d types (%s) — polymorphic dispatch point", g.iface.name, len(g.implementors), topNames(g.implementors)),
+			Instances:    len(g.implementors),
+			Total:        totalStructs,
+			Strength:     safeStrength(len(g.implementors), totalStructs),
+			Examples:     g.implementors,
+			KeySymbol:    g.iface.name,
+			definingPath: filePathByID[g.iface.fileID],
 		})
 	}
 	return out

@@ -52,6 +52,11 @@ type Convention struct {
 	// per-language refiners (see refineRubySignificance); zero for conventions a
 	// refiner does not touch, leaving prevalence the sole tiebreak.
 	Significance float64
+	// definingPath is the target symbol's defining file, recorded by the
+	// detectors whose rows can render identically when two distinct symbols
+	// share a qualified name (build-tag twin files). dedupeRenderedRows uses
+	// it to qualify true-difference collisions; it is never output on its own.
+	definingPath string
 }
 
 type Options struct {
@@ -109,6 +114,7 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	conventions = append(conventions, detectExternalDependencies(ctx, db, opts.Domain, fileFilter)...)
 	conventions = append(conventions, detectKeyTypes(symbols, edges, filePathByID, conventions)...)
 
+	conventions = dedupeRenderedRows(conventions)
 	enrichEdgeCounts(conventions, symbols, edges, filePathByID)
 	refineRubySignificance(conventions)
 
