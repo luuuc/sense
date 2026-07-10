@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.19] - 2026-07-10
+
+### Bug Fixes
+
+- present production callers before test callers
 ## [1.11.18] - 2026-07-09
 
 ### Bug Fixes
