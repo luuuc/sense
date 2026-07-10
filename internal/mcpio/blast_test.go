@@ -511,6 +511,62 @@ func TestBuildBlastResponseEnumeratesBreadthAcrossAreas(t *testing.T) {
 	}
 }
 
+func TestEnumerateByAreaProductionCallersPrecedeTests(t *testing.T) {
+	// Presentation order: production callers come before test-file callers
+	// regardless of area size. The dominant area here is a test directory
+	// (3 callers vs 2), so most-populated-first visitation alone would put
+	// the test entries at the head — exactly what a satisficing reader
+	// would then cite from. Selection is unaffected: all 5 survive the cap.
+	type caller struct {
+		id   int64
+		file string
+	}
+	callers := []caller{
+		{1, "app/tests/test_a.py"}, {2, "app/tests/test_b.py"}, {3, "app/tests/test_c.py"},
+		{4, "app/models/user.py"}, {5, "app/models/site.py"},
+		{6, "lib/email/sender.py"},
+	}
+	var ranked []rankedCaller
+	for _, c := range callers {
+		ranked = append(ranked, rankedCaller{
+			entry: BlastCaller{Symbol: fmt.Sprintf("C%d", c.id), File: c.file},
+			area:  areaOf(c.file), id: c.id, conf: 1.0,
+		})
+	}
+
+	// Uncapped: visitation is count-DESC/name-ASC → app/tests(3),
+	// app/models(2), lib/email(1); area-clustered emission gives
+	// [C1 C2 C3 C4 C5 C6]; the stable partition then yields exactly this
+	// sequence — pinning the partition, within-area order, AND cross-area
+	// cluster preservation in both classes in one compare.
+	got := enumerateByArea(ranked, 10)
+	want := []string{"C4", "C5", "C6", "C1", "C2", "C3"}
+	if len(got) != len(want) {
+		t.Fatalf("enumerated = %d, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Symbol != want[i] {
+			t.Fatalf("order[%d] = %s, want %s (full: %v)", i, got[i].Symbol, want[i], got)
+		}
+	}
+
+	// Capped at 2: the partition happens AFTER selection, never instead of
+	// it. Round-robin rank 0 seats app/tests (C1) and app/models (C4); the
+	// test-area caller is still SELECTED, merely presented second. A
+	// test-penalized selection would yield [C4 C5] — this pins that the
+	// reorder is presentation, not a selection change at the cap.
+	capped := enumerateByArea(ranked, 2)
+	wantCapped := []string{"C4", "C1"}
+	if len(capped) != len(wantCapped) {
+		t.Fatalf("capped enumerated = %d, want %d: %v", len(capped), len(wantCapped), capped)
+	}
+	for i := range wantCapped {
+		if capped[i].Symbol != wantCapped[i] {
+			t.Fatalf("capped order[%d] = %s, want %s (full: %v)", i, capped[i].Symbol, wantCapped[i], capped)
+		}
+	}
+}
+
 func TestBuildBlastResponseAreaExemplarIsHighestConfidence(t *testing.T) {
 	// (b) Within an area, the chosen exemplar is the highest-confidence
 	// caller, NOT the lowest-ID one. Two areas, each with three callers
@@ -1173,6 +1229,39 @@ func TestApplyBlastBudgetTrimsToFitPreservingCounts(t *testing.T) {
 	}
 	if len(r.AffectedTests) > blastTestExamplesCap {
 		t.Errorf("affected_tests sample = %d, want <= %d", len(r.AffectedTests), blastTestExamplesCap)
+	}
+}
+
+func TestApplyBlastBudgetTrimShedsTestCallersFirst(t *testing.T) {
+	// direct_callers arrive production-first (enumerateByArea's partition),
+	// and the budget trims from the TAIL — so under budget pressure test
+	// callers are shed before production ones. This is the deliberate
+	// consequence of the partition: the impact signal survives trimming.
+	r := bigBlastResponse(40, 0, 0)
+	for i := 20; i < 40; i++ {
+		r.DirectCallers[i].File = "app/tests/caller" + itoa(i) + "_test.rb"
+	}
+	const budget = 900 // forces step 4 into the direct-caller list
+	ApplyBlastBudget(&r, budget)
+
+	if !r.Truncated {
+		t.Fatal("expected Truncated=true after trimming")
+	}
+	n := len(r.DirectCallers)
+	if n >= 40 || n < 1 {
+		t.Fatalf("trim did not bite as expected: %d direct callers survive", n)
+	}
+	for i, c := range r.DirectCallers {
+		if i < min(n, 20) && IsTestPath(c.File) {
+			t.Errorf("survivor[%d] = %s is a test caller before all production callers were kept", i, c.File)
+		}
+	}
+	if n <= 20 {
+		for _, c := range r.DirectCallers {
+			if IsTestPath(c.File) {
+				t.Errorf("test caller %s survived while production callers were trimmed", c.File)
+			}
+		}
 	}
 }
 
