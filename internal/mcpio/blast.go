@@ -569,9 +569,10 @@ func areaOf(file string) string {
 // citable exemplar instead of being crowded out by a big low-ID area.
 // Areas are visited by descending member count, tiebreak area-name ASC;
 // within an area the exemplar order is the existing signal (confidence
-// DESC, then ID ASC). The returned slice is area-clustered in that same
-// visitation order, so the reader sees the enumerated callers by
-// subsystem. Selection and order are deterministic across builds.
+// DESC, then ID ASC). The returned slice puts production callers before
+// test-file callers; within each class it stays area-clustered in that
+// same visitation order (a mixed prod/test area appears in both classes).
+// Selection and order are deterministic across builds.
 //
 // When the callers span MORE areas than limit, round-robin seats one per
 // area, so the most-populated limit areas each get an exemplar and the
@@ -641,6 +642,15 @@ func enumerateByArea(callers []rankedCaller, limit int) []BlastCaller {
 	for _, area := range areas {
 		out = append(out, chosen[area]...)
 	}
+	// Production callers before test-file callers, so the head of the list
+	// is the impact signal, not test noise. Stable, so the area-clustered
+	// order above is preserved within each class. Selection at the enum cap
+	// is untouched; downstream, ApplyBlastBudget tail-trims direct_callers,
+	// so under budget pressure test callers are now shed first — deliberate,
+	// the impact signal survives trimming (pinned by the budget-trim test).
+	sort.SliceStable(out, func(i, j int) bool {
+		return !IsTestPath(out[i].File) && IsTestPath(out[j].File)
+	})
 	return out
 }
 
