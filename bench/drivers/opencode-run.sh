@@ -70,7 +70,8 @@ OPENCODE_OFFLOAD_DETECT="${OPENCODE_OFFLOAD_DETECT:-1}" # answer-offload gate (t
                                                     # run as offloaded if a *_audit/final*/compact*.json artifact appears OR a
                                                     # short answer points at a written .json file. Treated like a truncation:
                                                     # retried, then flagged error=answer_offloaded_to_file. Set 0 to disable.
-OPENCODE_OFFLOAD_MAX_CHARS="${OPENCODE_OFFLOAD_MAX_CHARS:-4000}" # a "pointer stub" is short; a real inline audit runs ~4000+ chars.
+OPENCODE_OFFLOAD_MAX_CHARS="${OPENCODE_OFFLOAD_MAX_CHARS:-8000}" # a "pointer stub" is short; a real inline audit runs ~16k+ chars
+                                                    # (a 4,305-char pointer summary escaped the old 4000 on litellm/Kimi).
                                                     # The content-signal half of the gate only fires below this length so a long,
                                                     # complete inline answer that merely mentions a .json path is never nuked.
 while [[ $# -gt 0 ]]; do case "$1" in
@@ -214,6 +215,21 @@ with open(p, "w") as f:
     json.dump(cfg, f, indent=2)
 PY
 
+  # Untracked-leftover guard (the wagtail session-3 contamination): a stalled
+  # draw can offload its work into the repo tree under model-chosen names
+  # (PAGE_REFERENCE*.md, DEPENDENCIES.txt, ...) that the .json offload sweep
+  # below never matches, and the NEXT draw reads them as a head start. Snapshot
+  # the untracked set now (sense surface + .sense index are already in place,
+  # so they land in the snapshot and are preserved), then delete anything NEW
+  # between attempts and after the arm. .sense/ is never touched either way.
+  untracked_snap="$out/untracked-snapshot.txt"
+  git -C "$repo_dir" ls-files --others --exclude-standard | sort > "$untracked_snap"
+  clean_new_untracked() {
+    git -C "$repo_dir" ls-files --others --exclude-standard | sort \
+      | comm -13 "$untracked_snap" - | grep -v '^\.sense/' \
+      | while IFS= read -r f; do rm -f "$repo_dir/$f"; done
+  }
+
   raw="$out/opencode-raw.jsonl"; LOGFILE="$out/opencode.log"; : > "$LOGFILE"
   # Isolated scratch for the offload gate: point the run's TMPDIR here so the model's
   # "write my audit to a file" behavior lands somewhere we can deterministically scan
@@ -228,6 +244,7 @@ PY
     # (opencode.json/AGENTS.md/.opencode) never matches, so it is preserved.
     [ "$OPENCODE_OFFLOAD_DETECT" = 1 ] && find "$repo_dir" -maxdepth 2 -type f \
       \( -iname '*audit*.json' -o -iname '*final*.json' -o -iname '*compact*.json' \) -delete 2>/dev/null || true
+    clean_new_untracked   # drop any non-.json leftovers the prior attempt wrote into the tree
     rm -rf "$run_scratch"; mkdir -p "$run_scratch"         # fresh offload-scratch per attempt
     ( cd "$repo_dir" && export PATH="$run_path" TMPDIR="$run_scratch" && run_guarded "$raw" \
         opencode run --format json -m "$MODEL" --dir "$repo_dir" \
@@ -285,6 +302,9 @@ print(len(ans), perr)" 2>/dev/null || echo "0 0")
 import json, os, re, sys, glob
 tpath, scratch, repo_dir, achars, maxchars = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
 # (a) file signal: model-chosen audit/final/compact .json names in the scratch or repo tree.
+# Length-gated like the content signal: an inline answer >= maxchars is a real audit, so a
+# working file the model ALSO wrote must not nuke it (netbox/Kimi false positive — the
+# audit-flavored scenarios make the model name its scratch notes *_audit.json).
 NAME = re.compile(r'(audit|final|compact|merge_request_audit).*\.json$', re.I)
 def has_artifact(root, maxdepth):
     if not os.path.isdir(root): return False
@@ -295,7 +315,7 @@ def has_artifact(root, maxdepth):
         for fn in fns:
             if NAME.search(fn): return True
     return False
-file_sig = has_artifact(scratch, 4) or has_artifact(repo_dir, 1)
+file_sig = achars < maxchars and (has_artifact(scratch, 4) or has_artifact(repo_dir, 1))
 # (b) content signal: a SHORT answer that says it wrote/saved its output to a .json file.
 parts = []
 try:
@@ -350,6 +370,8 @@ PY
 
   rm -f "$repo_dir/opencode.json" "$repo_dir/AGENTS.md"; rm -rf "$repo_dir/.opencode"
   git -C "$repo_dir" checkout -- . 2>/dev/null || true   # revert any stray edits (tracked only)
+  clean_new_untracked   # leave the clone pristine for the NEXT draw (contamination guard)
+  [[ "$KEEP_RAW" == 1 ]] || rm -f "$untracked_snap"
 
   cp "$LOGFILE" "$out/claude.log" 2>/dev/null || true
   [[ "$KEEP_RAW" == 1 ]] || rm -f "$raw"
