@@ -199,9 +199,14 @@ for tool in "${TOOLS[@]}"; do
   # heavy final-synthesis turn stays light enough to clear a metered throttle (the
   # Kimi empty_final_answer fix). Merges into the sense arm's MCP opencode.json;
   # creates a compaction-only one for the baseline (which otherwise has none).
-  python3 - "$repo_dir/opencode.json" <<'PY'
+  # Same pass also reroutes the sense arm's MCP server through the capture shim
+  # (byte-transparent tee of every request + full response → $out/sense-io.jsonl;
+  # see bench/lib/mcp_tee.py). Bench-only interposition on a bench-managed file
+  # (this opencode.json is rm -f'd and regenerated every run); baseline has no
+  # mcp key so it is untouched. SENSE_IO_CAPTURE=0 skips the reroute.
+  python3 - "$repo_dir/opencode.json" "$out" "$LIB_DIR/mcp_tee.py" "${SENSE_IO_CAPTURE:-1}" <<'PY'
 import json, os, sys
-p = sys.argv[1]
+p, out, shim, capture = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 cfg = {}
 if os.path.exists(p):
     try:
@@ -211,6 +216,11 @@ if os.path.exists(p):
         cfg = {}
 cfg.setdefault("$schema", "https://opencode.ai/config.json")
 cfg["compaction"] = {"auto": True, "prune": True, "reserved": 30000}
+sense = cfg.get("mcp", {}).get("sense")
+if sense and capture == "1":
+    cmd = list(sense.get("command", []))
+    if cmd and "mcp_tee.py" not in " ".join(cmd):
+        sense["command"] = [sys.executable, shim, "--log", f"{out}/sense-io.jsonl", "--"] + cmd
 with open(p, "w") as f:
     json.dump(cfg, f, indent=2)
 PY
@@ -246,6 +256,7 @@ PY
       \( -iname '*audit*.json' -o -iname '*final*.json' -o -iname '*compact*.json' \) -delete 2>/dev/null || true
     clean_new_untracked   # drop any non-.json leftovers the prior attempt wrote into the tree
     rm -rf "$run_scratch"; mkdir -p "$run_scratch"         # fresh offload-scratch per attempt
+    rm -f "$out/sense-io.jsonl"                            # fresh capture per attempt: the log must match the kept (last) transcript, not a mix of attempts
     ( cd "$repo_dir" && export PATH="$run_path" TMPDIR="$run_scratch" && run_guarded "$raw" \
         opencode run --format json -m "$MODEL" --dir "$repo_dir" \
         --dangerously-skip-permissions "$PROMPT" )

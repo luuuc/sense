@@ -148,7 +148,15 @@ PY
     # isolated by its own clone + scrubbed PATH, untouched by this.
     ( cd "$repo_dir" && sense setup >/dev/null 2>&1 ) \
       || echo "[codex]   WARN: sense setup failed" >&2
-    args+=(-c 'mcp_servers.sense.command="sense"' -c 'mcp_servers.sense.args=["mcp"]')
+    # MCP through the capture shim (byte-transparent tee of every request +
+    # full response → $out/sense-io.jsonl; see bench/lib/mcp_tee.py). Bench-only
+    # interposition; SENSE_IO_CAPTURE=0 reverts to the direct registration.
+    if [[ "${SENSE_IO_CAPTURE:-1}" == 1 ]]; then
+      args+=(-c 'mcp_servers.sense.command="python3"'
+             -c "mcp_servers.sense.args=[\"$LIB_DIR/mcp_tee.py\",\"--log\",\"$out/sense-io.jsonl\",\"--\",\"sense\",\"mcp\"]")
+    else
+      args+=(-c 'mcp_servers.sense.command="sense"' -c 'mcp_servers.sense.args=["mcp"]')
+    fi
     run_path="$PATH"
   else
     run_path="$SCRUBBED_PATH"
