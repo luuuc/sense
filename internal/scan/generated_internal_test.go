@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/luuuc/sense/internal/sqlite"
@@ -152,6 +153,9 @@ func TestProcessFileWarnsWhenEvictionDeleteFails(t *testing.T) {
 	}
 	if got := h.collector.count(); got == 0 {
 		t.Error("expected a write-failed warning for the injected delete error")
+	}
+	if out := h.collector.format(); !strings.Contains(out, errInjectedDelete.Error()) {
+		t.Errorf("warning must carry the injected failure; got %q", out)
 	}
 }
 
