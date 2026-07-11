@@ -39,9 +39,11 @@ type SymbolRef struct {
 	ID        int64
 	Qualified string
 	FileID    int64
-	// Receiver mirrors Symbol.Receiver ("instance"/"singleton"/""): the
-	// resolver's unqualified fallback filters candidates by dispatch kind
-	// so an instance call cannot bind to a same-named singleton method.
+	// Receiver mirrors Symbol.Receiver. For Ruby it is the dispatch kind
+	// ("instance"/"singleton"): the resolver's unqualified fallback filters
+	// candidates by kind so an instance call cannot bind to a same-named
+	// singleton method. For Go it is the receiver identifier and carries no
+	// dispatch meaning — the filter only interprets it on Ruby candidates.
 	Receiver string
 	// Language is the symbol's file language (from sense_files). The resolver's
 	// unqualified fallback uses it to drop code-to-code cross-language matches —

@@ -26,7 +26,10 @@ type parseOpts struct {
 
 // parseFileCore is the shared parse+extract body. Returns nil for files
 // that should be skipped (unknown language, read/parse/extract failure,
-// or when skip returns true for the computed hash).
+// or when skip returns true for the computed hash). Generated files return
+// a sentinel result with Generated set — before the hash skip, so a
+// previously-indexed generated file is still evicted rather than kept as a
+// cached row.
 func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) *fileResult {
 	ext := strings.ToLower(filepath.Ext(path))
 	ex := extract.ForExtension(ext)
@@ -34,16 +37,8 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 		return nil
 	}
 
-	if po.maxFileSizeKB > 0 {
-		info, err := os.Stat(path)
-		if err != nil {
-			po.warnf(warnMetaError, "%s (%v)", rel, err)
-			return nil
-		}
-		if info.Size() > int64(po.maxFileSizeKB)*1024 {
-			po.warnf(warnFileTooLarge, "%s (%d KB > %d KB max)", rel, info.Size()/1024, po.maxFileSizeKB)
-			return nil
-		}
+	if skipForSize(po, path, rel) {
+		return nil
 	}
 
 	if po.ctx.Err() != nil {
@@ -54,6 +49,10 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 	if err != nil {
 		po.warnf(warnMetaError, "%s (%v)", rel, err)
 		return nil
+	}
+
+	if isGeneratedSource(source) {
+		return &fileResult{Rel: rel, Generated: true}
 	}
 
 	newHash := hashSource(source)
@@ -120,6 +119,27 @@ func parseFileCore(po parseOpts, path, rel string, skip func(hash string) bool) 
 		PyAllExports:      collected.pyAllExports,
 		LangspecAnnotated: collected.lsAnnotated,
 	}
+}
+
+// skipForSize reports whether the file must be skipped for the size cap
+// (or a failed stat), warning as it goes. Known edge: a previously-indexed
+// generated file that has since grown past the cap is skipped here before
+// the generated check ever sees it, so its stale rows survive until the
+// file shrinks or is deleted. Accepted — not worth a capped header read.
+func skipForSize(po parseOpts, path, rel string) bool {
+	if po.maxFileSizeKB <= 0 {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		po.warnf(warnMetaError, "%s (%v)", rel, err)
+		return true
+	}
+	if info.Size() > int64(po.maxFileSizeKB)*1024 {
+		po.warnf(warnFileTooLarge, "%s (%d KB > %d KB max)", rel, info.Size()/1024, po.maxFileSizeKB)
+		return true
+	}
+	return false
 }
 
 // parseFileStandalone is the goroutine-safe parse function used by the

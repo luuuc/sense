@@ -238,8 +238,8 @@ func TestDefaultPatterns(t *testing.T) {
 		t.Error("DefaultPatterns must return a defensive copy")
 	}
 	want := map[string]bool{
-		"vendor/": true, "node_modules/": true, "dist/": true, "build/": true, "_next/": true,
-		"*.min.js": true, "*.bundle.js": true, "*.min.css": true,
+		"vendor/": true, "node_modules/": true, "dist/": true, "build/": true, "testdata/": true,
+		"_next/": true, "*.min.js": true, "*.bundle.js": true, "*.min.css": true,
 	}
 	for _, p := range again {
 		if !want[p] {

@@ -595,7 +595,7 @@ func filterByReceiver(matches []model.SymbolRef, sep string) (kept []model.Symbo
 	}
 	declared := false
 	for _, m := range matches {
-		if m.Receiver != "" {
+		if isDispatchKind(m) {
 			declared = true
 			break
 		}
@@ -605,7 +605,7 @@ func filterByReceiver(matches []model.SymbolRef, sep string) (kept []model.Symbo
 	}
 	kept = make([]model.SymbolRef, 0, len(matches))
 	for _, m := range matches {
-		if m.Receiver == "" || m.Receiver == want {
+		if !isDispatchKind(m) || m.Receiver == want {
 			kept = append(kept, m)
 		}
 	}
@@ -615,19 +615,29 @@ func filterByReceiver(matches []model.SymbolRef, sep string) (kept []model.Symbo
 	return kept, false
 }
 
+// isDispatchKind reports whether a candidate's receiver value is a Ruby
+// dispatch kind. Go stores the receiver IDENTIFIER (`c` in
+// `func (c *Context)`) in the same column; identifiers carry no dispatch
+// hint and must be invisible to filterByReceiver — a `.`-dispatched Go
+// call would otherwise be wrongly narrowed against its own methods. The
+// gate is by LANGUAGE, not value: a Go receiver legally named `instance`
+// or `singleton` must not masquerade as a kind.
+func isDispatchKind(m model.SymbolRef) bool {
+	return m.Language == "ruby" &&
+		(m.Receiver == extract.ReceiverInstance || m.Receiver == extract.ReceiverSingleton)
+}
+
 // receiverForSeparator maps a call separator to the dispatch kind it implies:
 // `#` ⇒ instance, `.` ⇒ singleton/class. `::` (namespace) and "" (bare,
 // receiver unknown) carry no dispatch hint.
 //
 // IMPORTANT: this encodes *Ruby* dispatch semantics, where `.` is a
-// singleton/class call and `#` an instance call. It is safe for other
-// languages today only because Ruby is the sole extractor that populates
-// SymbolRef.Receiver — filterByReceiver no-ops when no candidate declares a
-// receiver, so a Go/Python `pkg.fn` target (also separated by `.`) is never
-// narrowed. If another language begins populating Receiver, it must share this
-// `.`=singleton / `#`=instance convention, or filterByReceiver must be gated
-// by language — otherwise a `.`-dispatched instance call in that language
-// would be wrongly filtered against same-named singletons.
+// singleton/class call and `#` an instance call. Ruby is the sole extractor
+// that populates SymbolRef.Receiver with these kinds; Go populates the same
+// column with receiver identifiers, which isDispatchKind screens out of
+// filterByReceiver entirely — so a Go/Python `pkg.fn` target (also separated
+// by `.`) is never narrowed. A third language may only join the filter by
+// sharing the `.`=singleton / `#`=instance convention.
 func receiverForSeparator(sep string) string {
 	switch sep {
 	case "#":

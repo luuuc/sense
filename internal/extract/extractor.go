@@ -272,9 +272,11 @@ type EmittedSymbol struct {
 	Kind       model.SymbolKind
 	Visibility string
 	// Receiver is a method's dispatch kind ("instance" / "singleton") for
-	// languages that distinguish them; empty otherwise. Persisted to
-	// sense_symbols.receiver and used by the resolver to keep instance and
-	// singleton methods of the same name from cross-binding.
+	// languages that distinguish them, or — for Go — the receiver
+	// identifier (`c` in `func (c *Context)`), the feed for a per-type
+	// receiver-consistency population. Persisted to
+	// sense_symbols.receiver; the resolver's cross-binding filter acts
+	// only on the two dispatch-kind constants.
 	Receiver        string
 	ParentQualified string
 	LineStart       int
