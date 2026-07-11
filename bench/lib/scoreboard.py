@@ -19,7 +19,9 @@ un-reproducible SENSE-SCORING-REPORT.md (the numbers did not trace to disk).
                     recall ties BY DESIGN. Reported separately, NOT in the win
                     count, NOT in B-score (efficiency stays out of the blend).
 
-Usage: scoreboard.py [results_dir]   (default: claude-opus-4-8 vertical root)
+Usage: scoreboard.py [results_dir]   (default: the ruby-rails claude-opus-4-8 root;
+       pass another vertical's model root, e.g.
+       bench/verticals/python-django/results/claude-opus-4-8)
 """
 import json
 import glob
@@ -29,9 +31,33 @@ import sys
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT = os.path.join(REPO_ROOT, "bench", "verticals", "ruby-rails",
                        "results", "claude-opus-4-8")
+# Published Rails board order — a sort preference only; repos come from disk.
 ORDER = ["mastodon", "gitlabhq", "chatwoot", "discourse", "solidus", "forem",
          "ruby_llm", "redmine", "rails", "llm.rb", "langchainrb", "lobsters", "raix"]
 GEMS = {"ruby_llm", "llm.rb", "langchainrb", "raix"}
+
+
+def _repos(root):
+    """Repos benched under this root: present in BOTH arm dirs (excludes
+    `_`-staged and `.bak` preservation copies). ORDER pins the published Rails
+    board order; anything else appends alphabetically, so any vertical's model
+    root renders without a hardcoded list."""
+    def arm_dirs(arm):
+        p = os.path.join(root, arm)
+        if not os.path.isdir(p):
+            return set()
+        return {d for d in os.listdir(p) if os.path.isdir(os.path.join(p, d))
+                and not d.startswith("_") and not d.endswith(".bak")}
+    repos = arm_dirs("baseline") & arm_dirs("sense")
+    return [r for r in ORDER if r in repos] + sorted(repos - set(ORDER))
+
+
+def _vertical(root):
+    """Vertical name parsed from .../verticals/<name>/results/... (or None)."""
+    parts = os.path.normpath(os.path.abspath(root)).split(os.sep)
+    if "verticals" in parts and parts.index("verticals") + 1 < len(parts):
+        return parts[parts.index("verticals") + 1]
+    return None
 
 
 def _mean(a):
@@ -119,7 +145,7 @@ def build(root):
     wins = ties = losses = eff_wins = 0
     deltas = []
     judges = set()
-    for repo in ORDER:
+    for repo in _repos(root):
         b = arm_axes(root, "baseline", repo)
         s = arm_axes(root, "sense", repo)
         if b["cited"] is None or s["cited"] is None:
@@ -147,9 +173,13 @@ def build(root):
 
 def markdown(root):
     rows, wins, ties, losses, eff_wins, mean_d, judges = build(root)
+    if not rows:
+        sys.exit(f"scoreboard.py: no benched repos found under {root}")
     judge = sorted(j for j in judges if j) or ["?"]
+    vert = _vertical(root)
+    name = "Rails-vertical" if vert in (None, "ruby-rails") else f"{vert} vertical"
     out = []
-    out.append("# Rails-vertical scoring — Sense vs baseline\n")
+    out.append(f"# {name} scoring — Sense vs baseline\n")
     out.append(f"_Judge: {', '.join(judge)} (via subscription CLI). All axes "
                "averaged across runs. Regenerated FROM DISK by "
                "`bench/lib/scoreboard.py` (reproducible).\n")
