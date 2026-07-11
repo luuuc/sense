@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# rescan-all.sh — (re)index every Ruby/Rails-vertical repo in SMALLEST→BIGGEST
+# rescan-all.sh — (re)index every official vertical repo in SMALLEST→BIGGEST
 # order, reporting progress as it goes.
+#
+# Repo membership comes from the per-vertical repos.txt files
+# (bench/verticals/<vertical>/repos.txt) — the single source of truth for what
+# each vertical runs. DEFAULT = the union of EVERY vertical; scope with
+# VERTICALS and/or REPOS (both are space-separated lists, REPOS filters after
+# VERTICALS). A repo may belong to several verticals; the union is deduped.
 #
 # DEFAULT = a real full rebuild+embed of EVERY repo: each launched scan is
 # `sense scan -rebuild -embed` (this is what "rescan" means here — re-resolve the
@@ -12,15 +18,18 @@
 # tool-integration files in the clone — done every time, whether or not the index
 # is rebuilt — then ensures the index. (--check skips setup: it is read-only.)
 #
-# Why smallest-first (the opposite of the BENCH order): a rescan is a one-time
-# index build, not a discrimination test. Cheap indexes (raix, langchainrb, …)
-# finish in seconds and prove the binary + toolchain are healthy before the
-# multi-hour gitlabhq (177k symbols) embed runs LAST. If something is broken you
-# learn it on a 5-second repo, not 2 hours into the big one.
+# Why smallest-first (the opposite of the BENCH order, which lives in
+# sweep-resume.sh): a rescan is a one-time index build, not a discrimination
+# test. Cheap indexes (raix, langchainrb, …) finish in seconds and prove the
+# binary + toolchain are healthy before the multi-hour gitlabhq (177k symbols)
+# embed runs LAST. If something is broken you learn it on a 5-second repo, not
+# 2 hours into the big one.
 #
-#   bash bench/drivers/rescan-all.sh                 # FULL rebuild+embed of every repo (default)
+#   bash bench/drivers/rescan-all.sh                 # FULL rebuild+embed of every vertical repo (default)
 #   SKIP_FRESH=1 bash bench/drivers/rescan-all.sh    # replayable: skip fingerprint-fresh, rebuild only stale
-#   REPOS="forem rails" bash bench/drivers/rescan-all.sh   # subset, still in smallest-first order
+#   VERTICALS="python-django" bash bench/drivers/rescan-all.sh       # one vertical only
+#   VERTICALS="ruby-rails python-django" bash bench/drivers/rescan-all.sh   # several verticals
+#   REPOS="forem rails" bash bench/drivers/rescan-all.sh   # subset of repos, still in smallest-first order
 #   bash bench/drivers/rescan-all.sh --check         # report freshness only, rebuild nothing
 #
 # Knobs: SENSE_BIN (default ~/.local/bin/sense), SENSE_CLONES (clone root). The
@@ -39,11 +48,50 @@ if [ "${1:-}" != "--check" ] && [ "${SKIP_FRESH:-0}" != 1 ]; then
   export FORCE_REBUILD=1
 fi
 
-# Canonical vertical repos, SMALLEST→BIGGEST by indexed-symbol count (see
-# bench/index-state.json). Keep this in sync if the lineup changes; the BENCH
-# order (biggest↔smallest interleave) lives in sweep-resume.sh, deliberately
-# different — see that file's header.
-SMALL_TO_BIG=(raix langchainrb lobsters ruby_llm llm.rb solidus redmine chatwoot mastodon forem rails discourse gitlabhq)
+# --- vertical selection --------------------------------------------------
+VERT_DIR="$BENCH_DIR/verticals"
+verticals=()
+if [ -n "${VERTICALS:-}" ]; then
+  for v in $VERTICALS; do
+    if [ ! -f "$VERT_DIR/$v/repos.txt" ]; then
+      echo "[rescan] unknown vertical '$v' (no $VERT_DIR/$v/repos.txt); available:" \
+           "$(ls "$VERT_DIR" 2>/dev/null | while read -r d; do [ -f "$VERT_DIR/$d/repos.txt" ] && printf '%s ' "$d"; done)" >&2
+      exit 2
+    fi
+    verticals+=("$v")
+  done
+else
+  for f in "$VERT_DIR"/*/repos.txt; do
+    [ -f "$f" ] && verticals+=("$(basename "$(dirname "$f")")")
+  done
+fi
+[ "${#verticals[@]}" -eq 0 ] && { echo "[rescan] no verticals found under $VERT_DIR" >&2; exit 2; }
+
+# Union of the selected verticals' repos.txt (one repo key per line, comments
+# allowed), deduped — membership lists are not a partition.
+repo_keys=()
+for v in "${verticals[@]}"; do
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="${line//[[:space:]]/}"
+    [ -n "$line" ] && repo_keys+=("$line")
+  done < "$VERT_DIR/$v/repos.txt"
+done
+[ "${#repo_keys[@]}" -eq 0 ] && { echo "[rescan] selected verticals list no repos (${verticals[*]})" >&2; exit 2; }
+
+# SMALLEST→BIGGEST by index.db size on disk — the same rule as
+# ensure-index.sh --all: size exists for every already-indexed repo, and a
+# missing index sorts as 0 so a never-indexed repo fails fast instead of after
+# the giants. Name breaks ties.
+SMALL_TO_BIG=()
+while IFS= read -r r; do [ -n "$r" ] && SMALL_TO_BIG+=("$r"); done < <(
+  SENSE_CLONES="$CLONES" python3 -c "import os,sys
+clones=os.environ['SENSE_CLONES']
+repos=list(dict.fromkeys(sys.argv[1:]))
+def size(r):
+    try: return os.path.getsize(os.path.join(clones,r,'.sense','index.db'))
+    except OSError: return 0
+print('\n'.join(sorted(repos,key=lambda r:(size(r),r))))" "${repo_keys[@]}")
 
 # Optional REPOS override: keep only the requested repos, preserving small-first order.
 if [ -n "${REPOS:-}" ]; then
@@ -51,6 +99,7 @@ if [ -n "${REPOS:-}" ]; then
   for r in "${SMALL_TO_BIG[@]}"; do
     for want in $REPOS; do [ "$r" = "$want" ] && filtered+=("$r"); done
   done
+  [ "${#filtered[@]}" -eq 0 ] && { echo "[rescan] no repos selected (VERTICALS='${VERTICALS:-all}' REPOS='$REPOS')" >&2; exit 2; }
   SMALL_TO_BIG=("${filtered[@]}")
 fi
 
@@ -58,6 +107,7 @@ CHECK_FLAG=""
 [ "${1:-}" = "--check" ] && CHECK_FLAG="--check"
 
 total="${#SMALL_TO_BIG[@]}"
+echo "[rescan] verticals: ${verticals[*]}"
 echo "[rescan] $total repos, smallest→biggest order"
 echo "[rescan] $(${SENSE_BIN:-$HOME/.local/bin/sense} --version 2>/dev/null | head -1)"
 if [ -n "$CHECK_FLAG" ]; then echo "[rescan] mode: --check (report staleness, rebuild nothing)"

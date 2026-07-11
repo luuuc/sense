@@ -76,6 +76,24 @@ d['$1']={'fingerprint':'''$2''','symbols':'$3','edges':'$4','sense_version':'''$
 json.dump(d,open(p,'w'),indent=2,sort_keys=True); open(p,'a').write('\n')"
 }
 
+# --- clone hygiene guard --------------------------------------------------
+# An index built from a dirty clone silently changes conventions and steering:
+# on 2026-07-11 untracked mistral *.rb files a past agent left in the llm.rb
+# clone were indexed and faked a bench regression. Refuse to rebuild when the
+# clone carries modified or untracked files the scanner would INDEX — i.e.
+# source files, matched by the extension list below (keep in sync with the
+# extractors' Extensions()/Exts in internal/extract). sense-setup artifacts
+# (CLAUDE.md, .mcp.json, .cursorrules, ...) are config the scanner ignores;
+# the one source file setup writes (.opencode/plugin/sense.js) is excluded by
+# path. ALLOW_DIRTY=1 bypasses for a deliberate local experiment.
+SRC_EXT_RE='\.(rb|rake|gemspec|erb|go|rs|ts|tsx|js|jsx|mjs|cjs|py|c|h|cpp|cc|cxx|hpp|hxx|cs|java|php|kt|kts|scala|sc)$'
+dirty_source() { # clone-dir -> prints modified/untracked indexable source files
+  git -C "$1" status --porcelain -uall 2>/dev/null \
+    | grep -vE '^\?\? \.opencode/' \
+    | sed 's/^...//' \
+    | grep -E "$SRC_EXT_RE"
+}
+
 FP="$(scan_fingerprint)"
 if [[ "$FP" == ERR_* ]]; then echo "[ensure-index] cannot compute fingerprint ($FP) — is this the sense repo with go installed?"; exit 1; fi
 echo "[ensure-index] current scan fingerprint: $FP"
@@ -119,6 +137,15 @@ for repo in "${REPOS[@]}"; do
   if [ "$CHECK" = 1 ]; then
     echo "[STALE ] $repo — would rebuild ($reason; logged=${logged:-none})"
     rc=1; continue
+  fi
+  if [ "${ALLOW_DIRTY:-0}" != 1 ]; then
+    dirty="$(dirty_source "$clone")"
+    if [ -n "$dirty" ]; then
+      echo "[DIRTY ] $repo — clone has modified/untracked source files; refusing to index them:"
+      echo "$dirty" | sed 's/^/    /'
+      echo "          quarantine or 'git checkout/clean' them, or ALLOW_DIRTY=1 to override"
+      rc=1; continue
+    fi
   fi
   echo "[rebuild] $repo ($reason) ..."
   out="$(cd "$clone" && "$SENSE_BIN" scan -rebuild -embed 2>&1)"; ec=$?
