@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.20] - 2026-07-11
+
+### Bug Fixes
+
+- skip generated code and testdata/, extract Go receiver idents
 ## [1.11.19] - 2026-07-10
 
 ### Bug Fixes
