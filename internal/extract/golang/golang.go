@@ -463,6 +463,7 @@ func (w *walker) handleMethod(n *sitter.Node) error {
 		Name:            name,
 		Qualified:       qualified,
 		Kind:            model.KindMethod,
+		Receiver:        receiverIdent(receiver, w.source),
 		Visibility:      visibility(name),
 		ParentQualified: parent,
 		LineStart:       extract.Line(n.StartPosition()),
@@ -606,6 +607,26 @@ func packageName(root *sitter.Node, source []byte) string {
 			if id != nil && id.Kind() == "package_identifier" {
 				return extract.Text(id, source)
 			}
+		}
+	}
+	return ""
+}
+
+// receiverIdent pulls the receiver's identifier out of a method's
+// receiver list: `c` in `func (c *Context) Next()`. Empty for unnamed
+// receivers (`func (*T) M()`); `_` is kept verbatim — it is a naming
+// choice the receiver-consistency population must see.
+func receiverIdent(recv *sitter.Node, source []byte) string {
+	if recv == nil {
+		return ""
+	}
+	for i := uint(0); i < recv.NamedChildCount(); i++ {
+		param := recv.NamedChild(i)
+		if param == nil || param.Kind() != "parameter_declaration" {
+			continue
+		}
+		if name := param.ChildByFieldName("name"); name != nil {
+			return extract.Text(name, source)
 		}
 	}
 	return ""

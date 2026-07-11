@@ -61,6 +61,50 @@ func TestMethodWithEmptyReceiverEmitsNothing(t *testing.T) {
 	}
 }
 
+func TestReceiverIdent(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"pointer receiver", "package p\nfunc (c *Context) Next() {}\n", "c"},
+		{"value receiver", "package p\nfunc (s Server) Run() {}\n", "s"},
+		{"generic receiver", "package p\nfunc (m Money[T]) Add() {}\n", "m"},
+		{"unnamed generic receiver", "package p\nfunc (Money[T]) Add() {}\n", ""},
+		{"unnamed receiver", "package p\nfunc (*Server) Run() {}\n", ""},
+		{"underscore receiver kept verbatim", "package p\nfunc (_ Server) Run() {}\n", "_"},
+		{"comment-only receiver", "package p\nfunc (/* only */) Run() {}\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recv, src := parseRecv(t, tc.src)
+			if got := receiverIdent(recv, src); got != tc.want {
+				t.Errorf("receiverIdent = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	t.Run("nil receiver node", func(t *testing.T) {
+		if got := receiverIdent(nil, nil); got != "" {
+			t.Errorf("receiverIdent(nil) = %q, want empty", got)
+		}
+	})
+}
+
+func TestMethodSymbolCarriesReceiverIdent(t *testing.T) {
+	// End-to-end: the emitted method symbol stores the receiver identifier —
+	// the feed for a per-type receiver-consistency population (30-07).
+	r := parse(t, "package p\nfunc (c *Context) Next() {}\n")
+	for _, s := range r.symbols {
+		if s.Kind == "method" && s.Qualified == "p.Context.Next" {
+			if s.Receiver != "c" {
+				t.Errorf("method Receiver = %q, want %q", s.Receiver, "c")
+			}
+			return
+		}
+	}
+	t.Fatal("method symbol p.Context.Next not emitted")
+}
+
 func TestPackageNameNilRoot(t *testing.T) {
 	// The documented nil-root guard returns the zero value.
 	if got := packageName(nil, nil); got != "" {

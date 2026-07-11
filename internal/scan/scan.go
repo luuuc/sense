@@ -834,6 +834,12 @@ func (h *harness) accountAndWrite(entries []walkEntry, results []*fileResult, ha
 		rel := entries[i].rel
 		ex := extract.ForExtension(strings.ToLower(filepath.Ext(rel)))
 
+		if fr != nil && fr.Generated {
+			// Not indexed, and removed from the visit set so
+			// removeStaleFiles evicts any rows a pre-hygiene scan wrote.
+			delete(h.seenPaths, rel)
+			continue
+		}
 		if fr == nil {
 			h.accountCachedFile(rel, ex, hashMap)
 			continue
@@ -929,7 +935,11 @@ func (h *harness) flushBatch(batch []*fileResult) error {
 // fileResult holds the output of parseFile — everything needed to
 // persist a file's symbols and edges without re-reading or re-parsing.
 type fileResult struct {
-	Rel               string
+	Rel string
+	// Generated marks a file carrying the generated-code marker: never
+	// indexed, and evicted if a prior scan indexed it. All other fields
+	// are zero when set.
+	Generated         bool
 	Language          string
 	Source            []byte
 	Hash              string
@@ -963,6 +973,19 @@ func (h *harness) processFile(path, rel string) {
 	h.seenPaths[rel] = true
 	fr := h.parseFile(path, rel)
 	if fr == nil {
+		return
+	}
+	if fr.Generated {
+		// Incremental scans have no stale-removal pass; evict directly
+		// so a file regenerated with the marker leaves the index. The
+		// removed counter makes the eviction visible in the result and
+		// triggers the summary regeneration.
+		delete(h.seenPaths, rel)
+		if err := h.idx.DeleteFile(h.ctx, rel); err != nil {
+			h.addWarning(warnWriteFailed, "%s (%v)", rel, err)
+			return
+		}
+		h.removed++
 		return
 	}
 	if err := h.writeFileResult(fr); err != nil {

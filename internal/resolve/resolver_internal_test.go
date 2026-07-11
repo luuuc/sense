@@ -145,8 +145,8 @@ func TestFilterByTestDirection(t *testing.T) {
 }
 
 func TestFilterByReceiver(t *testing.T) {
-	instance := model.SymbolRef{ID: 1, Qualified: "Counter#zero", Receiver: extract.ReceiverInstance}
-	singleton := model.SymbolRef{ID: 2, Qualified: "Money.zero", Receiver: extract.ReceiverSingleton}
+	instance := model.SymbolRef{ID: 1, Qualified: "Counter#zero", Receiver: extract.ReceiverInstance, Language: "ruby"}
+	singleton := model.SymbolRef{ID: 2, Qualified: "Money.zero", Receiver: extract.ReceiverSingleton, Language: "ruby"}
 	bare := model.SymbolRef{ID: 3, Qualified: "zero"} // no receiver (e.g. another language)
 
 	t.Run("instance separator keeps instance and bare, drops singleton", func(t *testing.T) {
@@ -187,12 +187,64 @@ func TestFilterByReceiver(t *testing.T) {
 			t.Error("contradicted = true, want false (`::` carries no dispatch hint)")
 		}
 	})
+	t.Run("Go identifier receivers are invisible to the filter", func(t *testing.T) {
+		// Go stores the receiver identifier in the same column; identifiers
+		// carry no dispatch hint, so a set with only identifiers must pass
+		// through untouched — a `.`-dispatched Go call is never narrowed
+		// against its own methods.
+		in := []model.SymbolRef{
+			{ID: 6, Qualified: "gin.Context.Next", Receiver: "c", Language: "go"},
+			{ID: 7, Qualified: "gin.Engine.Next", Receiver: "engine", Language: "go"},
+		}
+		got, contradicted := filterByReceiver(in, ".")
+		if len(got) != 2 {
+			t.Fatalf("got %d candidates, want 2 (identifiers declare nothing)", len(got))
+		}
+		if contradicted {
+			t.Error("contradicted = true, want false (identifiers carry no dispatch kind)")
+		}
+	})
+	t.Run("Go receiver literally named instance is not a dispatch kind", func(t *testing.T) {
+		// `func (instance *Cache) Get()` is legal Go; the kind check gates by
+		// language, so the value collision must not narrow resolution.
+		in := []model.SymbolRef{
+			{ID: 9, Qualified: "cache.Cache.Get", Receiver: extract.ReceiverInstance, Language: "go"},
+			{ID: 10, Qualified: "cache.Store.Get", Receiver: "s", Language: "go"},
+		}
+		got, contradicted := filterByReceiver(in, ".")
+		if len(got) != 2 {
+			t.Fatalf("got %d candidates, want 2 (Go 'instance' is an identifier, not a kind)", len(got))
+		}
+		if contradicted {
+			t.Error("contradicted = true, want false (nothing declared a kind)")
+		}
+	})
+	t.Run("identifier candidates survive a dispatch-kind filter", func(t *testing.T) {
+		goMethod := model.SymbolRef{ID: 8, Qualified: "gin.Context.zero", Receiver: "c", Language: "go"}
+		got, contradicted := filterByReceiver([]model.SymbolRef{instance, goMethod}, ".")
+		if len(got) != 1 || got[0].ID != 8 {
+			t.Fatalf("got %+v, want only id 8 (identifier kept, instance dropped)", got)
+		}
+		if contradicted {
+			t.Error("contradicted = true, want false (a candidate survives)")
+		}
+	})
+	t.Run("identifier candidates survive an instance filter too", func(t *testing.T) {
+		goMethod := model.SymbolRef{ID: 11, Qualified: "gin.Context.zero", Receiver: "c", Language: "go"}
+		got, contradicted := filterByReceiver([]model.SymbolRef{singleton, goMethod}, "#")
+		if len(got) != 1 || got[0].ID != 11 {
+			t.Fatalf("got %+v, want only id 11 (identifier kept, singleton dropped)", got)
+		}
+		if contradicted {
+			t.Error("contradicted = true, want false (a candidate survives)")
+		}
+	})
 	t.Run("empty result falls back to original set and reports contradiction", func(t *testing.T) {
 		// All candidates are singletons but the call is an instance dispatch:
 		// filtering would empty the set, so the original is returned as a
 		// tie-break rather than dropping the edge — and the contradiction is
 		// reported so the resolver demotes the kind-mismatched bind.
-		in := []model.SymbolRef{singleton, {ID: 5, Qualified: "Other.zero", Receiver: extract.ReceiverSingleton}}
+		in := []model.SymbolRef{singleton, {ID: 5, Qualified: "Other.zero", Receiver: extract.ReceiverSingleton, Language: "ruby"}}
 		got, contradicted := filterByReceiver(in, "#")
 		if len(got) != 2 {
 			t.Fatalf("got %d candidates, want 2 (original set)", len(got))

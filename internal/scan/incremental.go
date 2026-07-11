@@ -85,7 +85,8 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 		if err := h.removeDeleted(opts.Removed); err != nil {
 			return nil, err
 		}
-		h.removed = len(opts.Removed)
+		// += not =: processFile may already have evicted generated files.
+		h.removed += len(opts.Removed)
 		phases.RemoveStale = time.Since(t0)
 	}
 

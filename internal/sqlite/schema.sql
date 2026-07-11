@@ -24,10 +24,13 @@ CREATE TABLE IF NOT EXISTS sense_symbols (
     visibility  TEXT    DEFAULT 'public',
     -- receiver records a method's dispatch kind for languages that
     -- distinguish them: 'instance' (Ruby Class#m) or 'singleton'
-    -- (Ruby Class.m / def self.m). Empty for non-methods and for
-    -- languages that don't carry the distinction. Used by the resolver
-    -- to keep an instance call from binding to a same-named singleton
-    -- method (and vice-versa) in the unqualified-name fallback.
+    -- (Ruby Class.m / def self.m). Used by the resolver to keep an
+    -- instance call from binding to a same-named singleton method (and
+    -- vice-versa) in the unqualified-name fallback. For Go it records
+    -- the receiver IDENTIFIER instead ('c' in `func (c *Context)`) —
+    -- feed for a per-type receiver-consistency population; the resolver
+    -- filter only acts on the two kind constants. Empty for non-methods
+    -- and languages that carry neither.
     receiver    TEXT    NOT NULL DEFAULT '',
     parent_id   INTEGER REFERENCES sense_symbols(id),
     line_start  INTEGER NOT NULL,

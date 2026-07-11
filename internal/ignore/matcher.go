@@ -15,6 +15,13 @@ var defaultPatterns = []string{
 	"node_modules/",
 	"dist/",
 	"build/",
+	// testdata/ is ignored wholesale, matching the Go toolchain: nothing in
+	// it is reachable production code, and indexing it pollutes symbol
+	// populations (gin's generated protoexample fixtures surfaced as
+	// "constants are grouped in testdata/"). Repos whose testdata/ is
+	// load-bearing at runtime can re-include it via !testdata/ in
+	// .senseignore — user rules layer after these defaults.
+	"testdata/",
 	// _next/ is the Next.js build output tree (static export under out/_next,
 	// chunks named <hash>.js — not *.min.js). Committing it into a repo (e.g. a
 	// vendored dashboard) otherwise floods the index with minified-bundle
