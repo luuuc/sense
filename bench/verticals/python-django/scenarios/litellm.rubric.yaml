@@ -1,0 +1,206 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The objective headline is cited_recall on the
+# `dependents` group (scored from gold, not the judge); this rubric scores the
+# orthogonal answer-quality axes for the AI-agent audience.
+#
+# Step names MUST match scenarios/litellm.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to safely rework the contract of
+  LiteLLM's base chat-transformation class (BaseConfig, the ABC every provider's chat
+  request/response transformation inherits from) with only small, targeted follow-up
+  lookups, not a fresh exploration of the codebase. Score for that audience, not a human
+  reader, not a docs page. A perfect answer leaves the agent able to change one of the
+  base class's transformation method signatures knowing the COMPLETE set of provider
+  configs affected - both the ones that extend the base directly and name it AND the
+  larger share that inherit the contract indirectly through an intermediate base
+  (OpenAIGPTConfig, OpenAILikeChatConfig) and never mention the base class - and how each
+  reaches the contract; a weak answer forces the agent to grep the base class name, spot
+  which subclasses are themselves intermediates, and grep each intermediate by hand before
+  it can act safely.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is LiteLLM (a gateway /
+          SDK that presents ~100 LLM providers behind one OpenAI-style API), that the
+          provider integrations live under litellm/llms/<provider>/ with per-provider chat
+          transformation configs, and that the base class being reworked is BaseConfig in
+          litellm/llms/base_llm/chat/transformation.py (the ABC every provider chat
+          transformation inherits from)?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete
+          (litellm/llms/base_llm/chat/transformation.py) rather than vague ("the base
+          transformation code"), and tied to actual package and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY this base class is the thing being reworked (it
+          defines the request/response transformation contract every provider implements),
+          not just name it?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where unsure, does it flag that so the agent doesn't act blindly?
+
+  - name: Map the base transformation contract and what it defines
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map the contract: the core transformation methods BaseConfig
+          declares (transform_request, transform_response, map_openai_params,
+          validate_environment, get_supported_openai_params, get_error_class), what a
+          provider config must implement or inherit, and what a teammate needs to know
+          before changing one of those method signatures?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the base class and its key methods pinned to file:line in
+          litellm/llms/base_llm/chat/transformation.py rather than described vaguely?
+      justification:
+        weight: 0.20
+        question: |
+          Does it explain what about the contract matters for a method-signature change,
+          not just list members?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it flag any part of the contract it is unsure about?
+
+  - name: Enumerate every provider config affected by the contract change
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          THE HEADLINE STEP. Does the answer assemble the COMPLETE affected set: BOTH the
+          provider configs that extend BaseConfig directly and name it AND the larger share
+          that inherit the contract indirectly through an intermediate base (OpenAIGPTConfig,
+          OpenAILikeChatConfig) and never mention BaseConfig (DeepInfra, DeepSeek, Nebius,
+          xAI, Perplexity, Mistral, Moonshot, Nvidia NIM, OpenRouter, Cerebras, Groq,
+          Databricks, GitHub, Friendliai, VolcEngine, DataRobot, and the like), each with
+          file:line? Completeness across the full inheritance depth is the whole point; a
+          list that only names the direct subclasses leaves a whole class of providers that
+          silently break when the contract changes.
+      specificity:
+        weight: 0.25
+        question: |
+          Is each provider config pinned to a concrete file:line and the actual class name,
+          rather than a vague "the OpenAI-compatible providers"?
+      justification:
+        weight: 0.20
+        question: |
+          For each config, does the answer state HOW it reaches the contract (extends the
+          base directly, or through which intermediate), not just name the file?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it flag where it may be incomplete (e.g. deeper intermediates it could not
+          confirm) rather than implying false completeness?
+
+  - name: Group the affected provider configs by how they inherit
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Are the provider configs organized by inheritance path (direct subclasses of the
+          base; the OpenAIGPTConfig family; the OpenAILikeChatConfig family; any other
+          intermediate families) with the base or intermediate each extends and whether it
+          reaches the contract directly or indirectly, so the agent sees which parts of the
+          provider ecosystem the change reaches?
+      specificity:
+        weight: 0.25
+        question: |
+          Are groups tied to concrete intermediates and provider configs with file:line,
+          not loose labels?
+      justification:
+        weight: 0.20
+        question: |
+          Does the grouping reflect real inheritance structure (and depth) rather than a
+          superficial sort?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it note any config it was unsure how to place?
+
+  - name: Assess the blast radius of the contract change
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer reason about impact per provider config: whether it overrides the
+          changed method itself or inherits it unchanged, how far it sits from the base
+          (direct, or through which intermediate), ranked by risk, so the agent can
+          prioritize?
+      specificity:
+        weight: 0.25
+        question: |
+          Is the impact tied to concrete provider configs at file:line with their actual
+          inheritance path, rather than generic risk talk?
+      justification:
+        weight: 0.20
+        question: |
+          Does it justify the risk ranking (e.g. a high-traffic OpenAI-compatible provider
+          inheriting the method unchanged is higher risk than a niche one that overrides it)?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it flag impacts it could not fully determine?
+
+  - name: Surface the non-obvious affected provider configs
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer single out the provider configs a text search for the base class
+          name would miss: the ones that never name BaseConfig because they inherit the
+          contract through an intermediate base, that a maintainer grepping the base class
+          name and tracing subclasses by hand would drop after the first hop (the
+          OpenAIGPTConfig / OpenAILikeChatConfig families)?
+      specificity:
+        weight: 0.25
+        question: |
+          Are these pinned to file:line and the intermediate base they inherit through, not
+          just gestured at?
+      justification:
+        weight: 0.20
+        question: |
+          Does it explain WHY each is easy to overlook (the intermediate hop, the absence of
+          the base class name in the file)?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it acknowledge there may be further hidden configs deeper in the inheritance
+          tree?
+
+  - name: Produce the change + verification map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Is the final handoff a single, actionable audit map: every affected provider config
+          grouped by how it inherits, with file:line, whether it extends the base directly or
+          through which intermediate, and what to check when the method signature changes, so
+          a teammate could land the PR without re-exploring?
+      specificity:
+        weight: 0.25
+        question: |
+          Is every entry concrete (file:line + class + direct/intermediate) rather than a
+          summary?
+      justification:
+        weight: 0.20
+        question: |
+          Does each entry say what must be verified for that provider config, not just name
+          it?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the map mark anything still open for the implementer to confirm?

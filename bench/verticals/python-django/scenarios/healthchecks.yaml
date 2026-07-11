@@ -1,0 +1,244 @@
+name: Healthchecks work session - audit every notification delivery method that implements the base transport contract before reworking it
+repo: healthchecks
+# Single-prompt session bench (run via bench/drivers/runs-variance.sh or bench-sense-local.sh):
+# all steps are presented in ONE prompt and worked in order, so context
+# accumulates the way a real work session does. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL: it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# CHANGE-IMPACT ticket on Healthchecks' base notification-delivery contract
+# (Transport, hc/api/transports.py): the abstract base class that defines how a
+# check-state change is delivered to a configured notification channel - the notify()
+# entry point plus the shared helper methods (down_checks / last_ping / get_ping_body /
+# tmpl / is_noop) every concrete delivery method builds on. A maintainer reworking that
+# base contract must audit every concrete delivery implementation affected.
+#
+# The implementations are SCATTERED: each lives in its own per-integration package
+# (hc/integrations/<name>/transport.py), reached from a channel only through a STRING
+# dotted-path registry (Channel.transport resolves channel.kind -> a dotted class path
+# and imports it lazily), so there is no literal import edge from the dispatch site to
+# any implementation. Several are reached through an INTERMEDIATE base (Slackalike ->
+# HttpTransport -> Transport), so their class line never contains the word "Transport"
+# (a `grep "class .*Transport"` misses Discord / Mattermost / Slack), and several
+# override a helper (payload / prepare) rather than notify() itself, so the contract
+# touch-point differs implementation to implementation. A single `sense_blast Transport`
+# returns the whole implementation set in one call; reconstructing it by hand means
+# listing every integration package, reading the base and its intermediate subclasses to
+# know which helper each overrides, and resolving the string registry that maps a
+# channel kind to its implementation.
+description: 'You are a maintainer about to rework the base contract that every
+  notification delivery method in this app is built on: the abstract class that turns a
+  check''s state change into an actual delivered alert (email, chat message, SMS, push,
+  webhook, and so on), including the entry point each delivery method implements and the
+  shared helpers they all call. You are changing that base contract (the method each
+  concrete delivery overrides and the helpers it relies on), so before touching it you
+  need a complete audit of every concrete delivery method affected, wherever in the
+  codebase it lives, even the ones that reach the base only through an intermediate class
+  and never name it directly, and even the ones that override a helper rather than the
+  main entry point. Miss one and that delivery method silently breaks against the new
+  base contract. Work through the tasks below one at a time; each builds on what you
+  learned in the previous one. Keep every answer concrete with file:line so the next step
+  (and a teammate opening the PR) can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized into apps/packages, and where does the base
+    notification-delivery contract you are about to rework sit, the abstract class that
+    turns a check's state change into a delivered alert? Hand the next agent a map so
+    they can act with small, targeted lookups, not a fresh exploration of the codebase.
+    No Explore agents.
+    "
+  checks:
+  - type: word
+    value: notification
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the base transport contract and what it is built on
+  prompt: "Task: map the contract you are about to change. What is the entry point every
+    concrete delivery method must implement, what shared helpers does the base provide
+    that those implementations call, and what does a teammate need to know about that
+    contract before changing it? Give file:line for the base class, its entry point, and
+    the key helpers.
+    "
+  checks:
+  - type: contains
+    value: hc/api/transports.py
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Enumerate every concrete delivery method built on the base contract
+  prompt: "Task: list every concrete notification-delivery implementation that is built
+    on this base contract. Across the WHOLE codebase, give ONE implementation per line
+    with its file:line, and nothing else on that line: do not group, rank, or explain how
+    each reaches the base yet (later steps do that) - the only job here is a complete,
+    flat list. Where one file holds several, list every one separately rather than
+    collapsing them into a summary like 'the various channels'. Completeness is the whole
+    point of this step: a missed implementation is a delivery method that silently breaks
+    against the new base contract, so include every one you surfaced from your lookups,
+    even a minor one or one that reaches the base only through an intermediate class.
+    "
+  checks:
+  - type: contains
+    value: hc/integrations/discord/transport.py
+    required: false
+  - type: contains
+    value: hc/integrations/webhook/transport.py
+    required: false
+  - type: contains
+    value: hc/integrations/msteamsw/transport.py
+    required: false
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Group the implementations by how they reach the base
+  prompt: "Task: organize the implementations you found by how they connect to the base
+    contract. For each group, name the implementations and the package each lives in,
+    with file:line, and note whether it extends the base directly, reaches it through an
+    intermediate class, and whether it overrides the main entry point or a shared helper.
+    The point is to see which parts of the notification code reworking the base contract
+    actually reaches.
+    "
+  checks:
+  - type: word
+    value: intermediate
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: assess the impact. If you change the base entry point and the shared
+    helpers, which implementations break loudest? For each, state what it delivers and
+    how it depends on the base (which method it overrides, which helpers it calls,
+    whether it reaches the base through an intermediate), and rank by risk. A missed
+    high-risk implementation is one that silently stops delivering a whole class of alerts
+    in production.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Surface the non-obvious implementations
+  prompt: "Task: call out the implementations a quick text search would most likely miss:
+    the ones whose class line never contains the base's name because they reach it
+    through an intermediate class, the ones that override a shared helper rather than the
+    main entry point, and the ones reached only through the string registry that maps a
+    channel to its implementation. Give file:line, name the intermediate or helper
+    involved, and explain why each is easy to overlook.
+    "
+  checks:
+  - type: contains
+    value: hc/integrations/mattermost/transport.py
+    required: false
+  - type: contains
+    value: hc/integrations/slack/transport.py
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: hand off a single audit map a teammate could act on. List every concrete
+    delivery implementation grouped by how it reaches the base, with file:line, which
+    method it overrides or which helper it relies on, and what must be checked when the
+    base contract changes. Carry over every implementation you found in the earlier steps,
+    including the minor ones and the ones reached through an intermediate; dropping one
+    here is the same as never finding it. Use file:line throughout so the PR can be landed
+    without re-exploring the codebase.
+    "
+  checks:
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+
+# ----------------------------------------------------------------------------
+# contract_symbol drives the Loop-A resolution oracle (bench/lib/resolve_oracle.py via
+# loopA-scan.sh preflight): it verifies, for $0, that sense blast actually retrieves the
+# implementation fan-out BEFORE a paid sweep. Transport is the abstract base class (one
+# definition, hc/api/transports.py); its subclasses scatter across hc/integrations/*/.
+contract_symbol: Transport
+contract_file: hc/api/transports.py
+
+# Gold targets. Each carries `relation`: the TRUE way it depends on the base Transport
+# contract, verified from healthchecks source at the pinned SHA via `sense blast
+# Transport` (all present in the default blast implementation set). It is NEVER rendered
+# to the agent (only name/prompt are). Every match path is a UNIQUE full
+# hc/integrations/<name>/transport.py path.
+#
+# The discriminator is the `dependents` group: the scattered concrete delivery
+# implementations, each in its own per-integration package, reached from a channel only
+# through the Channel.transport string dotted-path registry (no literal import edge).
+# Several reach the base through an INTERMEDIATE (Slackalike -> HttpTransport -> Transport)
+# so their class line never contains "Transport", and several override a helper
+# (payload / prepare) rather than notify(). A single `sense_blast Transport` returns the
+# whole set in one call; a hand audit must list every integration package, read the base
+# and its intermediates to know which helper each overrides, and resolve the string
+# registry. The `context` group holds the grep-trivial dispatch glue: the Channel model's
+# transport property + registry (Channel.transport / TRANSPORTS) that maps a channel kind
+# to its implementation and calls notify(); both arms cite these, they do not separate
+# the arms.
+gold:
+  # the contract under change (the abstract base delivery contract)
+  - {id: transport-base, group: contract, match: [hc/api/transports.py], relation: "Transport, the abstract base class every notification-delivery method implements (the notify(flip, notification) entry point plus the shared helpers down_checks / last_ping / get_ping_body / tmpl / is_noop); its base contract is being reworked"}
+  # grep-trivial dispatch glue (Channel.transport string registry + notify) — the non-discriminating context
+  - {id: ctx:registry-dispatch, group: context, match: [hc/api/models.py], relation: "Channel.transport resolves channel.kind through the TRANSPORTS string dotted-path registry to the implementation class and Channel.notify calls transport.notify(); the dispatch glue, grep-visible in the models god-file both arms read"}
+  # scattered concrete delivery implementations, each in its own package, reached via the
+  # string registry; some via the Slackalike intermediate (class line lacks "Transport"),
+  # some overriding a helper rather than notify() — THE DISCRIMINATOR (all present in the
+  # default sense_blast Transport implementation set; each path unique)
+  - {id: dep:discord,    group: dependents, match: [hc/integrations/discord/transport.py],    relation: "class Discord(Slackalike) -> HttpTransport -> Transport: reaches the base through an intermediate, so its class line never names Transport; overrides notify()"}
+  - {id: dep:mattermost, group: dependents, match: [hc/integrations/mattermost/transport.py], relation: "class Mattermost(Slackalike) -> HttpTransport -> Transport: reaches the base through an intermediate, class line lacks Transport; overrides notify()"}
+  - {id: dep:slack,      group: dependents, match: [hc/integrations/slack/transport.py],       relation: "class Slack(Slackalike) -> HttpTransport -> Transport: reaches the base through an intermediate; Slackalike here also defines the shared payload() helper Discord/Mattermost inherit"}
+  - {id: dep:webhook,    group: dependents, match: [hc/integrations/webhook/transport.py],     relation: "class Webhook(HttpTransport): overrides is_noop() (the only implementation that does) and a prepare() helper as well as notify(); a base-helper change hits it differently"}
+  - {id: dep:msteamsw,   group: dependents, match: [hc/integrations/msteamsw/transport.py],    relation: "class MsTeamsWorkflow(HttpTransport): overrides a payload() helper in addition to notify(); reached only via the msteamsw registry key"}
+  - {id: dep:rocketchat, group: dependents, match: [hc/integrations/rocketchat/transport.py],  relation: "class RocketChat(HttpTransport): overrides a payload() helper in addition to notify()"}
+  - {id: dep:email,      group: dependents, match: [hc/integrations/email/transport.py],       relation: "class Email(Transport): extends the base directly; overrides notify() to send an email via SMTP"}
+  - {id: dep:signal,     group: dependents, match: [hc/integrations/signal/transport.py],      relation: "class Signal(Transport): extends the base directly; overrides notify() with a rate-limit-aware Signal delivery"}
+  - {id: dep:pd,         group: dependents, match: [hc/integrations/pd/transport.py],          relation: "class PagerDuty(HttpTransport): overrides notify(); reached via the 'pd' registry key, not a name a grep for the integration would guess"}
+  - {id: dep:opsgenie,   group: dependents, match: [hc/integrations/opsgenie/transport.py],    relation: "class Opsgenie(HttpTransport): overrides notify() to post an incident to Opsgenie"}
+  - {id: dep:telegram,   group: dependents, match: [hc/integrations/telegram/transport.py],    relation: "class Telegram(HttpTransport): overrides notify() to send a Telegram message"}
+  - {id: dep:sms,        group: dependents, match: [hc/integrations/sms/transport.py],         relation: "class Sms(HttpTransport): overrides notify() to send an SMS via Twilio"}
+  - {id: dep:whatsapp,   group: dependents, match: [hc/integrations/whatsapp/transport.py],    relation: "class WhatsApp(HttpTransport): overrides notify() to send a WhatsApp message"}
+  - {id: dep:matrix,     group: dependents, match: [hc/integrations/matrix/transport.py],      relation: "class Matrix(HttpTransport): overrides notify() to post to a Matrix room"}
+  - {id: dep:ntfy,       group: dependents, match: [hc/integrations/ntfy/transport.py],        relation: "class Ntfy(HttpTransport): overrides notify() to publish to an ntfy topic"}
+  - {id: dep:gotify,     group: dependents, match: [hc/integrations/gotify/transport.py],      relation: "class Gotify(HttpTransport): overrides notify() to post to a Gotify server"}
+  - {id: dep:zulip,      group: dependents, match: [hc/integrations/zulip/transport.py],       relation: "class Zulip(HttpTransport): overrides notify() to post a Zulip message"}
+  - {id: dep:pushover,   group: dependents, match: [hc/integrations/po/transport.py],          relation: "class Pushover(HttpTransport): overrides notify(); reached via the 'po' registry key, another non-obvious kind->implementation mapping"}

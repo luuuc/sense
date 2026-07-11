@@ -1,0 +1,267 @@
+name: Sentry work session - audit every production subsystem that depends on the core issue model before reworking its contract
+repo: sentry
+# Single-prompt session bench (run via bench/drivers/runs-variance.sh or bench-sense-local.sh):
+# all steps are presented in ONE prompt and worked in order, so context
+# accumulates the way a real work session does. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL: it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# CHANGE-IMPACT ticket on Sentry's core issue model (Group, src/sentry/models/group.py):
+# the deduplicated-issue aggregate every product surface hangs off. A maintainer
+# restructuring the model's contract (fields moving to satellite models, how other
+# code holds and passes issue references) must audit every production subsystem
+# that depends on that contract before touching it.
+#
+# The seam is the CHATWOOT SHAPE, first time tried on this repo (the two prior
+# benched sentry scenarios were small named-chain sets — see sentry.*.bak): a
+# maximally NOISY token ("Group" appears in 380 prod files and collides with
+# grouping/GroupBy/nested Group enums) whose covering grep
+# (`from sentry.models.group import`) returns a 269-file haystack a baseline
+# cannot read whole, in a monorepo far past readable. The discriminator gold is
+# 11 heterogeneous, scattered, NON-OBVIOUS production dependents that hold a
+# Group reference as part of their own contract (dataclass/TypedDict fields,
+# notification/rule/workflow context objects, sentry-app request builders, the
+# AI-triage result), across 7 disjoint subsystems, with NO ≤3-grep-pattern cover;
+# three of them import Group only under `if TYPE_CHECKING:` so a naive
+# import-walker misses them. All 11 are present in the agent-facing budgeted
+# `sense_blast Group --file src/sentry/models/group.py` output at BOTH the
+# implicit default AND min_confidence 0.7 (verified over MCP stdio 2026-07-04;
+# they ride annotation-composes edges at 0.9). The famous/greppable deps
+# (serializer, REST endpoint, event_manager ingestion, Slack builder, satellite
+# model) are parked in `context` so pergroup isolates the real gap.
+description: 'You are a maintainer about to restructure the contract of the core
+  issue model: the model that represents one deduplicated problem in a project, the
+  thing users triage, assign, resolve, and get notified about. Several of its fields
+  are moving into satellite models and the way other code is expected to hold and
+  pass references to an issue is changing. Before touching it you need a complete
+  audit of every production subsystem that depends on the issue model''s contract:
+  not only the obvious API layer, but every piece of production code anywhere in
+  the codebase that keeps an issue reference inside its own data structures or
+  passes one across its own boundaries, wherever it lives, even when nothing about
+  its name or location suggests it. Miss one and that subsystem breaks silently
+  when the contract changes. Work through the tasks below one at a time; each
+  builds on what you learned in the previous one. Keep every answer concrete with
+  file:line so the next step (and a teammate opening the PR) can act without
+  re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized into apps/packages, and where does the core
+    issue model you are about to rework live, the model that represents one
+    deduplicated problem users triage, assign, and resolve? Hand the next agent a
+    map so they can act with small, targeted lookups, not a fresh exploration of
+    the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: issue
+    required: false
+  - type: word
+    value: Sentry
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the issue model contract
+  prompt: "Task: map the contract you are about to change. What does the issue
+    model consist of (its key fields and relationships), and what does a teammate
+    need to know about how other code holds and passes references to it before
+    restructuring it? Give file:line for the model and the key pieces of its
+    contract.
+    "
+  checks:
+  - type: contains
+    value: src/sentry/models/group.py
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Enumerate every production dependent of the issue model
+  prompt: "Task: list every production code path that depends on the issue model's
+    contract. Across the WHOLE codebase, list every piece of production code that
+    holds an issue reference inside its own data structures, passes one across its
+    own boundaries, or otherwise depends on the model's contract, wherever it
+    lives. Give ONE dependent per line with its file:line, and nothing else on
+    that line: do not group, rank, or explain how each depends on the model yet
+    (later steps do that) - the only job here is a complete, flat list. Where one
+    file holds several, list every one separately rather than collapsing them into
+    a summary like 'the various serializers'. Completeness is the whole point of
+    this step: a missed dependent is a subsystem that breaks silently when the
+    contract changes, so include every one you surfaced from your lookups, even a
+    minor or unexpected one.
+    "
+  checks:
+  - type: contains
+    value: src/sentry/sentry_apps/external_requests/issue_link_requester.py
+    required: false
+  - type: contains
+    value: src/sentry/tasks/seer/night_shift/models.py
+    required: false
+  - type: contains
+    value: src/sentry/digests/utils.py
+    required: false
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Group the dependents by subsystem
+  prompt: "Task: organize the dependents you found into the subsystems they live
+    in. For each subsystem, name the code involved and the package it lives in,
+    with file:line, and note how it depends on the issue model (it stores a
+    reference in its own structures, it passes one through its API, it reads
+    specific fields). The point is to see which parts of the product restructuring
+    the issue model actually reaches.
+    "
+  checks:
+  - type: word
+    value: notifications
+    required: false
+  - type: word
+    value: workflow
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: assess the impact. If you restructure the issue model's contract,
+    which dependents break loudest? For each, state what product flow drives it
+    and how tightly it is coupled to the model (it embeds an issue reference in
+    its own contract, or only reads it transiently), and rank by risk. A missed
+    high-risk dependent is a subsystem that silently breaks for a whole class of
+    users in production.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Surface the non-obvious dependents
+  prompt: "Task: call out the dependents a quick text search would most likely
+    miss: the ones that live far from the model in an unexpected subsystem, hold
+    an issue reference inside their own data structures without doing anything
+    that looks like issue management, or reference the model in a way plain text
+    search does not surface. Give file:line and explain why each is easy to
+    overlook.
+    "
+  checks:
+  - type: contains
+    value: src/sentry/services/eventstore/models.py
+    required: false
+  - type: contains
+    value: src/sentry/rules/history/base.py
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: hand off a single audit map a teammate could act on. List every
+    dependent grouped by subsystem, with file:line, how it depends on the issue
+    model, and what must be checked when the contract changes. Carry over every
+    dependent you found in the earlier steps, including the minor or
+    unexpected-subsystem ones; dropping one here is the same as never finding it.
+    Use file:line throughout so the PR can be landed without re-exploring the
+    codebase.
+    "
+  checks:
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+
+# ----------------------------------------------------------------------------
+# contract_symbol drives the Loop-A resolution oracle (bench/lib/resolve_oracle.py
+# via loopA-scan.sh preflight). Group is the issue model
+# (src/sentry/models/group.py); the NAME collides hard across the monorepo
+# (nested `class Group(StrEnum)` enums in workflow_engine/types.py, GroupBy
+# helpers, grouping/*), so contract_file disambiguates to the model.
+contract_symbol: Group
+contract_file: src/sentry/models/group.py
+
+# Gold targets. Each carries `relation`: the TRUE way it depends on the issue
+# model, verified from sentry source at the pinned SHA (7f129bb1) and against the
+# agent-facing budgeted `sense_blast Group --file src/sentry/models/group.py`
+# over MCP stdio (2026-07-04): every `dependents` entry is PRESENT in the shown
+# output at BOTH the implicit default AND min_confidence 0.7 (annotation-composes
+# edges, 0.9). It is NEVER rendered to the agent (only name/prompt are). Every
+# match path is a UNIQUE full src/sentry/... path.
+#
+# The discriminator is the `dependents` group: 11 heterogeneous production
+# dependents across 7 disjoint subsystems that hold a Group reference as part of
+# their OWN contract (dataclass/TypedDict/attrs fields, context objects, request
+# builders) and never look like issue-management code. The covering grep
+# (`from sentry.models.group import`) returns 269 production files — a haystack,
+# not a cover — and three of the 11 (notifications/base, rules/history/base,
+# services/eventstore/models) import Group only under `if TYPE_CHECKING:`, so an
+# import-sweep that skips type-only blocks misses them. There is no ≤3-pattern
+# grep family that reconstructs this set; a hand audit must triage 269 importers
+# by salience under session load. The `context` group holds the famous,
+# grep-trivial deps both arms get (serializer, REST endpoint, event_manager
+# ingestion result, Slack message builder, satellite open-period model).
+gold:
+  # the contract under change (the core issue model)
+  - {id: issue-model, group: contract, match: [src/sentry/models/group.py], relation: "Group, the deduplicated-issue aggregate (status/substatus lifecycle, project FK, message/culprit); its field layout and reference-passing contract is being restructured"}
+  # grep-trivial / famous deps (found by any baseline: the obvious API layer and
+  # ingestion path) — the non-discriminating context
+  - {id: ctx:serializer,     group: context, match: [src/sentry/api/serializers/models/group.py],            relation: "GroupSerializer, the canonical API serialization of a Group; the obvious API-layer dependent"}
+  - {id: ctx:rest-details,   group: context, match: [src/sentry/issues/endpoints/group_details.py],          relation: "GroupDetailsEndpoint, the single-issue REST surface; obvious endpoint-layer dependent"}
+  - {id: ctx:event-manager,  group: context, match: [src/sentry/event_manager.py],                           relation: "GroupInfo (event_manager.py:179) carries `group: Group` out of the ingestion pipeline; famous, heavily-documented path both arms reach"}
+  - {id: ctx:slack-builder,  group: context, match: [src/sentry/integrations/slack/message_builder/issues.py], relation: "Slack issue-message builder renders a Group into chat blocks; reached by any grep of the integrations layer"}
+  - {id: ctx:open-period,    group: context, match: [src/sentry/models/groupopenperiod.py],                  relation: "GroupOpenPeriod satellite model colocated in models/; trivially found next to the contract"}
+  # contract-embedding deps the PAIRED Opus 4.8 baseline cited 2/2 (run-1 + run-2,
+  # 2026-07-04) — demoted to context by the per-dep diagnostic ($0 gold-retarget,
+  # craft step 9: baseline-always-finds = non-discriminating). Pre-retarget gold
+  # (all 11 as dependents) preserved in sentry.gold-preretarget-11dep.bak.
+  - {id: ctx:digest-context,    group: context, match: [src/sentry/digests/utils.py],                                  relation: "_DigestContext TypedDict (digests/utils.py:56) keys the email-digest pipeline on `group: Group` and `Counter[Group]`; baseline's `group: Group` grep surfaced it in every run"}
+  - {id: ctx:notif-base,        group: context, match: [src/sentry/notifications/notifications/base.py],               relation: "BaseNotification (base.py:56) holds `group: Group` as the anchor of every notification's analytics/context; TYPE_CHECKING-only import, but the paired baseline reached it 2/2 (dropped only in the run-0 dry-run)"}
+  - {id: ctx:notif-strategy,    group: context, match: [src/sentry/notifications/platform/strategies/issue_owners.py], relation: "IssueOwnersActivityAlertStrategy (issue_owners.py:20) resolves notification targets from `group: Group` (issue_owners.py:27); paired baseline reached it 2/2 (dropped only in the run-0 dry-run)"}
+  - {id: ctx:group-event,       group: context, match: [src/sentry/services/eventstore/models.py],                     relation: "GroupEvent (models.py:59) wraps every stored event with `group: Group | None`; TYPE_CHECKING-only import, but famous enough that the baseline reached it in every run"}
+  - {id: ctx:seer-triage,       group: context, match: [src/sentry/tasks/seer/night_shift/models.py],                  relation: "TriageResult (models.py:28) anchors the AI night-shift auto-triage on `group: Group`; small dedicated file, the baseline's grep hit is salient — found in every run"}
+  - {id: ctx:workflow-types,    group: context, match: [src/sentry/workflow_engine/types.py],                          relation: "WorkflowEventData (types.py:109) threads `group: Group` through every workflow-engine evaluation; found by the baseline in every run despite the nested Group enums"}
+  # THE DISCRIMINATOR: the 5 contract-embedding deps a real Opus 4.8 baseline
+  # DROPPED in at least one of the two paired runs (sentryapp-link 3/3 across all
+  # baseline sessions incl. the dry-run; the others 2/3) while the sense arm cited
+  # all 5 in every run. All 5 present in the budgeted sense_blast at implicit
+  # default AND min_confidence 0.7.
+  - {id: dep:rule-history,      group: dependents, match: [src/sentry/rules/history/base.py],                                               relation: "RuleGroupHistory (base.py:17) records alert-rule fire history keyed on `group: Group`; imports Group only under `if TYPE_CHECKING:` (base.py:12)"}
+  - {id: dep:sentryapp-create,  group: dependents, match: [src/sentry/sentry_apps/external_issues/external_issue_creator.py],               relation: "ExternalIssueCreator (external_issue_creator.py:18) embeds `group: Group` in the sentry-app external-issue creation contract"}
+  - {id: dep:sentryapp-link,    group: dependents, match: [src/sentry/sentry_apps/external_issues/issue_link_creator.py],                   relation: "IssueLinkCreator (issue_link_creator.py:23) passes `group: Group` through the sentry-app issue-link flow; missed by the baseline in ALL THREE sessions"}
+  - {id: dep:sentryapp-request, group: dependents, match: [src/sentry/sentry_apps/external_requests/issue_link_requester.py],               relation: "IssueLinkRequester (issue_link_requester.py:77) serializes `group: Group` into the outbound webhook payload to a third-party sentry-app"}
+  - {id: dep:workflow-history,  group: dependents, match: [src/sentry/workflow_engine/endpoints/serializers/workflow_group_history_serializer.py], relation: "WorkflowGroupHistory (workflow_group_history_serializer.py:18) carries `group: Group` through the workflow-engine fire-history API"}

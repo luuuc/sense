@@ -1,0 +1,254 @@
+name: LiteLLM work session - audit every provider config affected before reworking the base chat-transformation contract
+repo: litellm
+# Single-prompt session bench (run via bench/drivers/runs-variance.sh or bench-sense-local.sh):
+# all steps are presented in ONE prompt and worked in order, so context
+# accumulates the way a real work session does. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL: it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# CHANGE-IMPACT ticket on LiteLLM's base chat-transformation contract (BaseConfig,
+# litellm/llms/base_llm/chat/transformation.py): the ABC every provider's chat
+# request/response transformation inherits from (transform_request, transform_response,
+# map_openai_params, validate_environment, get_supported_openai_params, get_error_class).
+# A maintainer reworking one of those method signatures must audit every provider config
+# affected before touching it.
+#
+# The seam is a TRANSITIVE, BRANCHING inheritance fan-out. Many provider configs extend
+# BaseConfig DIRECTLY and name it (grep BaseConfig finds them = context). But the largest
+# share extend it INDIRECTLY through an intermediate base - OpenAIGPTConfig (44 children)
+# or OpenAILikeChatConfig (17 children) - and their files NEVER contain the string
+# `BaseConfig` (verified: 0 textual refs each). So a `grep BaseConfig` misses all of them;
+# reconstructing the complete affected set by hand means grepping BaseConfig, spotting
+# which of its direct subclasses are THEMSELVES bases (the intermediates), grepping each
+# intermediate's name, and recursing - across ~15 distinct intermediate families and 100+
+# provider dirs - without dropping a branch under session load. A single directed
+# `sense_graph <intermediate> --direction callers` (inherited_by, the PR #178 split)
+# returns each intermediate's transitive children in one call, and `sense_blast BaseConfig`
+# reports the full transitive total.
+# NOTE: the Tier-0 loopA oracle UNDER-reports this scenario - the default `sense_blast
+# BaseConfig` is budget-trimmed (34 of 609) and returns mostly the direct namers, so the
+# transitive discriminator is retrieved via `sense_graph OpenAIGPTConfig/OpenAILikeChatConfig
+# --direction callers` (verified present: all 16 discriminator configs appear in those two
+# inherited_by lists at the pinned SHA), NOT the contract's default blast.
+# HONESTY: this is a well-organized repo (per-provider dirs, explicit imports); the ONLY
+# grep-hostility is the multi-intermediate transitive DEPTH. This is the same 2-hop-through-
+# named-intermediate shape as sentry.yaml, benched here to settle whether a frontier baseline
+# assembles the branching transitive closure COMPLETELY under load, or drops intermediates.
+description: 'You are a maintainer about to rework the base configuration class that
+  every provider''s chat request and response transformation inherits from in this LLM
+  gateway: the abstract base that defines how an OpenAI-style request is turned into each
+  provider''s native request and how the provider''s native response is turned back. You
+  are changing the signature of one of its core transformation methods, so before touching
+  it you need a complete audit of every provider configuration affected: not only the
+  provider configs that extend that base directly and name it, but every one that inherits
+  the contract INDIRECTLY through an intermediate base and so never mentions the base class
+  at all, wherever in the codebase it lives. Miss one and that provider silently keeps the
+  old transformation behaviour and breaks at runtime when the contract changes. Work through
+  the tasks below one at a time; each builds on what you learned in the previous one. Keep
+  every answer concrete with file:line so the next step (and a teammate opening the PR) can
+  act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the provider-integration code organized, and where does the base
+    configuration class you are about to rework sit, the one every provider's chat
+    request/response transformation inherits from? Hand the next agent a map so they can
+    act with small, targeted lookups, not a fresh exploration of the codebase. No Explore
+    agents.
+    "
+  checks:
+  - type: word
+    value: provider
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the base transformation contract and what it defines
+  prompt: "Task: map the contract of the base class you are about to change. What are the
+    core transformation methods it defines, what does a provider config have to implement
+    or inherit, and what does a teammate need to know about that contract before changing
+    one of the method signatures? Give file:line for the base class and the key methods it
+    declares.
+    "
+  checks:
+  - type: contains
+    value: litellm/llms/base_llm/chat/transformation.py
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Enumerate every provider config affected by the contract change
+  prompt: "Task: list every provider configuration that would be affected if you change one
+    of the base class's transformation method signatures. Across the WHOLE codebase, list
+    BOTH the provider configs that extend the base directly AND every one that inherits the
+    contract indirectly through an intermediate base, wherever it lives. Give ONE provider
+    config per line with its file:line, and nothing else on that line: do not group, rank,
+    or explain how each inherits yet (later steps do that) - the only job here is a
+    complete, flat list. Where one file holds several, list every one separately rather than
+    collapsing them into a summary like 'the OpenAI-compatible providers'. Completeness is
+    the whole point of this step: a missed provider config is one that silently keeps the
+    old transformation behaviour and breaks when the contract changes, so include every one
+    you surfaced from your lookups, even a minor or deeply-nested one.
+    "
+  checks:
+  - type: contains
+    value: litellm/llms/deepinfra/chat/transformation.py
+    required: false
+  - type: contains
+    value: litellm/llms/groq/chat/transformation.py
+    required: false
+  - type: contains
+    value: litellm/llms/databricks/chat/transformation.py
+    required: false
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Group the affected provider configs by how they inherit
+  prompt: "Task: organize the provider configs you found by how they inherit the contract.
+    For each group, name the base or intermediate they extend and the provider configs that
+    reach the contract through it, with file:line, and note whether each extends the base
+    directly or through an intermediate. The point is to see which parts of the provider
+    ecosystem reworking the base contract actually reaches.
+    "
+  checks:
+  - type: word
+    value: intermediate
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: assess the impact. If you change the base class's transformation method
+    signature, which provider configs break, and how does the breakage differ between the
+    ones that override the method themselves and the ones that inherit it unchanged? For
+    each affected provider config, state how it reaches the contract (extends the base
+    directly, or through which intermediate) and rank by risk. A missed high-traffic
+    provider is the one that silently keeps the old behaviour in production.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Surface the non-obvious affected provider configs
+  prompt: "Task: call out the provider configs a quick text search for the base class name
+    would most likely miss: the ones that never name the base class because they inherit the
+    contract through an intermediate base, that a maintainer grepping the base class name and
+    tracing subclasses by hand would drop after the first hop. Give file:line, name the
+    intermediate base they inherit through, and explain why each is easy to overlook.
+    "
+  checks:
+  - type: contains
+    value: litellm/llms/xai/chat/transformation.py
+    required: false
+  - type: contains
+    value: litellm/llms/nebius/chat/transformation.py
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: hand off a single audit map a teammate could act on. List every affected
+    provider config grouped by how it inherits, with file:line, whether it extends the base
+    directly or through which intermediate, and what must be checked when the method
+    signature changes. Carry over every provider config you found in the earlier steps,
+    including the minor or deeply-nested ones reached through an intermediate; dropping one
+    here is the same as never finding it. Use file:line throughout so the PR can be landed
+    without re-exploring the codebase.
+    "
+  checks:
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+
+# ----------------------------------------------------------------------------
+# contract_symbol drives the Loop-A resolution oracle (bench/lib/resolve_oracle.py
+# via loopA-scan.sh preflight). BaseConfig is the base chat-transformation ABC (one
+# definition, litellm/llms/base_llm/chat/transformation.py). NOTE: the oracle checks
+# the DEFAULT blast + graph depth-1 of contract_symbol, which is budget-trimmed and
+# returns mostly direct namers; the transitive discriminator is retrieved via
+# sense_graph on the two intermediate bases (OpenAIGPTConfig / OpenAILikeChatConfig),
+# verified manually at the pinned SHA - so the oracle UNDER-reports (as with sentry.yaml).
+contract_symbol: BaseConfig
+contract_file: litellm/llms/base_llm/chat/transformation.py
+
+# Gold targets. Each carries `relation`: the TRUE way it reaches the base contract,
+# verified from litellm source at the pinned SHA via `sense_graph <intermediate>
+# --direction callers` (inherited_by). It is NEVER rendered to the agent (only name/prompt
+# are). Every match path is a UNIQUE full litellm/llms/... path (basenames like
+# transformation.py / chat.py collide across ~100 provider dirs).
+#
+# The discriminator is the `dependents` group: provider configs that inherit the base
+# contract TRANSITIVELY through an intermediate base (OpenAIGPTConfig or OpenAILikeChatConfig)
+# and NEVER name BaseConfig (verified: each file has 0 textual references to `BaseConfig`), so
+# a `grep BaseConfig` cannot reach them and a hand audit must spot each intermediate among
+# BaseConfig's direct subclasses, grep the intermediate's name, and recurse without dropping
+# a branch. A directed `sense_graph <intermediate> --direction callers` returns each
+# intermediate's transitive children in one call. The `context` group holds the grep-trivial
+# direct subclasses (they name BaseConfig, so one `grep BaseConfig` finds them) plus the key
+# intermediate itself; both arms cite these, they do not separate the arms.
+gold:
+  # the contract under change (the base chat-transformation ABC)
+  - {id: contract, group: contract, match: [litellm/llms/base_llm/chat/transformation.py], relation: "BaseConfig, the abstract base every provider chat request/response transformation inherits from; one of its core transformation method signatures (transform_request / transform_response / map_openai_params) is being reworked"}
+  # grep-trivial direct subclasses + the key intermediate (found by grep BaseConfig) - non-discriminating context
+  - {id: ctx:openai-gpt,    group: context, match: [litellm/llms/openai/chat/gpt_transformation.py],       relation: "OpenAIGPTConfig extends BaseConfig directly and names it; it is ALSO the largest intermediate base (44 provider configs extend it) - grep-visible from the base name"}
+  - {id: ctx:anthropic,     group: context, match: [litellm/llms/anthropic/chat/transformation.py],        relation: "AnthropicConfig extends BaseConfig directly and names it; grep-visible from the base name"}
+  - {id: ctx:bedrock,       group: context, match: [litellm/llms/bedrock/chat/converse_transformation.py], relation: "AmazonConverseConfig extends BaseConfig directly and names it; grep-visible from the base name"}
+  - {id: ctx:cohere,        group: context, match: [litellm/llms/cohere/chat/transformation.py],           relation: "CohereChatConfig extends BaseConfig directly and names it; grep-visible from the base name"}
+  - {id: ctx:azure,         group: context, match: [litellm/llms/azure/chat/gpt_transformation.py],        relation: "AzureOpenAIConfig extends BaseConfig directly and names it; grep-visible from the base name"}
+  - {id: ctx:vertex-gemini, group: context, match: [litellm/llms/vertex_ai/gemini/vertex_and_google_ai_studio_gemini.py], relation: "VertexGeminiConfig extends BaseConfig directly and names it; grep-visible from the base name"}
+  # scattered TRANSITIVE configs (inherit via OpenAIGPTConfig / OpenAILikeChatConfig; never
+  # name BaseConfig; each FILE has 0 textual references to BaseConfig; all present in the two
+  # intermediates' inherited_by lists) - THE DISCRIMINATOR
+  - {id: dep:deepinfra,   group: dependents, match: [litellm/llms/deepinfra/chat/transformation.py],   relation: "DeepInfraConfig(OpenAIGPTConfig): inherits the base contract transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:deepseek,    group: dependents, match: [litellm/llms/deepseek/chat/transformation.py],    relation: "DeepSeekChatConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:nebius,      group: dependents, match: [litellm/llms/nebius/chat/transformation.py],      relation: "NebiusConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:xai,         group: dependents, match: [litellm/llms/xai/chat/transformation.py],         relation: "XAIChatConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:perplexity,  group: dependents, match: [litellm/llms/perplexity/chat/transformation.py],  relation: "PerplexityChatConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:mistral,     group: dependents, match: [litellm/llms/mistral/chat/transformation.py],     relation: "MistralConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:moonshot,    group: dependents, match: [litellm/llms/moonshot/chat/transformation.py],    relation: "MoonshotChatConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:nvidia-nim,  group: dependents, match: [litellm/llms/nvidia_nim/chat/transformation.py],  relation: "NvidiaNimConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:openrouter,  group: dependents, match: [litellm/llms/openrouter/chat/transformation.py],  relation: "OpenrouterConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:cerebras,    group: dependents, match: [litellm/llms/cerebras/chat.py],                   relation: "CerebrasConfig(OpenAIGPTConfig): inherits transitively through OpenAIGPTConfig; 0 references to BaseConfig"}
+  - {id: dep:groq,        group: dependents, match: [litellm/llms/groq/chat/transformation.py],        relation: "GroqChatConfig(OpenAILikeChatConfig): inherits transitively through OpenAILikeChatConfig (itself via OpenAIGPTConfig); 0 references to BaseConfig"}
+  - {id: dep:databricks,  group: dependents, match: [litellm/llms/databricks/chat/transformation.py],  relation: "DatabricksConfig(DatabricksBase, OpenAILikeChatConfig, AnthropicConfig): inherits transitively through OpenAILikeChatConfig (a multiple-inheritance diamond); 0 references to BaseConfig"}
+  - {id: dep:github,      group: dependents, match: [litellm/llms/github/chat/transformation.py],      relation: "GithubChatConfig(OpenAILikeChatConfig): inherits transitively through OpenAILikeChatConfig; 0 references to BaseConfig"}
+  - {id: dep:friendliai,  group: dependents, match: [litellm/llms/friendliai/chat/transformation.py],  relation: "FriendliaiChatConfig(OpenAILikeChatConfig): inherits transitively through OpenAILikeChatConfig; 0 references to BaseConfig"}
+  - {id: dep:volcengine,  group: dependents, match: [litellm/llms/volcengine/chat/transformation.py],  relation: "VolcEngineChatConfig(OpenAILikeChatConfig): inherits transitively through OpenAILikeChatConfig; 0 references to BaseConfig"}
+  - {id: dep:datarobot,   group: dependents, match: [litellm/llms/datarobot/chat/transformation.py],   relation: "DataRobotConfig(OpenAILikeChatConfig): inherits transitively through OpenAILikeChatConfig; 0 references to BaseConfig"}

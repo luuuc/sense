@@ -1,0 +1,238 @@
+# Per-scenario rubric for the LLM judge layer.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The objective headline is cited_recall on the
+# `dependents` group (scored from gold, not the judge); this rubric scores the
+# orthogonal answer-quality axes for the AI-agent audience.
+#
+# Step names MUST match scenarios/netbox.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to safely restructure the contract
+  of NetBox's core device model (Device, netbox/dcim/models/devices.py — the
+  physical-infrastructure aggregate) with only small, targeted follow-up lookups,
+  not a fresh exploration of the codebase. Score for that audience, not a human
+  reader, not a docs page. A perfect answer leaves the agent knowing the COMPLETE
+  set of production subsystems that depend on the model's contract — not just the
+  obvious device forms, views, and serializers, but every scattered piece of
+  production code that queries the model, caches a device reference inside its
+  own records, validates against it, or reacts to device state (the IPAddress
+  deletion signals that null a device's primary/OOB IP anchors, the cluster scope
+  validation over host devices, the service-import parent binding, the wireless
+  link and cable termination device caches, the rack elevation math, the
+  metaclass-built cable form factory, the site/location cascade and
+  virtual-chassis signal handlers) — and how tightly each is coupled; a weak
+  answer forces the agent to triage a 571-hit "Device" haystack across 123
+  production files by hand before it can act safely.
+
+steps:
+  - name: Orient in the codebase
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer hand the agent a usable map: that this is NetBox (a
+          Django network/infrastructure source-of-truth application), that the
+          backend is split into per-domain Django apps under netbox/ (dcim,
+          ipam, virtualization, wireless, circuits, tenancy, extras, core), and
+          that the core device model is Device in
+          netbox/dcim/models/devices.py (the physical-infrastructure record
+          everything else attaches to)?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (netbox/dcim/models/devices.py) rather
+          than vague ("the dcim app"), and tied to actual app and class names?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY this model is the thing being reworked
+          (it is the aggregate components, addresses, racks, clusters, and
+          multi-chassis memberships all hang off), not just name it?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where unsure, does it flag that so the agent doesn't act blindly?
+
+  - name: Map the device model contract
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer map the model's contract: its key fields and
+          relationships (site/location/rack placement, device_type and role,
+          the primary_ip4/primary_ip6/oob_ip anchors, cluster membership,
+          virtual-chassis position, component attachment) and — crucially for
+          this rework — how other code is expected to hold and pass references
+          to a Device, so the agent knows the contract before restructuring it?
+      specificity:
+        weight: 0.25
+        question: |
+          Is the model pinned to file:line in netbox/dcim/models/devices.py
+          with its actual field and property names, rather than described
+          vaguely?
+      justification:
+        weight: 0.20
+        question: |
+          Does it explain what about the contract matters for a restructuring
+          (which parts other code queries, caches, or reacts to), not just list
+          fields?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it flag any part of the contract it is unsure about?
+
+  - name: Enumerate every production dependent of the device model
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          THE HEADLINE STEP. Does the answer assemble the COMPLETE dependent
+          set: BOTH the obvious device UI/API layer (DeviceForm, the device
+          views, DeviceSerializer, the component base class) AND the scattered
+          production code that depends on the model far from it — the
+          pre_delete(IPAddress) receivers that null a device's primary/OOB IP
+          anchors (ipam/signals.py), the virtual-chassis-aware device filters
+          on the IPAM filtersets and their GraphQL twin (ipam/filtersets.py,
+          ipam/graphql/filters.py), the service-import parent binding
+          (ipam/forms/bulk_import.py), the cluster scope validation and the
+          cluster add-devices view (virtualization/models/clusters.py,
+          virtualization/views.py), the VM host anchor
+          (virtualization/models/virtualmachines.py), the wireless link device
+          caches (wireless/models.py), the cable termination device cache
+          (dcim/models/cables.py), the module anchor (dcim/models/modules.py),
+          the rack elevation math (dcim/models/racks.py), the cable form
+          factory (dcim/forms/connections.py), and the site/location cascade +
+          virtual-chassis signal handlers (dcim/signals.py) — each with
+          file:line? Completeness across unexpected subsystems is the whole
+          point; a list that only names the device UI layer leaves whole
+          subsystems breaking silently.
+      specificity:
+        weight: 0.25
+        question: |
+          Is each dependent pinned to a concrete file:line and the actual
+          class, function, or field name, rather than a vague "the various
+          forms"?
+      justification:
+        weight: 0.20
+        question: |
+          Is the list genuinely flat and per-item (one dependent per line)
+          rather than collapsed into subsystem summaries?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it flag where it may be incomplete (e.g. apps it could not
+          triage) rather than implying false completeness?
+
+  - name: Group the dependents by subsystem
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Are the dependents organized into coherent subsystems (device
+          UI/API, IP address management, virtualization/clusters, wireless,
+          cabling, racks/elevations, signal-driven denormalization) with the
+          app each lives in and HOW it depends on the model (stores or caches a
+          device reference in its own records, queries the model, reacts to
+          device lifecycle events, builds UI/API surfaces from it), so the
+          agent sees which parts of the product the restructuring reaches?
+      specificity:
+        weight: 0.25
+        question: |
+          Are subsystems tied to concrete apps and classes with file:line, not
+          loose labels?
+      justification:
+        weight: 0.20
+        question: |
+          Does the grouping reflect real coupling (cached FK vs query vs
+          signal-driven reaction) rather than a superficial sort?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it note any dependent it was unsure how to place?
+
+  - name: Assess the blast radius of the contract change
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer reason about impact per dependent: what product flow
+          drives it (address deletion, cluster assignment, service import,
+          cable connection, rack elevation rendering, virtual-chassis rename)
+          and how tightly it embeds or caches the model in its own records,
+          ranked by risk, so the agent can prioritize?
+      specificity:
+        weight: 0.25
+        question: |
+          Is the impact tied to concrete dependents at file:line with their
+          actual coupling, rather than generic risk talk?
+      justification:
+        weight: 0.20
+        question: |
+          Does it justify the risk ranking (e.g. a signal handler that silently
+          nulls a device's primary IP anchor breaking is higher risk than one
+          admin view)?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it flag impacts it could not fully determine?
+
+  - name: Surface the non-obvious dependents
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer single out the dependents a text search would miss or
+          mis-triage: the ones reacting to ANOTHER model's lifecycle in a way
+          that mutates devices (the pre_delete(IPAddress) receivers in
+          ipam/signals.py), the denormalized *_device caches that exist only
+          for filtering (wireless/models.py, dcim/models/cables.py), the
+          string-keyed parent binding in the service import form
+          (ipam/forms/bulk_import.py), the metaclass form factory that builds
+          device fields dynamically (dcim/forms/connections.py), and the
+          signal handlers that cascade site/location changes and
+          virtual-chassis membership into device rows (dcim/signals.py)?
+      specificity:
+        weight: 0.25
+        question: |
+          Are these pinned to file:line with the reason stated (signal-driven,
+          denormalized cache, string-keyed dispatch, dynamic form
+          construction), not just gestured at?
+      justification:
+        weight: 0.20
+        question: |
+          Does it explain WHY each is easy to overlook, concretely, per
+          dependent?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it acknowledge there may be further hidden dependents it could
+          not confirm?
+
+  - name: Produce the change + verification map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Is the final handoff a single, actionable audit map: every dependent
+          grouped by subsystem, with file:line, how it depends on the device
+          model, and what to check when the contract changes, so a teammate
+          could land the PR without re-exploring? Does it carry over the minor
+          and unexpected-subsystem dependents from earlier steps rather than
+          dropping them?
+      specificity:
+        weight: 0.25
+        question: |
+          Is every entry concrete (file:line + class/function + coupling)
+          rather than a summary?
+      justification:
+        weight: 0.20
+        question: |
+          Does each entry say what must be verified for that dependent, not
+          just name it?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does the map mark anything still open for the implementer to
+          confirm?

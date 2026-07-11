@@ -1,0 +1,244 @@
+name: Wagtail work session - audit every production subsystem that depends on the page model before reworking its contract
+repo: wagtail
+# Single-prompt session bench (run via bench/drivers/runs-variance.sh or bench-sense-local.sh):
+# all steps are presented in ONE prompt and worked in order, so context
+# accumulates the way a real work session does. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL: it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# CHANGE-IMPACT ticket on Wagtail's page model (Page, wagtail/models/pages.py:289):
+# the MP_Node tree node every CMS surface hangs off. A maintainer restructuring
+# the model's contract (fields moving to satellite models, how other code holds
+# and queries page references) must audit every production subsystem that
+# depends on that contract before touching it.
+#
+# HONEST-CONTROL ROW (banked 2026-07-07, Luc's call — the §13 "where the
+# baseline ties, and why" cell). The medium-slot dig measured wagtail thoroughly
+# TEXTUAL: `Page.objects` alone matches 37 prod files of which 29 are the
+# dependent set (near-transcription), and the only 3 grep-dark dependents
+# (actions/unpublish_page.py signal duck-typing, locales/views.py
+# get_locale_usage indirection, api/v2/serializers.py duck-typed fields) are
+# ALSO absent from blast∪graph at both 0.3 and 0.7 — so no recall discriminator
+# exists by measurement (the eighth Python repo to zero; see repos.md
+# "MEDIUM-SLOT DIG"). This scenario is therefore a fair, real maintainer task
+# where a recall TIE is the expected published result; efficiency (billed
+# tokens, wall) is reported alongside. The 3 sense-dark files are deliberately
+# NOT gold (neither arm retrieves them reliably; listed here for the record).
+#
+# Gold `dependents` = 8 heterogeneous production dependents, every one verified
+# PRESENT in the agent-facing budgeted `sense_blast Page --file
+# wagtail/models/pages.py` output at BOTH the implicit default AND
+# min_confidence 0.7 (CLI probe 2026-07-07 on the provisioned index @2ac39d35);
+# unique basenames throughout (the contract file's basename pages.py is avoided
+# in gold). The famous surfaces (the serve view, the public API viewset, the
+# form-builder subclass+FK, the permission policy) are parked in `context`.
+description: 'You are a maintainer about to restructure the contract of the page
+  model: the tree-node model that represents one page of the CMS, the thing editors
+  create, move, publish, and serve to visitors. Several of its fields are moving
+  into satellite models and the way other code is expected to hold and query page
+  references is changing. Before touching it you need a complete audit of every
+  production subsystem that depends on the page model''s contract: not only the
+  obvious serving and API layer, but every piece of production code anywhere in
+  the package that queries pages, stores a page reference in its own structures,
+  or otherwise leans on the model''s shape, wherever it lives, even when nothing
+  about its name or location suggests it. Miss one and that subsystem breaks
+  silently when the contract changes. Work through the tasks below one at a time;
+  each builds on what you learned in the previous one. Keep every answer concrete
+  with file:line so the next step (and a teammate opening the PR) can act without
+  re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized into packages, and where does the page
+    model you are about to rework live, the tree-node model that represents one
+    CMS page editors create, publish, and serve? Hand the next agent a map so they
+    can act with small, targeted lookups, not a fresh exploration of the codebase.
+    No Explore agents.
+    "
+  checks:
+  - type: word
+    value: page
+    required: false
+  - type: word
+    value: Wagtail
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the page model contract
+  prompt: "Task: map the contract you are about to change. What does the page
+    model consist of (its key fields, its tree mechanics, its publishing state,
+    its relationships), and what does a teammate need to know about how other code
+    holds and queries page references before restructuring it? Give file:line for
+    the model and the key pieces of its contract.
+    "
+  checks:
+  - type: contains
+    value: wagtail/models/pages.py
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Enumerate every production dependent of the page model
+  prompt: "Task: list every production code path that depends on the page model's
+    contract. Across the WHOLE package, list every piece of production code that
+    queries the page model, stores a page reference inside its own data
+    structures, or otherwise depends on the model's contract, wherever it lives.
+    Give ONE dependent per line with its file:line, and nothing else on that line:
+    do not group, rank, or explain how each depends on the model yet (later steps
+    do that) - the only job here is a complete, flat list. Where one file holds
+    several, list every one separately rather than collapsing them into a summary
+    like 'the various admin views'. Completeness is the whole point of this step:
+    a missed dependent is a subsystem that breaks silently when the contract
+    changes, so include every one you surfaced from your lookups, even a minor or
+    unexpected one.
+    "
+  checks:
+  - type: contains
+    value: wagtail/models/sites.py
+    required: false
+  - type: contains
+    value: wagtail/admin/views/home.py
+    required: false
+  - type: contains
+    value: wagtail/templatetags/wagtailcore_tags.py
+    required: false
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Group the dependents by subsystem
+  prompt: "Task: organize the dependents you found into the subsystems they live
+    in. For each subsystem, name the code involved and the package it lives in,
+    with file:line, and note how it depends on the page model (it queries the
+    model, it stores a page reference in its own structures, it reads specific
+    fields or tree state). The point is to see which parts of the CMS
+    restructuring the page model actually reaches.
+    "
+  checks:
+  - type: word
+    value: admin
+    required: false
+  - type: word
+    value: site
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: assess the impact. If you restructure the page model's contract,
+    which dependents break loudest? For each, state what editor or visitor flow
+    drives it and how tightly it is coupled to the model (it holds a page
+    reference in its own schema, or only queries it transiently), and rank by
+    risk. A missed high-risk dependent is a subsystem that silently breaks for a
+    whole class of users in production.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Surface the non-obvious dependents
+  prompt: "Task: call out the dependents a quick text search would most likely
+    miss: the ones that live far from the model in an unexpected subsystem,
+    reference the model without naming it the way the rest of the code does, or
+    reach it through configuration rather than a direct import. Give file:line and
+    explain why each is easy to overlook.
+    "
+  checks:
+  - type: contains
+    value: wagtail/models/sites.py
+    required: false
+  - type: contains
+    value: wagtail/contrib/search_promotions/models.py
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: hand off a single audit map a teammate could act on. List every
+    dependent grouped by subsystem, with file:line, how it depends on the page
+    model, and what must be checked when the contract changes. Carry over every
+    dependent you found in the earlier steps, including the minor or
+    unexpected-subsystem ones; dropping one here is the same as never finding it.
+    Use file:line throughout so the PR can be landed without re-exploring the
+    codebase.
+    "
+  checks:
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+
+# ----------------------------------------------------------------------------
+# contract_symbol drives the Loop-A resolution oracle. Page is the tree page
+# model (wagtail/models/pages.py:289, re-exported through wagtail/models/
+# __init__.py); contract_file disambiguates to the defining module.
+contract_symbol: Page
+contract_file: wagtail/models/pages.py
+
+# Gold targets. Each carries `relation`: the TRUE way it depends on the page
+# model, verified from wagtail source at the pinned SHA (2ac39d35) and against
+# the budgeted `sense blast Page --file wagtail/models/pages.py` output at BOTH
+# the implicit default AND min_confidence 0.7 (2026-07-07). It is NEVER rendered
+# to the agent (only name/prompt are). Every match path is a UNIQUE full
+# wagtail/... path and every dependents basename is unique (pages.py, the
+# contract basename, is excluded from gold).
+#
+# CONTROL-ROW NOTE: this dependent set is deliberately fair-but-textual — the
+# dig proved no grep-dark discriminator exists in this repo (see the header).
+# The `dependents` group still isolates the scattered, less-famous tail from
+# the famous surfaces in `context`, so pergroup reports an honest per-group
+# delta either way.
+gold:
+  # the contract under change (the page tree model)
+  - {id: page-model, group: contract, match: [wagtail/models/pages.py], relation: "Page, the MP_Node tree page model (path/depth tree fields, live/draft publishing state, specific/alias mechanics); its field layout and reference-passing contract is being restructured"}
+  # famous / first-grep surfaces both arms get — the non-discriminating context
+  - {id: ctx:serve,       group: context, match: [wagtail/views.py],                    relation: "the serve view resolves a request to get_object_or_404(Page).specific and renders it; the front-door dependent every audit finds first"}
+  - {id: ctx:api-pages,   group: context, match: [wagtail/api/v2/views.py],             relation: "PagesAPIViewSet exposes Page.objects.all().live() over the public API; the obvious API-layer dependent"}
+  - {id: ctx:form-pages,  group: context, match: [wagtail/contrib/forms/models.py],     relation: "the form builder both subclasses Page (AbstractForm) and FKs form submissions to it; the canonical page-type contrib app"}
+  - {id: ctx:perm-policy, group: context, match: [wagtail/permission_policies/pages.py], relation: "PagePermissionPolicy walks Page.objects tree queries (depth=1 root, first_common_ancestor_of) to answer every admin permission question"}
+  # the scattered production tail — every entry verified in the SHOWN budgeted
+  # blast at BOTH default AND min_confidence 0.7; unique basenames
+  - {id: dep:site-root,      group: dependents, match: [wagtail/models/sites.py],                     relation: "Site.root_page FKs to Page via the lazy string form (\"Page\"), no import — every site hangs its tree off a page and site resolution reads page paths"}
+  - {id: dep:search-promo,   group: dependents, match: [wagtail/contrib/search_promotions/models.py], relation: "SearchPromotion FKs to Page via the lazy app-label string (\"wagtailcore.Page\"), no import — editor-curated search results embed page references in their own schema"}
+  - {id: dep:admin-home,     group: dependents, match: [wagtail/admin/views/home.py],                 relation: "the admin dashboard panels (pages for moderation, recent edits, locked pages) are Page.objects queries; Page arrives via a multiline import easily missed by an exact-phrase grep"}
+  - {id: dep:locked-report,  group: dependents, match: [wagtail/admin/views/reports/locked_pages.py], relation: "the LockedPagesReport queries Page.objects.filter(locked_by=...) — the editor-lockout audit surface"}
+  - {id: dep:slugurl-tag,    group: dependents, match: [wagtail/templatetags/wagtailcore_tags.py],    relation: "the slugurl template tag resolves Page.objects.in_site(...) at render time — template authors depend on the page contract without touching Python"}
+  - {id: dep:side-panels,    group: dependents, match: [wagtail/admin/ui/side_panels.py],             relation: "the page-status side panel queries Page.objects...public() to render privacy/visibility state in the editor chrome"}
+  - {id: dep:page-listing,   group: dependents, match: [wagtail/admin/views/pages/listing.py],        relation: "the page explorer listing orders and annotates raw Page querysets (annotate_parent_page) — the main navigation surface of the admin"}
+  - {id: dep:page-chooser,   group: dependents, match: [wagtail/admin/views/chooser.py],              relation: "the page chooser modal filters Page.objects.all().type(...) and translation_of — every FK-to-page picker in the admin flows through it"}

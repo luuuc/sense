@@ -1,0 +1,289 @@
+name: NetBox work session - audit every production subsystem that depends on the device model before reworking its contract
+repo: netbox
+# Single-prompt session bench (run via bench/drivers/runs-variance.sh or bench-sense-local.sh):
+# all steps are presented in ONE prompt and worked in order, so context
+# accumulates the way a real work session does. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL: it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# CHANGE-IMPACT ticket on NetBox's core device model (Device,
+# netbox/dcim/models/devices.py): the physical-infrastructure aggregate every
+# other app hangs off. A maintainer restructuring how other code holds and
+# passes device references (component attachment, denormalized *_device caches,
+# primary-IP anchoring, cluster host assignment, virtual-chassis membership)
+# must audit every production subsystem that depends on that contract.
+#
+# The seam is the CHATWOOT/SENTRY SHAPE on the least-memorized big Django app:
+# a NOISY token ("Device" appears in 123 prod files and collides with
+# DeviceType/DeviceRole/VirtualDeviceContext/get_device_name), whose behavioral
+# dependents scatter across dcim/ipam/virtualization/wireless under names that
+# never say "device" (IPAddress deletion signals, Cluster scope validation,
+# Service import parent binding, wireless link caches, cable termination
+# caches, rack elevation math, a metaclass-built cable form factory). The
+# demanded set is ~30 items across 5 apps; the bet is the satisficing drop
+# under 7-step session load, not grep-impossibility (Python edges are textual).
+#
+# Every `dependents` entry verified PRESENT in the agent-facing budgeted
+# `sense_blast Device` output at BOTH min_confidence 0.3 AND 0.7 over MCP stdio
+# (2026-07-06, post fix/django-keyword-to-relation: keyword to= FK composes
+# edges + manager-chain model edges + production-first result cap). Composer
+# deps ride 0.8 composes edges (affected_via_composition); behavioral deps ride
+# 0.9 manager-chain calls edges. The grep-trivial/obvious deps (DeviceForm,
+# DeviceSerializer, device views, the ComponentModel base, the dcim filtersets)
+# are parked in `context` so pergroup isolates the real gap.
+description: 'You are a maintainer about to restructure the contract of the core
+  device model: the record that represents one piece of physical infrastructure,
+  the thing everything else in the system attaches to, addresses, or is placed
+  in. How other code is expected to hold and pass references to a device is
+  changing: how components and modules attach to one, how other records cache or
+  denormalize a device association, and how a device anchors addresses,
+  clusters, and multi-chassis memberships. Before touching it you need a
+  complete audit of every production subsystem that depends on the device
+  model''s contract: not only the obvious forms and API layer, but every piece
+  of production code anywhere in the codebase that queries the model, keeps a
+  device reference inside its own records or structures, or reacts to device
+  state, wherever it lives, even when nothing about its name or location
+  suggests it. Miss one and that subsystem breaks silently when the contract
+  changes. Work through the tasks below one at a time; each builds on what you
+  learned in the previous one. Keep every answer concrete with file:line so the
+  next step (and a teammate opening the PR) can act without re-exploring the
+  codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is
+    this project, how is the code organized into apps/packages, and where does
+    the core device model you are about to rework live, the record that
+    represents one piece of physical infrastructure everything else attaches
+    to? Hand the next agent a map so they can act with small, targeted lookups,
+    not a fresh exploration of the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: NetBox
+    required: false
+  - type: word
+    value: dcim
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the device model contract
+  prompt: "Task: map the contract you are about to change. What does the device
+    model consist of (its key fields and relationships), and what does a
+    teammate need to know about how other code holds and passes references to
+    it before restructuring it? Give file:line for the model and the key pieces
+    of its contract.
+    "
+  checks:
+  - type: contains
+    value: netbox/dcim/models/devices.py
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Enumerate every production dependent of the device model
+  prompt: "Task: list every production code path that depends on the device
+    model's contract. Across the WHOLE codebase, list every piece of production
+    code that queries the model, holds a device reference inside its own
+    records or data structures, reacts to device state, or otherwise depends on
+    the model's contract, wherever it lives. Give ONE dependent per line with
+    its file:line, and nothing else on that line: do not group, rank, or
+    explain how each depends on the model yet (later steps do that) - the only
+    job here is a complete, flat list. Where one file holds several, list every
+    one separately rather than collapsing them into a summary like 'the various
+    forms'. Completeness is the whole point of this step: a missed dependent is
+    a subsystem that breaks silently when the contract changes, so include
+    every one you surfaced from your lookups, even a minor or unexpected one.
+    "
+  checks:
+  - type: contains
+    value: netbox/ipam/filtersets.py
+    required: false
+  - type: contains
+    value: netbox/virtualization/views.py
+    required: false
+  - type: contains
+    value: netbox/dcim/forms/connections.py
+    required: false
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Group the dependents by subsystem
+  prompt: "Task: organize the dependents you found into the subsystems they
+    live in. For each subsystem, name the code involved and the app/package it
+    lives in, with file:line, and note how it depends on the device model (it
+    stores or caches a device reference in its own records, it queries the
+    model, it reacts to device lifecycle events, it builds UI/API surfaces from
+    it). The point is to see which parts of the product restructuring the
+    device model actually reaches.
+    "
+  checks:
+  - type: word
+    value: ipam
+    required: false
+  - type: word
+    value: virtualization
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: assess the impact. If you restructure the device model's
+    contract, which dependents break loudest? For each, state what product flow
+    drives it and how tightly it is coupled to the model (it embeds or caches a
+    device reference in its own records, it queries the model inside its own
+    logic, or it only reads it transiently), and rank by risk. A missed
+    high-risk dependent is a subsystem that silently breaks for a whole class
+    of users in production.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Surface the non-obvious dependents
+  prompt: "Task: call out the dependents a quick text search would most likely
+    miss: the ones that live far from the model in an unexpected subsystem,
+    keep a device reference or cache inside their own records without doing
+    anything that looks like device management, react to another record's
+    lifecycle in a way that touches devices, or reference the model in a way
+    plain text search does not surface. Give file:line and explain why each is
+    easy to overlook.
+    "
+  checks:
+  - type: contains
+    value: netbox/ipam/graphql/filters.py
+    required: false
+  - type: contains
+    value: netbox/dcim/models/racks.py
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: hand off a single audit map a teammate could act on. List
+    every dependent grouped by subsystem, with file:line, how it depends on the
+    device model, and what must be checked when the contract changes. Carry
+    over every dependent you found in the earlier steps, including the minor or
+    unexpected-subsystem ones; dropping one here is the same as never finding
+    it. Use file:line throughout so the PR can be landed without re-exploring
+    the codebase.
+    "
+  checks:
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+
+# ----------------------------------------------------------------------------
+# contract_symbol drives the Loop-A resolution oracle (bench/lib/resolve_oracle.py
+# via loopA-scan.sh preflight). Device is unambiguous in this index (single
+# class symbol); contract_file pins it anyway for the oracle and for agents
+# that pass the file disambiguator.
+contract_symbol: Device
+contract_file: netbox/dcim/models/devices.py
+
+# Gold targets. Each carries `relation`: the TRUE way it depends on the device
+# model, verified from netbox source at the pinned SHA (9189067f) and against
+# the agent-facing budgeted `sense_blast Device` over MCP stdio (2026-07-06):
+# every `dependents` entry is PRESENT in the shown output at BOTH the implicit
+# default AND min_confidence 0.7. It is NEVER rendered to the agent (only
+# name/prompt are). Every match path is a UNIQUE full netbox/... path; no
+# dependent gold shares a file with another or with the contract.
+#
+# RETARGETED 2026-07-06 after the step-6b baseline dry-run (craft step 9, the
+# $0 per-dep tally): the Opus 4.8 baseline (23 greps, 5 reads, 71 files cited,
+# exit 0) truly cited 7 of the original 13 dependents — those moved to
+# `context` (baseline-finds = non-discriminating). The discriminator is now
+# the 6 dependents the baseline MISSED in its answer, hand-verified against
+# the transcript (dep:service-import's original "cited" was a FALSE basename
+# credit: the answer's dcim/forms/bulk_import.py:1187 matched the
+# gold-unique basename bulk_import.py; the ipam path never appears in the
+# answer). Three context entries exist partly as basename guards: they are
+# genuine, obvious device dependents whose presence makes bulk_import.py /
+# filters.py / connections.py non-unique within the gold set, disabling
+# gold.py's basename+line shortcut for the discriminators that share them.
+#
+# The discriminator mechanism: 6 heterogeneous production dependents across 3
+# apps that query or embed the device model inside logic whose name and
+# location never suggest device management (VC-aware filter expansion on the
+# IPAM/GraphQL surfaces, string-keyed import parent binding, cluster
+# assignment flow, rack elevation math, a metaclass form factory). The
+# covering greps (`Device.objects`, `\bDevice\b`) exist — Python edges are
+# textual — and the baseline still dropped all 6 under 7-step session load:
+# the sentry/chatwoot satisficing mechanism, transcript-verified.
+gold:
+  # the contract under change (the core device model)
+  - {id: device-model, group: contract, match: [netbox/dcim/models/devices.py], relation: "Device, the physical-infrastructure aggregate (site/rack placement, device_type/role, primary_ip4/primary_ip6/oob_ip anchors, cluster membership, virtual-chassis position); how other code holds and passes device references is being restructured"}
+  # grep-trivial / famous deps (found by any baseline: the obvious device UI,
+  # API and component plumbing) — the non-discriminating context
+  - {id: ctx:device-form,     group: context, match: [netbox/dcim/forms/model_forms.py],           relation: "DeviceForm and the VC-membership/device-bay forms; the obvious form-layer dependent"}
+  - {id: ctx:serializer,      group: context, match: [netbox/dcim/api/serializers_/devices.py],    relation: "DeviceSerializer, the canonical REST serialization of a Device; the obvious API-layer dependent"}
+  - {id: ctx:device-views,    group: context, match: [netbox/dcim/views.py],                       relation: "the device detail/list/component views; the obvious view-layer dependent"}
+  - {id: ctx:component-base,  group: context, match: [netbox/dcim/models/device_components.py],    relation: "ComponentModel, the abstract base whose device FK every component model (Interface, ConsolePort, PowerPort, DeviceBay, PortMapping) inherits; colocated with the component tree and famous"}
+  - {id: ctx:dcim-filtersets, group: context, match: [netbox/dcim/filtersets.py],                  relation: "DeviceFilterSet plus the MACAddress/Interface virtual-chassis-member filter methods that expand a device into vc_interfaces(); the contract app's own filter layer"}
+  - {id: ctx:svg-elevation,   group: context, match: [netbox/dcim/svg/racks.py],                   relation: "RackElevationSVG renders devices into rack-elevation drawings via get_device_name; unexpected subsystem but reached only through low-confidence edges, so parked as context"}
+  # deps the paired-era baseline dry-run cited in its ANSWER (transcript-
+  # verified full-path citations) — demoted to context by the per-dep tally
+  - {id: ctx:ipam-signals,     group: context, match: [netbox/ipam/signals.py],                          relation: "clear_primary_ip (ipam/signals.py:54) and clear_oob_ip (:70), pre_delete(IPAddress) receivers that null a Device's primary_ip4/primary_ip6/oob_ip anchors with snapshot()+save(); cross-app but salient enough that the baseline reached it"}
+  - {id: ctx:cluster-clean,    group: context, match: [netbox/virtualization/models/clusters.py],        relation: "Cluster.clean (virtualization/models/clusters.py:125) validates that every host Device assigned to the cluster belongs to the cluster's scope site"}
+  - {id: ctx:vm-host,          group: context, match: [netbox/virtualization/models/virtualmachines.py], relation: "VirtualMachine.device FK (virtualization/models/virtualmachines.py:140) pins a VM to its host device; declared with to='dcim.Device', one grep away"}
+  - {id: ctx:wireless-cache,   group: context, match: [netbox/wireless/models.py],                       relation: "WirelessLink._interface_a_device/_interface_b_device (wireless/models.py:172/179), denormalized device caches; declared with to='dcim.Device', one grep away"}
+  - {id: ctx:cable-term-cache, group: context, match: [netbox/dcim/models/cables.py],                    relation: "CableTermination._device (dcim/models/cables.py:562), the denormalized device association cached on every cable termination; declared with to='dcim.Device', one grep away"}
+  - {id: ctx:module-anchor,    group: context, match: [netbox/dcim/models/modules.py],                   relation: "Module.device FK (dcim/models/modules.py:253) anchors field-installable modules to their parent device; declared with to='dcim.Device', one grep away"}
+  - {id: ctx:dcim-signals,     group: context, match: [netbox/dcim/signals.py],                          relation: "site/location cascade handlers and the virtual-chassis master/search-cache handlers (dcim/signals.py:59/77/110/122) that mutate Device rows; in the contract's own app, the baseline reached it"}
+  # genuine obvious dependents that double as basename guards (they share the
+  # bulk_import.py / filters.py / connections.py basenames with discriminator
+  # entries, so gold.py's basename+line shortcut is disabled for those)
+  - {id: ctx:devicebay-import,   group: context, match: [netbox/dcim/forms/bulk_import.py],        relation: "DeviceBayImportForm/PowerOutletImportForm (dcim/forms/bulk_import.py:1187/928) scope import fields to a device's components; the contract app's own import layer"}
+  - {id: ctx:dcim-graphql,       group: context, match: [netbox/dcim/graphql/filters.py],          relation: "DeviceFilter, the GraphQL filter surface for the device model itself; the obvious GraphQL-layer dependent"}
+  - {id: ctx:connection-tables,  group: context, match: [netbox/dcim/tables/connections.py],       relation: "the console/interface/power connection tables render a device column for every connection row; the contract app's own table layer"}
+  # THE DISCRIMINATOR: the 6 heterogeneous production dependents the tool-less
+  # Opus 4.8 baseline dropped from its answer under session load
+  # (transcript-verified misses, 2026-07-06 dry-run), spanning ipam,
+  # virtualization, and the non-obvious corners of dcim.
+  - {id: dep:ipam-filtersets,    group: dependents, match: [netbox/ipam/filtersets.py],                         relation: "IPAddressFilterSet.filter_device (ipam/filtersets.py:794), FHRPGroupAssignmentFilterSet.filter_device (:923) and ServiceFilterSet.filter_device (:1289) query Device.objects and expand each device into vc_interfaces() so address/service filtering is virtual-chassis-aware"}
+  - {id: dep:ipam-graphql,       group: dependents, match: [netbox/ipam/graphql/filters.py],                    relation: "FHRPGroupAssignmentFilter.filter_device (ipam/graphql/filters.py:167) repeats the VC-aware device expansion on the GraphQL surface"}
+  - {id: dep:service-import,     group: dependents, match: [netbox/ipam/forms/bulk_import.py],                  relation: "ServiceImportForm.__init__ (ipam/forms/bulk_import.py:636) re-points the parent queryset to Device.objects when the imported row's parent_object_type is 'dcim.device'; string-keyed dispatch a grep for the class name never surfaces"}
+  - {id: dep:cluster-add-view,   group: dependents, match: [netbox/virtualization/views.py],                    relation: "ClusterAddDevicesView.post (virtualization/views.py:362) assigns selected Devices to a cluster inside a transaction with per-device snapshot()+save()"}
+  - {id: dep:rack-elevation,     group: dependents, match: [netbox/dcim/models/racks.py],                       relation: "Rack.clean and Rack.get_rack_units (dcim/models/racks.py:404/487) query the devices mounted in the rack for unit-occupancy math and mount validation"}
+  - {id: dep:cable-form-factory, group: dependents, match: [netbox/dcim/forms/connections.py],                  relation: "get_cable_form (dcim/forms/connections.py:12) is a metaclass form factory that builds termination_{end}_device fields from Device.objects for every cable-end type combination"}

@@ -1,0 +1,256 @@
+name: Saleor work session - audit the sellable variant contract before a pricing/stock rework
+repo: saleor
+# Single-prompt session bench (run via bench/drivers/runs-variance.sh or bench-sense-local.sh):
+# all steps are presented in ONE prompt and worked in order, so context
+# accumulates the way a real work session does. Rendered to the agent: the
+# description + each step's name and prompt ONLY (checks/gold are NOT shown).
+# Everything rendered is kept NEUTRAL: it states the task, never the answer's
+# shape, file paths, class or method names, counts, or which tool to reach for.
+#
+# This is a CHANGE-IMPACT ticket, not an add-by-copying ticket. The recurring
+# real task it mirrors: a maintainer about to change the SKU-level sellable
+# catalog item (how its price/stock/identity are read) must first audit EVERY
+# place that depends on that contract before touching it. The must-find answer
+# is DELIBERATELY HETEROGENEOUS: not just the models that hold a foreign key to
+# it (those a single grep catches), but the scattered CODE that reads, derives,
+# reprices or serializes a variant — order-line creation, checkout->order
+# conversion, notification and tax-webhook payload builders, bulk import, the
+# generic attribute-reference, and promotion/voucher targeting — spread across
+# order, checkout, discount, attribute, warehouse and the GraphQL layer, all
+# buried under a token (Variant/ProductVariant) that occurs thousands of times.
+# The headline is whether the agent can assemble that cross-domain impact set
+# completely and cheaply: a structural blast/graph query returns the resolved
+# caller + dependent set in one shot, whereas reconstructing it by hand means
+# grepping an extremely common token and reading many modules to separate the
+# handful of real dependents from the noise, and a hand audit that only greps
+# for the class name misses the behavioral callers entirely.
+description: 'You are a maintainer about to rework the SKU-level sellable catalog
+  item: the specific purchasable unit (not the umbrella product) that order and
+  checkout lines, inventory and pricing are all written against. You
+  are changing how its price, stock and identity are read, so before touching the
+  model you need a complete audit of every part of the system that depends on that
+  contract: not only the models that hold a database relationship to it, but the
+  scattered code that reads, derives, reprices or serializes one, so the rework
+  does not silently break a dependent in another part of the system. Work through the tasks below one at a
+  time; each builds on what you learned in the previous one. Keep every answer
+  concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this
+    project, how is the code organized into apps, and where does the SKU-level
+    sellable catalog item you are about to rework sit, the specific purchasable unit
+    that lines, inventory and pricing are written against, along with
+    the shared base pieces it is built on? Hand the next agent a map so they can act
+    with small, targeted lookups, not a fresh exploration of the codebase. No
+    Explore agents.
+    "
+  checks:
+  - type: word
+    value: Variant
+    required: true
+  - type: word
+    value: Saleor
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the variant contract and what it is built on
+  prompt: "Task: map the contract of the model you are about to change. What does it
+    expose and what shared behavior does it pull in (the base classes / mixins it
+    inherits, the records it directly owns such as its per-channel listings, media
+    and translations), and what does a teammate need to know about that contract,
+    especially how its price and stock are read, before changing it? Give file:line
+    for the model and each shared piece.
+    "
+  checks:
+  - type: contains
+    value: product/models.py
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every dependent of the variant contract
+  prompt: "Task: enumerate every dependent of this model. Across the WHOLE codebase,
+    list BOTH the models that hold a database relationship to it (a foreign key or
+    many-to-many recording or targeting a variant) AND the code that reads, derives,
+    reprices or serializes a variant, in any app. Give ONE dependent per line with its
+    file:line, and nothing else on that line: do not classify it, explain how it
+    depends, or rank it yet - later steps do that; the only job here is a complete,
+    flat list. Where one file holds several dependents, list every one separately
+    rather than collapsing them into a summary like 'various services'. Completeness
+    is the whole point of this step: a missed dependent is a record or code path that
+    silently breaks when the contract changes, so include every one you surfaced from
+    your lookups, even a minor or indirect one.
+    "
+  checks:
+  - type: contains
+    value: order/utils.py
+    required: false
+  - type: contains
+    value: discount/models.py
+    required: false
+  - type: contains
+    value: attribute/models/base.py
+    required: false
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Group the dependents by domain
+  prompt: "Task: organize the dependents you found into the business domains they
+    live in. For each domain, name the models and code
+    involved and the app they live in, with file:line. The point is to see which
+    parts of the system reworking the variant contract actually reaches.
+    "
+  checks:
+  - type: word
+    value: checkout
+    required: false
+  - type: word
+    value: discount
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the contract change
+  prompt: "Task: assess the impact. If you change how a variant's price, stock and
+    identity are read, which dependents break loudest? For the model dependents,
+    state the relationship and its on-delete behavior (cascade / set-null / protect)
+    from the field definition; for the code dependents, state what they read off a
+    variant (its price, stock or identity) that the change would affect.
+    Rank by risk. A missed high-risk dependent is the one that silently miscalculates
+    a price or a downstream total in production.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Surface the non-obvious dependents
+  prompt: "Task: call out the dependents a quick text search would most likely miss,
+    the ones that live far from the catalog code, depend on a variant through code
+    rather than a relationship named after it, reach it under a field or name that
+    does not announce the variant, or are drowned by a model name that occurs
+    thousands of times across the codebase. Give file:line and explain why each is
+    easy to overlook.
+    "
+  checks:
+  - type: contains
+    value: notifications.py
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: hand off a single audit map a teammate could act on. List every
+    dependent grouped by domain, with file:line and its relationship to the variant
+    contract, and note for each what must be checked when the price/stock/identity
+    read path changes. Carry over every dependent you found in the earlier steps,
+    including the minor, indirect or unexpected-direction ones; dropping a dependent
+    here is the same as never finding it. Use file:line throughout so the PR can be
+    landed without re-exploring the codebase.
+    "
+  checks:
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+
+# ----------------------------------------------------------------------------
+# contract_symbol drives the Loop-A resolution oracle (bench/lib/resolve_oracle.py
+# via loopA-scan.sh preflight): it verifies, for $0, that sense blast/graph
+# actually retrieve the dependent fan-out BEFORE a paid sweep. contract_file
+# disambiguates ProductVariant (the token Variant/ProductVariant occurs thousands
+# of times across tests, GraphQL types and the catalog).
+contract_symbol: ProductVariant
+contract_file: saleor/product/models.py
+
+# Gold targets. Each carries `relation`: the TRUE way it reaches the ProductVariant
+# contract, verified from saleor source at the pinned SHA c662d3a. It is NEVER
+# rendered to the agent (only name/prompt are). The reference-aware relationship
+# audit scores an answer against it (covered + related). Every match path is a
+# UNIQUE file suffix (full saleor/... paths used where a bare name collides, e.g.
+# order/utils.py vs graphql/order/utils.py), so per-dependent cited-recall scores
+# cleanly. The discriminator is the `dependents` group: HETEROGENEOUS, non-obvious,
+# scattered dependents that depend on a variant through CODE (derivation/payload/
+# reprice/import) at a call site that carries no class-name token — what a hand grep
+# of the class name never assembles, and (verified via the discrimination guard) that
+# NO baseline citation resolves to at the SYMBOL level across both Opus-4.8 runs.
+# The `context` group holds the deps that do NOT separate the arms: the plain
+# foreign-key line-models a single grep catches first (OrderLine, CheckoutLine, Stock,
+# the name-bearing variant-attribute join models, the literal FK/M2M attr-reference and
+# promotion/voucher targets) PLUS two behavioral deps held out of the headline —
+# create_order_line/update_line_base_unit_prices (the baseline reliably grep-traces the
+# exact functions) and _append_line_to_create (a real sense-only reach, but its
+# 1000+-line host file collides with unrelated baseline citations, so it is not
+# cleanly scoreable at file granularity).
+gold:
+  # the contract under change (the model + the rows it directly owns live here)
+  - {id: variant-model, group: contract, match: [saleor/product/models.py], relation: "ProductVariant, the SKU-level sellable catalog item whose price/stock/identity read path is being reworked; product/models.py also defines the rows it directly owns (VariantMedia, ProductVariantChannelListing, ProductVariantTranslation) and Product.default_variant which points back to it"}
+  # grep-trivial dependents (plain FK to ProductVariant, name greppable) — the non-discriminating context
+  - {id: ctx:order-line,    group: context, match: [saleor/order/models.py],     relation: "OrderLine.variant — ForeignKey, on_delete=SET_NULL: the ordered line item records which variant was purchased"}
+  - {id: ctx:checkout-line, group: context, match: [saleor/checkout/models.py],  relation: "CheckoutLine.variant — ForeignKey, on_delete=CASCADE: the in-progress checkout line points at the variant"}
+  - {id: ctx:stock,         group: context, match: [saleor/warehouse/models.py], relation: "Stock.product_variant — ForeignKey, on_delete=CASCADE: inventory is tracked per variant per warehouse"}
+  - {id: ctx:variant-attr,  group: context, match: [saleor/attribute/models/product_variant.py], relation: "AttributeVariant / AssignedVariantAttribute / AssignedVariantAttributeValue — the variant<->attribute assignment/join models (name-greppable)"}
+  # behavioral deps that do NOT discriminate on Opus 4.8, demoted to context 2026-07-01:
+  - {id: ctx:order-line-build, group: context, match: [saleor/order/utils.py],     relation: "create_order_line + update_line_base_unit_prices_with_custom_price [order/utils.py:230-352, 410-440] — read variant.channel_listings / get_price to build and re-price an OrderLine. A genuine behavioral dependent, but the baseline reliably grep-traces it: BOTH Opus runs cited the exact functions (create_order_line:248, update_line_base_unit_prices:410), so it does not separate the arms."}
+  - {id: ctx:checkout-append,  group: context, match: [saleor/checkout/utils.py],  relation: "_append_line_to_create [checkout/utils.py:325-351] — adds a variant to a checkout, reading its per-channel listing and base price. A behavioral dependent the baseline never reached (it cited the unrelated checkout_info_for_logs:966-1040 in the same 1000+-line file), but that same-file collision means it cannot be scored cleanly at file granularity, so it is held out of the discriminator and parked here."}
+  # scattered, grep-missed dependents (depend via CODE that carries no class-name
+  # token at the dependency site) — THE DISCRIMINATOR. Refined 2026-07-01 via the
+  # discrimination guard: each arm's cited file:line was resolved to its OWNING
+  # SYMBOL against the bench-time index (manifesto §9, project_agent_drops_retrieved
+  # _deps_bench_pollution). The four below are the behavioral variant dependents that
+  # NO baseline citation resolves to across BOTH Opus-4.8 runs (baseline either
+  # cited nothing in the file, or cited a DIFFERENT function in it — e.g.
+  # get_order_line_payload:188, not get_product_variant_payload:170). Sense pins the
+  # exact dependent function in both runs.
+  - {id: dep:notif-payload,    group: dependents, match: [saleor/order/notifications.py],                       relation: "get_product_variant_payload(variant) [notifications.py:170-180] — derives the order/shipping notification payload (media, weight, preorder fields, global id) from a variant; behavioral dependent, no FK names it. Baseline cited the sibling get_order_line_payload:183-220 in the same file, never this function."}
+  - {id: dep:checkout-to-order,group: dependents, match: [saleor/checkout/complete_checkout.py],               relation: "_create_line_for_order [complete_checkout.py:292-442] — converts a checkout line's variant into an order line at checkout completion, reading price/translation off the variant. Baseline only named the file (:1), never this function."}
+  - {id: dep:tax-payload,      group: dependents, match: [saleor/checkout/webhooks/calculate_taxes.py],        relation: "_get_checkout_line_payload_data [calculate_taxes.py:45-59] — builds the tax-webhook line payload from variant.sku / global id / name; a miss silently breaks tax calculation. Baseline cited nothing in this file in either run."}
+  - {id: dep:bulk-order,       group: dependents, match: [saleor/graphql/order/bulk_mutations/order_bulk_create.py], relation: "OrderBulkCreate.create_single_order_line [order_bulk_create.py:1705-1860] — resolves a ProductVariant per line during bulk order import, far from the catalog code in the GraphQL layer. Baseline cited nothing in this file in either run."}
+  # NOTE: attr-reference and promotion-voucher reach the variant through a LITERAL
+  # ForeignKey(ProductVariant) / ManyToManyField("product.ProductVariant") line, so a
+  # class-name grep isolates them; the probe confirmed the baseline cited both. They
+  # are therefore CONTEXT (grep-reachable), not the discriminator. The discriminator
+  # is the behavioral CODE deps below, which reference a `variant` local/param and
+  # carry no class-name token at the dependency site (baseline cited 0/6).
+  - {id: ctx:attr-reference,   group: context, match: [saleor/attribute/models/base.py],                    relation: "AttributeValue.reference_variant — ForeignKey (base.py:392), on_delete=CASCADE: a reference-type attribute value points at a variant through the generic attribute system, under a field not named after the catalog"}
+  - {id: ctx:promotion-voucher,group: context, match: [saleor/discount/models.py],                          relation: "Voucher.variants (ManyToMany) and PromotionRule.variants (ManyToMany through PromotionRule_Variants) — promotions and vouchers target specific variants; the through table is a grep-invisible dependent record"}
