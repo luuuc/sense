@@ -1,0 +1,36 @@
+# matrix-plan.yaml — Loop 4's scheduling policy as a checkable file, one per vertical.
+# Copy to bench/verticals/<key>/matrix-plan.yaml at vertical start (the once-per-vertical
+# cap/budget human event). This makes scheduling rule 2 (cap-aware ordering) enforceable
+# from disk instead of memory. Consumed by humans + session agents today; sweep-resume.sh
+# integration is optional later wiring.
+#
+# Law reminders baked into the format (loops/04-matrix-fill.md):
+#   - every arm covers all 6 repos, x1, OPEN-flagged (RUNS=2 is headline-only)
+#   - big repos <= 2 per arm-week; shared pools are declared, not remembered
+#   - adoption is earned pre-flight (sense setup per harness), never debugged per-cell
+#   - cap hit -> durable handoff into the arm's prompt file + park
+
+vertical: <key>
+headline:
+  arm: claude-opus-4-8            # RUNS=2 law applies here only
+  runner: bench-sense-local.sh
+
+arms:
+  - name: <arm-id>                # e.g. gpt-5.5
+    runner: codex-run.sh          # codex-run.sh | opencode-run.sh
+    subscription: <which sub/quota this bills>
+    weekly_ceiling: <runs or token budget per cap-week>
+    big_repo_budget: 2            # max big-repo cells per cap-week
+    pool: <shared-pool-name|none> # arms in the same pool share ONE quota
+    adoption_preflight: <sense setup --tools ...; what to verify before cell 1>
+    prompt_file: <the arm's matching prompt doc, for cap handoffs>
+
+pools:
+  - name: <shared-pool-name>      # e.g. ollama-weekly
+    members: [<arm>, <arm>]
+    note: <e.g. one big-repo run burns ~34% of the weekly quota>
+
+repos:
+  big: [<repo>, <repo>]           # scheduled last, rule 2
+  medium: [<repo>, <repo>]
+  small: [<repo>, <repo>]

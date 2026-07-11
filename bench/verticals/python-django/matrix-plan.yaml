@@ -1,0 +1,53 @@
+# matrix-plan.yaml — python-django (RETROSPECTIVE, written 2026-07-11 after close).
+# The vertical ran on memory/precedent; this file back-fills the plan that WAS executed
+# so the Go vertical starts from a worked example instead of a blank template.
+# Vertical is CLOSED; this file is documentation, not a live schedule.
+
+vertical: python-django
+headline:
+  arm: claude-opus-4-8
+  runner: bench-sense-local.sh    # RUNS=2; board 3W/3T/0L (see results/ + campaign scorecard)
+
+arms:
+  - name: kimi-for-coding_k2p7
+    runner: opencode-run.sh
+    subscription: kimi-for-coding
+    weekly_ceiling: cap-windowed (weekly; exact quota per provider dashboard)
+    big_repo_budget: 2
+    pool: none
+    adoption_preflight: sense setup (full); opencode.json MCP + AGENTS.md + warm cold start
+    prompt_file: .doc/launch/03-python-django-vertical/prompts/04-bench-opencode-kimi.md
+  - name: ollama-cloud_qwen3-coder-next
+    runner: opencode-run.sh
+    subscription: ollama-cloud (SHARED with devstral)
+    weekly_ceiling: shared pool, see pools
+    big_repo_budget: 2
+    pool: ollama-weekly
+    adoption_preflight: sense setup (full); opencode MCP registration
+    prompt_file: .doc/launch/03-python-django-vertical/prompts/05-bench-opencode-qwen.md
+  - name: ollama-cloud_devstral-small-2_24b
+    runner: opencode-run.sh
+    subscription: ollama-cloud (SHARED with qwen)
+    weekly_ceiling: shared pool, see pools
+    big_repo_budget: 2
+    pool: ollama-weekly
+    adoption_preflight: sense setup (full); opencode MCP registration
+    prompt_file: .doc/launch/03-python-django-vertical/prompts/04b (Devstral board lived in the arm prompt; prompt-07 creation was owed from this campaign)
+  - name: gpt-5.5
+    runner: codex-run.sh
+    subscription: codex
+    weekly_ceiling: cap-windowed
+    big_repo_budget: 2
+    pool: none
+    adoption_preflight: sense setup (full) — AGENTS.md is load-bearing for codex exec (the zero-adoption incident)
+    prompt_file: .doc/launch/03-python-django-vertical/prompts/06-bench-codex-gpt.md
+
+pools:
+  - name: ollama-weekly
+    members: [ollama-cloud_qwen3-coder-next, ollama-cloud_devstral-small-2_24b]
+    note: ONE shared weekly quota; a big-repo run burns ~34% of it; schedule as one pool, never two arms
+
+repos:
+  big: [sentry, saleor]
+  medium: [netbox, wagtail]
+  small: [litellm, healthchecks]
