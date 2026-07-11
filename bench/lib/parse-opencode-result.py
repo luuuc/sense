@@ -161,6 +161,17 @@ def main():
             inp = state.get("input", {}) or {}
             emit(assistant([{"type": "tool_use", "name": name, "input": inp}]))
             out = state.get("output", "")
+            # Errored tool calls (MCP isError, harness failures) carry their
+            # text in state.error, not state.output — without this fallback
+            # the transcript records an empty result and the audit trail is
+            # blind on exactly the calls where the model went off-contract
+            # (e.g. a sense_blast disambiguation error read as "empty").
+            if not out:
+                err = state.get("error") or (state.get("metadata") or {}).get("error")
+                if err:
+                    out = f"[tool error] {err}"
+                elif state.get("status") == "error":
+                    out = "[tool error] (no error text recorded)"
             emit(user_tool_result(
                 out if isinstance(out, list)
                 else [{"type": "text", "text": str(out)}]))
