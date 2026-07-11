@@ -1,0 +1,304 @@
+{
+  "scenario": "Wagtail work session - audit every production subsystem that depends on the page model before reworking its contract",
+  "repo": "wagtail",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "wagtail.rubric.yaml"
+  },
+  "scenario_quality": 0.4726,
+  "relationship_audit": {
+    "total": 13,
+    "covered": 12,
+    "related": 12,
+    "contradicted": 0,
+    "covered_recall": 0.9231,
+    "related_recall": 0.9231,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "dep:admin-home"
+    ],
+    "missed_related": [
+      "dep:admin-home"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "page-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:serve",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:api-pages",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:form-pages",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:perm-policy",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:site-root",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:search-promo",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:admin-home",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:locked-report",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:slugurl-tag",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:side-panels",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:page-listing",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:page-chooser",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.8,
+          "rationale": "The answer correctly names Wagtail as a Django CMS, lists the main subsystem directories (admin, api, contrib, models, sites, etc.), and pins the Page model to wagtail/models/pages.py with a line range \u2014 enough for targeted follow-up. It stops short of articulating the functional role of each subsystem (what 'contrib' vs 'admin' vs 'api' actually does), so the agent still needs a small orientation pass on those."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "wagtail/models/pages.py with lines 289-2858, the class names AbstractPage and Page, the library Treebeard/MP_Node \u2014 all concrete and citable. Every subsystem is named as a directory path rather than a vague label."
+        },
+        "justification": {
+          "score": 0.4,
+          "rationale": "The answer says Page provides 'tree-node capabilities via Treebeard's MP_Node' but never states WHY it is the thing being reworked \u2014 that every serving, admin, and API surface hangs off it. The causal link (this model is the load-bearing node the whole CMS is built on) is absent, so the agent has to infer risk from structure rather than being told it."
+        },
+        "uncertainty": {
+          "score": 0.55,
+          "rationale": "The answer presents everything with full confidence, including the line range 289-2858, with no hedges. For a fresh orientation that is fine if accurate, but the 0 wall_time_seconds side-context raises the question of whether the line range was verified; no flag is given either way, leaving the agent to trust it without knowing its provenance."
+        }
+      },
+      "step_quality": 0.7075,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1824,
+        "cache_creation_input_tokens": 10460,
+        "cache_read_input_tokens": 23375
+      }
+    },
+    {
+      "step": "Map the page model contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.55,
+          "rationale": "The answer covers the four major contract areas (tree mechanics with MP_Node/path/depth/numchild, publishing state with live/has_unpublished_changes/locked, key method surface, and relationships including Site.root_page/SearchPromotion.page/Redirect.redirect_page), but the alias/specific-page mechanics get only a parenthetical mention ('GenericRelation for...aliases') with no detail on how alias pages actually work, and file:line anchors are given only for the class definitions (`:289`, `:248`) \u2014 not for any individual field, method, or relationship."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "Fields (title, slug, content_type, url_path, live, has_unpublished_changes) and methods (get_ancestors, get_descendants, move_to, copy_as) are named concretely, but the rubric asks for file:line per piece of the contract, and outside the two class-level anchors essentially no line numbers appear \u2014 an agent restructuring specific fields or methods would still need to open the file to locate each one."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The answer lists relationships (Site.root_page, SearchPromotion.page, PageViewRestriction, etc.) but makes no claim about which pieces of the contract carry the highest dependency weight or how restructuring order should follow risk; the agent is left to infer priority from the flat enumeration."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "No assumptions are flagged as unverified \u2014 the alias mechanics, the manager chain, and the GenericRelation topology are all stated as fact with no hedging, even though none of those entries carry line-level evidence."
+        }
+      },
+      "step_quality": 0.395,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1586,
+        "cache_creation_input_tokens": 10625,
+        "cache_read_input_tokens": 23375
+      }
+    },
+    {
+      "step": "Enumerate every production dependent of the page model",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The list covers most explicitly-called-out tail items: site root FK (sites.py:90), search promotions (search_promotions/models.py:104), reports (locked_pages.py:15, page_types_usage.py:127), template tags (wagtailcore_tags.py:52/:207), editor side panels (side_panels.py:268), listing (listing.py:44), and chooser (chooser.py:251/:259/:451/:514). Coverage is broad, but the 0.0 wall_time suggests no live code verification, raising doubt about whether stated line numbers are accurate and whether the list is truly exhaustive."
+        },
+        "specificity": {
+          "score": 0.55,
+          "rationale": "Most entries carry concrete file:line anchors, but the answer is grouped under bold subsystem headers with inline explanations \u2014 not the flat one-per-line format the step demanded. One entry (frontend_cache) lacks any file:line at all, citing only composition through other models."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "The list stays on production code \u2014 no test or migration files appear \u2014 and the extra sections (blast radius, JSON summary) added beyond the step's scope do not contaminate the production-only focus."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No caveats are offered anywhere: the answer presents ~70 entries with full confidence despite 0.0 wall_time implying no actual code traversal. An agent acting on this list has no signal that line numbers or coverage completeness should be verified before proceeding."
+        }
+      },
+      "step_quality": 0.5905,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2571,
+        "cache_creation_input_tokens": 13953,
+        "cache_read_input_tokens": 23375
+      }
+    },
+    {
+      "step": "Group the dependents by subsystem",
+      "scores": {
+        "map_quality": {
+          "score": 0.58,
+          "rationale": "The answer names real subsystems (Actions, Admin, API, Contrib, Models, Permission policies, Template tags, Rich text, Views, URL routing) with coupling kind noted per-entry (ForeignKey, Queries, Inherits), but 'Sites' is buried inside the Models block rather than isolated as its own subsystem, 'Reports' (locked_pages.py, page_types_usage.py) is folded into the Admin catch-all, and the Dashboard panels are absent as a distinct subsystem \u2014 a restructuring agent would still need to mentally separate these."
+        },
+        "specificity": {
+          "score": 0.7,
+          "rationale": "Most entries carry concrete file:line anchors and include the call pattern (e.g., 'wagtail/contrib/search_promotions/models.py:104 \u2014 ForeignKey to Page (page)'), giving the agent actionable pointers; a handful of entries use vague verbs ('Uses Page status', 'Uses Page in workflows') without a precise call site."
+        },
+        "justification": {
+          "score": 0.52,
+          "rationale": "The JSON summary counts per-subsystem (actions:8, admin:18, etc.) conveys the breadth of the change, but the prose grouping does not synthesize which subsystems embed schema (FKs that survive migrations) versus which merely query \u2014 the distinction an agent needs to sequence the restructuring safely."
+        },
+        "uncertainty": {
+          "score": 0.18,
+          "rationale": "The answer presents every entry with uniform confidence; there is no flagging of areas that could not be fully verified (e.g., whether the 'frontend cache' coupling is real or inferred, or whether the admin side-panels entry at wagtail/admin/ui/side_panels.py:268 was confirmed), leaving the agent to trust an unverified catalog."
+        }
+      },
+      "step_quality": 0.538,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1892,
+        "cache_creation_input_tokens": 14620,
+        "cache_read_input_tokens": 23375
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.38,
+          "rationale": "The answer has a 'Blast radius assessment' section but organizes by flow category (editor/visitor/API) rather than the coupling-kind axis the rubric demands: schema-embedding FKs (Site.root_page at sites.py:90, SearchPromotion.page at search_promotions/models.py:104, Redirect.redirect_page at redirects/models.py:33) are never separated from transient queriers \u2014 they appear mixed into the same bullet lists, so the agent cannot immediately see which dependents require a migration vs which only need a method update."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "The blast radius bullets do carry file:line anchors (e.g., wagtail/views.py:16, wagtail/api/v2/views.py:518, wagtail/actions/move_page.py:63), but several risk entries in the final section collapse multiple callers under one pattern (e.g., 'High-risk, API flows' lists four entries without distinguishing which embed schema vs which only query)."
+        },
+        "justification": {
+          "score": 0.22,
+          "rationale": "Risk tiers are labeled but not argued: the answer says wagtail/views.py:16 is high-risk because it is 'visitor-facing' without explaining it is called on every page request, and it says move_page.py is high-risk but does not connect this to the irreversibility of tree-path mutations; coupling kind (FK-in-schema vs transient method call) \u2014 the actual driver of restructuring risk \u2014 is never invoked as the argument."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "No judgment calls are explicitly flagged; line numbers for several entries look plausible but unverified (e.g., wagtail/url_routing.py:931, wagtail/models/pages.py:2843) and the answer presents them all with equal confidence, leaving the agent no signal about where to spot-check before acting."
+        }
+      },
+      "step_quality": 0.3705,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1494,
+        "cache_creation_input_tokens": 14624,
+        "cache_read_input_tokens": 23375
+      }
+    },
+    {
+      "step": "Surface the non-obvious dependents",
+      "scores": {
+        "map_quality": {
+          "score": 0.28,
+          "rationale": "The answer produces a five-entry 'non-obvious' list, but it misses the canonical hard-to-find patterns the rubric names: the lazy-string ForeignKey declarations in sites.py and search_promotions that spell the model as a quoted string ('wagtailcore.Page') and therefore never import the class (so grep-for-import misses them), and the multiline-import dashboard pattern. search_promotions:104 appears only in the exhaustive table, not called out as evading search. Sites.py is cited at line 790 for is_site_root(), not for the string-FK mechanism at its root_page field."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "All five non-obvious entries carry a file:line anchor, so the agent has something to jump to; but two of the entries (contrib/settings/models.py:73 as 'indirect via Site', admin/views/chooser.py:259 as 'without explicit Page mention') name the wrong mechanism and are therefore mislabeled non-obvious rather than genuinely hard-to-find."
+        },
+        "justification": {
+          "score": 0.25,
+          "rationale": "The 'why it is easy to miss' explanations are one-line glosses ('without direct import', 'indirectly uses Page through Site') that do not trace back to the actual code construct \u2014 the string-FK quoting mechanism, the tagged-template dispatch, or the multiline import chain \u2014 so an agent still cannot decide whether these are grep-invisible without reading the files."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer contains no acknowledgment of search blind spots, no caveat that the Sense index might not surface string-reference FKs, and no list of areas that could not be fully verified; the section ends with a JSON block, not a hedge."
+        }
+      },
+      "step_quality": 0.282,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1810,
+        "cache_creation_input_tokens": 14601,
+        "cache_read_input_tokens": 23375
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.45,
+          "rationale": "The answer groups dependents across ten subsystems with file:line and carries the list forward from earlier steps, but the core requirement of step 7 \u2014 'what must be checked per dependent when the contract changes' \u2014 is present only for a handful of high-risk callers in the blast-radius section; the remaining 20+ entries just restate the coupling kind ('Queries Page.objects.all()') with no verification note, leaving the agent to derive checks by inference rather than reading them off a map."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "File:line anchors appear throughout (e.g. 'wagtail/contrib/search_promotions/models.py:104', 'wagtail/admin/views/chooser.py:259') and are consistently formatted, giving the agent concrete jump targets; some line numbers for inferred calls (e.g. sites.py:790 for 'is_site_root()') are plausible but not obviously verified, and collapsed entries like 'wagtail/admin/forms/pages.py:34, 270, 288' compress three distinct call sites into one-line descriptions."
+        },
+        "justification": {
+          "score": 0.3,
+          "rationale": "Verification reasoning appears only for the five entries under 'High-risk, editor flows' and 'High-risk, visitor-facing flows' (e.g. 'Tree movement breaks if url_path changes', 'Page.copy() method signature must be preserved'), but for the 20+ remaining dependents the answer gives no coupling-derived check \u2014 an agent must still infer what to test for the admin forms, permission policies, rich-text converters, and contrib apps."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer presents its 25-dependent count and all file:line citations with no hedges, no 'could not verify', and no explicit follow-up items \u2014 residual unknowns (e.g. dynamic contrib apps discovered at runtime, lazy string FKs that may not appear in Sense's graph) are not flagged, leaving the agent no signal about where the map might still have gaps."
+        }
+      },
+      "step_quality": 0.425,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1806,
+        "cache_creation_input_tokens": 14629,
+        "cache_read_input_tokens": 23375
+      }
+    }
+  ]
+}

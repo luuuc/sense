@@ -1,0 +1,1285 @@
+{
+  "scenario": "Sentry work session - audit every production subsystem that depends on the core issue model before reworking its contract",
+  "repo": "sentry",
+  "adoption_score": 0.4,
+  "keyword_coverage": 0.7917,
+  "step_avg_score": 0.8429,
+  "efficiency": 0.0,
+  "completeness": 0.5837,
+  "tool_fluency": 0.0,
+  "discoverability": 1.0,
+  "citation_grounding": {
+    "total": 124,
+    "grounded": 108,
+    "unresolved": 11,
+    "hallucinated": 5,
+    "rate": 0.871,
+    "examples": {
+      "grounded": [
+        "src/sentry/models/group.py:704 (line 704 in src/sentry/models/group.py (file has 1228 lines))",
+        "src/sentry/models/groupassignee.py:276 (line 276 in src/sentry/models/groupassignee.py (file has 303 lines))",
+        "src/sentry/models/grouphistory.py:45 (line 45 in src/sentry/models/grouphistory.py (file has 355 lines))",
+        "src/sentry/models/groupsubscription.py:35 (line 35 in src/sentry/models/groupsubscription.py (file has 265 lines))",
+        "src/sentry/models/groupowner.py:42 (line 42 in src/sentry/models/groupowner.py (file has 251 lines))"
+      ],
+      "unresolved": [
+        "src/sentry/seer/lightweight_rca_cluster.py:7 (file not found at src/sentry/seer/lightweight_rca_cluster.py)",
+        "src/sentry/seer/night_shift/skip_cache.py:22 (file not found at src/sentry/seer/night_shift/skip_cache.py)",
+        "src/sentry/seer/night_shift/cron.py:529 (file not found at src/sentry/seer/night_shift/cron.py)",
+        "src/sentry/seer/backfill_supergroups_lightweight.py:123 (file not found at src/sentry/seer/backfill_supergroups_lightweight.py)",
+        "src/sentry/seer/statistical_detectors/detector.py:20 (file not found at src/sentry/seer/statistical_detectors/detector.py)"
+      ],
+      "hallucinated": [
+        "src/sentry/models/groupseen.py:33 (line 33 out of range (file only 28 lines))",
+        "src/sentry/models/groupbookmark.py:33 (line 33 out of range (file only 31 lines))",
+        "src/sentry/models/groupshare.py:37 (line 37 out of range (file only 35 lines))",
+        "src/sentry/tasks/reprocessing2.py:584 (line 584 out of range (file only 291 lines))",
+        "src/sentry/processing_errors/provisioning.py:1060 (line 1060 out of range (file only 87 lines))"
+      ]
+    },
+    "details": [
+      {
+        "file": "src/sentry/models/group.py",
+        "locator": "704",
+        "status": "grounded",
+        "reason": "line 704 in src/sentry/models/group.py (file has 1228 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupassignee.py",
+        "locator": "276",
+        "status": "grounded",
+        "reason": "line 276 in src/sentry/models/groupassignee.py (file has 303 lines)"
+      },
+      {
+        "file": "src/sentry/models/grouphistory.py",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in src/sentry/models/grouphistory.py (file has 355 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupsubscription.py",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in src/sentry/models/groupsubscription.py (file has 265 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupowner.py",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in src/sentry/models/groupowner.py (file has 251 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupsnooze.py",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in src/sentry/models/groupsnooze.py (file has 265 lines)"
+      },
+      {
+        "file": "src/sentry/models/grouplink.py",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in src/sentry/models/grouplink.py (file has 87 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupmeta.py",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in src/sentry/models/groupmeta.py (file has 109 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupenvironment.py",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in src/sentry/models/groupenvironment.py (file has 61 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupseen.py",
+        "locator": "33",
+        "status": "hallucinated",
+        "reason": "line 33 out of range (file only 28 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupbookmark.py",
+        "locator": "33",
+        "status": "hallucinated",
+        "reason": "line 33 out of range (file only 31 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupinbox.py",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in src/sentry/models/groupinbox.py (file has 169 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupshare.py",
+        "locator": "37",
+        "status": "hallucinated",
+        "reason": "line 37 out of range (file only 35 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupredirect.py",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in src/sentry/models/groupredirect.py (file has 52 lines)"
+      },
+      {
+        "file": "src/sentry/models/groupopenperiod.py",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in src/sentry/models/groupopenperiod.py (file has 273 lines)"
+      },
+      {
+        "file": "src/sentry/models/activity.py",
+        "locator": "47",
+        "status": "grounded",
+        "reason": "line 47 in src/sentry/models/activity.py (file has 235 lines)"
+      },
+      {
+        "file": "src/sentry/api/serializers/models/group.py",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in src/sentry/api/serializers/models/group.py (file has 1221 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/post_process.py",
+        "locator": "453",
+        "status": "grounded",
+        "reason": "line 453 in src/sentry/tasks/post_process.py (file has 1628 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/merge.py",
+        "locator": "193",
+        "status": "grounded",
+        "reason": "line 193 in src/sentry/tasks/merge.py (file has 305 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/unmerge.py",
+        "locator": "203",
+        "status": "grounded",
+        "reason": "line 203 in src/sentry/tasks/unmerge.py (file has 622 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/auto_resolve_issues.py",
+        "locator": "102",
+        "status": "grounded",
+        "reason": "line 102 in src/sentry/tasks/auto_resolve_issues.py (file has 174 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/auto_ongoing_issues.py",
+        "locator": "79",
+        "status": "grounded",
+        "reason": "line 79 in src/sentry/tasks/auto_ongoing_issues.py (file has 331 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/commit_context.py",
+        "locator": "86",
+        "status": "grounded",
+        "reason": "line 86 in src/sentry/tasks/commit_context.py (file has 219 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/reprocessing2.py",
+        "locator": "584",
+        "status": "hallucinated",
+        "reason": "line 584 out of range (file only 291 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/delete_pending_groups.py",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in src/sentry/tasks/delete_pending_groups.py (file has 75 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/email.py",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in src/sentry/tasks/email.py (file has 92 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/seer/autofix.py",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in src/sentry/tasks/seer/autofix.py (file has 405 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/seer/lightweight_rca_cluster.py",
+        "locator": "18",
+        "status": "grounded",
+        "reason": "line 18 in src/sentry/tasks/seer/lightweight_rca_cluster.py (file has 33 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/clear_expired_snoozes.py",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in src/sentry/tasks/clear_expired_snoozes.py (file has 45 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/summaries/utils.py",
+        "locator": "380",
+        "status": "grounded",
+        "reason": "line 380 in src/sentry/tasks/summaries/utils.py (file has 931 lines)"
+      },
+      {
+        "file": "src/sentry/tasks/weekly_escalating_forecast.py",
+        "locator": "64",
+        "status": "grounded",
+        "reason": "line 64 in src/sentry/tasks/weekly_escalating_forecast.py (file has 74 lines)"
+      },
+      {
+        "file": "src/sentry/core/endpoints/project_details.py",
+        "locator": "539",
+        "status": "grounded",
+        "reason": "line 539 in src/sentry/core/endpoints/project_details.py (file has 1295 lines)"
+      },
+      {
+        "file": "src/sentry/core/endpoints/team_unresolved_issue_age.py",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in src/sentry/core/endpoints/team_unresolved_issue_age.py (file has 76 lines)"
+      },
+      {
+        "file": "src/sentry/web/frontend/group_event_json.py",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in src/sentry/web/frontend/group_event_json.py (file has 39 lines)"
+      },
+      {
+        "file": "src/sentry/plugins/bases/issue2.py",
+        "locator": "23",
+        "status": "grounded",
+        "reason": "line 23 in src/sentry/plugins/bases/issue2.py (file has 510 lines)"
+      },
+      {
+        "file": "src/sentry/releases/endpoints/project_release_setup.py",
+        "locator": "63",
+        "status": "grounded",
+        "reason": "line 63 in src/sentry/releases/endpoints/project_release_setup.py (file has 98 lines)"
+      },
+      {
+        "file": "src/sentry/monitors/utils.py",
+        "locator": "295",
+        "status": "grounded",
+        "reason": "line 295 in src/sentry/monitors/utils.py (file has 542 lines)"
+      },
+      {
+        "file": "src/sentry/reprocessing2.py",
+        "locator": "584",
+        "status": "grounded",
+        "reason": "line 584 in src/sentry/reprocessing2.py (file has 743 lines)"
+      },
+      {
+        "file": "src/sentry/utils/email/address.py",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in src/sentry/utils/email/address.py (file has 84 lines)"
+      },
+      {
+        "file": "src/sentry/buffer/base.py",
+        "locator": "138",
+        "status": "grounded",
+        "reason": "line 138 in src/sentry/buffer/base.py (file has 199 lines)"
+      },
+      {
+        "file": "src/sentry/data_export/processors/issues_by_tag.py",
+        "locator": "58",
+        "status": "grounded",
+        "reason": "line 58 in src/sentry/data_export/processors/issues_by_tag.py (file has 128 lines)"
+      },
+      {
+        "file": "src/sentry/data_export/processors/discover.py",
+        "locator": "128",
+        "status": "grounded",
+        "reason": "line 128 in src/sentry/data_export/processors/discover.py (file has 150 lines)"
+      },
+      {
+        "file": "src/sentry/grouping/ingest/utils.py",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in src/sentry/grouping/ingest/utils.py (file has 65 lines)"
+      },
+      {
+        "file": "src/sentry/releases/use_cases/release.py",
+        "locator": "450",
+        "status": "grounded",
+        "reason": "line 450 in src/sentry/releases/use_cases/release.py (file has 469 lines)"
+      },
+      {
+        "file": "src/sentry/seer/agent/client.py",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in src/sentry/seer/agent/client.py (file has 998 lines)"
+      },
+      {
+        "file": "src/sentry/seer/agent/utils.py",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in src/sentry/seer/agent/utils.py (file has 507 lines)"
+      },
+      {
+        "file": "src/sentry/seer/autofix/autofix.py",
+        "locator": "14",
+        "status": "grounded",
+        "reason": "line 14 in src/sentry/seer/autofix/autofix.py (file has 216 lines)"
+      },
+      {
+        "file": "src/sentry/seer/autofix/trigger.py",
+        "locator": "22",
+        "status": "grounded",
+        "reason": "line 22 in src/sentry/seer/autofix/trigger.py (file has 188 lines)"
+      },
+      {
+        "file": "src/sentry/seer/autofix/webhooks.py",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in src/sentry/seer/autofix/webhooks.py (file has 98 lines)"
+      },
+      {
+        "file": "src/sentry/seer/autofix/introspection.py",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in src/sentry/seer/autofix/introspection.py (file has 527 lines)"
+      },
+      {
+        "file": "src/sentry/seer/autofix/issue_summary.py",
+        "locator": "20",
+        "status": "grounded",
+        "reason": "line 20 in src/sentry/seer/autofix/issue_summary.py (file has 609 lines)"
+      },
+      {
+        "file": "src/sentry/seer/autofix/on_completion_hook.py",
+        "locator": "14",
+        "status": "grounded",
+        "reason": "line 14 in src/sentry/seer/autofix/on_completion_hook.py (file has 702 lines)"
+      },
+      {
+        "file": "src/sentry/seer/autofix/utils.py",
+        "locator": "28",
+        "status": "grounded",
+        "reason": "line 28 in src/sentry/seer/autofix/utils.py (file has 1109 lines)"
+      },
+      {
+        "file": "src/sentry/seer/endpoints/group_autofix_repos.py",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in src/sentry/seer/endpoints/group_autofix_repos.py (file has 57 lines)"
+      },
+      {
+        "file": "src/sentry/seer/endpoints/group_ai_autofix.py",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in src/sentry/seer/endpoints/group_ai_autofix.py (file has 505 lines)"
+      },
+      {
+        "file": "src/sentry/seer/endpoints/group_autofix_setup_check.py",
+        "locator": "17",
+        "status": "grounded",
+        "reason": "line 17 in src/sentry/seer/endpoints/group_autofix_setup_check.py (file has 182 lines)"
+      },
+      {
+        "file": "src/sentry/seer/endpoints/group_ai_summary.py",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in src/sentry/seer/endpoints/group_ai_summary.py (file has 53 lines)"
+      },
+      {
+        "file": "src/sentry/seer/endpoints/organization_seer_agent_pr_groups.py",
+        "locator": "17",
+        "status": "grounded",
+        "reason": "line 17 in src/sentry/seer/endpoints/organization_seer_agent_pr_groups.py (file has 155 lines)"
+      },
+      {
+        "file": "src/sentry/seer/entrypoints/operator.py",
+        "locator": "7",
+        "status": "grounded",
+        "reason": "line 7 in src/sentry/seer/entrypoints/operator.py (file has 862 lines)"
+      },
+      {
+        "file": "src/sentry/seer/entrypoints/slack/entrypoint.py",
+        "locator": "44",
+        "status": "grounded",
+        "reason": "line 44 in src/sentry/seer/entrypoints/slack/entrypoint.py (file has 637 lines)"
+      },
+      {
+        "file": "src/sentry/seer/fetch_issues/by_error_type.py",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in src/sentry/seer/fetch_issues/by_error_type.py (file has 69 lines)"
+      },
+      {
+        "file": "src/sentry/seer/fetch_issues/by_function_name.py",
+        "locator": "12",
+        "status": "grounded",
+        "reason": "line 12 in src/sentry/seer/fetch_issues/by_function_name.py (file has 293 lines)"
+      },
+      {
+        "file": "src/sentry/seer/fetch_issues/by_text_query.py",
+        "locator": "8",
+        "status": "grounded",
+        "reason": "line 8 in src/sentry/seer/fetch_issues/by_text_query.py (file has 77 lines)"
+      },
+      {
+        "file": "src/sentry/seer/fetch_issues/utils.py",
+        "locator": "13",
+        "status": "grounded",
+        "reason": "line 13 in src/sentry/seer/fetch_issues/utils.py (file has 211 lines)"
+      },
+      {
+        "file": "src/sentry/seer/lightweight_rca_cluster.py",
+        "locator": "7",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/seer/lightweight_rca_cluster.py"
+      },
+      {
+        "file": "src/sentry/seer/night_shift/delivery.py",
+        "locator": "12",
+        "status": "grounded",
+        "reason": "line 12 in src/sentry/seer/night_shift/delivery.py (file has 187 lines)"
+      },
+      {
+        "file": "src/sentry/seer/night_shift/models.py",
+        "locator": "6",
+        "status": "grounded",
+        "reason": "line 6 in src/sentry/seer/night_shift/models.py (file has 54 lines)"
+      },
+      {
+        "file": "src/sentry/seer/night_shift/skip_cache.py",
+        "locator": "22",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/seer/night_shift/skip_cache.py"
+      },
+      {
+        "file": "src/sentry/seer/night_shift/cron.py",
+        "locator": "529",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/seer/night_shift/cron.py"
+      },
+      {
+        "file": "src/sentry/seer/backfill_supergroups_lightweight.py",
+        "locator": "123",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/seer/backfill_supergroups_lightweight.py"
+      },
+      {
+        "file": "src/sentry/seer/statistical_detectors/detector.py",
+        "locator": "20",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/seer/statistical_detectors/detector.py"
+      },
+      {
+        "file": "src/sentry/seer/usecases/replay_counts.py",
+        "locator": "135",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/seer/usecases/replay_counts.py"
+      },
+      {
+        "file": "src/sentry/statistical_detectors/detector.py",
+        "locator": "20",
+        "status": "grounded",
+        "reason": "line 20 in src/sentry/statistical_detectors/detector.py (file has 646 lines)"
+      },
+      {
+        "file": "src/sentry/incidents/endpoints/serializers/workflow_engine_incident.py",
+        "locator": "20",
+        "status": "grounded",
+        "reason": "line 20 in src/sentry/incidents/endpoints/serializers/workflow_engine_incident.py (file has 255 lines)"
+      },
+      {
+        "file": "src/sentry/incidents/typings/metric_detector.py",
+        "locator": "16",
+        "status": "grounded",
+        "reason": "line 16 in src/sentry/incidents/typings/metric_detector.py (file has 314 lines)"
+      },
+      {
+        "file": "src/sentry/incidents/logic/incident_occurrence.py",
+        "locator": "23",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/incidents/logic/incident_occurrence.py"
+      },
+      {
+        "file": "src/sentry/incidents/metric_issue_post_process.py",
+        "locator": "7",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/incidents/metric_issue_post_process.py"
+      },
+      {
+        "file": "src/sentry/notifications/models/notification_action.py",
+        "locator": "32",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/notifications/models/notification_action.py"
+      },
+      {
+        "file": "src/sentry/notifications/services/notifications_service.py",
+        "locator": "22",
+        "status": "unresolved",
+        "reason": "file not found at src/sentry/notifications/services/notifications_service.py"
+      },
+      {
+        "file": "src/sentry/notifications/utils/issue_notification_context.py",
+        "locator": "12",
+        "status": "grounded",
+        "reason": "line 12 in src/sentry/notifications/utils/issue_notification_context.py (file has 133 lines)"
+      },
+      {
+        "file": "src/sentry/notifications/utils/open_period.py",
+        "locator": "5",
+        "status": "grounded",
+        "reason": "line 5 in src/sentry/notifications/utils/open_period.py (file has 34 lines)"
+      },
+      {
+        "file": "src/sentry/notifications/platform/slack/renderers/issue.py",
+        "locator": "9",
+        "status": "grounded",
+        "reason": "line 9 in src/sentry/notifications/platform/slack/renderers/issue.py (file has 44 lines)"
+      },
+      {
+        "file": "src/sentry/notifications/platform/discord/renderers/issue.py",
+        "locator": "8",
+        "status": "grounded",
+        "reason": "line 8 in src/sentry/notifications/platform/discord/renderers/issue.py (file has 59 lines)"
+      },
+      {
+        "file": "src/sentry/processing_errors/tasks.py",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in src/sentry/processing_errors/tasks.py (file has 104 lines)"
+      },
+      {
+        "file": "src/sentry/processing_errors/provisioning.py",
+        "locator": "1060",
+        "status": "hallucinated",
+        "reason": "line 1060 out of range (file only 87 lines)"
+      },
+      {
+        "file": "src/sentry/receivers/releases.py",
+        "locator": "309",
+        "status": "grounded",
+        "reason": "line 309 in src/sentry/receivers/releases.py (file has 372 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/caches/action_filters.py",
+        "locator": "54",
+        "status": "grounded",
+        "reason": "line 54 in src/sentry/workflow_engine/caches/action_filters.py (file has 118 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_priority_greater_or_equal_handler.py",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in src/sentry/workflow_engine/handlers/condition/issue_priority_greater_or_equal_handler.py (file has 16 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_type_handler.py",
+        "locator": "20",
+        "status": "grounded",
+        "reason": "line 20 in src/sentry/workflow_engine/handlers/condition/issue_type_handler.py (file has 59 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/first_seen_event_handler.py",
+        "locator": "21",
+        "status": "grounded",
+        "reason": "line 21 in src/sentry/workflow_engine/handlers/condition/first_seen_event_handler.py (file has 27 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/new_high_priority_issue_handler.py",
+        "locator": "12",
+        "status": "grounded",
+        "reason": "line 12 in src/sentry/workflow_engine/handlers/condition/new_high_priority_issue_handler.py (file has 19 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/regression_event_handler.py",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in src/sentry/workflow_engine/handlers/condition/regression_event_handler.py (file has 20 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_category_handler.py",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in src/sentry/workflow_engine/handlers/condition/issue_category_handler.py (file has 63 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/latest_release_handler.py",
+        "locator": "130",
+        "status": "grounded",
+        "reason": "line 130 in src/sentry/workflow_engine/handlers/condition/latest_release_handler.py (file has 151 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_open_duration_handler.py",
+        "locator": "15",
+        "status": "grounded",
+        "reason": "line 15 in src/sentry/workflow_engine/handlers/condition/issue_open_duration_handler.py (file has 49 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_priority_deescalating_handler.py",
+        "locator": "12",
+        "status": "grounded",
+        "reason": "line 12 in src/sentry/workflow_engine/handlers/condition/issue_priority_deescalating_handler.py (file has 34 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/reappeared_event_handler.py",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in src/sentry/workflow_engine/handlers/condition/reappeared_event_handler.py (file has 20 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/tagged_event_handler.py",
+        "locator": "17",
+        "status": "grounded",
+        "reason": "line 17 in src/sentry/workflow_engine/handlers/condition/tagged_event_handler.py (file has 122 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_resolution_condition_handler.py",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in src/sentry/workflow_engine/handlers/condition/issue_resolution_condition_handler.py (file has 15 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/seer_activity_trigger_handler.py",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in src/sentry/workflow_engine/handlers/condition/seer_activity_trigger_handler.py (file has 67 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_resolved_trigger_condition.py",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in src/sentry/workflow_engine/handlers/condition/issue_resolved_trigger_condition.py (file has 17 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/latest_adopted_release_handler.py",
+        "locator": "22",
+        "status": "grounded",
+        "reason": "line 22 in src/sentry/workflow_engine/handlers/condition/latest_adopted_release_handler.py (file has 73 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/level_handler.py",
+        "locator": "16",
+        "status": "grounded",
+        "reason": "line 16 in src/sentry/workflow_engine/handlers/condition/level_handler.py (file has 66 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/event_created_by_detector_handler.py",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in src/sentry/workflow_engine/handlers/condition/event_created_by_detector_handler.py (file has 22 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/age_comparison_handler.py",
+        "locator": "17",
+        "status": "grounded",
+        "reason": "line 17 in src/sentry/workflow_engine/handlers/condition/age_comparison_handler.py (file has 63 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/assigned_to_handler.py",
+        "locator": "21",
+        "status": "grounded",
+        "reason": "line 21 in src/sentry/workflow_engine/handlers/condition/assigned_to_handler.py (file has 131 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/event_attribute_handler.py",
+        "locator": "16",
+        "status": "grounded",
+        "reason": "line 16 in src/sentry/workflow_engine/handlers/condition/event_attribute_handler.py (file has 113 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_priority_equals.py",
+        "locator": "10",
+        "status": "grounded",
+        "reason": "line 10 in src/sentry/workflow_engine/handlers/condition/issue_priority_equals.py (file has 16 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/event_frequency_handlers.py",
+        "locator": "23",
+        "status": "grounded",
+        "reason": "line 23 in src/sentry/workflow_engine/handlers/condition/event_frequency_handlers.py (file has 137 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/condition/issue_occurrences_handler.py",
+        "locator": "11",
+        "status": "grounded",
+        "reason": "line 11 in src/sentry/workflow_engine/handlers/condition/issue_occurrences_handler.py (file has 41 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/handlers/detector/base.py",
+        "locator": "127",
+        "status": "grounded",
+        "reason": "line 127 in src/sentry/workflow_engine/handlers/detector/base.py (file has 203 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/defaults/detectors.py",
+        "locator": "181",
+        "status": "grounded",
+        "reason": "line 181 in src/sentry/workflow_engine/defaults/detectors.py (file has 286 lines)"
+      },
+      {
+        "file": "src/sentry/workflow_engine/defaults/workflows.py",
+        "locator": "47",
+        "status": "grounded",
+        "reason": "line 47 in src/sentry/workflow_engine/defaults/workflows.py (file has 112 lines)"
+      },
+      {
+        "file": "groupassignee.py",
+        "locator": "276",
+        "status": "grounded",
+        "reason": "line 276 in groupassignee.py (file has 303 lines) [via src/sentry/models/groupassignee.py]"
+      },
+      {
+        "file": "grouphistory.py",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in grouphistory.py (file has 355 lines) [via src/sentry/models/grouphistory.py]"
+      },
+      {
+        "file": "post_process.py",
+        "locator": "453",
+        "status": "grounded",
+        "reason": "line 453 in post_process.py (file has 1628 lines) [via src/sentry/tasks/post_process.py]"
+      },
+      {
+        "file": "merge.py",
+        "locator": "193",
+        "status": "grounded",
+        "reason": "line 193 in merge.py (file has 305 lines) [via src/sentry/tasks/merge.py]"
+      },
+      {
+        "file": "serializers/models/group.py",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in serializers/models/group.py (file has 1221 lines) [via src/sentry/api/serializers/models/group.py]"
+      },
+      {
+        "file": "data_export/processors/issues_by_tag.py",
+        "locator": "58",
+        "status": "grounded",
+        "reason": "line 58 in data_export/processors/issues_by_tag.py (file has 128 lines) [via src/sentry/data_export/processors/issues_by_tag.py]"
+      },
+      {
+        "file": "notifications/services/notifications_service.py",
+        "locator": "22",
+        "status": "unresolved",
+        "reason": "file not found at notifications/services/notifications_service.py"
+      },
+      {
+        "file": "seer/autofix/autofix.py",
+        "locator": "14",
+        "status": "grounded",
+        "reason": "line 14 in seer/autofix/autofix.py (file has 216 lines) [via src/sentry/seer/autofix/autofix.py]"
+      },
+      {
+        "file": "web/frontend/group_event_json.py",
+        "locator": "3",
+        "status": "grounded",
+        "reason": "line 3 in web/frontend/group_event_json.py (file has 39 lines) [via src/sentry/web/frontend/group_event_json.py]"
+      },
+      {
+        "file": "utils/email/address.py",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in utils/email/address.py (file has 84 lines) [via src/sentry/utils/email/address.py]"
+      },
+      {
+        "file": "src/sentry/metrics/middleware.py",
+        "locator": "12",
+        "status": "grounded",
+        "reason": "line 12 in src/sentry/metrics/middleware.py (file has 239 lines)"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 17,
+    "mentioned": 4,
+    "cited": 4,
+    "mention_recall": 0.2353,
+    "cited_recall": 0.2353,
+    "groups": {
+      "contract": {
+        "total": 1,
+        "mentioned": 1,
+        "cited": 1,
+        "mention_recall": 1.0,
+        "cited_recall": 1.0
+      },
+      "context": {
+        "total": 11,
+        "mentioned": 3,
+        "cited": 3,
+        "mention_recall": 0.2727,
+        "cited_recall": 0.2727
+      },
+      "dependents": {
+        "total": 5,
+        "mentioned": 0,
+        "cited": 0,
+        "mention_recall": 0.0,
+        "cited_recall": 0.0
+      }
+    },
+    "missed_mention": [
+      "ctx:rest-details",
+      "ctx:event-manager",
+      "ctx:slack-builder",
+      "ctx:notif-base",
+      "ctx:notif-strategy",
+      "ctx:group-event",
+      "ctx:seer-triage",
+      "ctx:workflow-types",
+      "dep:rule-history",
+      "dep:sentryapp-create",
+      "dep:sentryapp-link",
+      "dep:sentryapp-request",
+      "dep:workflow-history"
+    ],
+    "missed_cite": [
+      "ctx:rest-details",
+      "ctx:event-manager",
+      "ctx:slack-builder",
+      "ctx:notif-base",
+      "ctx:notif-strategy",
+      "ctx:group-event",
+      "ctx:seer-triage",
+      "ctx:workflow-types",
+      "dep:rule-history",
+      "dep:sentryapp-create",
+      "dep:sentryapp-link",
+      "dep:sentryapp-request",
+      "dep:workflow-history"
+    ],
+    "details": [
+      {
+        "id": "issue-model",
+        "group": "contract",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:serializer",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:rest-details",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:event-manager",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:slack-builder",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:open-period",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:digest-context",
+        "group": "context",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "ctx:notif-base",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:notif-strategy",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:group-event",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:seer-triage",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "ctx:workflow-types",
+        "group": "context",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:rule-history",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:sentryapp-create",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:sentryapp-link",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:sentryapp-request",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "dep:workflow-history",
+        "group": "dependents",
+        "mentioned": false,
+        "cited": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "issue",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "Sentry",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 124,
+          "unique_refs": 124,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 0,
+      "total_required": 0,
+      "hits_bonus": 3,
+      "total_bonus": 5,
+      "fairness_hits_required": 0,
+      "fairness_total_required": 0,
+      "fairness_hits_bonus": 3,
+      "fairness_total_bonus": 3,
+      "score_required": 1.0,
+      "score_bonus": 0.6,
+      "combined_score": 0.6,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the issue model contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "src/sentry/models/group.py",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 124,
+          "unique_refs": 124,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_conventions",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 2,
+      "total_required": 2,
+      "hits_bonus": 0,
+      "total_bonus": 2,
+      "fairness_hits_required": 2,
+      "fairness_total_required": 2,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Enumerate every production dependent of the issue model",
+      "checks": [
+        {
+          "hit": false,
+          "type": "contains",
+          "value": "src/sentry/sentry_apps/external_requests/issue_link_requester.py",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "contains",
+          "value": "src/sentry/tasks/seer/night_shift/models.py",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "contains",
+          "value": "src/sentry/digests/utils.py",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "5",
+          "unique_files": 124,
+          "unique_refs": 124,
+          "threshold": 5,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 5,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 3,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.2857,
+      "fairness_score": 0.4
+    },
+    {
+      "name": "Group the dependents by subsystem",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "notifications",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "word",
+          "value": "workflow",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 124,
+          "unique_refs": 124,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 2,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 2,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 0.6667,
+      "combined_score": 0.8,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Assess the blast radius of the contract change",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 124,
+          "unique_refs": 124,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Surface the non-obvious dependents",
+      "checks": [
+        {
+          "hit": false,
+          "type": "contains",
+          "value": "src/sentry/services/eventstore/models.py",
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "contains",
+          "value": "src/sentry/rules/history/base.py",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 124,
+          "unique_refs": 124,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 3,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 2,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.4,
+      "fairness_score": 0.5
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "5",
+          "unique_files": 124,
+          "unique_refs": 124,
+          "threshold": 5,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0, post-MCP misses: 0 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 21,
+    "grep_count": 13,
+    "read_count": 8,
+    "mcp_count": 0,
+    "token_input_uncached": 956919,
+    "token_output": 8795,
+    "token_cache_read": 0,
+    "token_cache_write": 0,
+    "token_total_billed": 965714,
+    "token_total_all": 965714,
+    "wall_time_seconds": 0.0,
+    "cost_usd": null,
+    "effective_token_total_billed": 965714,
+    "effective_wall_time_seconds": 0.0,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 480,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 27902,
+    "audit_chars": 171683,
+    "overhead": null
+  }
+}

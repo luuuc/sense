@@ -1,0 +1,342 @@
+{
+  "scenario": "Healthchecks work session - audit every notification delivery method that implements the base transport contract before reworking it",
+  "repo": "healthchecks",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "healthchecks.rubric.yaml"
+  },
+  "scenario_quality": 0.4435,
+  "relationship_audit": {
+    "total": 20,
+    "covered": 20,
+    "related": 20,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "transport-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:registry-dispatch",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:discord",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:mattermost",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:slack",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:webhook",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:msteamsw",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rocketchat",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:email",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:signal",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:pd",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:opsgenie",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:telegram",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:sms",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:whatsapp",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:matrix",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:ntfy",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:gotify",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:zulip",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:pushover",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.55,
+          "rationale": "The answer names Healthchecks, Django, hc/, hc/api/transports.py, and the Transport class \u2014 hitting the file and class the rubric demands \u2014 but never enumerates the per-feature app split (api, front, accounts, integrations, ...) that the rubric explicitly requires; a downstream agent looking for all concrete delivery implementations would still need to discover the integrations sub-app structure from scratch."
+        },
+        "specificity": {
+          "score": 0.65,
+          "rationale": "hc/api/transports.py and Transport are concrete and correct; nothing else is pinned to a path or class name, so the organization description ('hc/ directory') is too vague to be actionable beyond the one file already cited."
+        },
+        "justification": {
+          "score": 0.45,
+          "rationale": "\"All concrete delivery methods extend\" gives a bare minimum reason, but the answer omits that notify() is the entry point every implementation overrides and that the shared helpers the base provides are what make it the load-bearing contract \u2014 a downstream agent still needs to read the file to understand what 'reworking the base contract' actually means."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "No uncertainty is flagged, which is acceptable for a correct orientation; however, the answer is sparse enough that it cannot distinguish confident completeness from silent omission, leaving the agent to wonder whether the app-list gap is intentional."
+        }
+      },
+      "step_quality": 0.5475,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1552,
+        "cache_creation_input_tokens": 33776,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Map the base transport contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer pins the entry point (notify at line 64), four shared helpers (is_noop, down_checks, last_ping, tmpl) with file:line, and mentions TransportError and the HttpTransport intermediate \u2014 but omits get_ping_body entirely, which the rubric lists as a key helper alongside the others; and the 'what a teammate needs to know before changing it' framing is absent: the answer lists members but never synthesises the contract implications."
+        },
+        "specificity": {
+          "score": 0.78,
+          "rationale": "The base class (hc/api/transports.py:60), entry point (line 64), and four helpers (lines 74, 85, 103, 117) are all pinned to concrete file:line; the HttpTransport convenience methods (request, post, put) are named but lack any line references, which is a minor gap."
+        },
+        "justification": {
+          "score": 0.3,
+          "rationale": "Each helper gets a one-phrase functional description ('gets last ping before flip', 'template rendering helper') but the answer never explains which parts implementations depend on or why the contract shapes the change risk \u2014 the agent still must infer which helpers, if altered, would break the most concrete implementations."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer presents the contract as complete with no hedges; it does not flag the missing get_ping_body, the unconfirmed HttpTransport line numbers, or any part of the contract it may have missed."
+        }
+      },
+      "step_quality": 0.5105,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1524,
+        "cache_creation_input_tokens": 10354,
+        "cache_read_input_tokens": 23724
+      }
+    },
+    {
+      "step": "Enumerate every concrete delivery method built on the base contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.7,
+          "rationale": "The answer delivers 29 file:line entries spanning all known per-integration packages (apprise, call, discord, email, github, ..., zulip), including the ones that reach the base through intermediates (discord, mattermost, slack, rocketchat). The flat structure is complete in breadth, but omitting class names means the agent cannot confirm what class lives at each line without opening the file."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "Every entry has a concrete file:line (e.g. hc/integrations/slack/transport.py:28), which is strong, but the actual class name is absent from every line \u2014 an agent acting on this list must open all 29 files to recover even the class identifiers before it can reason about the contract change."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "No indication of how any implementation connects to the base (direct subclass, via Slackalike/HttpTransport intermediate, or helper override) appears anywhere in the list; the answer is a bare location list with zero dependency context."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The list is presented as definitive and complete with no caveats, no flagged gaps, and no acknowledgement that some integration packages or indirect reaches might have been missed."
+        }
+      },
+      "step_quality": 0.4175,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2916,
+        "cache_creation_input_tokens": 10560,
+        "cache_read_input_tokens": 23724
+      }
+    },
+    {
+      "step": "Group the implementations by how they reach the base",
+      "scores": {
+        "map_quality": {
+          "score": 0.55,
+          "rationale": "The three-group structure (direct Transport, direct HttpTransport, Slackalike) correctly reflects the inheritance hierarchy with file:line throughout, giving the agent a usable routing map. However, the rubric's second dimension \u2014 whether each implementation overrides the entry point (notify()) or a shared helper (payload/prepare/is_noop) \u2014 is entirely absent, so the agent still must open every file to know which contract surface each class depends on before editing the base."
+        },
+        "specificity": {
+          "score": 0.75,
+          "rationale": "Every implementation is pinned to a concrete class name, file path, and line number (e.g. 'Discord(Slackalike) hc/integrations/discord/transport.py:11'), satisfying the file:line requirement. The missing specificity is the override method \u2014 'overrides notify()' vs. 'overrides payload()' is not stated for any entry."
+        },
+        "justification": {
+          "score": 0.45,
+          "rationale": "The grouping correctly captures real inheritance layering (Transport \u2192 HttpTransport \u2192 Slackalike \u2192 Slack/Discord/Mattermost) rather than a superficial category, which does reflect coupling depth. But it stops at the class-line level and does not explain which contract methods each group relies on, so the coupling to the change target is only half-articulated."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer presents itself as complete with no hedging \u2014 no flag that override methods were not confirmed, no note about whether any integration package was omitted, and no signal that the Slackalike chain was verified versus inferred. An agent acting on this map has no indication of where to double-check."
+        }
+      },
+      "step_quality": 0.52,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1437,
+        "cache_creation_input_tokens": 10800,
+        "cache_read_input_tokens": 23724
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.28,
+          "rationale": "The answer groups risk into three tiers but never names most of the concrete implementations or states what alert each delivers, so the agent still cannot prioritize without re-enumerating the integration packages itself. The 'highest risk' tier says 'all implementations override notify()' with no list, and the 'lower risk' placement of intermediates (Discord/Mattermost) is misleading since they are still fully affected by HttpTransport changes."
+        },
+        "specificity": {
+          "score": 0.15,
+          "rationale": "No file:line citations appear anywhere; the only concrete identifiers are six class/method names (Slackalike.fix_asterisks, Webhook.is_noop, Gotify, Ntfy, Pushover, Discord, Mattermost). The agent cannot navigate to any implementation without a fresh directory scan."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The risk tiers are stated but not justified: 'highest risk' for notify() overrides is asserted rather than reasoned ('this is the main entry point that will break if signature changes'), and placing intermediates in 'lower risk' contradicts their actual full exposure through HttpTransport without explanation."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer makes confident blanket claims ('All implementations override notify()', 'Most call base class helpers') without flagging that this list was not verified against every integration package, leaving the agent no signal about where gaps might exist."
+        }
+      },
+      "step_quality": 0.212,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1163,
+        "cache_creation_input_tokens": 10190,
+        "cache_read_input_tokens": 23724
+      }
+    },
+    {
+      "step": "Surface the non-obvious implementations",
+      "scores": {
+        "map_quality": {
+          "score": 0.28,
+          "rationale": "The answer correctly flags Discord and Mattermost reaching the base through Slackalike, but it completely omits the string-registry angle (the channel-kind-to-class map that means a grep for class names finds nothing) and fails to identify any implementation that overrides a shared helper (payload/prepare/is_noop) rather than the entry point. Signal and Group are flagged as non-obvious but both extend Transport directly, so a text search would not miss them at all \u2014 they are the obvious cases, not the non-obvious ones."
+        },
+        "specificity": {
+          "score": 0.38,
+          "rationale": "Discord, Mattermost, and Slackalike do get file:line citations, but the helper-override pattern is only gestured at ('payload() and fix_asterisks()') without pinning to a line or naming which concrete class overrides which helper; the string registry is entirely absent with no file:line at all."
+        },
+        "justification": {
+          "score": 0.25,
+          "rationale": "The Slackalike-intermediate explanation ('class lines never mention HttpTransport') is directionally correct but imprecise \u2014 the class lines do mention Slackalike, so a grep for Slackalike would find them. For Signal ('complex internal methods') and Group ('iterates over child channels'), the stated reasons are not explanations of why a text search would miss them; they are just behavioural descriptions."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer contains no caveats, no acknowledgement that the string registry was not examined, and no flag that the list may be incomplete; it implies complete coverage when two of the three non-obvious categories the rubric specifies are entirely absent."
+        }
+      },
+      "step_quality": 0.2645,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1381,
+        "cache_creation_input_tokens": 10190,
+        "cache_read_input_tokens": 23724
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "The JSON audit map groups implementations into three meaningful tiers (direct Transport, via HttpTransport, via Slackalike) with file:line, override lists, helper calls, and verification notes for each entry, plus a registry pointer at hc/api/models.py:47. The map is actionable for a PR landing without re-exploring; the main structural gap is that the HttpTransport intermediate is not named as such in the 'direct_http_transport' label, leaving the two-hop chain (Transport \u2192 HttpTransport \u2192 concrete class) implicit, and Slackalike is listed alongside its own subclasses rather than as a distinct intermediate tier."
+        },
+        "specificity": {
+          "score": 0.8,
+          "rationale": "Every entry carries file:line, class name, named overrides list, and named helpers-called list \u2014 the format is fully concrete. The verification_needed strings are per-entry rather than blanket, and the registry is pinned to a line, so an agent has enough anchors to open exactly the right files."
+        },
+        "justification": {
+          "score": 0.55,
+          "rationale": "Most verification_needed entries are formulaic ('Check notify() signature and X integration') rather than explaining which specific override or helper dependency makes that class sensitive to the base change; the Slackalike group is the exception, correctly noting that changes propagate to Slack/Discord/Mattermost through the intermediate. The risk_assessment block adds some cross-cutting justification but remains generic."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The map does not flag any file:line references as approximate, does not note any integration packages it could not confirm, and does not mark any open items for the implementer \u2014 the structured JSON implies completeness the answer has not verified, leaving no uncertainty signals for an agent that needs to know what still requires manual confirmation."
+        }
+      },
+      "step_quality": 0.6325,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1985,
+        "cache_creation_input_tokens": 12886,
+        "cache_read_input_tokens": 23724
+      }
+    }
+  ]
+}

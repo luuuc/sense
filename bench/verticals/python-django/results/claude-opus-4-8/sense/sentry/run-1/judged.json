@@ -1,0 +1,330 @@
+{
+  "scenario": "Sentry work session - audit every production subsystem that depends on the core issue model before reworking its contract",
+  "repo": "sentry",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "sentry.rubric.yaml"
+  },
+  "scenario_quality": 0.775,
+  "relationship_audit": {
+    "total": 17,
+    "covered": 15,
+    "related": 15,
+    "contradicted": 0,
+    "covered_recall": 0.8824,
+    "related_recall": 0.8824,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "ctx:serializer",
+      "ctx:slack-builder"
+    ],
+    "missed_related": [
+      "ctx:serializer",
+      "ctx:slack-builder"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "issue-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:serializer",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:rest-details",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:event-manager",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:slack-builder",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:open-period",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:digest-context",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:notif-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:notif-strategy",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:group-event",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:seer-triage",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:workflow-types",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rule-history",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:sentryapp-create",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:sentryapp-link",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:sentryapp-request",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:workflow-history",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Delivers the full map: Sentry as Django+React error-monitoring platform, backend split under src/sentry/ with the relevant sub-trees (models, api, issues/endpoints, tasks, integrations, notifications, workflow_engine, rules, seer, sentry_apps, digests, services) enumerated, and Group in src/sentry/models/group.py pinned as the triage/assign/resolve aggregate. The agent can act with targeted lookups from here."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Paths are concrete and line-anchored: `src/sentry/models/group.py:704` for `class Group(Model)` and `:361` for `GroupManager`, plus the DB table name `sentry_groupedmessage` and specific sub-tree paths rather than vague labels."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains why Group is the thing being reworked by quoting the docstring (\"Aggregated message which summarizes a set of Events\") and quantifying it as a hub (\"136 direct callers, ~261 affected symbols across 108 files\"). Could tie more explicitly to \"every triage/notification/workflow surface hangs off it\" but the hub-ness is made concrete."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "No explicit flags of uncertainty; approximations like \"~17k files\" and \"~261 affected symbols\" imply rough counts but nothing is called out as unsure. Given this is an orientation step with high-confidence facts, the absence is mild but present."
+        }
+      },
+      "step_quality": 0.8625,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 574,
+        "cache_creation_input_tokens": 14110,
+        "cache_read_input_tokens": 32896
+      }
+    },
+    {
+      "step": "Map the issue model contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "Maps the contract well: key fields with line ranges (status/substatus/priority/times_seen), behavioral accessors (is_resolved, get_absolute_url, issue_type), satellite models, and \u2014 critically for the rework \u2014 flags that dependents embed Group as a field in their own dataclasses/TypedDicts and pass it across RPC boundaries. Slightly light on which specific parts of the contract are most commonly embedded (e.g. which fields RPC flattens), but the agent gets the shape it needs."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Pins nearly every fact to file:line in src/sentry/models/group.py (`:711-767`, `:853-860`, `:1170-1176`, `:1200-1204`) and satellite models to their own files with lines (groupresolution.py:23, groupinbox.py:52). Concrete field and method names throughout."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains what matters for restructuring: 'dependents embed a Group object as a field inside their own dataclasses/TypedDicts' and RPC flattens issue fields \u2014 this is precisely the coupling that will break. Doesn't just list fields, ties them to why they're read (triage state is 'most-read by dependents')."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Does not explicitly flag anything uncertain or unverified about the contract; forward-references Steps 3/6 confidently. No hedging on satellite completeness or RPC surface."
+        }
+      },
+      "step_quality": 0.795,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 556,
+        "cache_creation_input_tokens": 14437,
+        "cache_read_input_tokens": 32896
+      }
+    },
+    {
+      "step": "Enumerate every production dependent of the issue model",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "The answer assembles a very broad dependent set covering all the headline non-obvious subsystems the rubric names: digests/utils.py:56, notifications/base.py:56, notifications platform strategy issue_owners.py:20, rules/history/base.py:17, all three sentry-app builders (external_issue_creator/issue_link_creator/issue_link_requester), eventstore models.py, tasks/seer/night_shift/models.py:28, workflow_engine/types.py (multiple lines), and WorkflowGroupHistory serializer. Coverage across ingestion, tasks, integrations, seer, and rules is deep enough that the agent could act with only small targeted follow-ups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every entry is a concrete file:line with a real path, no vague 'the various serializers' collapsing. Multiple hits in the same file (event_manager.py, update.py, workflow_engine/types.py) are listed separately as the prompt required."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "The list is per-item with one dependent per line as asked. It does add subsystem headers ('Composition carriers', 'Tasks (Celery)', etc.), which mildly violates the 'do not group' instruction but doesn't collapse entries."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer never flags that it may be incomplete or that some subsystems (importers, indirect holders) were not exhaustively triaged. It presents the list as authoritative with no hedging."
+        }
+      },
+      "step_quality": 0.7975,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 574,
+        "cache_creation_input_tokens": 17113,
+        "cache_read_input_tokens": 32896
+      }
+    },
+    {
+      "step": "Group the dependents by subsystem",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "The table covers all the required subsystems (API/serializers, ingestion, digests, notifications, alert rules, sentry-apps, eventstore, AI/seer, workflow engine) with packages and how each depends on the model (embeds `Group`, passes through API, reads fields). It correctly identifies contract-embedding cases like `WorkflowEventData.group`, `RuleGroupHistory.group`, `_DigestContext`, `BaseNotification.group`, `TriageResult.group`, and `GroupEvent`."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Nearly every entry has file:line and a named class/attribute (e.g., `types.py:109 (WorkflowEventData.group)`, `digests/utils.py:56 (_DigestContext.group + Counter[Group])`, `night_shift/models.py:28 (TriageResult.group)`). A few catch-all cells like 'GitHub/GitLab PR-comment workflows' and the frontend row are less pinned."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "The 'How it depends' column distinguishes contract-embedding ('embeds Group in its central event dataclass', 'Holds the issue as an instance attribute') from transient reads ('reads status/priority/type for filtering', 'Batch state transitions'), reflecting real coupling rather than a superficial sort."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "The answer presents the grouping as complete with no flags on where placement was uncertain (e.g., the 'Adjacent product surfaces' bucket is a catch-all without any note that these were hard to classify)."
+        }
+      },
+      "step_quality": 0.8,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 610,
+        "cache_creation_input_tokens": 15776,
+        "cache_read_input_tokens": 32896
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "Reasons per-dependent about product flow (workflow automation, ingest\u2192alert, notifications, triage UI, RPC cross-silo, alert history) with a clear risk ranking; covers WorkflowEventData, GroupInfo, GroupEvent, BaseNotification, serializers, RPC, rules history. Misses digest context and sentry-app external-issue builders explicitly in the ranking, and AI triage isn't called out."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Nearly every entry pinned to file:line with class/structure (`workflow_engine/types.py:109`, `event_manager.py:179`, `services/eventstore/models.py:651`, `notifications/base.py:56`, `rules/history/base.py:17`). Lower-risk bucket is more generic but adequate."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Ranking explicitly justified by embedding vs transient reads and by product-flow reach (\"every workflow action\", \"all alert delivery\", \"hottest path\", \"cross-silo\"). Clear rationale for why #1 outranks #7."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "No hedging on impacts it could not fully determine; the lower-risk bucket is asserted flatly and non-obvious subsystems (digests, sentry-app builders, AI triage) go unmentioned without a caveat."
+        }
+      },
+      "step_quality": 0.765,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 531,
+        "cache_creation_input_tokens": 14462,
+        "cache_read_input_tokens": 32896
+      }
+    },
+    {
+      "step": "Surface the non-obvious dependents",
+      "scores": {
+        "map_quality": {
+          "score": 0.6,
+          "rationale": "Hits several rubric targets: digests/utils.py _DigestContext, tasks/seer/night_shift/models.py TriageResult, services/eventstore/models.py GroupEvent, and workflow_engine/types.py. But misses the notifications base, rules/history/base.py, the three sentry-app external-issue builders, and never calls out the TYPE_CHECKING import pattern or the workflow_engine nested `Group` enum name-collision \u2014 the two mechanisms that most define 'non-obvious' here."
+        },
+        "specificity": {
+          "score": 0.75,
+          "rationale": "Each dependent is pinned to file:line with a concrete class or function name (`_DigestContext`, `TriageResult`, `GroupEvent`, `find_referenced_groups`). Reasons are attached but stay generic ('buried', 'grep won't flag') rather than naming the actual overlook mechanism per item."
+        },
+        "justification": {
+          "score": 0.5,
+          "rationale": "Reasons are given per item but shallow \u2014 'lives deep', 'name gives no hint', 'buried under the \u2026 layer'. The two strongest 'why easy to overlook' mechanisms the rubric wants (TYPE_CHECKING-only imports, and the nested `Group` enum name collision in workflow_engine/types.py) are not stated even where the file is cited."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "No acknowledgement that further hidden dependents (e.g. type-only imports elsewhere, other external-issue builders) may exist; the list is presented as if complete."
+        }
+      },
+      "step_quality": 0.5575,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 576,
+        "cache_creation_input_tokens": 14443,
+        "cache_read_input_tokens": 32896
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Delivers a comprehensive subsystem-grouped table with file:line, dependency description, and verify-on-change instructions covering workflow engine, ingestion, notifications/digests, rules, sentry-apps, seer, eventstore, RPC, integrations, and adjacent surfaces. Carries over the non-obvious dependents (digests/utils, TriageResult, external_issue_creator, GroupEvent, workflow types) \u2014 a teammate could act on this without re-exploring."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Nearly every entry is pinned to a concrete file:line with the actual class/attribute (e.g. `workflow_engine/types.py:109`, `notifications/base.py:56`, `digests/utils.py:56`, `services/eventstore/models.py:651/690/698`), plus a JSON block with structured refs."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Each row states dependency shape (\"Embeds `group: Group` in frozen dataclasses\", \"`Counter[Group]`\", \"RPC models mirror issue fields\") and a specific verify action; some rows bundle multiple dependents on one line rather than one-per-line, slightly reducing per-item granularity."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Notes exclusions (tests/migrations/debug) and the split-PR rule, and the JSON `method` field is explicit about tooling, but the map does not flag any dependent left uncertain or possibly incomplete for the implementer to confirm."
+        }
+      },
+      "step_quality": 0.8475,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 576,
+        "cache_creation_input_tokens": 18240,
+        "cache_read_input_tokens": 32896
+      }
+    }
+  ]
+}

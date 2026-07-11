@@ -1,0 +1,326 @@
+{
+  "scenario": "Wagtail work session - audit every production subsystem that depends on the page model before reworking its contract",
+  "repo": "wagtail",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "wagtail.rubric.yaml"
+  },
+  "scenario_quality": 0.1282,
+  "relationship_audit": {
+    "total": 13,
+    "covered": 1,
+    "related": 1,
+    "contradicted": 0,
+    "covered_recall": 0.0769,
+    "related_recall": 0.0769,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "ctx:serve",
+      "ctx:api-pages",
+      "ctx:form-pages",
+      "ctx:perm-policy",
+      "dep:site-root",
+      "dep:search-promo",
+      "dep:admin-home",
+      "dep:locked-report",
+      "dep:slugurl-tag",
+      "dep:side-panels",
+      "dep:page-listing",
+      "dep:page-chooser"
+    ],
+    "missed_related": [
+      "ctx:serve",
+      "ctx:api-pages",
+      "ctx:form-pages",
+      "ctx:perm-policy",
+      "dep:site-root",
+      "dep:search-promo",
+      "dep:admin-home",
+      "dep:locked-report",
+      "dep:slugurl-tag",
+      "dep:side-panels",
+      "dep:page-listing",
+      "dep:page-chooser"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "page-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:serve",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:api-pages",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:form-pages",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:perm-policy",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:site-root",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:search-promo",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:admin-home",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:locked-report",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:slugurl-tag",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:side-panels",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:page-listing",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:page-chooser",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.45,
+          "rationale": "The answer correctly names Wagtail as a Django CMS and pins the file to wagtail/models/pages.py, but the package map is incomplete: it lists admin, images, search, snippets with a vague 'and more', omitting the api and contrib sub-packages entirely, and never names the class Page \u2014 gaps that force the downstream agent to browse the directory tree before acting."
+        },
+        "specificity": {
+          "score": 0.5,
+          "rationale": "The file path is concrete and correct, but the class name Page is never stated, and the package enumeration ('and more') is too vague to let the agent target specific modules without further exploration."
+        },
+        "justification": {
+          "score": 0.3,
+          "rationale": "The answer says the model 'represents a CMS page that editors create, publish, and serve', which is surface-level; it does not explain that Page is an MP_Node tree node that every serving, admin, and API surface in the package hangs off, which is the key architectural fact motivating the rework."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "No uncertainty is flagged, but the answer is brief enough that it does not make speculative claims; the missing information is simply absent rather than asserted incorrectly, so neither penalising nor rewarding is warranted."
+        }
+      },
+      "step_quality": 0.44,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1722,
+        "cache_creation_input_tokens": 10230,
+        "cache_read_input_tokens": 23381
+      }
+    },
+    {
+      "step": "Map the page model contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.35,
+          "rationale": "The answer covers the four expected categories (fields, tree mechanics, publishing state, relationships) and correctly names the MP_Node base and key field groups, but provides only a single class-level anchor (line 289) rather than file:line for each contract piece; key items like the page manager, `serve()`, `get_url()`, and the alias/specific distinction's behavioral implications are absent, leaving the agent needing to open and scan the file from scratch."
+        },
+        "specificity": {
+          "score": 0.2,
+          "rationale": "Individual field names are present (slug, alias_of, live, has_unpublished_changes, etc.), which is better than 'various tree fields', but there is no file:line for any individual field, method, or manager \u2014 only the class-start at line 289 \u2014 so the agent cannot cite a location without re-reading the file."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The answer lists contract items without explaining which pieces other code depends on most or what the restructuring risk ordering should be; the question asks 'what does a teammate need to know before restructuring' and the answer does not address coupling, query patterns, or risk priority at all."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged anywhere; every claim is stated as settled fact with no indication of what was verified vs assumed, which is misleading given that methods and managers are entirely absent from the inventory."
+        }
+      },
+      "step_quality": 0.225,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1248,
+        "cache_creation_input_tokens": 10359,
+        "cache_read_input_tokens": 23381
+      }
+    },
+    {
+      "step": "Enumerate every production dependent of the page model",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer lists 9 lines all from pages.py itself \u2014 the model file, not external dependents. Every dependent the audience rubric calls out (serve view, sites FK, search promotions, admin views, template tags, chooser, reports) is completely absent; the list is essentially a null response to the enumeration task."
+        },
+        "specificity": {
+          "score": 0.05,
+          "rationale": "The file:line format is technically correct, but every reference points back to pages.py (the source of the contract) rather than to external callers, so the citations name the wrong scope entirely."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The answer avoids tests and migrations (technically on-task in that narrow sense), but listing lines inside the model file as its own 'dependents' is incoherent with the step goal, and no reasoning is offered for why those 9 lines were chosen."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer does not flag that it found almost nothing or that the enumeration is radically incomplete; an agent reading it would have no signal that all external dependents are missing."
+        }
+      },
+      "step_quality": 0.0525,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1259,
+        "cache_creation_input_tokens": 10583,
+        "cache_read_input_tokens": 23381
+      }
+    },
+    {
+      "step": "Group the dependents by subsystem",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer lists six entries that are all sub-models inside the single file wagtail/models/pages.py (GroupPagePermission, WorkflowPage, PageLogEntry, Comment, PageSubscription) \u2014 none of the real cross-file subsystems appear: not serving (wagtail/views/serve.py), not sites (root_page FK), not admin views/UI, not reports, not API, not contrib apps, not template tags, not the chooser. The task's subsystem map is entirely absent."
+        },
+        "specificity": {
+          "score": 0.15,
+          "rationale": "File:line anchors are cited but they all resolve to a single file, and the coupling kind (querying the model, embedding a FK, reading tree state) is never stated for any entry \u2014 so the specificity present is structurally useless for the task."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "The grouping shows nothing about which parts of the CMS a page-model restructuring reaches; a teammate reading this would have no idea that serving, sites, API, admin, and contrib apps are all affected."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "No flag is raised that the enumeration is incomplete or limited to a single file; the answer presents the truncated list as though it is the full subsystem map."
+        }
+      },
+      "step_quality": 0.075,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1000,
+        "cache_creation_input_tokens": 10456,
+        "cache_read_input_tokens": 23381
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer lists six model names with generic High/Medium/Low labels but never separates schema-embedding dependents (site root FK, search promotions) from transient queriers, names no driving editor or visitor flow, and omits almost every production dependent the rubric names as mandatory (Site FK, search promotions, serve view, admin views, API, template tags, chooser, dashboard panels, reports)."
+        },
+        "specificity": {
+          "score": 0.0,
+          "rationale": "There is not a single file:line reference in the answer; every entry is just a model name (e.g. 'GroupPagePermission') with a risk label and no location, making it impossible for an agent to act without re-exploring the entire codebase."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "All risk rankings are bare assertions ('central to the CMS', 'less critical') with no argument from coupling kind, product impact, or which user class breaks; 'Models: High risk' is circular rather than reasoned."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer states every risk level with full confidence and flags no uncertainty, despite having no file evidence to back any claim \u2014 there is no acknowledgment that the list could be incomplete or that any call is a judgment."
+        }
+      },
+      "step_quality": 0.0375,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 972,
+        "cache_creation_input_tokens": 10297,
+        "cache_read_input_tokens": 23381
+      }
+    },
+    {
+      "step": "Surface the non-obvious dependents",
+      "scores": {
+        "map_quality": {
+          "score": 0.0,
+          "rationale": "The answer lists five internal sections of pages.py itself (permissions, workflow, logging, comments, subscriptions) \u2014 not external dependents in other files. The genuinely non-obvious entries the rubric names (the lazy string FKs in sites.py and search_promotions, the multiline-import dashboard, the template tag) are entirely absent."
+        },
+        "specificity": {
+          "score": 0.05,
+          "rationale": "All five file:line citations resolve to the same file (pages.py) at different offsets; the task requires dependents in *other* subsystems that are hard to locate via text search, so the citations, while syntactically present, are all in the wrong place."
+        },
+        "justification": {
+          "score": 0.0,
+          "rationale": "Every 'why it is easy to miss' explanation is identical boilerplate ('not directly related to the page model's core functionality'); none of the entries explains an actual evasion mechanism (e.g., string FK with no import, multiline import splitting the class name, template-tag indirection)."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer flags no blind spots, caveats, or unverified claims; it presents the five internal line numbers with complete confidence and no acknowledgment of what it may have missed."
+        }
+      },
+      "step_quality": 0.0125,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1127,
+        "cache_creation_input_tokens": 10444,
+        "cache_read_input_tokens": 23381
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The map lists only six sub-models that live inside pages.py itself (GroupPagePermission, WorkflowPage, PageLogEntry, Comment, PageSubscription) \u2014 none of the actual external dependents the task requires carrying over: the serve view, the Site root_page FK, search promotions, admin views, dashboard panels, reports, template tags, the chooser, or the API layer are present at all. An agent acting on this map would believe the blast radius is a single file."
+        },
+        "specificity": {
+          "score": 0.1,
+          "rationale": "Every file:line entry points back to the source file being restructured (pages.py) rather than to the dependents; the format is correct but the targets are wrong, so the anchor is useless for a PR that needs to reach the dependents without re-exploring."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "Every verification note is the same generic formula ('Ensure X is correctly migrated') with no reasoning grounded in coupling kind, FK vs. transient query, or product impact; an agent cannot derive check order or risk level from these notes."
+        },
+        "uncertainty": {
+          "score": 0.0,
+          "rationale": "The answer presents the six entries as the complete audit map with no acknowledgment that the serve layer, admin, API, contrib apps, sites, or search promotions were omitted; a silent omission of this scale gives the agent false confidence that the map is exhaustive."
+        }
+      },
+      "step_quality": 0.055,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1242,
+        "cache_creation_input_tokens": 10694,
+        "cache_read_input_tokens": 23381
+      }
+    }
+  ]
+}

@@ -1,0 +1,364 @@
+{
+  "scenario": "NetBox work session - audit every production subsystem that depends on the device model before reworking its contract",
+  "repo": "netbox",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "netbox.rubric.yaml"
+  },
+  "scenario_quality": 0.8086,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 22,
+    "related": 22,
+    "contradicted": 0,
+    "covered_recall": 0.9565,
+    "related_recall": 0.9565,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "ctx:connection-tables"
+    ],
+    "missed_related": [
+      "ctx:connection-tables"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "device-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:device-form",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:serializer",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:device-views",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:component-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:dcim-filtersets",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:svg-elevation",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:ipam-signals",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:cluster-clean",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:vm-host",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:wireless-cache",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:cable-term-cache",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:module-anchor",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:dcim-signals",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:devicebay-import",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:dcim-graphql",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:connection-tables",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:ipam-filtersets",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:ipam-graphql",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:service-import",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:cluster-add-view",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rack-elevation",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:cable-form-factory",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Identifies NetBox as a Django DCIM/IPAM source-of-truth app, lists the per-domain apps under netbox/ (dcim, ipam, virtualization, wireless, etc.), and pins Device to netbox/dcim/models/devices.py as the central hub everything attaches to. Even goes further by mapping composition models, surface files, and reactive signal locations \u2014 exactly the map that saves the agent downstream exploration."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Cited paths are concrete with file:line (e.g. `netbox/dcim/models/devices.py:498`, `device_components.py:46`, `cables.py:518`, `dcim/filtersets.py:1230`) rather than vague app-level references."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Explicitly justifies WHY Device is the target: 'central hub of the schema', 'components attach to it, records cache a reference to it, and it anchors IP addresses, clusters, and virtual-chassis membership' \u2014 the aggregate framing the rubric wants."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "The answer is confident throughout and does not flag any uncertainty about the layout or hub status; the '55\u2013276 references' range hints at a range but no explicit flag of what it hasn't verified."
+        }
+      },
+      "step_quality": 0.8875,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 498,
+        "cache_creation_input_tokens": 14396,
+        "cache_read_input_tokens": 33271
+      }
+    },
+    {
+      "step": "Map the device model contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Maps identity/placement FKs, the primary_ip4/6/oob_ip anchors ('reverse-clearing IPAM signals key off these'), cluster and virtual-chassis membership, plus how other code holds refs (ComponentModel.device attach point, denormalized _site/_location/_rack caches, CableTermination._device, reverse related_names). Covers exactly what an agent restructuring the contract needs."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every field pinned to concrete file:line (e.g. primary_ip4 at devices.py:611, ComponentModel.device at device_components.py:50, CableTermination cache at cables.py:561) with actual field/related_name identifiers rather than vague descriptions."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Explains why parts matter for restructuring: 'Renaming/retyping device breaks every component model at once', 'IPAM signals key off these' anchors, cached FKs replicated on save(), counter caches assume FK name stays 'device'. Ties contract to downstream coupling."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No explicit flagging of unsure areas or gaps (e.g. whether the field/line list is exhaustive, or whether other reverse accessors exist beyond those cited); confidence is presented uniformly."
+        }
+      },
+      "step_quality": 0.8375,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 509,
+        "cache_creation_input_tokens": 14483,
+        "cache_read_input_tokens": 33271
+      }
+    },
+    {
+      "step": "Enumerate every production dependent of the device model",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "The list captures nearly all the scattered production dependents highlighted in the audience rubric: ipam/signals.py clear_primary_ip and clear_oob_ip, ipam/filtersets.py filter_device entries, ipam/graphql/filters.py FHRPGroupAssignmentFilter, ipam/forms/bulk_import.py ServiceImportForm, virtualization/models/clusters.py Cluster.clean, virtualization/views.py ClusterAddDevicesView, VM host anchor, wireless WirelessLink, CableTermination _device cache, Rack elevation, dcim/signals.py handlers, and the get_cable_form factory. Minor gaps: no explicit InterfaceFilterSet virtual-chassis handling for the primary example wasn't fully expanded and the wireless model list stops at WirelessLink (no WirelessLAN device-related caches called out), but coverage is strong."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every entry is pinned to a concrete file:line with the actual class/function name (e.g. 'netbox/ipam/signals.py:54 clear_primary_ip', 'netbox/dcim/forms/connections.py:12 get_cable_form'), rather than vague labels like 'the various forms'."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "The list is genuinely flat \u2014 one dependent per line \u2014 as requested by the step prompt; some parenthetical notes on coupling ('caches _device', 'device FK') appear but do not collapse items into subsystem summaries."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "The answer separates migrations and test infra rather than implying completeness there, but it does not flag any uncertainty about missed production dependents (e.g. apps like tenancy, extras, or GraphQL types not triaged) \u2014 it reads as an implicit claim of completeness."
+        }
+      },
+      "step_quality": 0.8025,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 690,
+        "cache_creation_input_tokens": 16332,
+        "cache_read_input_tokens": 33271
+      }
+    },
+    {
+      "step": "Group the dependents by subsystem",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Organizes dependents into coherent subsystems (DCIM core model, DCIM reactive/signals, DCIM UI/API, IPAM, Virtualization, Wireless) with app locations and coupling type stated (\"caches `_device`\", \"react when an IPAddress changes to null out `Device.primary_ip*`\", \"holds `members` and a master device\"). Minor gap: cabling is folded into DCIM core rather than surfaced as its own subsystem and racks/elevations aren't split out, but coupling nature is captured."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Nearly every entry is tied to a concrete file:line and class/function (e.g. `CableTermination` (`cables.py:518`), `clear_primary_ip` (`signals.py:54`), `ClusterAddDevicesView.post` (`views.py:362`)), not loose labels."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Grouping reflects real coupling: \"stores a device FK\", \"denormalizes site/location/rack from it\", \"caches `_device`\", \"react when an IPAddress changes\" \u2014 distinguishing cached FK vs query vs signal reaction rather than a superficial sort. Could be more explicit for some UI/API entries."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "No flags on placement uncertainty; e.g. cabling could arguably be its own subsystem and racks/elevation math is not called out as a distinct group, but the answer presents the grouping without noting where placement was judgment-call."
+        }
+      },
+      "step_quality": 0.7975,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 586,
+        "cache_creation_input_tokens": 15468,
+        "cache_read_input_tokens": 33271
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Answer walks through impact per dependent with product flow (component save, cable path, IP deletion, VC election, cluster validation) and ranks them Highest\u2192Lower; covers the signal-driven silent-breakage subsystems (ipam/signals.py, dcim/signals.py) that the audience specifically calls out."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Each entry names file:line (e.g. `ipam/signals.py:54/70`, `cables.py:518/845`, `clusters.py:125`) and the actual class/function; only the UI/API bucket collapses several symbols without individual lines."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Risk ranking is justified by coupling type (CASCADE+denormalized cache highest, reactive/silent signal handlers high, transient reads lower) \u2014 e.g. 'Reactive, cross-app, easy to miss; breakage is silent (stale primary IP).'"
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No explicit flags on impacts it couldn't fully determine; the confident 'blast verdict' framing implies completeness without noting gaps like GraphQL filters or bulk_import parent binding risk."
+        }
+      },
+      "step_quality": 0.815,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 468,
+        "cache_creation_input_tokens": 14615,
+        "cache_read_input_tokens": 33271
+      }
+    },
+    {
+      "step": "Surface the non-obvious dependents",
+      "scores": {
+        "map_quality": {
+          "score": 0.6,
+          "rationale": "Captures several non-obvious dependents (ComponentModel denormalization cache, CableTermination._device, IPAM signals, virtualization signals, CounterCacheFields) but misses key rubric-called-out items: the metaclass-built cable form factory in dcim/forms/connections.py, the string-keyed service-import parent binding in ipam/forms/bulk_import.py, the wireless *_device caches in wireless/models.py, and the site/location + virtual-chassis cascade signals in dcim/signals.py."
+        },
+        "specificity": {
+          "score": 0.85,
+          "rationale": "Most entries carry file:line and named symbols (e.g. 'CableTermination._device \u2014 cables.py:562', 'ipam/signals.py:54/70/20', 'CounterCacheFields devices.py:694\u2013733'), though 'device_components.py' lacks the dcim path prefix."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Each item has a per-dependent 'why it's easy to overlook' rationale grounded in the mechanism (denormalized cache, cross-app signal, declarative config, buried in SVG), e.g. 'declarative config, not a call, so text search over device usage won't flag it.'"
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer does not flag that further hidden dependents (e.g. wireless caches, the metaclass form factory, dcim/signals.py cascades) may exist beyond what it surfaced; the list reads as complete."
+        }
+      },
+      "step_quality": 0.6325,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 553,
+        "cache_creation_input_tokens": 14299,
+        "cache_read_input_tokens": 33271
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Delivers a comprehensive audit map organized by subsystem (DCIM model core, signals, UI/API surface, IPAM, virtualization, wireless) with file:line, coupling type, and per-item verification checks; carries over the non-obvious dependents (IPAM signals nulling primary_ip*, ComponentModel denorm cache, CableTermination._device, SVG get_device_name, VC signal handlers) and even flags migrations."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every entry is pinned to a concrete file:line with the actual class/function name (e.g. `netbox/ipam/signals.py:54 clear_primary_ip`, `netbox/dcim/models/cables.py:518 CableTermination`, `netbox/dcim/forms/connections.py:12 get_cable_form`); no vague 'the various forms'."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Each row states the coupling ('caches _device', 'react to IP lifecycle \u2192 null Device.primary_ip*/oob_ip', 'CASCADE FK + denorm') and the check to run ('Rebuild _device cache; re-test cable-path tracing', 'Fire location/rack/VC changes; confirm cascade + search cache'); tied to real risk rather than restated field lists."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Highest-risk block ranks impacts but the map itself doesn't explicitly flag remaining open items or apps it couldn't fully triage; the 'circuits' and 'core' apps are named in blast_radius but no dependents are listed for them and this isn't called out as a gap."
+        }
+      },
+      "step_quality": 0.8875,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 611,
+        "cache_creation_input_tokens": 19535,
+        "cache_read_input_tokens": 33271
+      }
+    }
+  ]
+}

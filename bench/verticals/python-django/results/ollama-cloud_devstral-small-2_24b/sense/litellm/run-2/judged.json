@@ -1,0 +1,395 @@
+{
+  "scenario": "LiteLLM work session - audit every provider config affected before reworking the base chat-transformation contract",
+  "repo": "litellm",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "litellm.rubric.yaml"
+  },
+  "scenario_quality": 0.2816,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 8,
+    "related": 7,
+    "contradicted": 1,
+    "covered_recall": 0.3478,
+    "related_recall": 0.3043,
+    "grounded_precision": 0.875,
+    "missed_covered": [
+      "dep:deepinfra",
+      "dep:deepseek",
+      "dep:nebius",
+      "dep:xai",
+      "dep:perplexity",
+      "dep:mistral",
+      "dep:moonshot",
+      "dep:nvidia-nim",
+      "dep:openrouter",
+      "dep:cerebras",
+      "dep:groq",
+      "dep:github",
+      "dep:friendliai",
+      "dep:volcengine",
+      "dep:datarobot"
+    ],
+    "missed_related": [
+      "dep:deepinfra",
+      "dep:deepseek",
+      "dep:nebius",
+      "dep:xai",
+      "dep:perplexity",
+      "dep:mistral",
+      "dep:moonshot",
+      "dep:nvidia-nim",
+      "dep:openrouter",
+      "dep:cerebras",
+      "dep:groq",
+      "dep:databricks",
+      "dep:github",
+      "dep:friendliai",
+      "dep:volcengine",
+      "dep:datarobot"
+    ],
+    "contradictions": [
+      "dep:databricks"
+    ],
+    "items": [
+      {
+        "id": "contract",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:openai-gpt",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:anthropic",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:bedrock",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:cohere",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:azure",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:vertex-gemini",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:deepinfra",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:deepseek",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:nebius",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:xai",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:perplexity",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:mistral",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:moonshot",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:nvidia-nim",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:openrouter",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:cerebras",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:groq",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:databricks",
+        "covered": true,
+        "related": false,
+        "contradicted": true
+      },
+      {
+        "id": "dep:github",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:friendliai",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:volcengine",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:datarobot",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "All three required map elements are present and correct: LiteLLM is identified as an LLM gateway, provider integrations are placed under 'litellm/llms/' with per-provider directories, and BaseConfig is pinned to 'litellm/llms/base_llm/chat/transformation.py:75' as the ABC every provider inherits from \u2014 a next agent can act on this immediately."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "The base class is cited at 'litellm/llms/base_llm/chat/transformation.py:75' with its class name, and the five core methods (transform_request, transform_response, map_openai_params, validate_environment, get_supported_openai_params) are named explicitly rather than described vaguely."
+        },
+        "justification": {
+          "score": 0.72,
+          "rationale": "The answer states BaseConfig 'serves as the abstract base for all provider chat request/response transformations' and describes what each key method does, establishing why it is the contract being reworked; the explanation is functional but does not articulate the ABC / abstract-method enforcement angle that makes a signature change universally binding."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "No uncertainty is flagged anywhere despite the answer presenting ~41 provider configs as all direct subclasses and only one indirect inheritor, which is almost certainly incomplete given the known OpenAIGPTConfig / OpenAILikeChatConfig intermediate families; the answer implies false completeness without any caveat."
+        }
+      },
+      "step_quality": 0.739,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2374,
+        "cache_creation_input_tokens": 15274,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Map the base transformation contract and what it defines",
+      "scores": {
+        "map_quality": {
+          "score": 0.5,
+          "rationale": "The answer pins the base class at `litellm/llms/base_llm/chat/transformation.py:75` and names five core methods (get_supported_openai_params, map_openai_params, validate_environment, transform_request, transform_response), but omits `get_error_class` which the rubric lists as a key contract member; it also does not distinguish abstract (must-override) methods from those with default implementations, which is the information a teammate most needs before changing a signature."
+        },
+        "specificity": {
+          "score": 0.35,
+          "rationale": "The class itself is pinned to a line (`transformation.py:75`), but none of the individual method declarations are given their own file:line citations; the rubric asks for methods 'pinned to file:line in litellm/llms/base_llm/chat/transformation.py' and that requirement is unmet."
+        },
+        "justification": {
+          "score": 0.25,
+          "rationale": "Each method gets a one-sentence gloss ('Maps OpenAI-style parameters to provider-specific parameters') but the answer never explains what a signature change actually breaks \u2014 e.g., which methods are abstract so every provider must re-implement them, which have base defaults that cascade silently to all inheritors, or what the call sites expect from the signature; the verification-map entries uniformly say 'Verify transform_request and transform_response method signatures,' which is not justification."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertainty is flagged anywhere \u2014 not about the missing `get_error_class`, not about which methods are abstract, not about whether the line number 75 is the class declaration or a method; the answer reads as complete when it is demonstrably not."
+        }
+      },
+      "step_quality": 0.3525,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1660,
+        "cache_creation_input_tokens": 15258,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Enumerate every provider config affected by the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.2,
+          "rationale": "The answer lists ~43 file:line entries but classifies nearly all as 'direct_inheritance' while placing only one config in 'indirect_inheritance' (gemini/common_utils.py via VertexGeminiConfig). The entire OpenAIGPTConfig and OpenAILikeChatConfig families \u2014 DeepInfra, DeepSeek, Nebius, xAI, Perplexity, Mistral, Moonshot, Nvidia NIM, OpenRouter, Cerebras, Groq, GitHub, Friendliai, VolcEngine, DataRobot \u2014 are entirely absent from the list, which is exactly the 'larger share' the rubric identifies as the headline requirement. The agent still needs a full second-hop traversal of the inheritance tree before it can act."
+        },
+        "specificity": {
+          "score": 0.45,
+          "rationale": "The entries that are present carry concrete file:line references (e.g., 'litellm/llms/anthropic/chat/transformation.py:235'), which is actionable; however, most entries omit the actual class name within the file, and the 'direct' label applied to items like databricks and fireworks_ai is demonstrably wrong, reducing the utility of the specificity that is present."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "The answer claims every entry except one reaches the contract 'directly', which is incorrect for the OpenAI-compatible providers that route through intermediate bases; no intermediate class names are given for those paths, and the single indirect entry names 'VertexGeminiConfig' without explaining the chain. The agent cannot tell which method to follow for the missing families."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer presents its list with false completeness \u2014 no caveat that intermediate families like OpenAIGPTConfig or OpenAILikeChatConfig exist, let alone that their downstream leaf providers were not enumerated. The agent has no signal that it is missing the majority of the indirect-inheritance set."
+        }
+      },
+      "step_quality": 0.2375,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2269,
+        "cache_creation_input_tokens": 15386,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Group the affected provider configs by how they inherit",
+      "scores": {
+        "map_quality": {
+          "score": 0.1,
+          "rationale": "The answer collapses the entire inheritance tree into one giant 'direct_inheritance' bucket (43 configs) and one 'indirect_inheritance' entry, completely omitting the OpenAIGPTConfig family and the OpenAILikeChatConfig family as named intermediate groups \u2014 the exact groupings the rubric targets; an agent reading this still has no view of which providers reach the contract through OpenAIGPTConfig or OpenAILikeChatConfig and would have to trace those trees from scratch."
+        },
+        "specificity": {
+          "score": 0.2,
+          "rationale": "File:line is present for each listed entry, but the intermediate class names for the major families (OpenAIGPTConfig, OpenAILikeChatConfig) are never named as group headers; only the single gemini indirect entry identifies its intermediate ('VertexGeminiConfig'), so the group labels are loose ('direct', 'indirect') rather than tied to concrete intermediates."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "Claiming ~43 configs are direct BaseConfig subclasses is structurally implausible and unjustified \u2014 providers like databricks, fireworks_ai, and deepseek almost certainly inherit through an intermediate (OpenAIGPTConfig / OpenAILikeChatConfig) rather than BaseConfig directly, but the answer makes no attempt to verify or explain the depth; the grouping reflects a flat listing, not the real two- or three-hop inheritance structure."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer flags nothing: it asserts 43 configs are 'direct' with no caveat that some may actually be indirect through an untraced intermediate, and it does not acknowledge that the OpenAIGPTConfig / OpenAILikeChatConfig families and their member providers could not be confirmed, which is precisely where the uncertainty should be flagged."
+        }
+      },
+      "step_quality": 0.1325,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1954,
+        "cache_creation_input_tokens": 15264,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.2,
+          "rationale": "The answer lists affected files with file:line references and splits them into high/medium/low risk, but completely omits the core blast-radius question: which providers override the changed method vs. inherit it unchanged. The 'indirect_inheritance' group contains exactly one entry (gemini/common_utils.py) when the rubric expects dozens of providers through OpenAIGPTConfig/OpenAILikeChatConfig intermediates (DeepInfra, DeepSeek, Groq, Mistral, Perplexity, etc.) \u2014 those families are entirely absent from the indirect group or silently misclassified as direct, leaving the most dangerous silent-breakage vector unmapped."
+        },
+        "specificity": {
+          "score": 0.3,
+          "rationale": "File:line pins are present throughout, but the risk ranking covers only 8 of ~43 listed providers with no per-entry differentiation, and every single 'check' entry in the verification map is the identical boilerplate 'Verify transform_request and transform_response method signatures' \u2014 the agent gains nothing actionable from that repetition over just grepping the class list."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "There is no reasoning given for why Anthropic/Azure/OpenAI are high risk vs. Bedrock/Vertex medium vs. the rest unranked; the rubric's key axis \u2014 a provider inheriting the method unchanged silently retains the old behaviour in production while one that overrides it at least surfaces the mismatch at call time \u2014 is never mentioned at all."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer flags zero uncertainty despite the indirect-inheritance group being nearly empty (one entry vs. the 20+ expected through OpenAIGPTConfig/OpenAILikeChatConfig) and wall_time_seconds of 0.0 suggesting no real structural traversal occurred; a calibrated answer would have noted which providers it could not confirm reach the contract indirectly."
+        }
+      },
+      "step_quality": 0.1725,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1835,
+        "cache_creation_input_tokens": 15281,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Surface the non-obvious affected provider configs",
+      "scores": {
+        "map_quality": {
+          "score": 0.05,
+          "rationale": "The answer lists only one indirect config (gemini/common_utils.py through VertexGeminiConfig) and classifies every other provider \u2014 including Databricks, Fireworks AI, and the entire OpenAI-compatible ecosystem \u2014 as 'direct inheritance'; the OpenAIGPTConfig and OpenAILikeChatConfig families (DeepInfra, DeepSeek, xAI, Perplexity, Mistral, Groq, Cerebras, etc.) are completely absent from the non-obvious section, which is exactly the family this step exists to surface."
+        },
+        "specificity": {
+          "score": 0.1,
+          "rationale": "The single non-obvious entry (gemini) is pinned to file:line with a named intermediate, but since it represents perhaps 1 of ~30+ actual indirect-inheritance configs, the specificity of the non-obvious set is negligible."
+        },
+        "justification": {
+          "score": 0.1,
+          "rationale": "The gemini entry gets a one-line reason ('inherits indirectly through VertexGeminiConfig'), but the answer never explains the broader pattern \u2014 that OpenAI-compatible providers inherit through named intermediates and therefore never contain 'BaseConfig' in their source \u2014 which is the WHY the step asks for."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer presents its single-entry indirect list as if complete, with no acknowledgment that dozens of OpenAI-compatible providers might also reach the contract through intermediate bases it did not surface, giving the agent false confidence in a deeply incomplete picture."
+        }
+      },
+      "step_quality": 0.0725,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1507,
+        "cache_creation_input_tokens": 15275,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.3,
+          "rationale": "The map collapses nearly all ~40 providers into a single 'direct_inheritance' bucket \u2014 including Databricks, Fireworks AI, Predibase, and others that almost certainly inherit through OpenAIGPTConfig or OpenAILikeChatConfig \u2014 with only one entry in 'indirect_inheritance'. The two intermediate families the rubric names (OpenAIGPTConfig family, OpenAILikeChatConfig family) never appear as groups, so the agent cannot see which slice of the provider ecosystem the change reaches without re-exploring the inheritance chains itself."
+        },
+        "specificity": {
+          "score": 0.4,
+          "rationale": "File:line citations are present for every entry, which is useful. However, actual class names are absent from most entries and the inheritance label is wrong for the majority of providers (tagged 'direct' when they are almost certainly indirect), which undermines the precision the citations imply."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "Every single entry carries the identical boilerplate check \u2014 'Verify transform_request and transform_response method signatures' \u2014 with no differentiation between providers that override the changed method (where the implementer must update the override) versus those that inherit it unchanged (where the changed signature propagates silently). The check field adds no actionable information beyond naming the two methods."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The map presents its (incorrect) 'direct' classifications with no hedging and flags no open items, implying completeness when the intermediate chains for dozens of providers (Groq, Perplexity, DeepSeek, xAI, Mistral, etc.) were never traced. An implementer following this map would not know they need to verify the inheritance of the 'direct' providers before acting."
+        }
+      },
+      "step_quality": 0.265,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1758,
+        "cache_creation_input_tokens": 15297,
+        "cache_read_input_tokens": 23823
+      }
+    }
+  ]
+}

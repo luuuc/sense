@@ -1,0 +1,309 @@
+{
+  "scenario": "Saleor work session - audit the sellable variant contract before a pricing/stock rework",
+  "repo": "saleor",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "saleor.rubric.yaml"
+  },
+  "scenario_quality": 0.5376,
+  "relationship_audit": {
+    "total": 13,
+    "covered": 10,
+    "related": 9,
+    "contradicted": 0,
+    "covered_recall": 0.7692,
+    "related_recall": 0.6923,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "ctx:checkout-line",
+      "dep:checkout-to-order",
+      "dep:bulk-order"
+    ],
+    "missed_related": [
+      "ctx:checkout-line",
+      "dep:checkout-to-order",
+      "dep:bulk-order",
+      "ctx:attr-reference"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "variant-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:order-line",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:checkout-line",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:stock",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:variant-attr",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:order-line-build",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:checkout-append",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:notif-payload",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:checkout-to-order",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:tax-payload",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:bulk-order",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:attr-reference",
+        "covered": true,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:promotion-voucher",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.82,
+          "rationale": "The answer names Saleor, lists the per-domain app split (product, checkout, order, warehouse, discount, attribute), pins ProductVariant to saleor/product/models.py:353, names the base mixins at saleor/core/models.py:16, and points to ProductVariantChannelListing at :482 for price/stock \u2014 a usable starting map. It does not explicitly state this is a Django e-commerce platform or call out the Product/ProductVariant distinction by name, leaving the agent to infer both."
+        },
+        "specificity": {
+          "score": 0.88,
+          "rationale": "Every claim is backed by a concrete file:line \u2014 saleor/product/models.py:353, saleor/core/models.py:16, saleor/product/models.py:482 \u2014 and model names (SortableModel, ModelWithMetadata, ModelWithExternalReference) are spelled out rather than gestured at."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "The answer states ProductVariant is 'the specific purchasable unit that lines, inventory and pricing are written against,' covering the three pillars asked for. Promotions are not mentioned here and the explanation is a single clause rather than a sentence showing each coupling, so the 'why central' argument is present but thin."
+        },
+        "uncertainty": {
+          "score": 0.25,
+          "rationale": "No uncertainty is flagged anywhere in the Step 1 section; every assertion is stated flatly. For a pure orientation step the confidence may be warranted, but the rubric asks the answer to flag where it is unsure, and it does not."
+        }
+      },
+      "step_quality": 0.7255,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2208,
+        "cache_creation_input_tokens": 18048,
+        "cache_read_input_tokens": 23586
+      }
+    },
+    {
+      "step": "Map the variant contract and what it is built on",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The contract is covered: base classes (SortableModel, ModelWithMetadata, ModelWithExternalReference at core/models.py:16) appear in Step 1, owned records (ProductVariantChannelListing at models.py:482, VariantMedia at models.py:359-361, ProductVariantTranslation at models.py:459) are named with lines, and the price read path via get_price()/get_base_price()/get_prior_price_amount() against the channel listing is described. However the inheritance chain is not re-stated in Step 2 with per-class file:line, and the specific price fields on ProductVariantChannelListing (price_amount, discounted_price_amount, prior_price_amount) that drive those methods are not pinned here \u2014 they surface later in Step 5, forcing the agent to stitch across sections."
+        },
+        "specificity": {
+          "score": 0.74,
+          "rationale": "Key owned records are pinned to file:line ranges (media M2M at models.py:359-361, translations at models.py:459, channel listing at models.py:482, price methods at models.py:411-439), and ModelWithMetadata is cited at core/models.py:80-94. SortableModel and ModelWithExternalReference lack individual line numbers in the Step 2 section itself, requiring the agent to carry that from Step 1."
+        },
+        "justification": {
+          "score": 0.5,
+          "rationale": "The answer lists contract members but rarely explains why each matters for a price/stock/identity read-path change specifically \u2014 it notes that get_price() reads channel_listing.discounted_price/price and get_base_price() reads price/price_override, but does not explain why ModelWithMetadata or the M2M media fields are relevant (or irrelevant) to the read path, leaving the agent to judge relevance itself."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "No uncertainty is flagged anywhere in the contract section; the answer presents the full contract as confirmed fact with no caveats, even though some field-level details (e.g., exact MoneyField decomposition on the channel listing) are deferred to later steps without acknowledgment."
+        }
+      },
+      "step_quality": 0.5805,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2242,
+        "cache_creation_input_tokens": 18038,
+        "cache_read_input_tokens": 23586
+      }
+    },
+    {
+      "step": "Audit every dependent of the variant contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "Both FK/M2M model dependents (OrderLine SET_NULL, Stock CASCADE, PreorderAllocation CASCADE, Voucher/PromotionRule M2M, AssignedVariantAttribute CASCADE) AND behavioral code callers (warehouse availability/reservations/management, checkout utils/calculations, order utils/notifications, discount promotion utils, webhook serializers, attribute utils, CSV export, GraphQL types/filters/dataloaders) are enumerated across all major domains. The 0s wall time suggests generation from training knowledge of the public Saleor repo rather than live tool calls, which limits how much the agent can trust the dependent list to be truly complete, but the cross-domain spread is sufficient for the agent to know which apps and files to audit."
+        },
+        "specificity": {
+          "score": 0.63,
+          "rationale": "Most entries carry a concrete file:line and model or function name (e.g., 'saleor/order/models.py:552 - OrderLine.variant', 'saleor/product/models.py:411 - ProductVariant.get_price', 'saleor/warehouse/reservations.py:32 - reserved_quantity variants iteration'), avoiding vague summaries. However, the 0s wall time means these line numbers come from model memory of the open-source codebase rather than verified lookups, so the agent must spot-check before acting on them as authoritative locations."
+        },
+        "justification": {
+          "score": 0.65,
+          "rationale": "Each flat-list entry carries a brief inline note that explains the relationship kind or what the dependent reads off the variant (e.g., '(SET_NULL on delete)', '(reads is_preorder_active)', '(reads channel_listing.discounted_price/price)', '(reads variant.product_type.weight)'), which directly answers 'how it depends' rather than just naming the file."
+        },
+        "uncertainty": {
+          "score": 0.18,
+          "rationale": "The answer makes no systematic acknowledgment of uncertainty; it implies completeness throughout. Only one entry hedges explicitly ('saleor/checkout/tasks.py (not in grep but implied)'), and the 0s wall time is never flagged as a source of possible inaccuracy \u2014 the agent is left without any signal about which entries to verify before trusting."
+        }
+      },
+      "step_quality": 0.6025,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3218,
+        "cache_creation_input_tokens": 18135,
+        "cache_read_input_tokens": 23586
+      }
+    },
+    {
+      "step": "Group the dependents by domain",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer organizes into seven app-aligned domains (product, order, warehouse, discount, attribute, checkout, graphql product) that cover most of the expected business domains; however, 'notifications' is folded silently into the order section rather than surfaced as a distinct domain, and 'tax' appears only as a parenthetical in the checkout label rather than its own group, so the agent must infer those groupings rather than read them off a clear map."
+        },
+        "specificity": {
+          "score": 0.68,
+          "rationale": "Model entries are consistently pinned to file:line with on-delete semantics (e.g., 'OrderLine.variant (models.py:552, SET_NULL)', 'Stock.product_variant (models.py:529, CASCADE)'), but code entries within each domain are uneven \u2014 some carry file:line ('notifications.py:170', 'reservations.py:32'), while others are described only as vague labels ('GraphQL resolvers/types/filters', 'filters/resolvers/bulk_mutations in GraphQL layers') without a concrete location."
+        },
+        "justification": {
+          "score": 0.55,
+          "rationale": "The grouping follows real Django-app coupling and labels FK on-delete behaviors, which is structurally sound, but it does not explain why each group belongs together as a domain \u2014 it asserts membership without articulating the coupling (e.g., why warehouse owns allocations rather than checkout, or what distinguishes the discount M2M coupling from the warehouse CASCADE coupling for change impact)."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "No uncertain placements are flagged anywhere; the answer presents all groupings as definitive without noting any dependents that cross domain lines or were ambiguous to classify (e.g., graphql/product/utils.py hosts attribute-related logic but is placed in the graphql domain, with no acknowledgment of the ambiguity)."
+        }
+      },
+      "step_quality": 0.583,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2490,
+        "cache_creation_input_tokens": 18000,
+        "cache_read_input_tokens": 23586
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.62,
+          "rationale": "The answer does produce a HIGH/MEDIUM/LOW risk ranking and states on-delete behaviors for model dependents (e.g. 'Stock.product_variant (saleor/warehouse/models.py:529) - FK with CASCADE', 'OrderLine.variant (saleor/order/models.py:552) - FK with SET_NULL') and what code reads for behavioral dependents (e.g. 'get_price() - Reads channel_listing.discounted_price'). However, it muddles the map by listing the variant's own methods (get_price, get_base_price at model.py:411/399) as if they were external dependents rather than the read-path being changed, and the ranking mixes 'things that break' with 'fields that exist on the model,' diluting the agent's ability to prioritize work."
+        },
+        "specificity": {
+          "score": 0.68,
+          "rationale": "Most HIGH-risk entries carry concrete file:line and relationship kind (e.g. 'PreorderAllocation.product_variant_channel_listing (saleor/warehouse/models.py:644) - FK with CASCADE'), and code dependents name the specific field or method read (e.g. 'variant.get_base_price', 'variant_listing.discounted_price'). Some MEDIUM/LOW entries are vaguer ('GraphQL ProductVariantChannelListing type' with only a type file reference), but the core high-risk tier is pinned well enough for targeted follow-up."
+        },
+        "justification": {
+          "score": 0.38,
+          "rationale": "The ranking lacks the key reasoning the rubric calls for: the answer notes CASCADE Stock deletion causes 'complete inventory loss' and SET_NULL on OrderLine 'would break existing order history,' but never explains why a silently mispriced order line (the classic hidden-production-failure) outranks explicit inventory data loss, nor why Voucher M2M sits at HIGH alongside CASCADE deletes. The step prompt specifically flags 'a missed high-risk dependent is the one that silently miscalculates a price or a downstream total in production' \u2014 that framing is absent from the justification."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The answer presents the blast-radius assessment as complete and authoritative with no flagged gaps; the verification checklist at the end hints at areas needing confirmation but frames them as testing tasks rather than impacts the analysis could not fully determine. No entry is marked 'could not confirm on-delete behavior' or 'impact unclear without reading the migration.'"
+        }
+      },
+      "step_quality": 0.5165,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1874,
+        "cache_creation_input_tokens": 18359,
+        "cache_read_input_tokens": 23586
+      }
+    },
+    {
+      "step": "Surface the non-obvious dependents",
+      "scores": {
+        "map_quality": {
+          "score": 0.32,
+          "rationale": "The ten-item list is diluted by two entries that are test code (benchmark tests, fixture files) rather than production dependents, and one item (saleor/checkout/tasks.py) is explicitly 'implied' with no pin. The genuinely non-obvious entries \u2014 channel_stock_availability.py reading via product_variant_id, discount background tasks, dataloaders, the webhook lambda \u2014 are there but thin, and the answer misses the items the rubric specifically names: the attribute TYPE_MAPPING dictionary at attribute/models/base.py:393 (variant appears as a dict value, not a named relationship), the VariantChannelListingPromotionRule through table (mentioned in Step 3 but never flagged here as hard to find), and the tax-webhook serializers that read variant fields under generic names."
+        },
+        "specificity": {
+          "score": 0.42,
+          "rationale": "Eight of ten entries carry a file:line, and a few pin an exact function (VariantChannelListingByIdLoader, _get_assigned_variant_attribute_for_attribute_value_qs), but item 6 is explicitly unresolved ('not in grep but implied'), and the descriptions of what text search tokens would fail \u2014 the actual field or variable name that hides the dependency \u2014 are absent for most entries."
+        },
+        "justification": {
+          "score": 0.22,
+          "rationale": "The WHY column for each entry is a superficial one-liner ('test code is easy to overlook', 'export code is often forgotten', 'managers are often overlooked') rather than explaining which search token fails: for channel_stock_availability.py the answer says 'bidirectional mapping is non-obvious' without naming that the field is product_variant_id not variant; for the webhook payloads entry it says 'not obvious from variant search' without explaining the lambda indirection. None of the entries trace the concrete name mismatch or indirection that causes a grep to miss them."
+        },
+        "uncertainty": {
+          "score": 0.15,
+          "rationale": "The section closes without any caveat about completeness; item 6 admits uncertainty about one specific file ('implied') but the overall list is presented as exhaustive, which it is not \u2014 the attribute TYPE_MAPPING and the through-table VariantChannelListingPromotionRule are omitted without acknowledgment."
+        }
+      },
+      "step_quality": 0.2995,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3119,
+        "cache_creation_input_tokens": 18031,
+        "cache_read_input_tokens": 23586
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.42,
+          "rationale": "The A\u2013F change-type structure in step 7 is genuinely useful and covers major FK/M2M/price-field dependents with file:line, but it drops large swaths of dependents catalogued in steps 3\u20134: the channel_stock_availability.py entries, plugins/manager.py, plugins/base_plugin.py, CSV export (csv/utils/products_data.py), dataloaders, and all the warehouse/webhooks/channel_stock_events.py callers vanish from the final map, violating the rubric's explicit 'dropping a dependent here is the same as never finding it' criterion \u2014 the agent still needs to cross-reference earlier steps to get the full picture."
+        },
+        "specificity": {
+          "score": 0.55,
+          "rationale": "File:line citations are dense and concrete in steps 3\u20136 ('OrderLine.variant (saleor/order/models.py:552, SET_NULL)', 'ProductVariant.get_price() (saleor/product/models.py:411)'), but the step 7 final map does not re-pin every dependent at file:line \u2014 it summarises groups ('All price calculations (checkout/utils.py, order/utils.py, discount utils)') and the verification checklist falls back to coarse pytest directory invocations rather than naming specific test functions or assertions tied to individual dependents."
+        },
+        "justification": {
+          "score": 0.6,
+          "rationale": "The map explains relationship types and failure modes well for the entries it does carry ('if field removed/renamed, ALL of these break', CASCADE inventory-loss reasoning, SET_NULL vs CASCADE distinction), but the verification section reduces to 'verify OrderLine queries still work' and 'verify Stock queries still work' \u2014 it does not say which field or code path in each dependent must be exercised, so a teammate cannot land the PR without still deciding what to test per entry."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The only acknowledged gap is a single implicit flag ('saleor/checkout/tasks.py \u2014 not in grep but implied'); the rest of the map reads as definitively complete, with no 'could not confirm', 'needs manual check', or 'may be incomplete' markers despite the codebase's scale \u2014 this leaves the implementer with a false sense of coverage and no open items to chase."
+        }
+      },
+      "step_quality": 0.4555,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2560,
+        "cache_creation_input_tokens": 18226,
+        "cache_read_input_tokens": 23586
+      }
+    }
+  ]
+}

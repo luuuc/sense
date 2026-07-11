@@ -1,0 +1,376 @@
+{
+  "scenario": "NetBox work session - audit every production subsystem that depends on the device model before reworking its contract",
+  "repo": "netbox",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "netbox.rubric.yaml"
+  },
+  "scenario_quality": 0.2974,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 16,
+    "related": 16,
+    "contradicted": 0,
+    "covered_recall": 0.6957,
+    "related_recall": 0.6957,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "ctx:dcim-filtersets",
+      "ctx:vm-host",
+      "ctx:wireless-cache",
+      "ctx:cable-term-cache",
+      "ctx:module-anchor",
+      "ctx:dcim-graphql",
+      "ctx:connection-tables"
+    ],
+    "missed_related": [
+      "ctx:dcim-filtersets",
+      "ctx:vm-host",
+      "ctx:wireless-cache",
+      "ctx:cable-term-cache",
+      "ctx:module-anchor",
+      "ctx:dcim-graphql",
+      "ctx:connection-tables"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "device-model",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:device-form",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:serializer",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:device-views",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:component-base",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:dcim-filtersets",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:svg-elevation",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:ipam-signals",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:cluster-clean",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:vm-host",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:wireless-cache",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:cable-term-cache",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:module-anchor",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:dcim-signals",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:devicebay-import",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:dcim-graphql",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:connection-tables",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:ipam-filtersets",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:ipam-graphql",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:service-import",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:cluster-add-view",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rack-elevation",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:cable-form-factory",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.7,
+          "rationale": "The answer correctly names NetBox as 'an extensible open-source network source-of-truth application,' pins the device model to 'netbox/dcim/models/devices.py:498,' and names dcim/ipam/virtualization apps; however it only says 'e.g., dcim, ipam, virtualization' for the app split, leaving wireless, circuits, tenancy, extras, and core unmentioned \u2014 the agent doesn't have the full domain map."
+        },
+        "specificity": {
+          "score": 0.75,
+          "rationale": "The device model is pinned to a concrete file:line ('netbox/dcim/models/devices.py:498') with 23 named fields and 7 named relationship classes, which is actionable; the app-structure description stays at the example level ('e.g., dcim, ipam, virtualization') without listing the full set of apps under netbox/."
+        },
+        "justification": {
+          "score": 0.35,
+          "rationale": "The answer lists the model's fields and related class names (VirtualChassis, Module, CableTermination, etc.) but never states WHY this is the aggregate anchor \u2014 that components, addresses, racks, clusters, and virtual-chassis memberships all hang off it and that is the source of the restructuring risk; the 'why rework this' question is unanswered."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer presents everything as a complete, confident JSON with no hedges, uncertainty flags, or notes about anything it could not confirm \u2014 the agent has no signal about where to double-check before acting."
+        }
+      },
+      "step_quality": 0.545,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2384,
+        "cache_creation_input_tokens": 13842,
+        "cache_read_input_tokens": 24183
+      }
+    },
+    {
+      "step": "Map the device model contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.52,
+          "rationale": "The answer pins the Device class to netbox/dcim/models/devices.py:498 and lists the right fields (site, location, rack, device_type, role, primary_ip4/primary_ip6/oob_ip, cluster, virtual_chassis, vc_position/vc_priority), satisfying the field-inventory half of the criterion. However it never answers the second, harder half: it does not explain how other code holds and passes references to a Device \u2014 there is no description of FK patterns, queryset access paths, cached fields like _device, or signal-driven mutations that write back to Device rows, leaving the agent without the contract picture it needs before restructuring."
+        },
+        "specificity": {
+          "score": 0.55,
+          "rationale": "The model is pinned to one file:line (devices.py:498) and field names are the actual Django field identifiers (primary_ip4, vc_position, oob_ip, etc.). However, no individual field or property carries its own line number, and the relationships section names classes (VirtualChassis, CableTermination, ComponentModel) without naming the FK fields that link them or their lines in devices.py, leaving the agent to locate the actual FK declarations itself."
+        },
+        "justification": {
+          "score": 0.22,
+          "rationale": "The answer lists fields and coupling labels at subsystem level ('stores device references', 'queries the model', 'reacts to device lifecycle events') but never ties a specific contract element to a specific restructuring risk \u2014 for example, it does not explain that primary_ip4/oob_ip are the fields nulled by ipam/signals.py pre_delete receivers, or that cluster/virtual_chassis drive scope validations in other models, so the agent cannot rank which contract pieces are load-bearing."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "No uncertainty flags appear anywhere in the answer; the agent is given a flat list with no indication of which relationships or coupling paths were inferred vs. confirmed, leaving it no signal about where to verify before acting."
+        }
+      },
+      "step_quality": 0.397,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1573,
+        "cache_creation_input_tokens": 13814,
+        "cache_read_input_tokens": 24183
+      }
+    },
+    {
+      "step": "Enumerate every production dependent of the device model",
+      "scores": {
+        "map_quality": {
+          "score": 0.42,
+          "rationale": "The answer covers several key cross-subsystem dependents correctly: ipam/signals.py (lines 20, 54, 70), ipam/filtersets.py, ipam/graphql/filters.py:167, ipam/forms/bulk_import.py:636, virtualization/models/clusters.py:125, virtualization/views.py:362, dcim/signals.py, dcim/models/racks.py, and dcim/forms/connections.py. However, it entirely omits four subsystems the rubric calls out as critical: wireless/models.py (wireless link device caches), dcim/models/cables.py (cable termination device cache), dcim/models/modules.py (module anchor), and virtualization/models/virtualmachines.py (VM host anchor) \u2014 leaving whole product subsystems unaccounted for."
+        },
+        "specificity": {
+          "score": 0.44,
+          "rationale": "Every entry in the production_dependents array carries a concrete file:line (e.g. 'netbox/ipam/signals.py:70'), which is useful. However, no actual class or function name accompanies any line reference \u2014 the rubric requires 'the actual class, function, or field name', not just coordinates \u2014 so an agent would still need to open every file to know what it is looking at."
+        },
+        "justification": {
+          "score": 0.12,
+          "rationale": "The step prompt explicitly requires 'ONE dependent per line... do not group, rank, or explain... the only job here is a complete, flat list.' Instead the answer delivers a large JSON document organized into subsystems, blast_radius tiers (high/medium/low), non_obvious_dependents, and a change_verification_map \u2014 it groups, ranks, and explains in direct violation of the format requirement, making the flat dependency list hard to extract and audit for completeness."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "The answer does not flag any potential incompleteness or apps it could not fully triage, projecting false completeness; given that wireless, cables, and modules subsystems are entirely absent, the lack of any uncertainty signal actively misleads the downstream agent."
+        }
+      },
+      "step_quality": 0.314,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2404,
+        "cache_creation_input_tokens": 13945,
+        "cache_read_input_tokens": 24183
+      }
+    },
+    {
+      "step": "Group the dependents by subsystem",
+      "scores": {
+        "map_quality": {
+          "score": 0.28,
+          "rationale": "The answer collapses all dependents into only three Django-app-level buckets (dcim, ipam, virtualization), missing the finer subsystems the rubric requires: wireless (wireless/models.py absent entirely), cabling, racks/elevations, and signal-driven denormalization are all swallowed into the single 'dcim' blob rather than broken out, so an agent cannot see the distinct product areas the restructuring reaches."
+        },
+        "specificity": {
+          "score": 0.38,
+          "rationale": "File:line citations are present, but the coupling type labels ('stores device references', 'queries the model', etc.) are applied as an array at the subsystem level rather than per-entry, so the agent cannot tell whether dcim/signals.py:59 reacts to lifecycle events or dcim/forms/connections.py:12 builds UI \u2014 information that is precisely what the step is supposed to deliver."
+        },
+        "justification": {
+          "score": 0.18,
+          "rationale": "The grouping reflects Django app membership, not real coupling style; signal handlers, FK caches, form factories, and SVG renderers all share the same four generic labels under 'dcim' with no per-entry explanation of why each belongs there or how tightly it is coupled."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer flags zero uncertainty about placement; it presents the three-subsystem split as complete and exhaustive, with no note that wireless dependents are absent or that signal-driven vs. query-based coupling could not always be confirmed."
+        }
+      },
+      "step_quality": 0.258,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1431,
+        "cache_creation_input_tokens": 13855,
+        "cache_read_input_tokens": 24183
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.15,
+          "rationale": "The blast_radius section dumps all 37+ dependents into high_risk with medium_risk and low_risk left empty \u2014 there is no per-dependent reasoning about what product flow drives each (address deletion, cluster assignment, rack elevation rendering, virtual-chassis rename), and no characterisation of coupling tightness per dependent. The subsystem 'dependencies' fields are generic labels applied to whole apps, not individual entries; wireless/models.py and dcim/models/cables.py (the denormalized device caches called out as critical in the rubric) are absent entirely."
+        },
+        "specificity": {
+          "score": 0.35,
+          "rationale": "File:line references are present throughout, which is useful, but the actual coupling per dependent \u2014 what field it caches, what query it fires, whether it reacts to a signal or reads transiently \u2014 is never stated at the individual entry level, only as vague subsystem-level labels. Key missing entries (wireless, cables) further reduce coverage."
+        },
+        "justification": {
+          "score": 0.05,
+          "rationale": "No risk ranking is justified: every dependent is placed in high_risk with identical weight, so there is no explanation of why ipam/signals.py silently nulling a device's primary IP anchor outranks a view, or why a denormalized FK cache is more dangerous than a transient query. The 'non_obvious_dependents' rationales are superficial ('not immediately obvious') and cover only 3 of the non-obvious cases."
+        },
+        "uncertainty": {
+          "score": 0.1,
+          "rationale": "The answer flags no gaps and implies completeness across all subsystems, yet wireless/models.py and dcim/models/cables.py are absent \u2014 a concrete blind spot that goes unacknowledged. There is no 'could not confirm' or 'may be incomplete' note anywhere."
+        }
+      },
+      "step_quality": 0.1725,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1792,
+        "cache_creation_input_tokens": 13858,
+        "cache_read_input_tokens": 24183
+      }
+    },
+    {
+      "step": "Surface the non-obvious dependents",
+      "scores": {
+        "map_quality": {
+          "score": 0.15,
+          "rationale": "The dedicated `non_obvious_dependents` section names only 3 items (svg/racks.py, ipam/graphql/filters.py, virtualization/models/clusters.py) and omits the canonically non-obvious ones the rubric requires: wireless/models.py (denormalized *_device caches) is absent entirely, dcim/models/cables.py cable termination cache is absent, ipam/signals.py pre_delete(IPAddress) receivers are buried in the flat production list without being called out as reacting to a foreign model's lifecycle, and dcim/forms/connections.py metaclass factory is similarly buried. The answer fails the core task of singling out the scattered, hard-to-find dependents."
+        },
+        "specificity": {
+          "score": 0.15,
+          "rationale": "Each of the three items in `non_obvious_dependents` carries a file:line, but the stated reason for all three is the identical boilerplate 'not immediately obvious as a dependent of the device model' \u2014 no mechanism is named (signal-driven, denormalized cache, string-keyed dispatch, dynamic form construction), so an agent cannot act on it."
+        },
+        "justification": {
+          "score": 0.08,
+          "rationale": "The explanations are circular ('not immediately obvious as a dependent' explains nothing about WHY a text search would miss it); there is no per-dependent rationale tied to the actual code mechanism, making the section useless for triage."
+        },
+        "uncertainty": {
+          "score": 0.05,
+          "rationale": "The answer implies completeness throughout and never acknowledges that it may have missed subsystems or that wireless/cables caches are unconfirmed; there is no flag anywhere that the non-obvious set might be larger."
+        }
+      },
+      "step_quality": 0.121,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1832,
+        "cache_creation_input_tokens": 13843,
+        "cache_read_input_tokens": 24183
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.38,
+          "rationale": "The answer provides a structured JSON with file:line throughout and three subsystems (dcim, ipam, virtualization), but drops entire subsystems the rubric requires: wireless (wireless/models.py device caches), cables (dcim/models/cables.py termination cache), and modules (dcim/models/modules.py) are wholly absent, as is virtualization/models/virtualmachines.py (VM host anchor); a teammate acting on this map would silently miss those coupling points."
+        },
+        "specificity": {
+          "score": 0.32,
+          "rationale": "File:line is consistently present, which is good, but no entry names the class or function it pins (e.g., which signal receiver at ipam/signals.py:70, which filterset class at ipam/filtersets.py:794); coupling labels are bucketed at the subsystem level ('stores device references', 'queries the model') rather than stated per entry, so the agent cannot distinguish a cached FK from a queryset filter without re-reading each file."
+        },
+        "justification": {
+          "score": 0.15,
+          "rationale": "Each subsystem gets the same four boilerplate verification bullets ('Check that device references are correctly handled', 'Verify that queries to the device model work as expected') applied identically to all its entries; there is no per-dependent statement of what must be checked, so the map does not answer 'what do I verify at ipam/signals.py:70 specifically' versus 'at dcim/signals.py:110'."
+        },
+        "uncertainty": {
+          "score": 0.08,
+          "rationale": "The answer flags no open items, no subsystems it could not triage, and no entries it is unsure about, despite dropping wireless entirely and listing dcim as a monolithic bucket; the false confidence of 'blast_radius.medium_risk: []' and 'low_risk: []' is the opposite of calibrated uncertainty."
+        }
+      },
+      "step_quality": 0.274,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1944,
+        "cache_creation_input_tokens": 13851,
+        "cache_read_input_tokens": 24183
+      }
+    }
+  ]
+}

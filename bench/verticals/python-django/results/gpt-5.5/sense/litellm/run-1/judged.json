@@ -1,0 +1,360 @@
+{
+  "scenario": "LiteLLM work session - audit every provider config affected before reworking the base chat-transformation contract",
+  "repo": "litellm",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "litellm.rubric.yaml"
+  },
+  "scenario_quality": 0.7576,
+  "relationship_audit": {
+    "total": 23,
+    "covered": 23,
+    "related": 23,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "contract",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:openai-gpt",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:anthropic",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:bedrock",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:cohere",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:azure",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "ctx:vertex-gemini",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:deepinfra",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:deepseek",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:nebius",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:xai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:perplexity",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:mistral",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:moonshot",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:nvidia-nim",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:openrouter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:cerebras",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:groq",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:databricks",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:github",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:friendliai",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:volcengine",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:datarobot",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "The answer delivers every element the criterion asks for: LiteLLM named as 'an LLM gateway/provider abstraction layer', provider integrations pinned to 'litellm/llms/<provider>/chat/transformation.py', BaseConfig located at 'litellm/llms/base_llm/chat/transformation.py:75', and seven intermediate base classes with file:line \u2014 the agent can act with zero re-exploration."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every reference includes a concrete file path and line number (e.g. 'OpenAIGPTConfig litellm/llms/openai/chat/gpt_transformation.py:73', 'BaseConfig litellm/llms/base_llm/chat/transformation.py:75'); no vague labels appear."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "The answer explains WHY: BaseConfig 'is the abstract provider config contract for OpenAI-style chat request to provider-native request transformation and provider-native response to LiteLLM ModelResponse transformation', and the signature_change_warning spells out the consequence of reworking a method \u2014 this goes beyond naming."
+        },
+        "uncertainty": {
+          "score": 0.7,
+          "rationale": "The answer explicitly flags scope exclusions ('BaseConfig tree also includes completion, embedding, audio\u2026 filtered those out') and lists verification steps, but offers no uncertainty flags about the orientation facts themselves (e.g. whether the intermediate list is exhaustive at the orientation level) \u2014 appropriate confidence but thin on explicit hedges."
+        }
+      },
+      "step_quality": 0.9025,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1882,
+        "cache_creation_input_tokens": 18325,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Map the base transformation contract and what it defines",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "All six rubric-named methods (transform_request, transform_response, map_openai_params, validate_environment, get_supported_openai_params, get_error_class) appear in the core_methods list, plus three additional contract members (async_transform_request, transform_parsed_response_dict, get_model_response_iterator); abstract vs concrete vs optional is distinguished; the signature_change_warning names every intermediate that propagates the contract."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "BaseConfig is pinned to litellm/llms/base_llm/chat/transformation.py:75 and every method carries an exact :line, e.g. get_error_class :371, get_model_response_iterator :377 \u2014 nothing is described vaguely."
+        },
+        "justification": {
+          "score": 0.68,
+          "rationale": "The signature_change_warning explains the cascading-inheritance risk and the 'silently keep old behavior' failure mode, which is the key consequence; but it does not explain what role each method plays in the transformation pipeline (e.g. that map_openai_params feeds transform_request, or that get_error_class is invoked on HTTP error responses), leaving the agent to infer which signature changes are riskier than others."
+        },
+        "uncertainty": {
+          "score": 0.55,
+          "rationale": "The answer flags the scope boundary (non-chat descendants excluded) and lists verification steps, but it does not flag any uncertainty about whether the contract methods and line numbers are current or complete \u2014 useful given the 105k-token run that still relied on AST parsing rather than reading the file body directly."
+        }
+      },
+      "step_quality": 0.816,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1734,
+        "cache_creation_input_tokens": 18309,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Enumerate every provider config affected by the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "The 122-entry audit_map covers every rubric-named indirect provider (DeepInfra, DeepSeek, Nebius, xAI, Perplexity, Mistral, Moonshot, Nvidia NIM, OpenRouter, Cerebras, Groq, Databricks, GitHub, Friendliai, VolcEngine, DataRobot) plus dozens more drawn from Sense index traversal and an AST pass, and it traces multi-hop inheritance (e.g. 'via OpenAIGPTConfig -> OpenAILikeChatConfig') beyond the first-hop subclasses; the agent needs no re-exploration to assemble the affected set."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Every audit_map entry carries the actual class name and a concrete file:line (e.g. 'GroqChatConfig litellm/llms/groq/chat/transformation.py:43'), with no entries collapsed into vague group labels like 'the OpenAI-compatible providers'."
+        },
+        "justification": {
+          "score": 0.88,
+          "rationale": "Each entry explicitly states the inheritance path \u2014 'direct BaseConfig', 'via OpenAIGPTConfig', 'via OpenAIGPTConfig -> OpenAILikeChatConfig', 'via AnthropicConfig plus AmazonInvokeConfig', etc. \u2014 directly answering how each config reaches the contract without a follow-up lookup."
+        },
+        "uncertainty": {
+          "score": 0.5,
+          "rationale": "The answer acknowledges the scope boundary (non-chat configs excluded) and reports its methodology (AST + Sense + rg spot-checks), but asserts 122 configs with no explicit caveat about deeper intermediates it could not confirm or provider directories it may have missed, leaving the agent with a somewhat false sense of total completeness."
+        }
+      },
+      "step_quality": 0.836,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3924,
+        "cache_creation_input_tokens": 18437,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Group the affected provider configs by how they inherit",
+      "scores": {
+        "map_quality": {
+          "score": 0.55,
+          "rationale": "The inheritance path for each provider is annotated inline (\"via OpenAIGPTConfig -> OpenAILikeChatConfig\"), and the important intermediates are named with file:line at the top, but the audit_map itself is sorted alphabetically rather than organized by inheritance group \u2014 an agent that wants to see the OpenAIGPTConfig family as a unit, or the AmazonInvokeConfig family, must re-sort 122 entries, which is exactly the downstream exploration work a good grouping should eliminate."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Every one of the 122 entries carries the class name, a concrete file:line, and the full inheritance chain (e.g. \"GroqChatConfig litellm/llms/groq/chat/transformation.py:43 | via OpenAIGPTConfig -> OpenAILikeChatConfig\"), leaving nothing for the agent to pin down."
+        },
+        "justification": {
+          "score": 0.6,
+          "rationale": "Multi-hop depth is shown with the \"X -> Y\" notation and the \"important_intermediates\" block names the hubs, but the answer does not explain what the grouping reveals about blast-radius scope \u2014 e.g. why OpenAILikeChatConfig being a second-hop intermediate means its ~20 leaf providers are invisible to a grep of the base class name."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "The answer flags non-chat configs as out-of-scope but does not call out any provider it was unsure how to classify, nor does it acknowledge that the two-intermediate chains (AmazonAnthropicClaudeConfig via AnthropicConfig + AmazonInvokeConfig) may have additional resolution ambiguity."
+        }
+      },
+      "step_quality": 0.61,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1973,
+        "cache_creation_input_tokens": 18315,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Assess the blast radius of the contract change",
+      "scores": {
+        "map_quality": {
+          "score": 0.72,
+          "rationale": "The answer supplies a 122-entry audit map with file:line, inheritance path, and override status for every config, covering direct and indirect descendants through all major intermediates (OpenAIGPTConfig, OpenAILikeChatConfig, AnthropicConfig, AmazonInvokeConfig, VertexGeminiConfig). Risk is ranked mechanically as override=high, inherit=medium, but the answer never reasons about which providers are high-traffic and therefore the most dangerous to miss silently."
+        },
+        "specificity": {
+          "score": 0.92,
+          "rationale": "Every entry carries a concrete file:line anchor, exact class name, named inheritance path, and specific override line numbers (e.g. 'OpenAIGPTConfig litellm/llms/openai/chat/gpt_transformation.py:73 | overrides transform_request:424 async_transform_request:456 transform_response:595'), giving the agent direct navigation targets with no ambiguity."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "The risk ranking applies a single rule (overrides=high, inherits=medium) with no explanation of why, and never applies the traffic-weighted reasoning the rubric calls for \u2014 for example, it marks CerebrasConfig and NebiusConfig as 'risk medium' (inherit unchanged) even though silently inheriting a changed base implementation in high-traffic providers is the stated failure scenario, while niche override configs are marked 'risk high'."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "The answer acknowledges the non-chat filtering boundary and labels the 95 indirect configs as 'likely missed by baseclass grep,' but never flags which intermediates may have sub-intermediates that were not traced, nor whether the AST pass covered dynamic or conditional inheritance; a reader cannot tell where the confidence boundary sits on the 122-item list."
+        }
+      },
+      "step_quality": 0.603,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2596,
+        "cache_creation_input_tokens": 18332,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Surface the non-obvious affected provider configs",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "The answer explicitly identifies all families the rubric names (OpenAIGPTConfig, OpenAILikeChatConfig, OpenAIConfig, AnthropicConfig, AmazonInvokeConfig, VertexGeminiConfig) and surfaces ~95 indirect descendants with a clear top-level statement: 'Every audit_map entry with via ... is easy to miss with a text search for BaseConfig because its class definition does not name BaseConfig.' The cluster summary at the end further groups the highest-risk missed families, leaving the agent with no re-exploration needed."
+        },
+        "specificity": {
+          "score": 0.92,
+          "rationale": "Every non-obvious entry is pinned to file:line and names the exact intermediate base (e.g., 'AI21ChatConfig litellm/llms/ai21/chat/transformation.py:12 | via OpenAIGPTConfig -> OpenAILikeChatConfig'), with method-level detail (which methods are overridden vs inherited) rather than a generic label."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "The general explanation \u2014 'its class definition does not name BaseConfig' \u2014 is stated once and implicitly covers all 'via ...' entries, which is correct and sufficient for an agent; however, per-entry explanations are absent, so the agent must apply the general rule itself to each case rather than having the intermediate-hop reasoning spelled out entry by entry."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "The answer presents the 95-entry indirect list as effectively complete ('95 indirect configs likely missed') and never flags that deeper intermediate hops (e.g., a third-level intermediary the AST pass might have missed) could hide additional configs; the only acknowledged scope limit is the out-of-scope non-chat descendants, not potential incompleteness within scope."
+        }
+      },
+      "step_quality": 0.76,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1471,
+        "cache_creation_input_tokens": 18326,
+        "cache_read_input_tokens": 23823
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.82,
+          "rationale": "The answer delivers 122 provider configs each with file:line, inheritance path, and override details \u2014 a teammate can act on it without re-exploring. The deduction is that entries are sorted alphabetically rather than explicitly grouped by inheritance family, so the agent must mentally extract the OpenAIGPTConfig family, the OpenAILikeChatConfig subfamily, the AnthropicConfig family, etc., rather than finding them pre-organized as the rubric asks."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Every entry carries class name, file:line, inheritance chain (e.g., 'via OpenAIGPTConfig -> OpenAILikeChatConfig'), and override locations at the method level (e.g., 'overrides transform_request:190 transform_response:243'), satisfying the 'concrete file:line + class + direct/intermediate' requirement throughout."
+        },
+        "justification": {
+          "score": 0.68,
+          "rationale": "Each entry records which methods are overridden and where, which implicitly tells the implementer what to change or check, but the map never states the explicit verification action per entry (e.g., 'update the override signature at :190' vs. 'verify the inherited method from OpenAIGPTConfig:424 still satisfies the new contract'); 'inherits target methods' leaves the agent inferring what that means for verification."
+        },
+        "uncertainty": {
+          "score": 0.58,
+          "rationale": "The answer notes the non-chat scope exclusion and lists the spot-check method, but every one of the 122 entries is presented as confirmed with no per-entry uncertainty flags; there is no note about deeper intermediates that could not be confirmed or about any config whose placement in the tree was ambiguous."
+        }
+      },
+      "step_quality": 0.776,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1884,
+        "cache_creation_input_tokens": 18348,
+        "cache_read_input_tokens": 23823
+      }
+    }
+  ]
+}
