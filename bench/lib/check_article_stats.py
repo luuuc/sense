@@ -2,11 +2,15 @@
 """Freshness check: do the numbers in each vertical article still match the bench?
 
 Each teardown article carries a `headline:` block (repo, deps_delta, overall_from,
-overall_to) and a `data:` pointer to its bench model root
+overall_to), an `axes:` block (judge-score numbers: cited_delta, B-score,
+related/grounded/contra per arm), and a `data:` pointer to its bench model root
 (bench/verticals/<vertical>/results/<model>/). This recomputes those numbers from
-the live results and prints FRESH / OUTDATED per article, so a re-bench can't
-silently leave stale figures in a draft. It checks NUMBERS only; the prose is the
-author's. Articles with no `headline:` block (the essay, gem feeders) are skipped.
+the live results (axes via scoreboard.py's readers, the same source `regen via
+bench/lib/scoreboard.py` names) and prints FRESH / OUTDATED per article, so a
+re-bench can't silently leave stale figures in a draft. It checks NUMBERS only;
+the prose is the author's. Articles with neither a `headline:` nor an `axes:`
+block (the essay) are skipped. Non-score axes metadata (judge, runs, antifab,
+eff_*) stays unchecked.
 
 Usage: check_article_stats.py [articles_dir] [--tol 0.01]
 """
@@ -23,6 +27,25 @@ except ImportError:  # pragma: no cover - environment guard
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_ARTICLES = os.path.join(
     REPO_ROOT, ".doc", "launch", "02-rails-vertical", "articles")
+
+# axes: keys we can recompute from disk (claim key -> live key). The packs use
+# two shapes (related_from/related_to vs related_b/related_s); both map to the
+# same live value. Anything not listed here (judge, runs, antifab, eff_*) is
+# metadata or informational-only and is not checked.
+AXES_KEYS = {
+    "cited_delta": "cited_delta",
+    "deps_delta": "deps_delta",
+    "b_score_from": "b_score_from",
+    "b_score_to": "b_score_to",
+    "related_from": "related_b",
+    "related_b": "related_b",
+    "related_to": "related_s",
+    "related_s": "related_s",
+    "grounded_b": "grounded_b",
+    "grounded_s": "grounded_s",
+    "contra_b": "contra_b",
+    "contra_s": "contra_s",
+}
 
 
 def frontmatter(path):
@@ -73,6 +96,48 @@ def live_stats(model_root, repo):
     return {"overall_from": b_overall, "overall_to": s_overall, "deps_delta": deps_delta}
 
 
+def live_axes(model_root, repo):
+    """Recompute the judge-score axes for one repo via scoreboard's readers
+    (the source of truth the packs' `regen via bench/lib/scoreboard.py` names).
+    Returns {} when either arm has no runs on disk."""
+    import scoreboard as sb  # local: bench/lib is on sys.path for script + tests
+    b = sb.arm_axes(model_root, "baseline", repo)
+    s = sb.arm_axes(model_root, "sense", repo)
+    if b["cited"] is None or s["cited"] is None:
+        return {}
+    deps = (s["deps"] - b["deps"]) if (
+        b["deps"] is not None and s["deps"] is not None) else None
+    return {"cited_delta": s["cited"] - b["cited"], "deps_delta": deps,
+            "b_score_from": sb.bscore(b), "b_score_to": sb.bscore(s),
+            "related_b": b["related"], "related_s": s["related"],
+            "grounded_b": b["grounded"], "grounded_s": s["grounded"],
+            "contra_b": b["contra"], "contra_s": s["contra"]}
+
+
+def _fmt(key, v):
+    if isinstance(v, int):
+        return str(v)
+    sign = "+" if key.endswith("_delta") else ""
+    return f"{sign}{v:.2f}"
+
+
+def axes_verdict(claim, live, tol=0.01):
+    """Return diffs comparing a claimed axes: block to the live recompute."""
+    items = dict(claim)
+    if "grounded" in items:  # single-field shape claims both arms
+        g = items.pop("grounded")
+        items.setdefault("grounded_b", g)
+        items.setdefault("grounded_s", g)
+    diffs = []
+    for key, lkey in AXES_KEYS.items():
+        c, got = items.get(key), live.get(lkey)
+        if not isinstance(c, (int, float)) or isinstance(c, bool) or got is None:
+            continue  # not claimed, metadata, or no live value to compare
+        if abs(round(got, 2) - round(c, 2)) > tol:
+            diffs.append(f"axes.{key} {_fmt(key, c)}->{_fmt(key, got)}")
+    return diffs
+
+
 def verdict(claim, live, tol=0.01):
     """Return (is_fresh, has_data, diffs) comparing a claimed headline to live."""
     if live["overall_from"] is None and live["overall_to"] is None:
@@ -89,22 +154,31 @@ def verdict(claim, live, tol=0.01):
 
 
 def check(articles_dir, root=REPO_ROOT, tol=0.01):
-    """Yield (article_name, status, repo) for every article with a headline block."""
+    """Yield (article_name, status, repo) for every article with a headline
+    and/or axes block (gem feeders carry axes only)."""
     rows = []
     for path in sorted(glob.glob(os.path.join(articles_dir, "*.md"))):
         fm = frontmatter(path)
-        h, data = fm.get("headline"), fm.get("data")
-        if not (isinstance(h, dict) and isinstance(data, str)):
+        h = fm.get("headline") if isinstance(fm.get("headline"), dict) else None
+        ax = fm.get("axes") if isinstance(fm.get("axes"), dict) else None
+        data = fm.get("data")
+        if not ((h or ax) and isinstance(data, str)):
             continue
-        live = live_stats(os.path.join(root, data.strip()), h.get("repo"))
-        fresh, has_data, diffs = verdict(h, live, tol)
+        repo = (h or {}).get("repo") or fm.get("repo")
+        model_root = os.path.join(root, data.strip())
+        live = live_stats(model_root, repo)
+        fresh, has_data, diffs = verdict(h or {}, live, tol)
+        if has_data and ax:
+            adiffs = axes_verdict(ax, live_axes(model_root, repo), tol)
+            diffs += adiffs
+            fresh = fresh and not adiffs
         if not has_data:
             status = "NO DATA"
         elif fresh:
             status = "FRESH"
         else:
             status = "OUTDATED  " + "; ".join(diffs)
-        rows.append((os.path.basename(path), status, h.get("repo")))
+        rows.append((os.path.basename(path), status, repo))
     return rows
 
 
@@ -120,7 +194,7 @@ def main(argv):
             i += 1
     rows = check(os.path.abspath(articles_dir), tol=tol)
     if not rows:
-        print("no articles with a headline: block under", articles_dir)
+        print("no articles with a headline: or axes: block under", articles_dir)
         return 0
     w = max(len(r[0]) for r in rows)
     need = sum(1 for _, s, _ in rows if not s == "FRESH")
