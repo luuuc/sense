@@ -35,7 +35,7 @@ var stdlibInterfaces = []stdlibInterface{
 
 type ifaceInfo struct {
 	sym     model.Symbol
-	methods []string
+	methods map[string]bool
 }
 
 type structInfo struct {
@@ -78,9 +78,14 @@ func (h *harness) satisfyInterfaces() error {
 	}
 
 	collectMethodSets(syms, interfaces, structs)
-	if err := h.promoteEmbeddedMethodSets(structs); err != nil {
+	embeddings, err := h.loadEmbeddings()
+	if err != nil {
 		return err
 	}
+	// Interface sets expand first: struct-side promotion through an embedded
+	// interface field unions the interface's already-expanded set.
+	expandInterfaceMethodSets(interfaces, embeddings)
+	promoteEmbeddedMethodSets(structs, interfaces, embeddings)
 
 	written, err := h.writeSatisfactionEdges(interfaces, structs)
 	if err != nil {
@@ -102,7 +107,10 @@ func classifyGoSymbols(syms []model.Symbol, goFiles map[int64]bool) (map[int64]*
 		}
 		switch s.Kind {
 		case model.KindInterface:
-			interfaces[s.ID] = &ifaceInfo{sym: *s}
+			interfaces[s.ID] = &ifaceInfo{
+				sym:     *s,
+				methods: map[string]bool{},
+			}
 		case model.KindClass:
 			structs[s.ID] = &structInfo{
 				sym:     *s,
@@ -136,7 +144,7 @@ func collectMethodSets(syms []model.Symbol, interfaces map[int64]*ifaceInfo, str
 		}
 		parentID := *s.ParentID
 		if iface, ok := interfaces[parentID]; ok {
-			iface.methods = append(iface.methods, s.Name)
+			iface.methods[s.Name] = true
 		}
 		if st, ok := structs[parentID]; ok {
 			st.methods[s.Name] = true
@@ -144,13 +152,13 @@ func collectMethodSets(syms []model.Symbol, interfaces map[int64]*ifaceInfo, str
 	}
 }
 
-// promoteEmbeddedMethodSets loads resolved embedding (includes) edges and
-// promotes embedded structs' methods onto their embedders, up to depth 3, so an
-// embedded method counts toward interface satisfaction.
-func (h *harness) promoteEmbeddedMethodSets(structs map[int64]*structInfo) error {
+// loadEmbeddings loads the resolved embedding (includes) edges once, as a
+// source→targets adjacency shared by the interface-expansion and the
+// struct-promotion passes.
+func (h *harness) loadEmbeddings() (map[int64][]int64, error) {
 	edges, err := h.idx.EdgesOfKind(h.ctx, model.EdgeIncludes)
 	if err != nil {
-		return fmt.Errorf("satisfy: query embeddings: %w", err)
+		return nil, fmt.Errorf("satisfy: query embeddings: %w", err)
 	}
 	embeddings := map[int64][]int64{}
 	for _, e := range edges {
@@ -159,10 +167,51 @@ func (h *harness) promoteEmbeddedMethodSets(structs map[int64]*structInfo) error
 		}
 		embeddings[*e.SourceID] = append(embeddings[*e.SourceID], e.TargetID)
 	}
-	for id, st := range structs {
-		promoteEmbeddedMethods(st, id, embeddings, structs, 3)
+	return embeddings, nil
+}
+
+// expandInterfaceMethodSets closes every interface's method set over its
+// embedded interfaces. Go makes embedded method sets fully transitive, so the
+// expansion is a memoized full closure — a depth cap here would shrink
+// REQUIRED sets and silently re-create false satisfaction on composites. The
+// visiting guard terminates on cycles, which Go forbids but a mid-edit or
+// misresolved index can still contain. Targets that are not known interfaces
+// (stdlib, unresolved, structs) contribute nothing.
+func expandInterfaceMethodSets(interfaces map[int64]*ifaceInfo, embeddings map[int64][]int64) {
+	expanded := map[int64]bool{}
+	for id := range interfaces {
+		expandInterfaceMethods(id, interfaces, embeddings, expanded, map[int64]bool{})
 	}
-	return nil
+}
+
+func expandInterfaceMethods(id int64, interfaces map[int64]*ifaceInfo, embeddings map[int64][]int64, expanded, visiting map[int64]bool) {
+	if expanded[id] || visiting[id] {
+		return
+	}
+	visiting[id] = true
+	iface := interfaces[id]
+	for _, embeddedID := range embeddings[id] {
+		embedded, ok := interfaces[embeddedID]
+		if !ok {
+			continue
+		}
+		expandInterfaceMethods(embeddedID, interfaces, embeddings, expanded, visiting)
+		for m := range embedded.methods {
+			iface.methods[m] = true
+		}
+	}
+	delete(visiting, id)
+	expanded[id] = true
+}
+
+// promoteEmbeddedMethodSets promotes embedded structs' methods onto their
+// embedders, up to depth 3, so an embedded method counts toward interface
+// satisfaction. An embedded interface field delegates its whole (expanded)
+// method set, so interface targets union in full.
+func promoteEmbeddedMethodSets(structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, embeddings map[int64][]int64) {
+	for id, st := range structs {
+		promoteEmbeddedMethods(st, id, embeddings, structs, interfaces, 3)
+	}
 }
 
 // writeSatisfactionEdges writes an inherits edge for every struct whose method
@@ -171,6 +220,10 @@ func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, struct
 	var written int
 	err := h.idx.InTx(h.ctx, func() error {
 		for _, iface := range interfaces {
+			// Post-expansion an empty INDEXED set: interface{}, a
+			// constraint-only interface, or a composite of purely
+			// unresolvable (stdlib) embeds. Everything would satisfy it, so
+			// emitting edges would be noise, not information.
 			if len(iface.methods) == 0 {
 				continue
 			}
@@ -188,24 +241,32 @@ func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, struct
 	return written, err
 }
 
-func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int64, structs map[int64]*structInfo, depth int) {
+func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int64, structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, depth int) {
 	if depth <= 0 {
 		return
 	}
 	for _, embeddedID := range embeddings[id] {
+		if iface, ok := interfaces[embeddedID]; ok {
+			// An embedded interface value delegates its whole method set;
+			// the set is already fully expanded, no recursion needed.
+			for m := range iface.methods {
+				st.methods[m] = true
+			}
+			continue
+		}
 		embedded, ok := structs[embeddedID]
 		if !ok {
 			continue
 		}
-		promoteEmbeddedMethods(embedded, embeddedID, embeddings, structs, depth-1)
+		promoteEmbeddedMethods(embedded, embeddedID, embeddings, structs, interfaces, depth-1)
 		for m := range embedded.methods {
 			st.methods[m] = true
 		}
 	}
 }
 
-func methodSetSatisfies(methods map[string]bool, required []string) bool {
-	for _, m := range required {
+func methodSetSatisfies(methods, required map[string]bool) bool {
+	for m := range required {
 		if !methods[m] {
 			return false
 		}

@@ -274,11 +274,10 @@ func (w *walker) handleTypeDeclaration(n *sitter.Node) error {
 }
 
 func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool, doc string) error {
-	nameNode := spec.ChildByFieldName("name")
-	if nameNode == nil {
-		return nil
+	name := ""
+	if nameNode := spec.ChildByFieldName("name"); nameNode != nil {
+		name = extract.Text(nameNode, w.source)
 	}
-	name := extract.Text(nameNode, w.source)
 	if name == "" {
 		return nil
 	}
@@ -320,6 +319,9 @@ func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool, doc string) error
 		if err := w.emitInterfaceMethods(ifaceNode, qualified); err != nil {
 			return err
 		}
+		if err := w.emitInterfaceEmbeddings(ifaceNode, qualified); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -356,6 +358,57 @@ func (w *walker) emitInterfaceMethods(ifaceNode *sitter.Node, ifaceQualified str
 	return nil
 }
 
+// emitInterfaceEmbeddings walks an interface_type's type_elem children and
+// emits includes edges for embedded interfaces. A type_elem with more than
+// one term is a Go 1.18 union constraint (`A | B`), and approximation terms
+// (`~T`) are not named types — neither embeds a method set, so both are
+// skipped.
+func (w *walker) emitInterfaceEmbeddings(ifaceNode *sitter.Node, ifaceQualified string) error {
+	for i := uint(0); i < ifaceNode.NamedChildCount(); i++ {
+		te := ifaceNode.NamedChild(i)
+		if te == nil || te.Kind() != "type_elem" {
+			continue
+		}
+		if te.NamedChildCount() != 1 {
+			continue
+		}
+		target := w.embedTargetName(te.NamedChild(0))
+		if target == "" {
+			continue
+		}
+		line := extract.Line(te.StartPosition())
+		if err := w.emit.Edge(extract.EmittedEdge{
+			SourceQualified: ifaceQualified,
+			TargetQualified: target,
+			Kind:            model.EdgeIncludes,
+			Line:            &line,
+			Confidence:      extract.ConfidenceStatic,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// embedTargetName resolves an embedded type node to its qualified target
+// name; non-name terms (unions, approximations, literals) yield "".
+func (w *walker) embedTargetName(typeNode *sitter.Node) string {
+	if typeNode == nil {
+		return ""
+	}
+	switch typeNode.Kind() {
+	case "type_identifier":
+		return w.qualify(extract.Text(typeNode, w.source))
+	case "qualified_type":
+		return extract.Text(typeNode, w.source)
+	case "generic_type":
+		if base := typeNode.ChildByFieldName("type"); base != nil {
+			return w.qualify(extract.Text(base, w.source))
+		}
+	}
+	return ""
+}
+
 // emitEmbeddings walks a struct_type's field declarations and emits
 // includes edges for embedded fields (fields with no explicit name).
 func (w *walker) emitEmbeddings(structNode *sitter.Node, structQualified string) error {
@@ -371,35 +424,17 @@ func (w *walker) emitEmbeddings(structNode *sitter.Node, structQualified string)
 		if fd.ChildByFieldName("name") != nil {
 			continue
 		}
-		typeNode := fd.ChildByFieldName("type")
-		if typeNode == nil {
-			continue
-		}
-		var target string
-		switch typeNode.Kind() {
-		case "type_identifier":
-			target = w.qualify(extract.Text(typeNode, w.source))
-		case "qualified_type":
-			target = extract.Text(typeNode, w.source)
-		case "generic_type":
-			if base := typeNode.ChildByFieldName("type"); base != nil {
-				target = w.qualify(extract.Text(base, w.source))
+		if target := w.embedTargetName(fd.ChildByFieldName("type")); target != "" {
+			line := extract.Line(fd.StartPosition())
+			if err := w.emit.Edge(extract.EmittedEdge{
+				SourceQualified: structQualified,
+				TargetQualified: target,
+				Kind:            model.EdgeIncludes,
+				Line:            &line,
+				Confidence:      extract.ConfidenceStatic,
+			}); err != nil {
+				return err
 			}
-		default:
-			continue
-		}
-		if target == "" {
-			continue
-		}
-		line := extract.Line(fd.StartPosition())
-		if err := w.emit.Edge(extract.EmittedEdge{
-			SourceQualified: structQualified,
-			TargetQualified: target,
-			Kind:            model.EdgeIncludes,
-			Line:            &line,
-			Confidence:      extract.ConfidenceStatic,
-		}); err != nil {
-			return err
 		}
 	}
 	return nil

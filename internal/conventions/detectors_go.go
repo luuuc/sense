@@ -22,11 +22,14 @@ func isGoInterfaceSatisfaction(tgt symbolRow, filePathByID map[int64]string) boo
 	return tgt.kind == "interface" && isGoDeclared(tgt, filePathByID)
 }
 
-// goEmbedDescription is the wording for a Go embedding group. Go embedders
-// are structs whatever kind the index stores them under (the extractor files
-// them as class), and embedding promotes the embedded type's members —
-// nothing is mixed in.
-func goEmbedDescription(count int, label, names string) string {
+// goEmbedDescription is the wording for a Go embedding group, split by what
+// does the embedding: struct embedders (the extractor files them as class)
+// promote the embedded type's members; interface embedders union the embedded
+// interface's method set into their contract. Nothing is mixed in either way.
+func goEmbedDescription(count int, label, names, sourceKind string) string {
+	if sourceKind == "interface" {
+		return fmt.Sprintf("%d interfaces embed %s (interface embedding) (%s)", count, label, names)
+	}
 	return fmt.Sprintf("%d structs embed %s (methods promoted) (%s)", count, label, names)
 }
 
