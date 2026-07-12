@@ -1,0 +1,62 @@
+# matrix-plan.yaml — go (LIVE PLAN, set 2026-07-12 at the once-per-vertical cap/budget event).
+# Decision (Luc, 2026-07-12): reuse the python-django arm plan with ONE modification — the Ollama
+# Cloud models devstral-small-2 and qwen3-coder-next retire ~2026-07-14; this vertical runs their
+# replacements devstral-2:123b-cloud and qwen3.5:397b-cloud instead.
+# Repos + prompt paths fill in at Loop 2 admission / Loop 1 stamp; arm policy is fixed now.
+
+vertical: go
+headline:
+  arm: claude-opus-4-8
+  runner: bench-sense-local.sh    # RUNS=2 law applies here only
+
+arms:
+  - name: kimi-for-coding_k2p7
+    runner: opencode-run.sh
+    subscription: kimi-for-coding
+    weekly_ceiling: cap-windowed (weekly; exact quota per provider dashboard)
+    big_repo_budget: 2
+    pool: none
+    adoption_preflight: sense setup (full); opencode.json MCP + AGENTS.md + warm cold start
+    prompt_file: .doc/launch/NN-go-vertical/prompts/04-bench-opencode-kimi.md  # NN at stamp time
+  - name: ollama-cloud_qwen3p5_397b
+    model: qwen3.5:397b-cloud     # replaces qwen3-coder-next (retires ~2026-07-14)
+    runner: opencode-run.sh
+    subscription: ollama-cloud (SHARED with devstral)
+    weekly_ceiling: shared pool, see pools
+    big_repo_budget: 2
+    pool: ollama-weekly
+    adoption_preflight: sense setup (full); opencode MCP registration; verify the NEW model id resolves before cell 1
+    prompt_file: .doc/launch/NN-go-vertical/prompts/05-bench-opencode-qwen.md
+  - name: ollama-cloud_devstral-2_123b
+    model: devstral-2:123b-cloud  # replaces devstral-small-2 (retires ~2026-07-14)
+    runner: opencode-run.sh
+    subscription: ollama-cloud (SHARED with qwen)
+    weekly_ceiling: shared pool, see pools
+    big_repo_budget: 2
+    pool: ollama-weekly
+    adoption_preflight: sense setup (full); opencode MCP registration; verify the NEW model id resolves before cell 1
+    prompt_file: .doc/launch/NN-go-vertical/prompts/07-bench-opencode-devstral.md  # prompt-07 creation owed from Django
+  - name: gpt-5.5
+    runner: codex-run.sh
+    subscription: codex
+    weekly_ceiling: cap-windowed
+    big_repo_budget: 2
+    pool: none
+    adoption_preflight: sense setup (full) — AGENTS.md is load-bearing for codex exec (the zero-adoption incident)
+    prompt_file: .doc/launch/NN-go-vertical/prompts/06-bench-codex-gpt.md
+
+pools:
+  - name: ollama-weekly
+    members: [ollama-cloud_qwen3p5_397b, ollama-cloud_devstral-2_123b]
+    note: >-
+      ONE shared weekly quota; the ~34%-per-big-run figure was measured on the RETIRED models
+      (24b/next) — the replacements are far larger (123b/397b), so RE-MEASURE quota burn on the
+      first small-repo cell before scheduling any big repo; until then treat big_repo_budget as
+      provisional. Schedule as one pool, never two arms.
+
+repos:
+  # Filled at Loop 2 admission (Event A). §7.0 composition: 1 framework + 1 big + 2 medium + 2 small
+  # (or the 2-big variant, never both); big scheduled last, rule 2.
+  big: []
+  medium: []
+  small: []
