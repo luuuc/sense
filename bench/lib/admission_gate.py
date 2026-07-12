@@ -27,6 +27,12 @@ Measurements (laws from bench/results/loss-anatomy.md baked in):
           Depth is NOT hostility (anatomy law #4) — nothing here scores hops.
   bar 4 — blast-retrievable at 0.3 AND 0.7 inside the per-tool budget
           (~32KB ≈ 8k tokens); a broken anchor (saleor) fails loudly here.
+          PLUS a graph-side fold probe (the #191 lesson, 2026-07-12): blast
+          dep sets were BYTE-IDENTICAL across the fold collapse, only
+          `graph --direction callers` saw it (called_by 126 → 1). Collapse
+          signature = called_by tiny while blast direct callers are numerous;
+          a healthy small seam has BOTH small. FAIL when called_by <=
+          GRAPH_FOLD_FLOOR and direct >= GRAPH_FOLD_RATIO × max(called_by, 1).
 
 The gate is slot-aware downstream: win-pillar slots are gated on 1-5, small
 slots are measured-not-rejected (§7.0 ballast). That policy lives in the
@@ -43,6 +49,8 @@ import sys
 BUDGET_BYTES = 32_000          # ≈ the 8k-token per-tool response budget
 COVER_THRESHOLD = 0.8          # one pattern transcribing ≥80% of deps = covered
 PRECISION_FLOOR = 0.3          # ...but only if it enumerates mostly-deps (usable)
+GRAPH_FOLD_FLOOR = 5           # called_by at/below this is suspicious... (collapse=1, healthy min=25)
+GRAPH_FOLD_RATIO = 10          # ...when blast direct >= 10× it (collapse=60×, healthy max=1.08×)
 TEST_PATH = re.compile(r"(^|/)(tests?|spec|specs|testing)(/|_)|_test\.|\btest_")
 
 
@@ -60,6 +68,26 @@ def run_blast(clone, sense, symbol, conf, file_hint):
     return {"conf": conf, "ok": p.returncode == 0 and data is not None,
             "bytes": len(raw), "data": data,
             "err": (p.stderr or raw)[:300] if data is None else ""}
+
+
+def run_graph_callers(clone, sense, symbol, file_hint):
+    """Default-floor `graph --direction callers` for the anchor. Blast alone is
+    blind to a graph-side fold collapse (#191: blast byte-identical, graph
+    called_by 126 → 1); the oracle's blast∪graph union caught it — this is
+    that union's cheap half."""
+    cmd = [sense, "graph", symbol, "--direction", "callers", "--json"]
+    if file_hint:
+        cmd += ["--file", file_hint]
+    p = subprocess.run(cmd, cwd=clone, capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL)
+    try:
+        data = json.loads(p.stdout)
+    except ValueError:
+        data = None
+    ok = p.returncode == 0 and data is not None
+    called_by = len((data.get("edges") or {}).get("called_by") or []) if ok else 0
+    return {"ok": ok, "called_by": called_by,
+            "err": (p.stderr or p.stdout)[:300] if not ok else ""}
 
 
 def dep_files(blast_data):
@@ -202,6 +230,21 @@ def measure(clone, symbol, file_hint, sense):
         out["verdict_hint"] = "BAR 4 FAIL (anchor unresolved at default confidence) — product finding first, admission verdict second: file it"
         return out
 
+    direct03 = len(b03["data"].get("direct_callers") or [])
+    g = run_graph_callers(clone, sense, symbol, file_hint)
+    collapse = g["ok"] and g["called_by"] <= GRAPH_FOLD_FLOOR \
+        and direct03 >= GRAPH_FOLD_RATIO * max(g["called_by"], 1)
+    out["bar4"]["graph"] = {"ok": g["ok"], "called_by": g["called_by"],
+                            "blast_direct_callers": direct03,
+                            "fold_collapse": collapse,
+                            "err": g["err"]}
+    if collapse:
+        out["verdict_hint"] = (
+            f"BAR 4 FAIL (graph fold-collapse: called_by={g['called_by']} vs "
+            f"blast direct={direct03} — the #191 signature; blast is blind to it) "
+            "— product finding first, admission verdict second: file it")
+        return out
+
     def grep_hit_files(base):
         """Non-test production files repo-wide containing the token (rg, with
         grep fallback). The denominator of seam_hunt-style precision."""
@@ -298,6 +341,12 @@ def render(m):
         L.append(f"- bar 4 {k}: ok={r['ok']} bytes={r['bytes']} "
                  f"within_budget={r['within_budget']}"
                  + (f" err={r['err']}" if r["err"] else ""))
+    if "graph" in b4:
+        g = b4["graph"]
+        L.append(f"- bar 4 graph: ok={g['ok']} called_by={g['called_by']} "
+                 f"blast_direct={g['blast_direct_callers']} "
+                 f"fold_collapse={g['fold_collapse']}"
+                 + (f" err={g['err']}" if g["err"] else ""))
     if "bar2" not in m:
         L.append(f"- **{m.get('verdict_hint', 'anchor unresolved')}**")
         return "\n".join(L)
