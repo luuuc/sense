@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.22] - 2026-07-13
+
+### Bug Fixes
+
+- resolve cross-file receiver method parents at finalize
 ## [1.11.21] - 2026-07-13
 
 ### Bug Fixes
