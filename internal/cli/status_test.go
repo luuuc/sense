@@ -165,8 +165,10 @@ func TestComputeHealthBareCallBindsStamp(t *testing.T) {
 		t.Errorf("detail = %q, want bare-call message", h.detail)
 	}
 
-	// Stamped: healthy again.
+	// Stamped: healthy again (composes_go seeded too — it is an independent
+	// full-write stamp with its own advisory branch).
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('composes_go', '1')`)
 	h = computeHealth(ctx, db, t.TempDir(), resp)
 	if h.verdict != "healthy" {
 		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
@@ -180,6 +182,50 @@ func TestComputeHealthBareCallBindsStamp(t *testing.T) {
 	h = computeHealth(ctx, db, t.TempDir(), resp)
 	if h.verdict != "healthy" {
 		t.Errorf("verdict = %q on ruby-only index without stamp, want healthy", h.verdict)
+	}
+}
+
+func TestComputeHealthComposesGoStamp(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+	_, _ = db.ExecContext(ctx, `CREATE TABLE sense_meta (key TEXT PRIMARY KEY, value TEXT)`)
+	// Go-only gate: rust already emitted composes edges, so a rust index has
+	// nothing to heal and must see no advisory.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'a.go', 'go', 'abc', 1, '2026-01-01T00:00:00Z')`)
+	// Keep the sibling stamp branches quiet so this test observes its own.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('parent_linkage', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
+
+	resp := mcpio.StatusResponse{
+		Version: &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: true},
+	}
+	resp.Index.Symbols = 5
+	resp.Index.Embeddings = 5
+
+	// No stamp: the index predates Go composition edges and composed_by
+	// stays empty until a rebuild rewrites every file.
+	h := computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "degraded" {
+		t.Errorf("verdict = %q without composes_go stamp, want degraded", h.verdict)
+	}
+	if h.detail != "index predates Go composition edges — run 'sense scan --rebuild'" {
+		t.Errorf("detail = %q, want composes message", h.detail)
+	}
+
+	// Stamped: healthy again.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('composes_go', '1')`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
+	}
+
+	// A rust-only index already had composes edges: no advisory without the
+	// stamp (the gate is narrower than the go+rust parent-linkage gate).
+	_, _ = db.ExecContext(ctx, `DELETE FROM sense_meta WHERE key = 'composes_go'`)
+	_, _ = db.ExecContext(ctx, `UPDATE sense_files SET language = 'rust', path = 'a.rs'`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q on rust-only index without stamp, want healthy", h.verdict)
 	}
 }
 
@@ -206,10 +252,11 @@ func TestComputeHealthParentLinkageStamp(t *testing.T) {
 		t.Errorf("detail = %q, want parent-linkage message", h.detail)
 	}
 
-	// Stamped: healthy again (bare_call_binds seeded too — it is an
-	// independent full-write stamp with its own advisory branch).
+	// Stamped: healthy again (bare_call_binds and composes_go seeded too —
+	// each is an independent full-write stamp with its own advisory branch).
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('parent_linkage', '1')`)
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('composes_go', '1')`)
 	h = computeHealth(ctx, db, t.TempDir(), resp)
 	if h.verdict != "healthy" {
 		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)

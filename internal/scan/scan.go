@@ -427,6 +427,13 @@ func finalizeScan(ctx context.Context, idx *sqlite.Adapter, h *harness, senseDir
 		if err := idx.WriteMeta(ctx, "bare_call_binds", "1"); err != nil {
 			_, _ = fmt.Fprintf(h.warn, "warn: write bare_call_binds: %v\n", err)
 		}
+		// composes_go records that every Go struct's named fields were
+		// extracted by a binary that emits composition edges (G-7). Same
+		// full-write gate: a plain rescan re-extracts only changed files,
+		// so a pre-fix index keeps its empty composed_by until a rebuild.
+		if err := idx.WriteMeta(ctx, "composes_go", "1"); err != nil {
+			_, _ = fmt.Fprintf(h.warn, "warn: write composes_go: %v\n", err)
+		}
 	}
 
 	if err := idx.StampSchemaVersion(ctx); err != nil {

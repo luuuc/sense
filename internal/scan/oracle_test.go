@@ -117,9 +117,9 @@ func oracleDigest(t *testing.T, dbPath string) (digest string, content []string)
 // leave it unchanged, and a refactor that alters derived output fails here
 // loudly. When output changes on purpose, regenerate it (see the capture line
 // in TestScanContentOracleDigest) and update this constant in the same commit.
-// Last regeneration: the bare_call_binds meta stamp (bare-call resolution
-// fix) added one meta line; symbols/edges/embeddings unchanged.
-const oracleGolden = "5e06add5beac2aa2888c81980018e9a25ebda9a18eed4d7168dc3e0e47307dcd"
+// Last regeneration: the composes_go meta stamp (Go composition-edge fix)
+// added one meta line; symbols/edges/embeddings unchanged.
+const oracleGolden = "a167103865f0532dcbd3e31af0ae098dfd21394f8c2bfbd975fec055c9b1dec8"
 
 func TestScanContentOracleDigest(t *testing.T) {
 	useFakeEmbedder(t)

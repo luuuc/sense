@@ -208,7 +208,31 @@ func computeHealth(ctx context.Context, db *sql.DB, dir string, resp mcpio.Statu
 		}
 	}
 
+	// The composes_go stamp mirrors the two above for Go composition edges
+	// (named struct fields emitted no composes edges before the fix): absence
+	// means the index was built by a pre-fix binary and Go `composed_by`
+	// stays empty until a rebuild rewrites every file. Gated on Go files
+	// only — every other extracted language already emitted composes, so
+	// there is nothing to heal elsewhere.
+	if resp.Index.Symbols > 0 && readMeta(ctx, db, "composes_go") == "" && hasGoFiles(ctx, db) {
+		if h.verdict == "healthy" {
+			h.verdict = "degraded"
+		}
+		if h.detail == "" {
+			h.detail = "index predates Go composition edges — run 'sense scan --rebuild'"
+		}
+	}
+
 	return h
+}
+
+// hasGoFiles reports whether the index contains Go files — the only language
+// whose composition edges were missing before the composes_go fix.
+func hasGoFiles(ctx context.Context, db *sql.DB) bool {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sense_files WHERE language = 'go' LIMIT 1`).Scan(&n)
+	return err == nil && n > 0
 }
 
 // hasCrossFileParentLanguage reports whether the index contains files in a
