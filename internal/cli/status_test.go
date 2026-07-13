@@ -139,6 +139,50 @@ func TestComputeHealthEmbeddingModelMismatch(t *testing.T) {
 	}
 }
 
+func TestComputeHealthBareCallBindsStamp(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+	_, _ = db.ExecContext(ctx, `CREATE TABLE sense_meta (key TEXT PRIMARY KEY, value TEXT)`)
+	// Same language gate as parent_linkage: only Go/Rust grammars forbid
+	// bare-call method binds, so only their indexes carry the defect.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'a.go', 'go', 'abc', 1, '2026-01-01T00:00:00Z')`)
+	// Keep the parent-linkage branch quiet so this test observes its own.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('parent_linkage', '1')`)
+
+	resp := mcpio.StatusResponse{
+		Version: &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: true},
+	}
+	resp.Index.Symbols = 5
+	resp.Index.Embeddings = 5
+
+	// No stamp: the index predates the bare-call resolution fix and keeps
+	// its fabricated bare→method edges until a rebuild rewrites every file.
+	h := computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "degraded" {
+		t.Errorf("verdict = %q without bare_call_binds stamp, want degraded", h.verdict)
+	}
+	if h.detail != "index predates the bare-call resolution fix — run 'sense scan --rebuild'" {
+		t.Errorf("detail = %q, want bare-call message", h.detail)
+	}
+
+	// Stamped: healthy again.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
+	}
+
+	// A pure lexically-scoped index (no Go/Rust files) cannot carry the
+	// defect: no advisory, no wasted rebuild.
+	resp.Index.Symbols = 5
+	_, _ = db.ExecContext(ctx, `DELETE FROM sense_meta WHERE key = 'bare_call_binds'`)
+	_, _ = db.ExecContext(ctx, `UPDATE sense_files SET language = 'ruby', path = 'a.rb'`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q on ruby-only index without stamp, want healthy", h.verdict)
+	}
+}
+
 func TestComputeHealthParentLinkageStamp(t *testing.T) {
 	ctx := context.Background()
 	db := healthTestDB(t)
@@ -162,8 +206,10 @@ func TestComputeHealthParentLinkageStamp(t *testing.T) {
 		t.Errorf("detail = %q, want parent-linkage message", h.detail)
 	}
 
-	// Stamped: healthy again.
+	// Stamped: healthy again (bare_call_binds seeded too — it is an
+	// independent full-write stamp with its own advisory branch).
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('parent_linkage', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
 	h = computeHealth(ctx, db, t.TempDir(), resp)
 	if h.verdict != "healthy" {
 		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)

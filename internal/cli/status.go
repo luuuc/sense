@@ -193,6 +193,21 @@ func computeHealth(ctx context.Context, db *sql.DB, dir string, resp mcpio.Statu
 		}
 	}
 
+	// The bare_call_binds stamp mirrors parent_linkage for the bare-call
+	// resolution fix (bare identifier calls binding same-named methods, a
+	// grammar impossibility in Go/Rust): absence means the edges were
+	// resolved by a pre-fix binary and the fabricated binds persist until a
+	// rebuild rewrites every file. Same language gate — lexically-scoped
+	// indexes have nothing to heal.
+	if resp.Index.Symbols > 0 && readMeta(ctx, db, "bare_call_binds") == "" && hasCrossFileParentLanguage(ctx, db) {
+		if h.verdict == "healthy" {
+			h.verdict = "degraded"
+		}
+		if h.detail == "" {
+			h.detail = "index predates the bare-call resolution fix — run 'sense scan --rebuild'"
+		}
+	}
+
 	return h
 }
 

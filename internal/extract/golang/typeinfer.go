@@ -87,16 +87,19 @@ func (w *walker) collectParamTypes(params *sitter.Node, types map[string]localTy
 		if pd == nil || pd.Kind() != "parameter_declaration" {
 			continue
 		}
+		// A parameter is a local binding whatever its type — record it even
+		// when the type doesn't unwrap to a name (func-typed params are the
+		// closure carriers behind G-10's bare-call false binds). The type
+		// map entry still requires a resolved name.
 		typeName, elemName := resolveTypeAndElem(pd.ChildByFieldName("type"), w.source)
-		if typeName == "" && elemName == "" {
-			continue
-		}
 		for j := uint(0); j < pd.NamedChildCount(); j++ {
 			ch := pd.NamedChild(j)
 			if ch.Kind() == "identifier" {
 				name := extract.Text(ch, w.source)
-				types[name] = localType{typeName, elemName, extract.ConfidenceStatic}
 				locals[name] = true
+				if typeName != "" || elemName != "" {
+					types[name] = localType{typeName, elemName, extract.ConfidenceStatic}
+				}
 			}
 		}
 	}

@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.23] - 2026-07-13
+
+### Bug Fixes
+
+- refuse bare-identifier call binds to methods (Go, Rust)
+- apply --file inside the lookup cascade, matching MCP
+- surface bare-name collisions a no-package symbol shadowed
 ## [1.11.22] - 2026-07-13
 
 ### Bug Fixes

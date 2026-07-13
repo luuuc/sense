@@ -53,8 +53,15 @@ type SymbolRef struct {
 	// Path is the symbol's file path (from sense_files). The resolver uses it to
 	// determine test-ness so a production-source calls/references edge cannot
 	// resolve into a test file (production never depends on test code). Empty
-	// when the file path is unknown, in which case that gate is a no-op.
+	// when the path is unknown, in which case that gate is a no-op.
 	Path string
+	// Kind mirrors Symbol.Kind. The resolver's unqualified fallback uses it to
+	// enforce per-language call grammar: in Go and Rust a bare identifier call
+	// can never be a method call (methods are only reachable through receiver
+	// or path expressions), so method-kind candidates are dropped for bare
+	// targets from those languages. Empty when unknown, in which case the
+	// gate is a no-op.
+	Kind SymbolKind
 }
 
 // HydrateSymbolNullables copies the sql.NullXxx carriers scanned from

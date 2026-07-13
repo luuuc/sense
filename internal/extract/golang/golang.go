@@ -585,6 +585,15 @@ func (w *walker) emitCall(call *sitter.Node, source string, types map[string]loc
 	switch fn.Kind() {
 	case "identifier":
 		target = extract.Text(fn, w.source)
+		// A bare call through a local binding (closure, func param, method
+		// value) cannot statically reach an indexed symbol — the local
+		// shadows package scope, so a same-named match downstream is always
+		// a coincidence (the emitConstRefs precedent, minus goBuiltins:
+		// builtin names stay because a package-block `func min` shadows the
+		// builtin and its bare calls are real edges).
+		if locals[target] {
+			return nil
+		}
 	case "selector_expression":
 		target, confidence = w.resolveSelector(fn, types, locals)
 	default:

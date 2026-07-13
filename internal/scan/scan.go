@@ -420,6 +420,13 @@ func finalizeScan(ctx context.Context, idx *sqlite.Adapter, h *harness, senseDir
 		if err := idx.WriteMeta(ctx, "parent_linkage", "1"); err != nil {
 			_, _ = fmt.Fprintf(h.warn, "warn: write parent_linkage: %v\n", err)
 		}
+		// bare_call_binds records that every edge was resolved by a binary
+		// that refuses bare-call→method binds (G-10). Same full-write gate:
+		// a plain rescan re-resolves only changed files, so a pre-fix
+		// index keeps its fabricated edges until a rebuild.
+		if err := idx.WriteMeta(ctx, "bare_call_binds", "1"); err != nil {
+			_, _ = fmt.Fprintf(h.warn, "warn: write bare_call_binds: %v\n", err)
+		}
 	}
 
 	if err := idx.StampSchemaVersion(ctx); err != nil {
