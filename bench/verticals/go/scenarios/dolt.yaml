@@ -1,0 +1,234 @@
+name: Dolt work session - audit the versioned-database handle contract before an ownership rework
+repo: dolt
+# Single-prompt session bench (run via bench/drivers/runs-variance.sh or bench-sense-local.sh):
+# all steps are presented in ONE prompt and worked in order, so context accumulates the way a
+# real work session does. Rendered to the agent: the description + each step's name and prompt
+# ONLY (checks/gold are NOT shown). Everything rendered is kept NEUTRAL: it states the task,
+# never the answer's shape, file paths, type or method names, counts, or which tool to reach for.
+#
+# This is a CHANGE-IMPACT ticket, not an add-by-copying ticket. The real task it mirrors:
+# dolt genuinely has many distinct ways a subsystem obtains the *DoltDB handle (a lazy env
+# accessor, a DbData struct pull, a session accessor, a provider fan-out, construction-time
+# struct capture, a deferred closure, a plain parameter, and an escape hatch into the raw
+# storage layer) — a maintainer imposing single ownership (handles obtained from one managed
+# place and lifecycle-managed) must first audit EVERY holder outside the handle's own package:
+# HOW each obtains it and WHICH of its methods it exercises. The must-find answer is
+# DELIBERATELY HETEROGENEOUS and grep-hostile: the qualified type token appears in 81 files
+# (238 hits) with zero ranking, while several true dependents never name the type at all —
+# the auto-increment tracker reaches it purely through a provider fan-out over a shadowed
+# lowercase local; the CLI corner obtains it through a bare accessor call that returns it
+# among 36 unranked files. Curation law for this vertical (Event B ruling + amended rail (a),
+# 2026-07-13, dolt-scout-groundwork.md): gold = SHOWN in budgeted output of tools the session
+# naturally elicits (any confidence band) AND hand-audited real — the 18/18 audit table in the
+# groundwork is this file's provenance. Grouping below is the INITIAL split by grep-
+# reachability (type-token present = context; token-free/accessor-only = dependents); it is
+# refined against actual baseline citations after the agent dry-run gate, per the saleor
+# precedent (2026-07-01 demotions).
+description: 'You are a maintainer about to rework how the versioned-database handle is
+  obtained and owned. The handle is the single object the rest of the system holds to reach
+  refs, roots, commits and working sets; it wraps the underlying storage layer. Today,
+  different parts of the system get hold of one in several different ways, and the rework
+  imposes single ownership: handles must come from one managed place and be lifecycle-managed,
+  so every other way of obtaining or keeping one is being audited. Before touching anything
+  you need a complete audit of every place OUTSIDE the handle''s own package that obtains or
+  holds a handle: how it gets it, and which of the handle''s methods it exercises, so the
+  rework does not silently break a dependent in another part of the system. Work through the
+  tasks below one at a time; each builds on what you learned in the previous one. Keep every
+  answer concrete with file:line so the next step (and a teammate opening the PR) can act
+  without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths, what is this project,
+    how is the code organized into its major layers, and where does the versioned-database
+    handle you are about to rework live — the object the rest of the system holds to reach
+    refs, roots, commits and working sets — along with the storage layer it wraps? Hand the
+    next agent a map so they can act with small, targeted lookups, not a fresh exploration
+    of the codebase. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: DoltDB
+    required: true
+  - type: word
+    value: dolt
+    required: false
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Map the handle contract and how handles are created
+  prompt: "Task: map the contract of the handle you are about to change. What state does it
+    wrap, how is one created or loaded, and what side doors exist around it (any way to reach
+    the wrapped storage besides the handle's own methods)? What does a teammate need to know
+    about that contract before changing how handles are obtained and owned? Give file:line
+    for the type and each creation path.
+    "
+  checks:
+  - type: contains
+    value: doltdb/doltdb.go
+    required: true
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_conventions
+    required: false
+    layer: adoption
+- name: Audit every holder of the handle
+  prompt: "Task: enumerate every dependent of this handle outside its own package. Across the
+    WHOLE codebase, list every place that obtains or holds one — whether it stores it, receives
+    it, builds it, fetches it through another object, or defers getting one until later — in
+    any layer, command-line or server side. Give ONE dependent per line with its file:line, and
+    nothing else on that line: do not classify it, explain how it depends, or rank it yet -
+    later steps do that; the only job here is a complete, flat list. Where one file holds
+    several dependents, list every one separately rather than collapsing them into a summary
+    like 'various commands'. Completeness is the whole point of this step: a missed holder is
+    a code path that silently breaks when handle ownership changes, so include every one you
+    surfaced from your lookups, even a minor or indirect one.
+    "
+  checks:
+  - type: contains
+    value: autoincrement_tracker.go
+    required: false
+  - type: contains
+    value: commithook.go
+    required: false
+  - type: contains
+    value: newgen_to_oldgen.go
+    required: false
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Classify how each holder obtains the handle
+  prompt: "Task: for each dependent you found, state HOW it gets its hands on the handle —
+    the concrete acquisition path in that code, quoted or described from the actual lines,
+    with file:line. Group the dependents by acquisition style so the ownership rework can be
+    planned one style at a time, and say which styles the single-ownership rule kills outright.
+    "
+  checks:
+  - type: word
+    value: accessor
+    required: false
+  - type: word
+    value: closure
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the ownership change
+  prompt: "Task: assess the impact. If handles must now come from one managed place and be
+    lifecycle-managed, which dependents break loudest? For each, state which of the handle's
+    methods it exercises (from the actual call sites) and what behavior that method backs —
+    replication, garbage collection, imports, migrations, metrics, session state — then rank
+    by risk. A missed high-risk dependent is the one that silently corrupts or stalls a
+    database in production.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Surface the non-obvious holders
+  prompt: "Task: call out the holders a quick text search would most likely miss — the ones
+    that never name the handle's type anywhere in the file, reach it through a chain of other
+    objects, capture it inside a callback for later, or sit in far corners of the command-line
+    tooling. Give file:line and explain why each is easy to overlook.
+    "
+  checks:
+  - type: contains
+    value: autoincrement_tracker.go
+    required: false
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: hand off a single audit map a teammate could act on. List every holder
+    grouped by the layer it lives in, with file:line, how it obtains the handle, which methods
+    it exercises, and what must be checked when ownership becomes single and managed. Carry
+    over every dependent you found in the earlier steps, including the minor, indirect or
+    deferred ones; dropping a dependent here is the same as never finding it. Use file:line
+    throughout so the PR can be landed without re-exploring the codebase.
+    "
+  checks:
+  - type: response_richness
+    value: '5'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+
+# ----------------------------------------------------------------------------
+# contract_symbol drives the Loop-A resolution oracle (bench/lib/resolve_oracle.py via
+# loopA-scan.sh preflight): it verifies, for $0, that sense blast/graph actually retrieve the
+# dependent fan-out BEFORE a paid sweep. contract_file disambiguates DoltDB (the bare token
+# appears in 145 files; the qualified type in 81).
+contract_symbol: DoltDB
+contract_file: go/libraries/doltcore/doltdb/doltdb.go
+
+# Gold targets. Each carries `relation`: the TRUE way it reaches the DoltDB handle contract,
+# hand-verified from dolt source at the pinned SHA 7e268bf (18/18 audit table,
+# .doc/launch/04-go-vertical/dolt-scout-groundwork.md, 2026-07-13). NEVER rendered to the
+# agent. Full go/... paths are used in `match` because bare basenames collide
+# (cmd/dolt/commands/branch.go vs env/actions/branch.go). Grouping = INITIAL split by
+# grep-reachability, refined after the baseline dry-run:
+#  - context: files where the qualified type token `doltdb.DoltDB` appears (a type grep finds
+#    the file among 81, though not the relation);
+#  - dependents (THE DISCRIMINATOR): files with ZERO type token — reachable only through the
+#    accessor/provider noise (`.DoltDB(` = 36 unranked files; `DoltDatabases()`; shadowed
+#    lowercase locals) or not at all by name.
+gold:
+  # the contract under change (the handle type + every creation path + the escape hatch)
+  - {id: handle-type, group: contract, match: [go/libraries/doltcore/doltdb/doltdb.go], relation: "DoltDB struct (doltdb.go:126-140) wrapping hooksDatabase/ValueReadWriter/NodeStore; constructors DoltDBFromCS:148, LoadDoltDB:183, LoadDoltDBWithParams:187; the ExposeDatabaseFromDoltDB escape hatch:176 the single-ownership rework must close"}
+  # type-token-present dependents (a `doltdb.DoltDB` grep lists the file among 81) — context
+  - {id: ctx:env-owner,      group: context, match: [go/libraries/doltcore/env/environment.go],  relation: "DoltEnv.doltDB private field (:92) + lazy DoltDB(ctx) accessor (:119) — the accessor provider itself; also a dependent via LoadDoltDB:224, WorkingSet:790, FindRef:1224, mergeStateToMergeState:373"}
+  - {id: ctx:actions-branch, group: context, match: [go/libraries/doltcore/env/actions/branch.go], relation: "IsBranch:368 / IsTag:373 take ddb *doltdb.DoltDB directly and call ddb.HasRef; CopyBranch:71 — plain-parameter holders, type-greppable signature"}
+  - {id: ctx:commithook,     group: context, match: [go/libraries/doltcore/sqle/cluster/commithook.go], relation: "cluster replication commithook: srcDB/destDB *doltdb.DoltDB struct fields (:50/:52) + destDBF closure field (:47) deferring acquisition; Execute:485 and attemptReplicate:283 exercise NomsRoot-level replication"}
+  - {id: ctx:controller,     group: context, match: [go/libraries/doltcore/sqle/cluster/controller.go], relation: "Controller.applyCommitHooks builds commithooks with a closure factory returning (*doltdb.DoltDB, error) (:315-317) and calls denv.DoltDB(ctx).PrependCommitHooks (:318); provider.DoltDatabases() fan at :963"}
+  - {id: ctx:rebase,         group: context, match: [go/libraries/doltcore/rebase/filter_branch.go], relation: "AllBranches:89 dEnv.DoltDB(ctx).GetBranches; rebaseRefs:106 pulls dbData.Ddb — two acquisition styles (env accessor + DbData struct pull) in one file"}
+  - {id: ctx:auto-gc,        group: context, match: [go/libraries/doltcore/sqle/auto_gc.go],      relation: "AutoGCController.ApplyCommitHooks:322-330 fans over MultiRepoEnv, denv.DoltDB(ctx) per database, then ddb.PrependCommitHooks — GC hooks installed on every handle at engine init"}
+  - {id: ctx:binlog,         group: context, match: [go/libraries/doltcore/sqle/binlogreplication/binlog_primary_hooks.go], relation: "NewBinlogInitDatabaseHook closure calls denv.DoltDB(ctx) (:48) feeding replicateExistingData(ddb *doltdb.DoltDB):61 — binlog primary replication seeds from the handle"}
+  - {id: ctx:dtables-ancestors, group: context, match: [go/libraries/doltcore/sqle/dtables/commit_ancestors_table.go], relation: "ddb *doltdb.DoltDB struct fields (:33,:141); reaches the hub 2-hop via doltdb.CommitItrForAllBranches (NewCommitAncestorsRowItr:146, PartitionRows:91) — the dolt_commit_ancestors system table iterates every branch's commits"}
+  - {id: ctx:dtables-commits,   group: context, match: [go/libraries/doltcore/sqle/dtables/commits_table.go], relation: "ddb *doltdb.DoltDB struct field (:36); 2-hop via CommitItrForAllBranches (NewCommitsRowItr:146, PartitionRows:99) — the dolt_commits system table"}
+  # token-free / accessor-only holders (NO doltdb.DoltDB token anywhere in the file) — THE
+  # DISCRIMINATOR: a type grep never lists these files; the accessor grep drowns them in 36
+  # unranked candidates; autoincrement_tracker carries no greppable token at all.
+  - {id: dep:autoinc-tracker, group: dependents, match: [go/libraries/doltcore/sqle/dsess/autoincrement_tracker.go], relation: "AutoIncrementTracker.deepSet:318 (+ Set:290/Next:186/initializeTableAutoIncrement:123 indirect) — obtains handles via sess.Provider().BaseDatabase(ctx, dbName) → db.DoltDatabases() → shadowed lowercase loop `for _, db := range doltdbs` (:374-376); scans EVERY branch head for auto-increment state. The type name never appears in the file."}
+  - {id: dep:newgen,          group: dependents, match: [go/cmd/dolt/commands/admin/newgen_to_oldgen.go], relation: "NewGenToOldGenCmd.Exec:66 — doltdb.ExposeDatabaseFromDoltDB(dEnv.DoltDB(ctx)): the ONLY out-of-package user of the escape hatch, dropping to the raw ChunkStore; the single-ownership rework's hardest case"}
+  - {id: dep:setref,          group: dependents, match: [go/cmd/dolt/commands/admin/setref.go],   relation: "SetRefCmd.Exec — dEnv.DoltDB(ctx).SetHead(ctx, r, h) at :91; admin surgery writing a ref head directly through the handle"}
+  - {id: dep:conjoin,         group: dependents, match: [go/cmd/dolt/commands/admin/conjoin.go],  relation: "ConjoinCmd.Exec:77 — obtains the handle from the dEnv accessor to conjoin storage; admin CLI corner"}
+  - {id: dep:copy-tags,       group: dependents, match: [go/cmd/dolt/commands/schcmds/copy-tags.go], relation: "CopyTagsCmd.validateArgs:196 doltDB := dEnv.DoltDB(ctx) + doltCommitUpdatedTags:254 — tag copy reads and commits through the handle"}
+  - {id: dep:schema-import,   group: dependents, match: [go/cmd/dolt/commands/schcmds/import.go], relation: "importSchema:284 — reaches the handle through commands.GetWorkingWithVErr(dEnv); schema import writes through the working set"}
+  - {id: dep:cli-branch,      group: dependents, match: [go/cmd/dolt/commands/branch.go],         relation: "printAllDatasets:405 — dEnv.DoltDB(ctx).GetHeadRefs(ctx); the branch listing walks head refs off the handle"}
+  - {id: dep:cli-filter-branch, group: dependents, match: [go/cmd/dolt/commands/filter-branch.go], relation: "getNerf:251 — obtains the handle via dEnv to decide the rebase filter; feeds the rebase package's replayers"}
+  - {id: dep:main,            group: dependents, match: [go/cmd/dolt/dolt.go],                    relation: "runMain:585-586 — dEnv.DoltDB(ctx).CSMetricsSummary() for chunk-store metrics; buildLateBinder:749 nil-probes targetEnv.DoltDB(ctx) to decide late binding — the process entrypoint itself holds handles"}
