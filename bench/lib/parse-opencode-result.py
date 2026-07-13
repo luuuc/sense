@@ -51,7 +51,11 @@ import re
 import sys
 
 SENSE_VERB = re.compile(r"(graph|search|blast|conventions|status)$")
-SENSE_CLI = re.compile(r"\bsense\b")
+# A sense CLI INVOCATION (subcommand required). A bare \bsense\b matched the
+# CLONE PATH (…/sense-benchmark/sense/<repo>) in every shell command, counting
+# every rg/grep as cli_sense — found 2026-07-13 (netbox/kimi run-1: channels
+# said cli_sense=7, the 7 commands were all rg).
+SENSE_CLI = re.compile(r"\bsense\s+(blast|graph|search|conventions|status|scan|dead)\b")
 MANUAL = re.compile(r"\b(rg|grep|cat|sed|find|ls|head|tail|awk|fd)\b")
 
 NATIVE_REMAP = {
@@ -68,9 +72,11 @@ def assistant(content):
     return {"type": "assistant", "message": {"content": content}}
 
 
-def user_tool_result(content):
-    return {"type": "user",
-            "message": {"content": [{"type": "tool_result", "content": content}]}}
+def user_tool_result(content, tool_use_id=None):
+    block = {"type": "tool_result", "content": content}
+    if tool_use_id is not None:
+        block["tool_use_id"] = tool_use_id
+    return {"type": "user", "message": {"content": [block]}}
 
 
 def remap_tool(name):
@@ -159,7 +165,11 @@ def main():
             name, is_sense = remap_tool(p.get("tool", ""))
             state = p.get("state", {}) or {}
             inp = state.get("input", {}) or {}
-            emit(assistant([{"type": "tool_use", "name": name, "input": inp}]))
+            # Synthetic id: downstream analyzers (transcript_miss) pair
+            # tool_use -> tool_result by id; id-less blocks made every
+            # opencode transcript unpairable (the 2026-07-13 blindness).
+            emit(assistant([{"type": "tool_use", "id": pid, "name": name,
+                             "input": inp}]))
             out = state.get("output", "")
             # Errored tool calls (MCP isError, harness failures) carry their
             # text in state.error, not state.output — without this fallback
@@ -174,7 +184,7 @@ def main():
                     out = "[tool error] (no error text recorded)"
             emit(user_tool_result(
                 out if isinstance(out, list)
-                else [{"type": "text", "text": str(out)}]))
+                else [{"type": "text", "text": str(out)}], tool_use_id=pid))
             if is_sense:
                 channels["mcp_sense"] += 1
             elif name == "Bash":
