@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -324,6 +325,47 @@ func TestSymbolRefsCarriesReceiver(t *testing.T) {
 	}
 	if got["PriceValue#zero?"] != "instance" {
 		t.Errorf("PriceValue#zero? Receiver = %q, want instance", got["PriceValue#zero?"])
+	}
+}
+
+// The wiring test the resolver's bare-call gate depends on: unit tests build
+// SymbolRef literals with Kind set by hand, so only this test fails when the
+// production bulk load stops populating the column and the gate goes dead.
+func TestSymbolRefsCarriesKind(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "version_set.go", "go", "h1")
+	kinds := map[string]model.SymbolKind{
+		"pebble.versionSet":        model.KindType,
+		"pebble.versionSet.append": model.KindMethod,
+		"pebble.makeRoom":          model.KindFunction,
+		"pebble.Store":             model.KindClass,
+		"pebble.storage":           model.KindModule,
+		"pebble.MaxLevels":         model.KindConstant,
+		"pebble.Reader":            model.KindInterface,
+	}
+	for q, k := range kinds {
+		seedSymbol(t, a, fid, q[strings.LastIndex(q, ".")+1:], q, string(k))
+	}
+	// An unrecognised kind passes through as-is (fail-open), never erased.
+	seedSymbol(t, a, fid, "oddity", "pebble.oddity", "gadget")
+
+	refs, err := a.SymbolRefs(ctx)
+	if err != nil {
+		t.Fatalf("SymbolRefs: %v", err)
+	}
+	got := map[string]model.SymbolKind{}
+	for _, r := range refs {
+		got[r.Qualified] = r.Kind
+	}
+	for q, want := range kinds {
+		if got[q] != want {
+			t.Errorf("%s Kind = %q, want %q", q, got[q], want)
+		}
+	}
+	if got["pebble.oddity"] != model.SymbolKind("gadget") {
+		t.Errorf("oddity Kind = %q, want passthrough %q", got["pebble.oddity"], "gadget")
 	}
 }
 

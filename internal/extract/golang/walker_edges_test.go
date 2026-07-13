@@ -109,3 +109,47 @@ func Run() {
 		t.Error("missing calls edge svc.Run -> log.Printf")
 	}
 }
+
+func TestBareCallToLocalEmitsNoEdge(t *testing.T) {
+	// A bare call through a local binding (closure, func param, method value)
+	// can never statically reach an indexed symbol — the local shadows
+	// package scope. Emitting it produced G-10-class false binds
+	// (`release()` from `x, release := acquire()` landing on a same-named
+	// method elsewhere).
+	r := parse(t, `package svc
+
+func Run(handle func()) {
+	release := acquire()
+	handle()
+	release()
+}
+`)
+	if e := findEdge(r, "svc.Run", "handle", "calls"); e != nil {
+		t.Error("bare call to a func param must not emit an edge")
+	}
+	if e := findEdge(r, "svc.Run", "release", "calls"); e != nil {
+		t.Error("bare call to a local binding must not emit an edge")
+	}
+	// The initializer call itself is a real package-scope call and stays.
+	if findEdge(r, "svc.Run", "acquire", "calls") == nil {
+		t.Error("missing calls edge svc.Run -> acquire (package-scope bare call)")
+	}
+}
+
+func TestConstReferenceSuppressedByParamShadow(t *testing.T) {
+	// A parameter shadows a same-named package binding for the whole body —
+	// including params whose type doesn't unwrap (func-typed), which the
+	// locals map now registers. No references edge may be emitted for the
+	// shadowed name.
+	r := parse(t, `package svc
+
+var Registry = newRegistry()
+
+func Run(Registry func()) {
+	_ = Registry
+}
+`)
+	if findEdge(r, "svc.Run", "svc.Registry", "references") != nil {
+		t.Error("references edge must be suppressed when a param shadows the package binding")
+	}
+}

@@ -138,14 +138,12 @@ const disambiguationCap = 10
 // returns a resolveError whose result field carries a pre-built
 // *mcp.CallToolResult with structured JSON for the LLM.
 //
-// A non-empty fileHint is a hard constraint. It serves the same intent
-// as the CLI's --file flag but is deliberately stricter: the CLI
-// filters after the cascade picks a winning tier, while resolution here
-// applies the file filter inside each tier, so a lower-tier match in
-// the pinned file beats a higher-tier match elsewhere. When no tier
-// matches the file, the error names the constraint and lists where the
-// symbol does resolve — it never falls back to a conflicting cross-file
-// winner.
+// A non-empty fileHint is a hard constraint, applied inside each tier
+// of the cascade (the CLI's --file flag rides the same LookupInFile
+// path): a lower-tier match in the pinned file beats a higher-tier
+// match elsewhere. When no tier matches the file, the error names the
+// constraint and lists where the symbol does resolve — it never falls
+// back to a conflicting cross-file winner.
 func (h *handlers) resolveSymbol(ctx context.Context, tool, symbol, fileHint string) (cli.Match, error) {
 	if fileHint != "" {
 		matches, err := cli.LookupInFile(ctx, h.db, symbol, fileHint)
