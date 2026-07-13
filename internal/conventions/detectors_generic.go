@@ -379,7 +379,7 @@ func detectComposition(symbols []symbolRow, edges []edgeRow, symbolByID map[int6
 		label := baseLabel(g.targetName, g.targetQualified, ambiguous)
 		var desc string
 		if isGoDeclared(symbolByID[g.targetID], filePathByID) {
-			desc = goEmbedDescription(g.count, label, topNames(g.examples))
+			desc = goEmbedDescription(g.count, label, topNames(g.examples), g.sourceKind)
 		} else {
 			desc = fmt.Sprintf("%d %s mix in %s for shared behavior (%s)", g.count, pluralize(g.sourceKind), label, topNames(g.examples))
 		}

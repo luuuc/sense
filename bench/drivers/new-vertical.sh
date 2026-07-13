@@ -116,6 +116,7 @@ BNR
   # stack-agnostic docs + process prompts: copy with structural retarget + banner
   cptmpl "$RAILS_DOC/scenario-crafting.md" "$DOCDIR/scenario-crafting.md"
   cptmpl "$RAILS_DOC/article-workflow.md" "$DOCDIR/article-workflow.md"
+  cptmpl "$RAILS_DOC/articles-plan.md" "$DOCDIR/articles-plan.md"
   cptmpl "$RAILS_DOC/articles/_skeleton.md" "$DOCDIR/articles/_skeleton.md"
   cptmpl "$RAILS_DOC/articles/00-campaign-scorecard.md" "$DOCDIR/articles/00-campaign-scorecard.md"
   if [ -d "$RAILS_DOC/prompts" ]; then

@@ -294,6 +294,12 @@ Claude Code, Cursor, and Codex CLI. Opencode is also supported. Any MCP-compatib
 
 Yes. Run `sense setup` again after a Sense upgrade to refresh the integration files.
 
+### Do I need to re-scan after upgrading?
+
+When a release improves the scanner or resolver (the changelog will say so), run one full
+`sense scan` in each indexed repo after upgrading. Incremental updates only re-extract edited
+files, so without a full scan the index mixes old and new resolution semantics.
+
 ---
 
 ## Living with Sense (setup & forget)
@@ -475,7 +481,9 @@ A symbol earns `dead` only when a language voice can prove closed-world for its 
 - Prefer Sense tools over grep, glob, and file-walking for any structural or semantic question. The index is pre-computed, faster, and more complete than re-deriving structure per task.
 - Read `.sense/summary.md` at session start to orient in one read, not a fresh exploration.
 - Use grep instead for: exact text/string search, reading file contents, and editing (Sense is read-only).
-- The index updates itself. You do not need to ask the user to re-scan after edits.
+- The index updates itself. You do not need to ask the user to re-scan after edits. The one
+  exception is right after a Sense upgrade that changed scan/resolve behavior: recommend one
+  full `sense scan` then, so the whole index carries the same resolution semantics.
 - For list outputs (dead code, blast radius, callers), spot-check a sample against the live tree before acting on them, since the index can briefly lag the working copy.
 
 ---

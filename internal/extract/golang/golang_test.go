@@ -1354,6 +1354,63 @@ type Order struct {
 	}
 }
 
+func TestInterfaceEmbeddingEdges(t *testing.T) {
+	r := parse(t, `package model
+
+type Reader interface {
+	Read() string
+}
+
+type Closer interface {
+	Close() error
+}
+
+type ReadCloser interface {
+	Reader
+	Closer
+}
+`)
+	if findEdge(r, "model.ReadCloser", "model.Reader", "includes") == nil {
+		t.Error("missing includes edge model.ReadCloser -> model.Reader from interface embedding")
+	}
+	if findEdge(r, "model.ReadCloser", "model.Closer", "includes") == nil {
+		t.Error("missing includes edge model.ReadCloser -> model.Closer from interface embedding")
+	}
+}
+
+func TestInterfaceEmbeddingQualified(t *testing.T) {
+	r := parse(t, `package model
+
+type Page interface {
+	resource.Resource
+	Name() string
+}
+`)
+	if findEdge(r, "model.Page", "resource.Resource", "includes") == nil {
+		t.Error("missing includes edge model.Page -> resource.Resource from qualified interface embedding")
+	}
+}
+
+func TestInterfaceEmbeddingConstraintTermsSkipped(t *testing.T) {
+	r := parse(t, `package model
+
+type Number interface {
+	~int | ~string
+}
+
+type Either interface {
+	Reader | Closer
+}
+`)
+	// Union and approximation terms are Go 1.18 type constraints, not
+	// method-set embedding — they must not produce includes edges.
+	for _, e := range r.edges {
+		if e.Kind == "includes" && (e.SourceQualified == "model.Number" || e.SourceQualified == "model.Either") {
+			t.Errorf("unexpected includes edge from constraint terms: %s -> %s", e.SourceQualified, e.TargetQualified)
+		}
+	}
+}
+
 func TestSelectorCallWithEmptyReturn(t *testing.T) {
 	r := parse(t, `package svc
 
@@ -1941,5 +1998,173 @@ func F() {
 	}
 	if findEdge(r, "svc.F", "svc.Y", "references") == nil {
 		t.Error("missing references edge for grouped var Y")
+	}
+}
+
+func TestInterfaceEmbeddingEdgeError(t *testing.T) {
+	err := parseWithEmitter(t, `package main
+
+type Reader interface {
+	Read() string
+}
+
+type ReadCloser interface {
+	Reader
+}
+`, &failAfterN{symbolsLeft: 100, edgesLeft: 0})
+	if err == nil {
+		t.Error("expected error on interface embedding includes edge emit")
+	}
+}
+
+func TestInterfaceEmbeddingApproximationSkipped(t *testing.T) {
+	r := parse(t, `package model
+
+type Approx interface {
+	~int
+}
+`)
+	// A single approximation term is a constraint, not an embedded interface:
+	// it reaches the target switch and resolves to no name.
+	for _, e := range r.edges {
+		if e.Kind == "includes" && e.SourceQualified == "model.Approx" {
+			t.Errorf("unexpected includes edge from approximation term: -> %s", e.TargetQualified)
+		}
+	}
+}
+
+func TestEmbedTargetNameNil(t *testing.T) {
+	w := &walker{}
+	if got := w.embedTargetName(nil); got != "" {
+		t.Errorf("nil type node must resolve to no target, got %q", got)
+	}
+}
+
+func TestEmptyStructNoEmbeddingEdges(t *testing.T) {
+	r := parse(t, `package model
+
+type Empty struct{}
+`)
+	for _, e := range r.edges {
+		if string(e.Kind) == "includes" && e.SourceQualified == "model.Empty" {
+			t.Errorf("empty struct must emit no includes edges, got -> %s", e.TargetQualified)
+		}
+	}
+}
+
+func TestUnnamedNonTypeFieldNoEmbeddingEdge(t *testing.T) {
+	// Illegal-but-parseable mid-edit code: an unnamed field whose type is not
+	// a name (a map). The target resolves to nothing and no edge is emitted.
+	r := parse(t, `package model
+
+type S struct {
+	map[string]int
+}
+`)
+	for _, e := range r.edges {
+		if string(e.Kind) == "includes" && e.SourceQualified == "model.S" {
+			t.Errorf("non-name unnamed field must emit no includes edge, got -> %s", e.TargetQualified)
+		}
+	}
+}
+
+func TestNamelessTypeSpecSkipped(t *testing.T) {
+	// Mid-edit code: a type declaration without a name parses with error
+	// nodes; the extractor must skip it without emitting or crashing.
+	r := parse(t, `package model
+
+type struct{ A int }
+`)
+	for _, s := range r.symbols {
+		if s.Kind == "class" && s.Name == "" {
+			t.Errorf("nameless type spec must not emit a symbol: %+v", s)
+		}
+	}
+}
+
+func TestEmbeddingSkipsNonFieldChildren(t *testing.T) {
+	// A comment and an ERROR recovery node inside the field list (mid-edit
+	// code) are not field declarations; the walk skips them and still emits
+	// the real embed.
+	r := parse(t, `package model
+
+type S struct {
+	// a comment inside the field list
+	chan int
+	Base
+}
+`)
+	if findEdge(r, "model.S", "model.Base", "includes") == nil {
+		t.Error("missing includes edge past comment/ERROR children")
+	}
+}
+
+// findNodeOfKind walks the tree depth-first for the first node of a kind —
+// the harness for grammar-drift tests that call walker methods directly.
+func findNodeOfKind(n *sitter.Node, kind string) *sitter.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind() == kind {
+		return n
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		if found := findNodeOfKind(n.NamedChild(i), kind); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// TestEmitTypeSpecNamelessNodeSkipped and TestEmitEmbeddingsNonStructNode are
+// grammar-drift guards: the grammar cannot produce these shapes today, so the
+// tests hand the walker a node of the wrong kind directly — exactly the
+// malformed input the guards exist for.
+func TestEmitTypeSpecNamelessNodeSkipped(t *testing.T) {
+	src := []byte("package p\n\ntype S struct{ Base }\n")
+	ex := Extractor{}
+	p := sitter.NewParser()
+	defer p.Close()
+	_ = p.SetLanguage(ex.Grammar())
+	tree := p.Parse(src, nil)
+	defer tree.Close()
+
+	r := &recorder{}
+	w := &walker{source: src, emit: r, pkg: "p"}
+	structType := findNodeOfKind(tree.RootNode(), "struct_type")
+	if structType == nil {
+		t.Fatal("no struct_type node in fixture")
+	}
+	// struct_type has no "name" field: emitTypeSpec must skip, not emit.
+	if err := w.emitTypeSpec(structType, false, ""); err != nil {
+		t.Fatalf("emitTypeSpec on nameless node: %v", err)
+	}
+	if len(r.symbols) != 0 {
+		t.Errorf("nameless spec must emit nothing, got %d symbols", len(r.symbols))
+	}
+}
+
+func TestEmitEmbeddingsNonStructNode(t *testing.T) {
+	src := []byte("package p\n\ntype I interface{}\n")
+	ex := Extractor{}
+	p := sitter.NewParser()
+	defer p.Close()
+	_ = p.SetLanguage(ex.Grammar())
+	tree := p.Parse(src, nil)
+	defer tree.Close()
+
+	r := &recorder{}
+	w := &walker{source: src, emit: r, pkg: "p"}
+	ifaceType := findNodeOfKind(tree.RootNode(), "interface_type")
+	if ifaceType == nil {
+		t.Fatal("no interface_type node in fixture")
+	}
+	// An empty interface_type has no field_declaration_list child: the guard
+	// returns cleanly instead of walking garbage.
+	if err := w.emitEmbeddings(ifaceType, "p.I"); err != nil {
+		t.Fatalf("emitEmbeddings on non-struct node: %v", err)
+	}
+	if len(r.edges) != 0 {
+		t.Errorf("non-struct node must emit no edges, got %d", len(r.edges))
 	}
 }
