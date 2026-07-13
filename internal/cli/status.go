@@ -177,7 +177,33 @@ func computeHealth(ctx context.Context, db *sql.DB, dir string, resp mcpio.Statu
 		}
 	}
 
+	// The parent_linkage stamp is written by full-write scans (fresh index
+	// or rebuild). Its absence means the index predates cross-file parent
+	// linkage and a plain rescan will not backfill it — only a rebuild
+	// rewrites every file. Gated on languages that can carry the defect
+	// (receiver/impl-based parent emission: Go, Rust); lexically-scoped
+	// languages never emit cross-file parents, and advising a rebuild
+	// that heals nothing would spend trust for noise.
+	if resp.Index.Symbols > 0 && readMeta(ctx, db, "parent_linkage") == "" && hasCrossFileParentLanguage(ctx, db) {
+		if h.verdict == "healthy" {
+			h.verdict = "degraded"
+		}
+		if h.detail == "" {
+			h.detail = "index predates cross-file parent linkage — run 'sense scan --rebuild'"
+		}
+	}
+
 	return h
+}
+
+// hasCrossFileParentLanguage reports whether the index contains files in a
+// language whose methods can be declared in a different file than their
+// parent type — the shape the parent-linkage advisory is about.
+func hasCrossFileParentLanguage(ctx context.Context, db *sql.DB) bool {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sense_files WHERE language IN ('go', 'rust') LIMIT 1`).Scan(&n)
+	return err == nil && n > 0
 }
 
 func queryLangBreakdown(ctx context.Context, db *sql.DB) map[string]mcpio.StatusLanguage {

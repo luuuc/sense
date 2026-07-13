@@ -139,6 +139,54 @@ func TestComputeHealthEmbeddingModelMismatch(t *testing.T) {
 	}
 }
 
+func TestComputeHealthParentLinkageStamp(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+	_, _ = db.ExecContext(ctx, `CREATE TABLE sense_meta (key TEXT PRIMARY KEY, value TEXT)`)
+	// A Go file makes the index eligible for the advisory: only
+	// receiver/impl-based languages can carry cross-file parents.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'a.go', 'go', 'abc', 1, '2026-01-01T00:00:00Z')`)
+
+	resp := mcpio.StatusResponse{
+		Version: &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: true},
+	}
+	resp.Index.Symbols = 5
+	resp.Index.Embeddings = 5 // keep the embeddings-incomplete branch quiet
+
+	// No stamp: the index predates cross-file parent linkage.
+	h := computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "degraded" {
+		t.Errorf("verdict = %q without parent_linkage stamp, want degraded", h.verdict)
+	}
+	if h.detail != "index predates cross-file parent linkage — run 'sense scan --rebuild'" {
+		t.Errorf("detail = %q, want parent-linkage message", h.detail)
+	}
+
+	// Stamped: healthy again.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('parent_linkage', '1')`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
+	}
+
+	// An empty index (no symbols) has nothing to advise about.
+	resp.Index.Symbols = 0
+	_, _ = db.ExecContext(ctx, `DELETE FROM sense_meta`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q on empty index without stamp, want healthy", h.verdict)
+	}
+
+	// A pure lexically-scoped index (no Go/Rust files) cannot have the
+	// defect: no advisory, no wasted rebuild.
+	resp.Index.Symbols = 5
+	_, _ = db.ExecContext(ctx, `UPDATE sense_files SET language = 'ruby', path = 'a.rb'`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q on ruby-only index without stamp, want healthy (defect impossible)", h.verdict)
+	}
+}
+
 func TestEmbeddingsEnabled(t *testing.T) {
 	tests := []struct {
 		name    string

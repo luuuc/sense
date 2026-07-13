@@ -183,6 +183,50 @@ func (a *Adapter) Query(ctx context.Context, f index.Filter) ([]model.Symbol, er
 	return out, nil
 }
 
+// ContainerRef is one container-kind symbol (class, module, interface,
+// type) as loaded for parent-link resolution. Path is the symbol's file
+// path (empty when the file row is missing); Line is its line_start. Both
+// feed the content-derived tiebreak in the scan layer's pickParent.
+type ContainerRef struct {
+	ID        int64
+	Qualified string
+	FileID    int64
+	Path      string
+	Line      int
+}
+
+// ContainerRefs returns every container-kind symbol with its file path,
+// for the parent-link finalize pass. The kind set is fixed — the one
+// caller resolves method/nested-symbol parents, which extractors only
+// ever point at these four kinds. The full-key ORDER BY keeps the result
+// deterministic; callers must still not depend on relative order across
+// scans (ids are history-dependent).
+func (a *Adapter) ContainerRefs(ctx context.Context) ([]ContainerRef, error) {
+	const q = `SELECT s.id, s.qualified, s.file_id, COALESCE(f.path, ''), s.line_start
+		FROM sense_symbols s
+		LEFT JOIN sense_files f ON f.id = s.file_id
+		WHERE s.kind IN ('class', 'module', 'interface', 'type')
+		ORDER BY s.qualified ASC, COALESCE(f.path, '') ASC, s.line_start ASC, s.id ASC`
+	rows, err := a.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite ContainerRefs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var refs []ContainerRef
+	for rows.Next() {
+		var r ContainerRef
+		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Path, &r.Line); err != nil {
+			return nil, fmt.Errorf("sqlite ContainerRefs scan: %w", err)
+		}
+		refs = append(refs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite ContainerRefs iterate: %w", err)
+	}
+	return refs, nil
+}
+
 // SymbolRefs returns every symbol's (id, qualified, file_id, receiver,
 // language) ordered by ascending id. It exists so resolution passes that build
 // an in-memory qualified-name index can avoid hydrating Snippet / Docstring /
