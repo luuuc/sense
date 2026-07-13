@@ -14,9 +14,13 @@ Measurements (laws from bench/results/loss-anatomy.md baked in):
           naive invisibility alone would reject the banked +0.60 win):
           (a) grep-invisible dependents: prod dependents (blast @0.3) whose
               file text lacks the contract token literally;
-          (b) grep-noise / PRECISION: dependents ÷ repo-wide prod files
-              containing the token (seam_hunt v3's win-pattern: LOWER
-              precision = the baseline cannot cleanly enumerate the set).
+          (b) grep-noise / PRECISION: dependents grep actually finds ÷
+              repo-wide prod files containing the token (seam_hunt v3's
+              win-pattern: LOWER precision = the baseline cannot cleanly
+              enumerate the set). Intersection numerator, like the battery
+              rows — counting grep-INVISIBLE deps in the numerator emitted
+              values >1 (the hunt-v2 versionSet/ChannelTrace/indexMap
+              anomaly, 2026-07-13).
           Threshold: calibrated by backtest, not guessed; raw numbers printed.
   bar 3 — covering-pattern battery: does ONE declared textual pattern
           transcribe the dependent set? Battery per anatomy law #6: the token
@@ -33,6 +37,12 @@ Measurements (laws from bench/results/loss-anatomy.md baked in):
           signature = called_by tiny while blast direct callers are numerous;
           a healthy small seam has BOTH small. FAIL when called_by <=
           GRAPH_FOLD_FLOOR and direct >= GRAPH_FOLD_RATIO × max(called_by, 1).
+          VERIFIED-EDGE FLOOR (G-3 recount, 2026-07-13): the ratio runs on
+          blast direct @0.7 (the verified band), not @0.3 — tiny internal
+          types ride the 0.3 bare-name band to the 60-cap and faked 24 of
+          the hunt-v2 fires while their verified callers were honestly 0-4.
+          A real collapse loses VERIFIED callers (#191: the healed edges
+          came back at conf 0.8-1.0), so @0.7 stays numerous.
 
 The gate is slot-aware downstream: win-pillar slots are gated on 1-5, small
 slots are measured-not-rejected (§7.0 ballast). That policy lives in the
@@ -50,7 +60,9 @@ BUDGET_BYTES = 32_000          # ≈ the 8k-token per-tool response budget
 COVER_THRESHOLD = 0.8          # one pattern transcribing ≥80% of deps = covered
 PRECISION_FLOOR = 0.3          # ...but only if it enumerates mostly-deps (usable)
 GRAPH_FOLD_FLOOR = 5           # called_by at/below this is suspicious... (collapse=1, healthy min=25)
-GRAPH_FOLD_RATIO = 10          # ...when blast direct >= 10× it (collapse=60×, healthy max=1.08×)
+GRAPH_FOLD_RATIO = 10          # ...when blast direct@0.7 >= 10× it (collapse=60×, healthy max=1.08×)
+SURVIVOR_FLOOR = 5             # dep files at 0.7 below this = gold impossible (blast-both-confidences
+                               # law needs 8-10 gold files; banked wins 22-68, fabricated class <=3)
 TEST_PATH = re.compile(r"(^|/)(tests?|spec|specs|testing)(/|_)|_test\.|\btest_")
 
 
@@ -172,10 +184,13 @@ def battery(clone, symbol, contract_file, files, texts):
     base = symbol.split(".")[-1].split("::")[-1]
     fileset = set(files)
     results = []
+    matched = {}  # kind -> set of dep files the pattern matched (for the union flag)
 
     def add(name, kind, regex, fixed=False):
         rx = re.compile(regex if not fixed else re.escape(regex))
-        in_deps = sum(1 for f in files if rx.search(texts[f]))
+        hit_deps = {f for f in files if rx.search(texts[f])}
+        matched.setdefault(kind, set()).update(hit_deps)
+        in_deps = len(hit_deps)
         row_hits = rg_files(clone, regex, fixed=fixed)
         row = {"pattern": name, "kind": kind,
                "cover": round(in_deps / len(files), 3) if files else 0.0}
@@ -188,6 +203,15 @@ def battery(clone, symbol, contract_file, files, texts):
         results.append(row)
 
     add(base, "token", regex=base, fixed=True)
+    # Type-named accessor family (the GO-NAMING LAW, dolt dry-run kill 2026-07-13):
+    # in Go, accessor/provider/constructor names INHERIT the type name
+    # (dEnv.DoltDB(, GetDoltDB(, DoltDatabases(), NewBatch() — all contain the
+    # type substring in a CALL position), so "holders of X" is one substring
+    # sweep even in files that never name the type. Precision does NOT protect
+    # this pattern: receiver-verifying the hits is window-resolvable (THE
+    # BATCHING LAW), so slot_verdict kills on cover alone (K6).
+    add(f".*{base}*( call", "type-accessor",
+        regex=r"[.\t (]\w*" + re.escape(base) + r"\w*\s*\(")
     add(f"import …{base}", "import",
         regex=r"^\s*(from\s+\S+\s+import\b[^\n]*\b" + re.escape(base) +
               r"\b|import\s+[^\n]*\b" + re.escape(base) +
@@ -213,7 +237,15 @@ def battery(clone, symbol, contract_file, files, texts):
                         "repo_hits": len(all_same), "precision": prec,
                         "usable": (n / len(files)) >= COVER_THRESHOLD and
                                   (prec or 0) >= PRECISION_FLOOR})
-    return sorted(results, key=lambda r: -r["cover"])
+    # NAME-FAMILY UNION (dolt dry-run lesson 2026-07-13): the adversary COMPOSES
+    # the type-token grep (param/field holders name the type) with the
+    # type-named-accessor sweep (token-free holders call an accessor that
+    # inherits the name). Neither pattern alone need cover; the union does.
+    # Not a kill (sentry's token cover is ~1.0 and it's a banked WIN — noise +
+    # whole-structure judgment defeat the batcher) — a PROBE-REQUIRED flag.
+    union = matched.get("token", set()) | matched.get("type-accessor", set())
+    union_cover = round(len(union) / len(files), 3) if files else 0.0
+    return sorted(results, key=lambda r: -r["cover"]), union_cover
 
 
 def measure(clone, symbol, file_hint, sense):
@@ -231,34 +263,22 @@ def measure(clone, symbol, file_hint, sense):
         return out
 
     direct03 = len(b03["data"].get("direct_callers") or [])
+    direct07 = len(b07["data"].get("direct_callers") or []) if b07["ok"] else 0
     g = run_graph_callers(clone, sense, symbol, file_hint)
     collapse = g["ok"] and g["called_by"] <= GRAPH_FOLD_FLOOR \
-        and direct03 >= GRAPH_FOLD_RATIO * max(g["called_by"], 1)
+        and direct07 >= GRAPH_FOLD_RATIO * max(g["called_by"], 1)
     out["bar4"]["graph"] = {"ok": g["ok"], "called_by": g["called_by"],
                             "blast_direct_callers": direct03,
+                            "blast_direct_at_0.7": direct07,
                             "fold_collapse": collapse,
                             "err": g["err"]}
     if collapse:
         out["verdict_hint"] = (
             f"BAR 4 FAIL (graph fold-collapse: called_by={g['called_by']} vs "
-            f"blast direct={direct03} — the #191 signature; blast is blind to it) "
+            f"blast direct@0.7={direct07} verified — the #191 signature; "
+            "blast is blind to it) "
             "— product finding first, admission verdict second: file it")
         return out
-
-    def grep_hit_files(base):
-        """Non-test production files repo-wide containing the token (rg, with
-        grep fallback). The denominator of seam_hunt-style precision."""
-        # Explicit "." path: rg with no path searches STDIN, which silently
-        # swallows a caller's heredoc/pipe. DEVNULL belt-and-suspenders.
-        for cmd in (["rg", "-l", "--no-messages", base, "."],
-                    ["grep", "-rl", base, "."]):
-            p = subprocess.run(cmd, cwd=clone, capture_output=True, text=True,
-                               stdin=subprocess.DEVNULL)
-            if p.returncode in (0, 1):
-                hits = [h for h in p.stdout.splitlines()
-                        if h and not TEST_PATH.search(h)]
-                return len(hits)
-        return -1
 
     d = b03["data"]
     # CLI blast reports symbol as a string; the contract's defining file comes
@@ -279,23 +299,26 @@ def measure(clone, symbol, file_hint, sense):
     dirs = sorted({"/".join(f.split("/")[:2]) for f in files})
     deps07 = dep_files(b07["data"]) if b07["ok"] else []
 
-    hits = grep_hit_files(base)
+    hit_list = rg_files(clone, base, fixed=True)
+    hits = len(hit_list) if hit_list is not None else -1
+    grep_found = sum(1 for h in hit_list or [] if h in set(files))
     out["bar2"] = {"prod_dependent_files": len(files),
                    "grep_invisible": len(invisible),
                    "invisible_ratio": round(len(invisible) / len(files), 3) if files else 0.0,
                    "invisible_files": invisible[:20],
                    "grep_hit_files": hits,
-                   "precision": round(len(files) / hits, 4) if hits > 0 else None,
+                   "precision": round(grep_found / hits, 4) if hits > 0 else None,
                    "scatter_dirs": len(dirs),
                    "total_affected": d.get("total_affected", 0),
                    "survive_at_0.7": len(deps07)}
-    bat = battery(clone, symbol, contract_file, files, texts)
+    bat, union_cover = battery(clone, symbol, contract_file, files, texts)
     usable = [r for r in bat if r.get("usable")]
     best = (usable or bat or [{"cover": 0.0, "pattern": "-", "kind": "-"}])[0]
     out["bar3"] = {"battery": bat[:8],
                    "best_cover": best["cover"],
                    "best_pattern": f'{best["pattern"]} ({best["kind"]})',
-                   "covered": bool(usable)}
+                   "covered": bool(usable),
+                   "name_family_union_cover": union_cover}
     return out
 
 
@@ -307,6 +330,12 @@ def slot_verdict(out):
     win, killed only by gold-level analysis) come out WIN-VIABLE here and die
     in the Loop 3 scout dig — the gate is the coarse sieve, not Event A."""
     b2, b3 = out["bar2"], out["bar3"]
+    g = out["bar4"].get("graph", {})
+    if b2["total_affected"] == 0 and g.get("called_by", 0) == 0:
+        return "MEASUREMENT-INVALID", [
+            "zero edges everywhere (blast affected=0, graph called_by=0) — check index "
+            "health (`sense status`) before reading this cell; the litellm 2026-07-13 "
+            "broken-index (schema v0, 0 edges) measured exactly this shape"]
     bat = b3["battery"]
     tok = next((r for r in bat if r["kind"] == "token"), {})
     kills = []
@@ -323,14 +352,31 @@ def slot_verdict(out):
             and b2["prod_dependent_files"] < 30:
         kills.append(f"K4 seam-thin (invisible {b2['invisible_ratio']}, token cover "
                      f"{tok.get('cover')}, deps {b2['prod_dependent_files']}) — haystack class")
+    if b2["survive_at_0.7"] < SURVIVOR_FLOOR:
+        kills.append(f"K5 verified-band starved (survive@0.7={b2['survive_at_0.7']}, "
+                     f"called_by={g.get('called_by')}) — gold impossible under the "
+                     "blast-both-confidences law; the seam is 0.3-band fabrication "
+                     "(zapRaftLogger/noCopy class, hunt v3 2026-07-13)")
+    ta = next((r for r in bat if r["kind"] == "type-accessor"), {})
+    if ta.get("cover", 0) >= COVER_THRESHOLD:
+        kills.append(f"K6 type-named accessor family covers the deps (cover "
+                     f"{ta['cover']}, {ta.get('repo_hits', '?')} repo hits) — the "
+                     "GO-NAMING LAW; noise does not protect it, receiver checks are "
+                     "window-resolvable (dolt DoltDB dry-run class, 2026-07-13)")
     if kills:
         return "BALLAST-ONLY", kills
     prec = tok.get("precision")
+    notes = []
+    if b3.get("name_family_union_cover", 0) >= COVER_THRESHOLD:
+        notes.append(f"⚠ NAME-FAMILY UNION cover {b3['name_family_union_cover']} "
+                     "(token ∪ type-accessor) — dolt-class composition risk; the "
+                     "ADVERSARY PROBE (manifesto §8 step 3b) is REQUIRED before any "
+                     "gold curation on this anchor")
     if prec is not None and prec <= 0.3 and b2["total_affected"] >= 500:
         return "WIN-VIABLE", [f"win signature: no usable cover, token precision {prec}, "
                               f"affected {b2['total_affected']} (sentry/netbox/saleor class; "
-                              f"wagtail-class false positives die in the scout dig)"]
-    return "GRAY", ["measurements do not separate — Event A judgment, numbers recorded"]
+                              f"wagtail-class false positives die in the scout dig)"] + notes
+    return "GRAY", ["measurements do not separate — Event A judgment, numbers recorded"] + notes
 
 
 def render(m):
@@ -345,6 +391,7 @@ def render(m):
         g = b4["graph"]
         L.append(f"- bar 4 graph: ok={g['ok']} called_by={g['called_by']} "
                  f"blast_direct={g['blast_direct_callers']} "
+                 f"blast_direct@0.7={g['blast_direct_at_0.7']} "
                  f"fold_collapse={g['fold_collapse']}"
                  + (f" err={g['err']}" if g["err"] else ""))
     if "bar2" not in m:

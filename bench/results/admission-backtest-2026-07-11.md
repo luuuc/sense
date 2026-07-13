@@ -124,3 +124,80 @@ the component records the error and does not fire; the blast checks stand as bef
 
 `slot_verdict()` semantics and the measured/checklist split are unchanged for every cell the new
 component does not fire on; the probe only adds a `bar4.graph` block and one render line.
+
+## Addendum 2026-07-13 — calibration v3: precision numerator fix, verified-edge floor, K5, broken-index guard
+
+Trigger: the post-31-05 hunt v2 board carried a bar-2 `precision > 1` anomaly on three rows
+(pebble versionSet 6.0, grpc-go ChannelTrace 6.29, restic indexMap 12.0) and 24 residual bar-4
+fold fires flagged as needing a verified-edge floor (loopA-gaps/go.md G-3 recount). Four changes
+to `admission_gate.py`, all $0-verified same day:
+
+1. **Bar-2 precision numerator = intersection.** Was `prod_dependent_files ÷ grep_hits`, which
+   counts grep-INVISIBLE deps in the numerator — the metric exceeded 1 exactly on high-invisibility
+   seams (the win class!). Now `deps grep actually finds ÷ grep_hits`, matching the battery rows.
+   Verdicts unaffected (`slot_verdict` uses the battery token precision, which was always
+   intersection-based). The three anomalous rows re-vetted: all three are REAL win shapes
+   (corrected precisions 0.167 / 0.286 / 0.0; verified backing called_by 775 / 548 / 496).
+2. **Bar-4 fold ratio runs on blast direct @0.7 (verified band), not @0.3.** Tiny internal types
+   ride the 0.3 bare-name band to the 60-cap and faked all 24 hunt-v2 residual fires (called_by
+   0-4 AND direct@0.7 0-4 → ratio can't trip). Positive control preserved: v1.11.16 binary on the
+   saleor index (the #191 collapse) reads called_by=1 / direct@0.7=60 → still FAILS loudly; main
+   reads called_by=126 → clean. Blast byte-identical across binaries, as in the 07-12 addendum.
+   Hunt v3/v4 recount: fold fires 24 → **0** on the 84-gate medium board. G-3 reading (b)
+   CONFIRMED for the entire residual class — no product defect behind those fires.
+3. **K5 — verified-band starved.** The floor change re-routed the fabricated class from bar-4 FAIL
+   to the WIN SIGNATURE (perfect invisibility + no cover + huge affected, all fabricated by
+   0.3-band noise: etcd zapRaftLogger, grpc noCopy/componentData, nats waitQueue, pebble
+   Frontiers/flusherCond, etcd concurrency.Mutex). Kill when `survive@0.7 < 5`: below that, the
+   8-10-file gold bar is impossible under the blast-both-confidences law. Calibration: banked wins
+   measure survive@0.7 = 68 (sentry) / 22 (netbox) / 51 (saleor); the fabricated class ≤ 3; the
+   gap is clean. wagtail (41) correctly NOT killed — it stays the documented gold-level false
+   positive no mechanical bar can see.
+4. **MEASUREMENT-INVALID guard.** The litellm re-verification cell returned all-zeros (blast
+   affected=0, graph called_by=0) and the gate confidently emitted K2 BALLAST-ONLY — on an index
+   that `sense status` reports as BROKEN (schema v0 mismatch, 0 edges; plausibly the rescan Luc
+   stopped mid-session on 2026-07-12). Zero-edges-everywhere now routes to MEASUREMENT-INVALID
+   ("check index health"), never to a verdict.
+
+### Re-verification on the fixed gate (fresh runs, 2026-07-13)
+
+| cell | verdict | survive@0.7 | note |
+|---|---|---|---|
+| sentry / Group | WIN-VIABLE ✓ | 68 | numbers match 07-11 table |
+| netbox / Device | WIN-VIABLE ✓ | 22 | post-rescan (v1.11.22) index |
+| saleor / ProductVariant | WIN-VIABLE ✓ | 51 | pre-rescan index |
+| wagtail / Page | WIN-VIABLE ⚠ ✓ | 41 | post-rescan index; still the documented FP; anchor moved to `wagtail/models/pages.py` on this HEAD |
+| healthchecks / Transport | K1+K2 ✓ | 30 | post-rescan index |
+| litellm / BaseConfig | MEASUREMENT-INVALID | — | broken index (schema v0, 0 edges); RE-RUN owed after its rescan-all slot heals it |
+| haystack / Document | K4 ✓ | 23 | 07-11 clone |
+| pretix / Team | K2 ✓ | 26 | 07-11 clone |
+
+7/8 verdicts preserved with margins intact; the 8th is an honest instrument refusal on a broken
+index, not a classification change. K5 fired on ZERO historical cells.
+
+## Addendum 2026-07-13 (later) — K6 + the name-family union flag; the probe is the decider
+
+Post-dolt-dry-run additions to `admission_gate.py` (the GO-NAMING LAW: Go accessor/provider
+names inherit the type name, so holder-enumeration composes from one substring family):
+
+- **battery row `type-accessor`** (`[.\t (]\w*<Type>\w*\(`) — the type-named call family.
+- **K6 kill** when that family ALONE covers ≥0.8 of the deps, regardless of precision
+  (receiver checks are window-resolvable — THE BATCHING LAW; noise does not protect).
+  Fires on healthchecks (cover 0.839, already K1+K2-dead — correct-in-class). No banked
+  win affected.
+- **⚠ NAME-FAMILY UNION flag** (token ∪ type-accessor cover ≥0.8, NOT a kill): fires on
+  netbox (0.926) and wagtail (0.976) — epistemically correct, both needed behavioral
+  verification historically (wagtail died at gold; netbox won only via gold-vs-noise
+  curation). sentry-class anchors will fire it too by construction; that is the point:
+  high name-family cover = the probe decides, the gate cannot.
+- **THE HONEST LIMIT, measured:** dolt itself — the case that motivated all of this —
+  escapes BOTH the K6 kill and the union flag (its baseline composed idiom patterns like
+  `DbData.Ddb` and `GetRemoteDB` that carry NO type substring). Conclusion, now law in the
+  manifesto (§8 step 3b), Loop 3, and prompts/02: **the $0 ADVERSARY PROBE runs on EVERY
+  anchor before gold curation, unconditionally.** The mechanical additions are detectors
+  and priority flags, never a substitute.
+
+Verdict-preservation battery (sweep-fresh indexes where available): dolt/versionSet/Batch/
+client.Client/ChannelTrace/ignore.cache/indexMap/nats-Server WIN-VIABLE unchanged; etcd
+GRAY; healthchecks/haystack/pretix BALLAST unchanged; netbox/wagtail WIN-VIABLE + flag.
+sentry/saleor/litellm cells re-run when Luc's sweep reaches them.
