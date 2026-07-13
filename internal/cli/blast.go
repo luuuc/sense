@@ -195,12 +195,15 @@ func runBlastSymbol(cio IO, opts blastOptions) int {
 	}
 	defer func() { _ = adapter.Close() }()
 
-	matches, err := Lookup(ctx, adapter.DB(), opts.Symbol)
+	// --file constrains resolution inside the tier cascade (the MCP path):
+	// a lower-tier match in the pinned file beats a higher-tier match
+	// elsewhere. --language has no in-cascade variant and filters after.
+	matches, err := LookupInFile(ctx, adapter.DB(), opts.Symbol, opts.File)
 	if err != nil {
 		_, _ = fmt.Fprintln(cio.Stderr, "sense blast:", err)
 		return ExitGeneralError
 	}
-	matches = FilterMatches(matches, opts.File, opts.Language)
+	matches = FilterMatches(matches, "", opts.Language)
 	switch len(matches) {
 	case 0:
 		PrintNotFound(cio.Stderr, opts.Symbol)
