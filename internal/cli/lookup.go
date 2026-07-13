@@ -50,8 +50,20 @@ type Match struct {
 //
 // Each match carries a Resolution field indicating which tier
 // produced it. Later tiers are only consulted when all earlier tiers
-// come up empty. Suffix and containment tiers require query length
-// ≥ 3 (likeMinQueryLen).
+// come up empty — with one exception: a QUALIFIER-FREE query (no
+// `.`/`::`/`#`) that hits tier 1 also consults tier 2, because such a
+// hit is only possible on a symbol whose qualified name IS its bare
+// name (a no-package top-level, e.g. a frontend TS type), and letting
+// it win silently shadowed every same-named qualified symbol — blast
+// answered "0 affected" for a repo's central hub while the real one
+// sat one tier down. When tier 2 adds candidates the union returns as
+// an ambiguous set for disambiguation, stamped uniformly ResExactName
+// (callers read matches[0].Resolution) with the exact-qualified hit
+// first; cross-language candidates are intentionally LISTED, never
+// ranked away — a "helpful" language heuristic here would reintroduce
+// the silent pick from the other side. When tier 2 adds nothing the
+// tier-1 hit resolves exactly as before. Suffix and containment tiers
+// require query length ≥ 3 (likeMinQueryLen).
 //
 // Caller contract:
 //   - len(matches) == 0 → not-found; render "no symbol" message
@@ -100,10 +112,55 @@ func lookupCascade(ctx context.Context, db *sql.DB, query, file string) ([]Match
 		}
 		matches = FilterMatches(matches, file, "")
 		if len(matches) > 0 {
+			if t.res == ResExactQualified && !hasQualifierSeparator(query) {
+				union, err := mergeBareNameTier(ctx, db, query, file, matches)
+				if err != nil {
+					return nil, err
+				}
+				if len(union) > len(matches) {
+					return setResolution(union, ResExactName), nil
+				}
+			}
 			return setResolution(matches, t.res), nil
 		}
 	}
 	return nil, nil
+}
+
+// hasQualifierSeparator reports whether a query names a namespace or
+// receiver (`app.User`, `Admin::User`, `Greeter#hello`). Queries without
+// one are bare names, where an exact-qualified hit can only be a
+// no-package symbol and must not shadow same-named qualified candidates.
+// Synthetic qualified names (`route:users`) test as bare here; the merge
+// is a superset union, so they keep resolving through their tier-1 hit.
+func hasQualifierSeparator(query string) bool {
+	return strings.ContainsAny(query, ".#") || strings.Contains(query, "::")
+}
+
+// mergeBareNameTier unions a bare query's exact-qualified hits with the
+// exact-name tier's candidates (the same file constraint applied), the
+// tier-1 hits first, deduplicated by symbol id. For a separator-free query
+// tier 1 is normally a subset of tier 2 (`qualified == name`); the by-id
+// merge is a guard for stores that break that invariant.
+func mergeBareNameTier(ctx context.Context, db *sql.DB, query, file string, exact []Match) ([]Match, error) {
+	byName, err := lookupByName(ctx, db, query)
+	if err != nil {
+		return nil, err
+	}
+	byName = FilterMatches(byName, file, "")
+	seen := make(map[int64]bool, len(exact))
+	union := make([]Match, 0, len(exact)+len(byName))
+	for _, m := range exact {
+		seen[m.ID] = true
+		union = append(union, m)
+	}
+	for _, m := range byName {
+		if !seen[m.ID] {
+			seen[m.ID] = true
+			union = append(union, m)
+		}
+	}
+	return union, nil
 }
 
 func setResolution(matches []Match, r Resolution) []Match {
