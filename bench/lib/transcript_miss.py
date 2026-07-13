@@ -43,6 +43,14 @@ SENSE_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")
 VERTICALS = os.path.join(SENSE_REPO, "bench", "verticals")  # verticals/<stack>/{results,scenarios}/
 
 SENSE_TOOLS = ("sense_blast", "sense_graph", "sense_search")
+# CLI-channel sense invocation (the codex arm uses the CLI by design; opencode
+# arms mix channels). Subcommand REQUIRED — a bare \bsense\b matches the clone
+# path (…/sense-benchmark/sense/<repo>) in every shell command.
+SENSE_CLI_RE = re.compile(r"\bsense\s+(blast|graph|search)\b")
+CLI_SYMBOL_RE = re.compile(r"\bsense\s+(?:blast|graph|search)\s+['\"]?([\w:.\-]+)")
+CLI_FILE_RE = re.compile(r"--file[= ]['\"]?([^\s'\"]+)")
+# Fallback path harvest for non-JSON CLI output (refs like pkg/file.go:123).
+BARE_PATH_RE = re.compile(r"\b([\w./-]+/[\w.-]+\.[a-zA-Z]{1,4}):\d+")
 # A gold group is a "discriminator" (the headline) unless it is one of the
 # anchor groups both arms are expected to get. cited-not-returned in a
 # discriminator group is the high-value product signal.
@@ -95,6 +103,23 @@ def _rel(path, repo):
     return path.lstrip("/")
 
 
+def _remap_use(name, inp):
+    """A Bash use that invokes the sense CLI is remapped to the equivalent
+    sense_* tool so the whole analysis sees both channels (codex arm = CLI by
+    design; opencode arms mix channels)."""
+    if name == "Bash":
+        cmd = str(inp.get("command") or "")
+        m = SENSE_CLI_RE.search(cmd)
+        if m:
+            sym = CLI_SYMBOL_RE.search(cmd)
+            fil = CLI_FILE_RE.search(cmd)
+            return (f"sense_{m.group(1)}",
+                    {"cli": True, "command": cmd,
+                     "symbol": sym.group(1) if sym else "",
+                     "file": fil.group(1) if fil else ""})
+    return (name, inp)
+
+
 def analyze_run(run_dir, repo, gold_by_id):
     tpath = os.path.join(run_dir, "transcript.json")
     spath = os.path.join(run_dir, "scored.json")
@@ -102,11 +127,16 @@ def analyze_run(run_dir, repo, gold_by_id):
         return None
     rows = _load_jsonl(tpath)
 
-    # Pair tool_use ids -> name/input; collect tool_results by id.
+    # Pair tool_use -> tool_result. Claude-format transcripts carry ids;
+    # opencode-CONVERTED transcripts carry NONE (parse-opencode-result emits
+    # use/result adjacently without ids) — that id-less shape is exactly the
+    # blindness that reported "0.0 sense-calls" on runs whose channels.json
+    # showed real MCP calls (found 2026-07-13). Fallback: pair each result
+    # with the most recent tool_use in block order.
     uses = {}
     for b in _blocks(rows):
-        if b.get("type") == "tool_use":
-            uses[b.get("id")] = (b.get("name") or "", b.get("input") or {})
+        if b.get("type") == "tool_use" and b.get("id"):
+            uses[b.get("id")] = _remap_use(b.get("name") or "", b.get("input") or {})
 
     sense_calls = []          # [(short_tool, input, returned_files, n_returned)]
     sense_files = set()       # every repo-rel path any Sense call returned
@@ -114,11 +144,13 @@ def analyze_run(run_dir, repo, gold_by_id):
     grep_calls = 0            # Bash greps/finds (text-search fallback)
     structural_calls = 0      # blast/graph calls (the resolvers, not search/status)
 
+    last_use = ("", {})
     for b in _blocks(rows):
         if b.get("type") == "tool_use":
-            name, inp = b.get("name") or "", b.get("input") or {}
+            name, inp = _remap_use(b.get("name") or "", b.get("input") or {})
+            last_use = (name, inp)
             if name == "Read":
-                fp = inp.get("file_path") or ""
+                fp = inp.get("file_path") or inp.get("filePath") or ""
                 if fp:
                     read_files.append(_rel(fp, repo))
             elif name == "Bash":
@@ -127,12 +159,15 @@ def analyze_run(run_dir, repo, gold_by_id):
                     grep_calls += 1
         elif b.get("type") == "tool_result":
             tid = b.get("tool_use_id")
-            name, inp = uses.get(tid, ("", {}))
+            name, inp = uses[tid] if tid in uses else last_use
             short = next((t for t in SENSE_TOOLS if t in name), None)
             if not short:
                 continue
             txt = _result_text(b)
             files = set(m.group(1) for m in PATH_RE.finditer(txt))
+            if not files and inp.get("cli"):
+                # non-JSON CLI output: harvest bare path:line refs instead
+                files = set(m.group(1) for m in BARE_PATH_RE.finditer(txt))
             # the symbol's own definition file isn't a "returned dependent"
             files.discard(_symbol_self_file(inp, txt))
             sense_calls.append((short, inp, files, len(files)))
