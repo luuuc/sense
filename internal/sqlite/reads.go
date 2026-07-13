@@ -227,7 +227,7 @@ func (a *Adapter) ContainerRefs(ctx context.Context) ([]ContainerRef, error) {
 	return refs, nil
 }
 
-// SymbolRefs returns every symbol's (id, qualified, file_id, receiver,
+// SymbolRefs returns every symbol's (id, qualified, file_id, receiver, kind,
 // language) ordered by ascending id. It exists so resolution passes that build
 // an in-memory qualified-name index can avoid hydrating Snippet / Docstring /
 // Visibility fields that they immediately discard — about a 5× reduction in
@@ -235,9 +235,11 @@ func (a *Adapter) ContainerRefs(ctx context.Context) ([]ContainerRef, error) {
 // build multi-value maps without a follow-up sort: the first id under each key
 // is deterministically the earliest written. The language is left-joined from
 // sense_files so the resolver can gate cross-language bare-name matches; a
-// symbol whose file row is missing returns an empty language.
+// symbol whose file row is missing returns an empty language. Kind is interned
+// to the canonical model constants so half a million refs share backing data
+// instead of each carrying a fresh string.
 func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
-	const q = `SELECT s.id, s.qualified, s.file_id, s.receiver, COALESCE(f.language, ''), COALESCE(f.path, '')
+	const q = `SELECT s.id, s.qualified, s.file_id, s.receiver, s.kind, COALESCE(f.language, ''), COALESCE(f.path, '')
 		FROM sense_symbols s
 		LEFT JOIN sense_files f ON f.id = s.file_id
 		ORDER BY s.id ASC`
@@ -250,15 +252,41 @@ func (a *Adapter) SymbolRefs(ctx context.Context) ([]model.SymbolRef, error) {
 	var refs []model.SymbolRef
 	for rows.Next() {
 		var r model.SymbolRef
-		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Receiver, &r.Language, &r.Path); err != nil {
+		var kind string
+		if err := rows.Scan(&r.ID, &r.Qualified, &r.FileID, &r.Receiver, &kind, &r.Language, &r.Path); err != nil {
 			return nil, fmt.Errorf("sqlite SymbolRefs scan: %w", err)
 		}
+		r.Kind = internSymbolKind(kind)
 		refs = append(refs, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite SymbolRefs iterate: %w", err)
 	}
 	return refs, nil
+}
+
+// internSymbolKind maps a scanned kind string onto the canonical
+// model.SymbolKind constants so every ref shares one backing string per kind.
+// An unrecognised value passes through as-is rather than being erased — the
+// resolver's kind gate fails open on anything it does not know.
+func internSymbolKind(kind string) model.SymbolKind {
+	switch kind {
+	case string(model.KindClass):
+		return model.KindClass
+	case string(model.KindModule):
+		return model.KindModule
+	case string(model.KindMethod):
+		return model.KindMethod
+	case string(model.KindFunction):
+		return model.KindFunction
+	case string(model.KindConstant):
+		return model.KindConstant
+	case string(model.KindInterface):
+		return model.KindInterface
+	case string(model.KindType):
+		return model.KindType
+	}
+	return model.SymbolKind(kind)
 }
 
 // EdgesOfKind returns all edges of a given kind. Used by post-extraction

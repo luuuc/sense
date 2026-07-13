@@ -399,6 +399,9 @@ func (ix *Index) resolveByLeaf(target string, req Request) (Result, bool) {
 	matches := ix.byName[name]
 	matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
 	matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
+	if sep == "" && !bareCallBindsMethods(ix.fileLang[req.SourceFileID]) {
+		matches = filterOutMethods(matches)
+	}
 	matches, receiverContradicted := filterByReceiver(matches, sep)
 	if len(matches) == 0 {
 		return Result{}, false
@@ -704,6 +707,46 @@ func filterByLanguage(matches []model.SymbolRef, srcLang string) []model.SymbolR
 // ERB is the only such language today; add others here as they gain extractors.
 func isViewLanguage(lang string) bool {
 	return lang == "erb"
+}
+
+// bareCallBindsMethods reports whether a language's grammar allows a bare
+// identifier call to dispatch to a method. In Go and Rust it cannot: methods
+// are only reachable through a receiver or path expression (`x.m()`,
+// `Type::m(recv)`), and the extractors for both emit dotted/pathed targets on
+// every selector path, so a bare target is a genuinely bare call — builtins
+// (`append`, `len`), conversions (`int(…)`), functions, and local closures
+// are its only legal callees, none of which is a method symbol. Ruby's bare
+// calls ARE implicit-self method dispatch, so it (and any unknown language)
+// answers true and the gate fails open.
+func bareCallBindsMethods(lang string) bool {
+	return lang != "go" && lang != "rust"
+}
+
+// filterOutMethods drops method-kind candidates from a bare-target fallback
+// in languages where that bind is grammatically impossible (see
+// bareCallBindsMethods). Like filterByLanguage, a hard exclusion: an
+// all-method set empties and the edge drops to unresolved rather than
+// fabricating a verified-band bind (G-10: Go builtin `append(…)` calls rode
+// this path to 778 false edges on one repo). Candidates with an unknown kind
+// are kept, so the gate fails open.
+func filterOutMethods(matches []model.SymbolRef) []model.SymbolRef {
+	hasMethod := false
+	for _, m := range matches {
+		if m.Kind == model.KindMethod {
+			hasMethod = true
+			break
+		}
+	}
+	if !hasMethod {
+		return matches
+	}
+	kept := make([]model.SymbolRef, 0, len(matches))
+	for _, m := range matches {
+		if m.Kind != model.KindMethod {
+			kept = append(kept, m)
+		}
+	}
+	return kept
 }
 
 // filterByTestDirection drops candidates that live in a test file when the
