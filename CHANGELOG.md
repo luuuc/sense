@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.24] - 2026-07-13
+
+### Bug Fixes
+
+- emit composition edges for Go struct fields
 ## [1.11.23] - 2026-07-13
 
 ### Bug Fixes
