@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.21] - 2026-07-13
+
+### Bug Fixes
+
+- expand Go method sets through embedded interfaces
 ## [1.11.20] - 2026-07-11
 
 ### Bug Fixes
