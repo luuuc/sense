@@ -117,7 +117,9 @@ func oracleDigest(t *testing.T, dbPath string) (digest string, content []string)
 // leave it unchanged, and a refactor that alters derived output fails here
 // loudly. When output changes on purpose, regenerate it (see the capture line
 // in TestScanContentOracleDigest) and update this constant in the same commit.
-const oracleGolden = "e2ae251f1928556d5f19a8a195ace3c7b109d6ebd8b3337c661d1d4332ab8fcb"
+// Last regeneration: the parent_linkage meta stamp (cross-file parent
+// linkage) added one meta line; symbols/edges/embeddings unchanged.
+const oracleGolden = "abc968fbbbdcaac3e3ef4969a72ecb8762561edf0994e4ea8c8658525c726693"
 
 func TestScanContentOracleDigest(t *testing.T) {
 	useFakeEmbedder(t)

@@ -10,7 +10,25 @@ import (
 )
 
 // DeleteFile removes a file and (via FK CASCADE) its symbols from the index.
+// Children in OTHER files that hold a parent_id into the doomed symbols are
+// detached first: parent_id carries no ON DELETE action, so the cascade
+// would otherwise trip the foreign key. Detached children re-link when
+// their own file is next scanned, or on a full rebuild. When a schema bump
+// happens for any other reason, parent_id gains ON DELETE SET NULL and this
+// detach retires. The two statements are not wrapped in a transaction here
+// (InTx is raw BEGIN/COMMIT on the shared connection and callers may
+// already hold one); a crash between them leaves detached children with a
+// live parent — benign, it heals like any orphan.
 func (a *Adapter) DeleteFile(ctx context.Context, path string) error {
+	const detach = `
+		UPDATE sense_symbols SET parent_id = NULL
+		WHERE parent_id IN (
+			SELECT s.id FROM sense_symbols s
+			JOIN sense_files f ON f.id = s.file_id
+			WHERE f.path = ?)`
+	if _, err := a.db.ExecContext(ctx, detach, path); err != nil {
+		return fmt.Errorf("sqlite DeleteFile detach: %w", err)
+	}
 	_, err := a.db.ExecContext(ctx, "DELETE FROM sense_files WHERE path = ?", path)
 	if err != nil {
 		return fmt.Errorf("sqlite DeleteFile: %w", err)
@@ -186,6 +204,17 @@ func ExecEdgeStmt(ctx context.Context, stmt *sql.Stmt, e *model.Edge) (int64, er
 		return 0, fmt.Errorf("sqlite WriteEdge (prepared): %w", err)
 	}
 	return id, nil
+}
+
+// UpdateSymbolParent sets a symbol's parent_id. Used by the scan layer's
+// parent-link finalize pass; call inside a transaction when batching.
+func (a *Adapter) UpdateSymbolParent(ctx context.Context, symbolID, parentID int64) error {
+	_, err := a.db.ExecContext(ctx,
+		"UPDATE sense_symbols SET parent_id = ? WHERE id = ?", parentID, symbolID)
+	if err != nil {
+		return fmt.Errorf("sqlite UpdateSymbolParent: %w", err)
+	}
+	return nil
 }
 
 // WriteMeta upserts a key-value pair into sense_meta.

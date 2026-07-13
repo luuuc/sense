@@ -104,6 +104,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	defer func() { _ = idx.Close() }()
 	defer h.closeParsers()
 
+	// Fresh index or rebuild: every file is written this run, so the
+	// index carries complete cross-file parent linkage and finalizeScan
+	// may stamp it. A plain scan skips unchanged-hash files and heals
+	// nothing on a pre-linkage index, so it must not stamp.
+	h.fullyLinked = firstRun || opts.Rebuild || idx.Rebuilt
+
 	h.progress.start()
 	defer h.progress.stop()
 
@@ -126,7 +132,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	h.progress.setPhase("Resolving edges...", 0)
 	t0 = time.Now()
-	if err := h.resolveAndWriteEdges(); err != nil {
+	if err := h.resolvePhase(); err != nil {
 		return nil, err
 	}
 	phases.ResolveEdges = time.Since(t0)
@@ -410,6 +416,12 @@ func finalizeScan(ctx context.Context, idx *sqlite.Adapter, h *harness, senseDir
 		_, _ = fmt.Fprintf(h.warn, "warn: write last_scan_at: %v\n", err)
 	}
 
+	if h.fullyLinked {
+		if err := idx.WriteMeta(ctx, "parent_linkage", "1"); err != nil {
+			_, _ = fmt.Fprintf(h.warn, "warn: write parent_linkage: %v\n", err)
+		}
+	}
+
 	if err := idx.StampSchemaVersion(ctx); err != nil {
 		return err
 	}
@@ -521,6 +533,18 @@ type harness struct {
 	// Empty at start, filled by writeFile, drained by
 	// resolveAndWriteEdges.
 	pendingEdges []pendingEdge
+
+	// pendingParents holds symbols whose ParentQualified missed the
+	// per-file map in writeFileInner (cross-file receiver methods).
+	// Appended only from writeFileInner — the parse phase is parallel —
+	// and drained by resolveParentLinks after the walk.
+	pendingParents []pendingParent
+
+	// fullyLinked records that this scan wrote every file (fresh index
+	// or rebuild), so finalizeScan may stamp the parent_linkage meta
+	// key. A plain scan skips unchanged-hash files and must not stamp:
+	// it heals nothing on an index built before cross-file linkage.
+	fullyLinked bool
 
 	// indexedFiles lists every file successfully processed during
 	// the walk, in visit order. The test-association post-pass
@@ -891,6 +915,7 @@ func (h *harness) flushBatch(batch []*fileResult) error {
 	snapEdges := len(h.pendingEdges)
 	snapIndexed := len(h.indexedFiles)
 	snapChanged := len(h.changedFileIDs)
+	snapParents := len(h.pendingParents)
 
 	var totalSyms int
 	failedIdx := -1
@@ -910,6 +935,7 @@ func (h *harness) flushBatch(batch []*fileResult) error {
 		h.pendingEdges = h.pendingEdges[:snapEdges]
 		h.indexedFiles = h.indexedFiles[:snapIndexed]
 		h.changedFileIDs = h.changedFileIDs[:snapChanged]
+		h.pendingParents = h.pendingParents[:snapParents]
 
 		h.addWarning(warnWriteFailed, "%s (%v)", batch[failedIdx].Rel, err)
 		retry := make([]*fileResult, 0, len(batch)-1)
@@ -1000,6 +1026,15 @@ func (h *harness) processFile(path, rel string) {
 // Used by processFile (RunIncremental) where per-file transactions
 // are appropriate for small change sets.
 func (h *harness) writeFileResult(fr *fileResult) error {
+	// Snapshot the in-memory buffers writeFileInner appends to, mirroring
+	// flushBatch: an entry surviving a rolled-back transaction would carry
+	// symbol ids the rollback freed, and SQLite reuses top rowids — a later
+	// finalize pass would then link or edge the WRONG symbol.
+	snapEdges := len(h.pendingEdges)
+	snapParents := len(h.pendingParents)
+	snapIndexed := len(h.indexedFiles)
+	snapChanged := len(h.changedFileIDs)
+
 	var symsWritten int
 	err := h.idx.InTx(h.ctx, func() error {
 		n, err := h.writeFileInner(fr)
@@ -1010,6 +1045,10 @@ func (h *harness) writeFileResult(fr *fileResult) error {
 		return nil
 	})
 	if err != nil {
+		h.pendingEdges = h.pendingEdges[:snapEdges]
+		h.pendingParents = h.pendingParents[:snapParents]
+		h.indexedFiles = h.indexedFiles[:snapIndexed]
+		h.changedFileIDs = h.changedFileIDs[:snapChanged]
 		return err
 	}
 	h.symbols += symsWritten
@@ -1067,6 +1106,14 @@ func (h *harness) writeFileInner(fr *fileResult) (int, error) {
 		}
 		idByQualified[s.Qualified] = id
 		parentByQualified[s.Qualified] = s.ParentQualified
+		if s.ParentQualified != "" && parentID == nil {
+			h.pendingParents = append(h.pendingParents, pendingParent{
+				SymbolID:        id,
+				ParentQualified: s.ParentQualified,
+				FileID:          fileID,
+				Dir:             filepath.Dir(fr.Rel),
+			})
+		}
 		symsWritten++
 	}
 
@@ -1091,8 +1138,9 @@ func (h *harness) writeFileInner(fr *fileResult) (int, error) {
 
 // removeStaleFiles deletes index entries for files that were not seen
 // during this walk (deleted from disk, or now excluded by ignore rules).
-// FK CASCADE on sense_symbols cleans up symbols; edges referencing those
-// symbols are also cascaded.
+// FK CASCADE on sense_symbols cleans up symbols and their edges;
+// DeleteFile first detaches cross-file parent links into the doomed
+// symbols (parent_id has no ON DELETE action).
 func (h *harness) removeStaleFiles() error {
 	tracked, err := h.idx.FilePaths(h.ctx)
 	if err != nil {

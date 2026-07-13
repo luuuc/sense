@@ -142,6 +142,128 @@ func TestFlushBatchPartialFailureRollsBackAndRetries(t *testing.T) {
 	assertQualified(t, fresh, map[string]bool{"A": true, "B": true})
 }
 
+// goMethodFile builds a fileResult whose method's receiver type lives in
+// another file, so writeFileInner buffers a pendingParent for it — the
+// shape the rollback snapshots must clean up.
+func goMethodFile(rel string) *fileResult {
+	return &fileResult{
+		Rel:      rel,
+		Language: "go",
+		Source:   []byte("package mvcc\n\nfunc (s *Store) Read() int { return 1 }\n"),
+		Hash:     "hash-" + rel,
+		Symbols: []extract.EmittedSymbol{
+			{Name: "Read", Qualified: "mvcc.Store.Read", Kind: "method", ParentQualified: "mvcc.Store", LineStart: 3, LineEnd: 3},
+		},
+	}
+}
+
+// TestFlushBatchRollbackDropsPendingParents kills the mutant Beck named:
+// deleting the pendingParents truncate in flushBatch must fail this test.
+// File A buffers a pendingParent, file B's WriteFile fault rolls the
+// transaction back (freeing A's rowids), and the retry re-writes A with
+// NEW ids. A stale entry surviving the rollback would carry a freed rowid
+// that resolveParentLinks could stamp onto the wrong symbol.
+func TestFlushBatchRollbackDropsPendingParents(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	writeSource(t, dir, "read.go", "package mvcc\n\nfunc (s *Store) Read() int { return 1 }\n")
+	writeSource(t, dir, "b.rb", "class B\nend\n")
+
+	adapter := openIndex(t, dir)
+	t.Cleanup(func() { _ = adapter.Close() })
+	store := &faultWriteStore{Adapter: adapter, failPath: "b.rb"}
+	h := &harness{
+		ctx:       ctx,
+		idx:       store,
+		out:       io.Discard,
+		warn:      io.Discard,
+		collector: newWarningCollector(),
+		progress:  &progress{},
+		seenPaths: map[string]bool{},
+	}
+
+	if err := h.flushBatch([]*fileResult{goMethodFile("read.go"), classFile("b.rb", "B")}); err != nil {
+		t.Fatalf("flushBatch: %v", err)
+	}
+	if !store.fired {
+		t.Fatal("fault was never triggered")
+	}
+
+	if got := len(h.pendingParents); got != 1 {
+		t.Fatalf("pendingParents = %d entries after rollback+retry, want exactly 1 (stale rolled-back entry must be truncated)", got)
+	}
+	var liveID int64
+	err := adapter.DB().QueryRowContext(ctx,
+		"SELECT id FROM sense_symbols WHERE qualified = 'mvcc.Store.Read'").Scan(&liveID)
+	if err != nil {
+		t.Fatalf("read surviving symbol: %v", err)
+	}
+	if h.pendingParents[0].SymbolID != liveID {
+		t.Errorf("pendingParents[0].SymbolID = %d, want the live rowid %d (a stale id would mislink on rowid reuse)",
+			h.pendingParents[0].SymbolID, liveID)
+	}
+}
+
+// faultSymbolStore fails WriteSymbol once for a named qualified — the
+// failure point AFTER a pendingParent append, driving writeFileResult's
+// rollback snapshot (the incremental per-file path).
+type faultSymbolStore struct {
+	*sqlite.Adapter
+	failQualified string
+	fired         bool
+}
+
+func (f *faultSymbolStore) WriteSymbol(ctx context.Context, s *model.Symbol) (int64, error) {
+	if !f.fired && s.Qualified == f.failQualified {
+		f.fired = true
+		return 0, errInjectedWrite
+	}
+	return f.Adapter.WriteSymbol(ctx, s)
+}
+
+// TestWriteFileResultRollbackDropsPendingParents pins the incremental
+// twin of the flushBatch snapshot: the method's pendingParent is appended
+// before a later symbol's write fails, and the rollback must drop it.
+func TestWriteFileResultRollbackDropsPendingParents(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	adapter := openIndex(t, dir)
+	t.Cleanup(func() { _ = adapter.Close() })
+	store := &faultSymbolStore{Adapter: adapter, failQualified: "mvcc.Store.Write"}
+	h := &harness{
+		ctx:       ctx,
+		idx:       store,
+		out:       io.Discard,
+		warn:      io.Discard,
+		collector: newWarningCollector(),
+		progress:  &progress{},
+		seenPaths: map[string]bool{},
+	}
+
+	fr := goMethodFile("txn.go")
+	fr.Symbols = append(fr.Symbols, extract.EmittedSymbol{
+		Name: "Write", Qualified: "mvcc.Store.Write", Kind: "method",
+		ParentQualified: "mvcc.Store", LineStart: 5, LineEnd: 5,
+	})
+
+	if err := h.writeFileResult(fr); err == nil {
+		t.Fatal("writeFileResult should surface the injected symbol failure")
+	}
+	if !store.fired {
+		t.Fatal("fault was never triggered")
+	}
+	if got := len(h.pendingParents); got != 0 {
+		t.Errorf("pendingParents = %d entries after rolled-back writeFileResult, want 0", got)
+	}
+	if got := len(h.pendingEdges); got != 0 {
+		t.Errorf("pendingEdges = %d entries after rolled-back writeFileResult, want 0", got)
+	}
+	if got := len(h.indexedFiles); got != 0 {
+		t.Errorf("indexedFiles = %d entries after rolled-back writeFileResult, want 0", got)
+	}
+}
+
 // TestFlushBatchWholeBatchFailsDropsAllCleanly covers flushBatch's
 // retry-exhausted branch: when the only file in a batch fails, the retry list
 // is empty, so flushBatch returns cleanly with nothing indexed and a warning

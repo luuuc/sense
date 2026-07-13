@@ -105,7 +105,8 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 }
 
 // removeDeleted deletes the given relative paths from the index in one
-// transaction; FK CASCADE removes their symbols and edges.
+// transaction; FK CASCADE removes their symbols and edges, after
+// DeleteFile detaches cross-file parent links into them.
 func (h *harness) removeDeleted(removed []string) error {
 	err := h.idx.InTx(h.ctx, func() error {
 		for _, rel := range removed {
@@ -126,8 +127,15 @@ func (h *harness) removeDeleted(removed []string) error {
 // recording each phase's timing.
 func (h *harness) deriveIncremental(embeddingsEnabled bool, phases *PhaseTiming) error {
 	t0 := time.Now()
-	if err := h.resolveAndWriteEdges(); err != nil {
-		return fmt.Errorf("resolve edges: %w", err)
+	// The parent-link leg is load-bearing here, not symmetry:
+	// WriteSymbol's upsert clobbers parent_id on every rescan of a
+	// child's file; the resolve phase restores the cross-file links for
+	// the files this run touched. The clobber commits per file and the
+	// repair lands at end of run — a crash in between leaves those
+	// links NULL until the file changes again or a rebuild (benign,
+	// same class as the DeleteFile detach window).
+	if err := h.resolvePhase(); err != nil {
+		return fmt.Errorf("resolve: %w", err)
 	}
 	phases.ResolveEdges = time.Since(t0)
 

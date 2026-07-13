@@ -123,6 +123,46 @@ func TestLoadEdgesScanError(t *testing.T) {
 
 // --- query errors: a closed handle surfaces the QueryContext error path. ---
 
+// A closed handle fails ContainerRefs at QueryContext; a corrupt line_start
+// on a container row fails its row scan. Together they pin the parent-link
+// pass's read against both sqlite failure shapes.
+func TestContainerRefsQueryErrorOnClosedDB(t *testing.T) {
+	ctx := context.Background()
+	a := closedSeededAdapter(t, nil)
+	if _, err := a.ContainerRefs(ctx); err == nil {
+		t.Error("expected error from ContainerRefs on closed DB")
+	}
+}
+
+func TestContainerRefsScanError(t *testing.T) {
+	a := openTestDB(t)
+	ctx := context.Background()
+
+	fid := seedFile(t, a, "kv.go", "go", "h1")
+	classID := seedSymbol(t, a, fid, "Store", "mvcc.Store", "class")
+	corruptColumn(t, a, "sense_symbols", "line_start", classID)
+
+	if _, err := a.ContainerRefs(ctx); err == nil {
+		t.Error("expected scan error from ContainerRefs, got nil")
+	}
+}
+
+func TestParentWritesErrorOnClosedDB(t *testing.T) {
+	ctx := context.Background()
+	a := closedSeededAdapter(t, nil)
+
+	t.Run("UpdateSymbolParent", func(t *testing.T) {
+		if err := a.UpdateSymbolParent(ctx, 1, 2); err == nil {
+			t.Error("expected error from UpdateSymbolParent on closed DB")
+		}
+	})
+	t.Run("DeleteFileDetach", func(t *testing.T) {
+		if err := a.DeleteFile(ctx, "a.go"); err == nil {
+			t.Error("expected error from DeleteFile detach on closed DB")
+		}
+	})
+}
+
 func TestKeySymbolsQueryErrorsOnClosedDB(t *testing.T) {
 	ctx := context.Background()
 	a := closedSeededAdapter(t, nil)

@@ -32,11 +32,13 @@ type indexStore interface {
 	WriteFile(ctx context.Context, f *model.File) (int64, error)
 	WriteSymbol(ctx context.Context, s *model.Symbol) (int64, error)
 	WriteEdge(ctx context.Context, e *model.Edge) (int64, error)
+	UpdateSymbolParent(ctx context.Context, symbolID, parentID int64) error
 	DeleteFile(ctx context.Context, path string) error
 
 	// Reads used across the resolve, temporal, satisfy and embed passes.
 	Query(ctx context.Context, f index.Filter) ([]model.Symbol, error)
 	SymbolRefs(ctx context.Context) ([]model.SymbolRef, error)
+	ContainerRefs(ctx context.Context) ([]sqlite.ContainerRef, error)
 	FileMeta(ctx context.Context, path string) (int64, string, error)
 	FileHashMap(ctx context.Context) (map[string]sqlite.CachedFile, error)
 	FilePaths(ctx context.Context) ([]string, error)
