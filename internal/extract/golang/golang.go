@@ -314,6 +314,9 @@ func (w *walker) emitTypeSpec(spec *sitter.Node, isAlias bool, doc string) error
 		if err := w.emitEmbeddings(structNode, qualified); err != nil {
 			return err
 		}
+		if err := w.emitFieldCompositions(structNode, qualified, typeParamNames(spec, w.source)); err != nil {
+			return err
+		}
 	}
 	if ifaceNode != nil {
 		if err := w.emitInterfaceMethods(ifaceNode, qualified); err != nil {
