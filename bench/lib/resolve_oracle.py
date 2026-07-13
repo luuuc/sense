@@ -5,10 +5,14 @@ The isolated product unit-test the vertical bench is too coarse to be. For each
 repo's CENTRAL contract symbol it runs the LIVE `sense` CLI against the repo's
 pinned `.sense` index and asserts two things mechanically:
 
-  COVERAGE — does `sense blast <symbol>` (default min_confidence 0.7, the agent's
-    default) actually return the gold DISCRIMINATOR dependents the scenario says it
-    must? Missing gold here is a LIVE-CONFIRMED resolver miss (stronger than the
-    transcript_miss inference, which only saw what the agent happened to query).
+  COVERAGE — does `sense blast <symbol>` at min_confidence 0.3 (the AGENT's
+    default: the MCP schema default since 16b20de; the bare CLI defaults to 0.7 and
+    diverges by design) actually return the gold DISCRIMINATOR dependents the
+    scenario says it must? Missing gold here is a LIVE-CONFIRMED resolver miss
+    (stronger than the transcript_miss inference, which only saw what the agent
+    happened to query). Instrument matches the Go-vertical gold law (Event B ruling
+    + amended rail (a), 2026-07-13): citable = SHOWN by the budgeted tools at any
+    band, hand-audited — so the oracle measures the same union the law names.
 
   AMBIGUITY — does the naive `sense graph/blast <symbol>` (no --file) resolve, or
     does it error/empty while the --file form returns a real set? That is the exact
@@ -169,8 +173,10 @@ def check_repo(stack, repo, spec):
     symbol = spec["symbol"]
     file_arg = spec.get("file")
 
-    # 1) canonical blast (with --file if the symbol is ambiguous) → coverage
-    blast_args = ["blast", symbol, "--json"]
+    # 1) canonical blast (with --file if the symbol is ambiguous) → coverage.
+    # Explicit 0.3 = the MCP/agent default; the bare CLI defaults to 0.7 and would
+    # under-measure the agent-facing surface (CLI diverges by design).
+    blast_args = ["blast", symbol, "--json", "--min-confidence", "0.3"]
     if file_arg:
         blast_args += ["--file", file_arg]
     bcode, bjson = run_sense(clone, blast_args)
@@ -183,7 +189,8 @@ def check_repo(stack, repo, spec):
     # blast's direct_callers are budget-capped (~60); graph called_by/composes/etc
     # are not — so coverage must be measured against blast ∪ graph, else the cap
     # gets misread as a resolver miss (two different product axes).
-    gboth_args = ["graph", symbol, "--direction", "both", "--json"]
+    gboth_args = ["graph", symbol, "--direction", "both", "--json",
+                  "--min-confidence", "0.3"]
     if file_arg:
         gboth_args += ["--file", file_arg]
     _gc, gboth = run_sense(clone, gboth_args)
