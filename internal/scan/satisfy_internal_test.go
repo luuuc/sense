@@ -156,6 +156,28 @@ func TestExpandInterfaceMethodSets(t *testing.T) {
 	}
 }
 
+// TestExpandInterfaceMethodSetsArityConflict pins the diamond-disagreement
+// rule: the same member name arriving from two embedded interfaces with
+// DIFFERENT arities collapses to UNKNOWN — map order never decides, and the
+// conservative direction (keep the edge) holds.
+func TestExpandInterfaceMethodSetsArityConflict(t *testing.T) {
+	k := func(p, r int) arity { return arity{params: p, results: r, known: true} }
+	interfaces := map[int64]*ifaceInfo{
+		1: {methods: map[string]arity{"Close": k(0, 1)}},
+		2: {methods: map[string]arity{"Close": k(1, 1)}},
+		3: {methods: map[string]arity{}},
+	}
+	embeddings := map[int64][]int64{3: {1, 2}}
+	expandInterfaceMethodSets(interfaces, embeddings)
+	got, ok := interfaces[3].methods["Close"]
+	if !ok {
+		t.Fatal("Close must be present after expansion")
+	}
+	if got.known {
+		t.Errorf("conflicting arities must collapse to UNKNOWN, got %+v", got)
+	}
+}
+
 // TestExpandInterfaceMethodSetsCycle proves termination on an embedding cycle
 // (illegal Go, but the index can contain mid-edit or misresolved code).
 func TestExpandInterfaceMethodSetsCycle(t *testing.T) {
