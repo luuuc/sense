@@ -416,6 +416,15 @@ func finalizeScan(ctx context.Context, idx *sqlite.Adapter, h *harness, senseDir
 		_, _ = fmt.Fprintf(h.warn, "warn: write last_scan_at: %v\n", err)
 	}
 
+	// satisfy_unbudgeted records that interface satisfaction ran without the
+	// old 500K interfaces×structs budget that silently skipped the whole pass
+	// on big Go repos (G-2). Unlike the rebuild-gated stamps below, the
+	// satisfy pass recomputes over the full symbol table on EVERY scan, so a
+	// plain scan heals a blind index — the stamp writes unconditionally.
+	if err := idx.WriteMeta(ctx, "satisfy_unbudgeted", "1"); err != nil {
+		_, _ = fmt.Fprintf(h.warn, "warn: write satisfy_unbudgeted: %v\n", err)
+	}
+
 	if h.fullyLinked {
 		if err := idx.WriteMeta(ctx, "parent_linkage", "1"); err != nil {
 			_, _ = fmt.Fprintf(h.warn, "warn: write parent_linkage: %v\n", err)

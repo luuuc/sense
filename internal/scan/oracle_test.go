@@ -119,7 +119,7 @@ func oracleDigest(t *testing.T, dbPath string) (digest string, content []string)
 // in TestScanContentOracleDigest) and update this constant in the same commit.
 // Last regeneration: the composes_go meta stamp (Go composition-edge fix)
 // added one meta line; symbols/edges/embeddings unchanged.
-const oracleGolden = "a167103865f0532dcbd3e31af0ae098dfd21394f8c2bfbd975fec055c9b1dec8"
+const oracleGolden = "a5fb23c61141369e99b348abf7691778d07eb8de0d16eddf1251b656eb32a7e9"
 
 func TestScanContentOracleDigest(t *testing.T) {
 	useFakeEmbedder(t)
