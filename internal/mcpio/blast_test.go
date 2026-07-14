@@ -1214,8 +1214,10 @@ func TestApplyBlastBudgetTrimsToFitPreservingCounts(t *testing.T) {
 	const budget = 1500
 	ApplyBlastBudget(&r, budget)
 
-	if got := estimateJSONTokens(&r); got > budget {
-		t.Errorf("after trim, tokens=%d still exceed budget=%d", got, budget)
+	// The budget is priced against the wire (compact) marshal — what the MCP
+	// transport actually sends — not the pretty marshal the CLI prints.
+	if got := estimateBlastWireTokens(&r); got > budget {
+		t.Errorf("after trim, wire tokens=%d still exceed budget=%d", got, budget)
 	}
 	if !r.Truncated {
 		t.Error("expected Truncated=true after trimming")
@@ -1241,7 +1243,7 @@ func TestApplyBlastBudgetTrimShedsTestCallersFirst(t *testing.T) {
 	for i := 20; i < 40; i++ {
 		r.DirectCallers[i].File = "app/tests/caller" + itoa(i) + "_test.rb"
 	}
-	const budget = 900 // forces step 4 into the direct-caller list
+	const budget = 500 // forces step 4 into the direct-caller list (wire-priced)
 	ApplyBlastBudget(&r, budget)
 
 	if !r.Truncated {

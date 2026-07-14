@@ -350,9 +350,12 @@ type BlastResponse struct {
 	// produce it). RetainedCount is the full computed size and is never
 	// reduced by budget trimming, so a trimmed list is self-evident from
 	// retained_via_interfaces_count > len(retained_via_interfaces).
-	RetainedViaInterfaces []BlastCaller `json:"retained_via_interfaces,omitempty"`
-	RetainedCount         int           `json:"retained_via_interfaces_count,omitempty"`
-	RetainedNote          string        `json:"retained_note,omitempty"`
+	// RetainedNote carries the group's shared semantics once — per-entry
+	// weight is what decides whether the group survives the token budget on
+	// a hub subject, so entries stay minimal (see BlastRetained).
+	RetainedViaInterfaces []BlastRetained `json:"retained_via_interfaces,omitempty"`
+	RetainedCount         int             `json:"retained_via_interfaces_count,omitempty"`
+	RetainedNote          string          `json:"retained_note,omitempty"`
 
 	// Tier 2 — references (composes/inherits/includes). Count + top examples.
 	References BlastTierSummary `json:"references"`
@@ -419,6 +422,19 @@ type BlastCaller struct {
 	Ref         string    `json:"ref,omitempty"`
 	ViaTemporal bool      `json:"via_temporal,omitempty"`
 	CallSite    *CallSite `json:"call_site,omitempty"`
+}
+
+// BlastRetained is the shape of a retained_via_interfaces entry: the holder,
+// its citable file:line ref, and the interface its field is typed as (the
+// laundering route, so the agent can verify the hop without a second call).
+// Deliberately leaner than BlastCaller — the ref already encodes file and
+// line, and the may-retain relation lives once in retained_note; on a hub
+// subject the whole group must fit the token budget alongside the caller
+// lists or it is the first thing trimmed away.
+type BlastRetained struct {
+	Symbol string `json:"symbol"`
+	Ref    string `json:"ref"`
+	Via    string `json:"via"`
 }
 
 // Completeness is a single, machine-branchable verdict on whether the

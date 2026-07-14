@@ -86,17 +86,23 @@ func TestBuildBlastResponseRendersRetainedGroup(t *testing.T) {
 		t.Fatalf("retained entries = %d, want 2", len(resp.RetainedViaInterfaces))
 	}
 	first := resp.RetainedViaInterfaces[0]
-	if first.Relation != "may retain Widget via RareIface" {
-		t.Errorf("relation = %q, want may-retain wording with the via-interface", first.Relation)
+	if first.Via != "RareIface" {
+		t.Errorf("via = %q, want the via-interface name", first.Via)
 	}
-	if first.File != "app/holder.go" || first.Ref == "" {
-		t.Errorf("entry must carry file and ref, got file=%q ref=%q", first.File, first.Ref)
+	if first.Ref != "app/holder.go:30" {
+		t.Errorf("entry must carry the file:line ref, got %q", first.Ref)
+	}
+	if first.Symbol != "HolderH" {
+		t.Errorf("symbol = %q, want HolderH", first.Symbol)
 	}
 	if resp.RetainedCount != 2 {
 		t.Errorf("RetainedCount = %d, want 2", resp.RetainedCount)
 	}
 	if !strings.Contains(resp.RetainedNote, "one interface indirection") {
 		t.Errorf("group note must state the depth-1 bound, got %q", resp.RetainedNote)
+	}
+	if !strings.Contains(resp.RetainedNote, "may retain Widget") {
+		t.Errorf("group note must carry the may-retain semantics once, got %q", resp.RetainedNote)
 	}
 
 	// Exclusion pins: every existing accounting surface is byte-equal.
@@ -140,6 +146,38 @@ func TestApplyBlastBudgetTrimsRetainedBeforeDirect(t *testing.T) {
 	}
 	if len(resp.DirectCallers) != 1 {
 		t.Errorf("the last direct caller must survive, got %d", len(resp.DirectCallers))
+	}
+	if !resp.Truncated {
+		t.Errorf("Truncated must be set")
+	}
+}
+
+// TestApplyBlastBudgetShedsDuplicativeContentFirst: under pressure the tier-2
+// reference examples (duplicates of fully-enumerated group lists) and the
+// affected-test sample empty BEFORE any retained entry sheds, and their
+// counts survive.
+func TestApplyBlastBudgetShedsDuplicativeContentFirst(t *testing.T) {
+	resp := BuildBlastResponse(context.Background(), retainedResult(true), retainedFiles, nil)
+	resp.AffectedTests = []string{"a_test.go", "b_test.go"}
+	resp.TestsAffectedCount = 2
+	resp.References = BlastTierSummary{Count: 7, Examples: []BlastCaller{{Symbol: "Dup", File: "app/widget.go"}}}
+
+	// A budget wide enough that shedding examples+tests suffices: current
+	// size minus just those two lists.
+	over := estimateBlastWireTokens(&resp) - 1
+	ApplyBlastBudget(&resp, over)
+
+	if len(resp.References.Examples) != 0 {
+		t.Errorf("reference examples must shed first, got %d", len(resp.References.Examples))
+	}
+	if resp.References.Count != 7 {
+		t.Errorf("references.count must survive, got %d", resp.References.Count)
+	}
+	if resp.TestsAffectedCount != 2 {
+		t.Errorf("tests_affected_count must survive, got %d", resp.TestsAffectedCount)
+	}
+	if len(resp.RetainedViaInterfaces) != 2 {
+		t.Errorf("retained entries must not shed while duplicative content remains, got %d", len(resp.RetainedViaInterfaces))
 	}
 	if !resp.Truncated {
 		t.Errorf("Truncated must be set")
