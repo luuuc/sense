@@ -37,6 +37,8 @@ Sense gives you structural understanding of the codebase (symbols, relationships
 | Question | Tool |
 |---|---|
 | Who calls X? What does X call? | sense_graph |
+| Who holds/embeds X? Which structs carry it (directly or via a field)? | sense_graph (composed_by) |
+| What retains X transitively, incl. behind interface-typed fields (lifecycle audit)? | sense_blast (retained_via_interfaces) |
 | Find code related to a concept | sense_search |
 | What breaks if I change X? | sense_blast |
 | What patterns does this project follow? | sense_conventions |

@@ -36,6 +36,8 @@ const ServerInstructions = "When Sense is available and indexed, prefer Sense to
 	"Sense provides pre-indexed results that are faster and more complete.\n\n" +
 	"WHEN TO USE SENSE TOOLS:\n" +
 	"- Symbol relationships, callers, dependencies → sense_graph\n" +
+	"- Who holds/embeds X, which structs carry it → sense_graph (composed_by)\n" +
+	"- What retains X transitively, incl. behind interface fields (lifecycle audit) → sense_blast (retained_via_interfaces)\n" +
 	"- \"What would break if I changed X?\", impact analysis → sense_blast\n" +
 	"- Conceptual/semantic code search (not exact string match) → sense_search\n" +
 	"- Project patterns and conventions → sense_conventions\n" +
@@ -339,6 +341,22 @@ type BlastResponse struct {
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
 	AffectedViaIncludes    []BlastCaller `json:"affected_via_includes"`
 
+	// RetainedViaInterfaces lists may-retain holders: structs holding the
+	// subject only behind an interface-typed field whose concrete satisfier
+	// is a carrier of the subject, one interface indirection deep. A weaker
+	// claim than the affected_* groups — it never feeds total_affected,
+	// references.count, or the production/test segmentation, and it is
+	// omitted entirely when empty (languages without interface symbols never
+	// produce it). RetainedCount is the full computed size and is never
+	// reduced by budget trimming, so a trimmed list is self-evident from
+	// retained_via_interfaces_count > len(retained_via_interfaces).
+	// RetainedNote carries the group's shared semantics once — per-entry
+	// weight is what decides whether the group survives the token budget on
+	// a hub subject, so entries stay minimal (see BlastRetained).
+	RetainedViaInterfaces []BlastRetained `json:"retained_via_interfaces,omitempty"`
+	RetainedCount         int             `json:"retained_via_interfaces_count,omitempty"`
+	RetainedNote          string          `json:"retained_note,omitempty"`
+
 	// Tier 2 — references (composes/inherits/includes). Count + top examples.
 	References BlastTierSummary `json:"references"`
 	// Tier 3 — affected test count (detail omitted to keep response focused).
@@ -404,6 +422,19 @@ type BlastCaller struct {
 	Ref         string    `json:"ref,omitempty"`
 	ViaTemporal bool      `json:"via_temporal,omitempty"`
 	CallSite    *CallSite `json:"call_site,omitempty"`
+}
+
+// BlastRetained is the shape of a retained_via_interfaces entry: the holder,
+// its citable file:line ref, and the interface its field is typed as (the
+// laundering route, so the agent can verify the hop without a second call).
+// Deliberately leaner than BlastCaller — the ref already encodes file and
+// line, and the may-retain relation lives once in retained_note; on a hub
+// subject the whole group must fit the token budget alongside the caller
+// lists or it is the first thing trimmed away.
+type BlastRetained struct {
+	Symbol string `json:"symbol"`
+	Ref    string `json:"ref"`
+	Via    string `json:"via"`
 }
 
 // Completeness is a single, machine-branchable verdict on whether the

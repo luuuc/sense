@@ -284,6 +284,9 @@ func CollectBlastFileIDs(r blast.Result) []int64 {
 			note(sym.FileID)
 		}
 	}
+	for _, rh := range r.RetainedViaInterfaces {
+		note(rh.Symbol.FileID)
+	}
 	return ids
 }
 

@@ -269,10 +269,12 @@ func TestInboundComposersRowsIterationError(t *testing.T) {
 }
 
 // TestLoadReverseCompositionPropagatesQueryError covers the error return after
-// inboundComposers fails inside the method.
+// the symbol hydration fails inside the method (composerIDs now arrive
+// pre-fetched from Compute, so the composes-query fault lives with
+// inboundComposers' own tests above).
 func TestLoadReverseCompositionPropagatesQueryError(t *testing.T) {
 	db := openBlastFaultDB(t)
-	armBlastQueryFault("kind = 'composes'")
+	armBlastQueryFault("FROM sense_symbols")
 	t.Cleanup(disarmBlastFaults)
 	s := &bfsState{childSet: map[int64]struct{}{}}
 	noSelf := func(model.Symbol) bool { return false }

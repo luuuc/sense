@@ -1214,8 +1214,10 @@ func TestApplyBlastBudgetTrimsToFitPreservingCounts(t *testing.T) {
 	const budget = 1500
 	ApplyBlastBudget(&r, budget)
 
-	if got := estimateJSONTokens(&r); got > budget {
-		t.Errorf("after trim, tokens=%d still exceed budget=%d", got, budget)
+	// The budget is priced against the wire (compact) marshal — what the MCP
+	// transport actually sends — not the pretty marshal the CLI prints.
+	if got := estimateBlastWireTokens(&r); got > budget {
+		t.Errorf("after trim, wire tokens=%d still exceed budget=%d", got, budget)
 	}
 	if !r.Truncated {
 		t.Error("expected Truncated=true after trimming")
@@ -1241,7 +1243,7 @@ func TestApplyBlastBudgetTrimShedsTestCallersFirst(t *testing.T) {
 	for i := 20; i < 40; i++ {
 		r.DirectCallers[i].File = "app/tests/caller" + itoa(i) + "_test.rb"
 	}
-	const budget = 900 // forces step 4 into the direct-caller list
+	const budget = 500 // forces step 4 into the direct-caller list (wire-priced)
 	ApplyBlastBudget(&r, budget)
 
 	if !r.Truncated {
@@ -1781,5 +1783,28 @@ func TestBuildDiffBlastResponseSeenCollapses(t *testing.T) {
 	}
 	if !strings.Contains(resp.RiskFactors[0], "2 direct callers") {
 		t.Errorf("risk factor = %q, want it to report 2 direct callers (full magnitude)", resp.RiskFactors[0])
+	}
+}
+
+// TestApplyBlastBudgetPricesTheWireNotThePrettyPrint pins the estimator to
+// the compact marshal the MCP transport sends: a budget that the wire fits
+// but the pretty print exceeds must trim NOTHING. Under pretty pricing this
+// response sheds real content to pay for indentation nobody receives.
+func TestApplyBlastBudgetPricesTheWireNotThePrettyPrint(t *testing.T) {
+	r := bigBlastResponse(60, 20, 12)
+	wire := estimateBlastWireTokens(&r)
+	pretty := estimateJSONTokens(&r)
+	if wire >= pretty {
+		t.Fatalf("fixture must diverge: wire=%d pretty=%d", wire, pretty)
+	}
+	budget := (wire + pretty) / 2
+
+	before := len(r.DirectCallers) + len(r.IndirectCallers) + len(r.AffectedTests)
+	ApplyBlastBudget(&r, budget)
+	after := len(r.DirectCallers) + len(r.IndirectCallers) + len(r.AffectedTests)
+
+	if after != before || r.Truncated {
+		t.Errorf("in-wire-budget response must be untouched: before=%d after=%d truncated=%v (wire=%d pretty=%d budget=%d)",
+			before, after, r.Truncated, wire, pretty, budget)
 	}
 }

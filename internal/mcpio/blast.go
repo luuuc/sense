@@ -3,6 +3,7 @@ package mcpio
 import (
 	"context"
 	"fmt"
+	"math"
 	"path"
 	"sort"
 
@@ -87,20 +88,24 @@ func spanIndirectByFile(hops []blast.CallerHop, directCallers []model.Symbol) []
 //
 // Applied on the MCP path only — the token budget is an LLM-context
 // concern. The CLI emits the full (untrimmed) response for piping to
-// jq and friends, so the two surfaces can diverge by design.
+// jq and friends, so the two surfaces can diverge by design. Because
+// this path is MCP-only, the estimate prices the COMPACT marshal the
+// transport actually sends (estimateBlastWireTokens): pretty-pricing
+// was charging ~25% phantom indentation against the budget, which on
+// a hub subject trimmed away real content the wire had room for.
 func ApplyBlastBudget(resp *BlastResponse, budget int) {
 	if budget <= 0 {
 		return
 	}
 	// 1. Affected-test sample: tests_affected_count carries the real total.
-	if estimateJSONTokens(resp) > budget && len(resp.AffectedTests) > blastTestExamplesCap {
+	if estimateBlastWireTokens(resp) > budget && len(resp.AffectedTests) > blastTestExamplesCap {
 		resp.AffectedTests = resp.AffectedTests[:blastTestExamplesCap]
 		resp.Truncated = true
 	}
 	// 2. Call-site snippets are supporting detail; a caller's identity is
 	// the decision-relevant signal for "what breaks?". Shed snippets before
 	// dropping any caller, so more callers survive within the same budget.
-	if estimateJSONTokens(resp) > budget {
+	if estimateBlastWireTokens(resp) > budget {
 		stripped := false
 		for i := range resp.DirectCallers {
 			if resp.DirectCallers[i].CallSite != nil {
@@ -113,14 +118,36 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		}
 	}
 	// 3. Indirect callers are a weaker signal than direct callers.
-	for estimateJSONTokens(resp) > budget && len(resp.IndirectCallers) > 0 {
+	for estimateBlastWireTokens(resp) > budget && len(resp.IndirectCallers) > 0 {
 		n := len(resp.IndirectCallers)
 		resp.IndirectCallers = resp.IndirectCallers[:n-trimStep(n)]
 		resp.Truncated = true
 	}
+	// 3b. Tier-2 reference examples are pure duplication under pressure —
+	// every example is an entry the subclass/composition/includes lists
+	// already enumerate in full — so they shed before any content-bearing
+	// group. references.count keeps the magnitude.
+	if estimateBlastWireTokens(resp) > budget && len(resp.References.Examples) > 0 {
+		resp.References.Examples = resp.References.Examples[:0]
+		resp.Truncated = true
+	}
+	// 3c. The affected-test sample is illustrative; tests_affected_count
+	// carries the true total, so the sample empties before answer content.
+	if estimateBlastWireTokens(resp) > budget && len(resp.AffectedTests) > 0 {
+		resp.AffectedTests = resp.AffectedTests[:0]
+		resp.Truncated = true
+	}
+	// 3d. Retained holders carry a weaker claim than any direct caller, so
+	// they shed next. RetainedCount is never reduced — a trimmed group is
+	// self-evident from count > len(entries).
+	for estimateBlastWireTokens(resp) > budget && len(resp.RetainedViaInterfaces) > 0 {
+		n := len(resp.RetainedViaInterfaces)
+		resp.RetainedViaInterfaces = resp.RetainedViaInterfaces[:n-trimStep(n)]
+		resp.Truncated = true
+	}
 	// 4. Direct callers last; keep at least one. total_affected still
 	// reports how many exist beyond what is shown.
-	for estimateJSONTokens(resp) > budget && len(resp.DirectCallers) > 1 {
+	for estimateBlastWireTokens(resp) > budget && len(resp.DirectCallers) > 1 {
 		n := len(resp.DirectCallers)
 		resp.DirectCallers = resp.DirectCallers[:n-trimStep(n-1)]
 		resp.Truncated = true
@@ -130,6 +157,20 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 	if resp.Completeness != nil {
 		resp.Completeness = blastCompleteness(resp, resp.TotalAffected)
 	}
+}
+
+// estimateBlastWireTokens prices a blast response as the MCP transport
+// sends it: the compact marshal (MarshalBlastCompact), at the shared
+// 4-chars-per-token heuristic. The generic estimateJSONTokens prices the
+// pretty marshal — correct for surfaces that ship pretty JSON, but the
+// blast budget is applied on the MCP path only, and charging indentation
+// that never reaches the wire trims real content for nothing.
+func estimateBlastWireTokens(resp *BlastResponse) int {
+	out, err := marshalCompact(*resp)
+	if err != nil {
+		return math.MaxInt
+	}
+	return len(out) / 4
 }
 
 // trimStep returns how many trailing items to drop this iteration —
@@ -326,6 +367,27 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, Relation: "includes " + r.Symbol.Name, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, entry)
 		tier2All = append(tier2All, entry)
+	}
+
+	// Retained holders are a MAY-claim, weaker than every affected_* group:
+	// they stay out of tier2All (references.count), the production/test
+	// segmentation, affected_files, and the completeness arithmetic — their
+	// own count field is the only place they are tallied.
+	for _, rh := range r.RetainedViaInterfaces {
+		var file string
+		if path, ok := files(rh.Symbol.FileID); ok {
+			file = path
+		}
+		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, BlastRetained{
+			Symbol: qualifiedOrName(rh.Symbol),
+			Ref:    FormatRef(file, rh.Symbol.LineStart),
+			Via:    rh.Via.Name,
+		})
+	}
+	if len(resp.RetainedViaInterfaces) > 0 {
+		resp.RetainedCount = r.RetainedCount
+		resp.RetainedNote = "each entry may retain " + r.Symbol.Name + ": its `via` interface field can hold a carrier of " +
+			r.Symbol.Name + ", one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
 	}
 
 	examples := tier2All

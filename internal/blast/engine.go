@@ -201,6 +201,17 @@ type Result struct {
 	// Keyed by symbol ID. Used by response shapers to cap output.
 	SymbolTiers map[int64]Tier
 
+	// RetainedViaInterfaces lists the interface-laundered may-retain holders
+	// (see RetainedHolder): structs holding the subject only behind an
+	// interface-typed field whose concrete satisfier carries the subject.
+	// Computed one interface indirection deep from the carrier closure; a
+	// weaker claim than the caller lists, so it never feeds TotalAffected.
+	RetainedViaInterfaces []RetainedHolder
+	// RetainedCount is the full computed holder count BEFORE the result cap,
+	// so a capped RetainedViaInterfaces list is self-evident from
+	// RetainedCount > len(RetainedViaInterfaces).
+	RetainedCount int
+
 	Truncated bool
 }
 
@@ -287,17 +298,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	symbolTiers := state.buildTiers(directIDs, indirectIDs, symbolsByID, isSelf)
 	subclasses, viaIncludes := state.buildEdgeKindGroups(directIDs, indirectIDs, symbolsByID, isSelf)
 
-	// Composition is derived from the edge table directly rather than from the
-	// capped/visitedKind-bucketed callers: on a high-fan-out hub the reverse
-	// composers (e.g. every Django model holding a ForeignKey to this one) ride
-	// low-confidence composes edges that capResults evicts beneath the 1.0
-	// call/test callers, and a composer that also calls the subject is recorded
-	// under the calls edge and never bucketed here. excludeGrouped keeps the
-	// one-node-one-group invariant against the inherits/includes buckets above.
-	excludeGrouped := symbolIDSet(subclasses, viaIncludes)
-	viaComposition, err := state.loadReverseComposition(ctx, db, symbolIDs, seedSet, excludeGrouped, isSelf, opts.MaxResults)
+	viaComposition, retained, retainedCount, err := state.loadEdgeTableGroups(ctx, db, subject, symbolIDs, seedSet, subclasses, viaIncludes, isSelf, opts.MaxResults)
 	if err != nil {
-		return Result{}, fmt.Errorf("blast: reverse composition: %w", err)
+		return Result{}, err
 	}
 	// Count any composer the BFS did not visit (pruned by confidence) into the
 	// total so total_affected never under-reports what the response surfaces.
@@ -320,9 +323,43 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
+		RetainedViaInterfaces:  retained,
+		RetainedCount:          retainedCount,
 		SymbolTiers:            symbolTiers,
 		Truncated:              state.truncated,
 	}, nil
+}
+
+// loadEdgeTableGroups computes the two edge-table-derived groups after the
+// BFS: reverse composition and the retention closure.
+//
+// Composition is derived from the edge table directly rather than from the
+// capped/visitedKind-bucketed callers: on a high-fan-out hub the reverse
+// composers (e.g. every Django model holding a ForeignKey to this one) ride
+// low-confidence composes edges that capResults evicts beneath the 1.0
+// call/test callers, and a composer that also calls the subject is recorded
+// under the calls edge and never bucketed here. excludeGrouped keeps the
+// one-node-one-group invariant against the inherits/includes buckets. The
+// composer IDs are fetched once and shared: the composition group and the
+// retention closure's fixpoint level 1 read the same reverse-composes set.
+func (s *bfsState) loadEdgeTableGroups(ctx context.Context, db *sql.DB, subject model.Symbol, symbolIDs []int64, seedSet map[int64]struct{}, subclasses, viaIncludes []model.Symbol, isSelf selfMethodFn, maxResults int) ([]model.Symbol, []RetainedHolder, int, error) {
+	excludeGrouped := symbolIDSet(subclasses, viaIncludes)
+	composerIDs, err := inboundComposers(ctx, db, symbolIDs)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("blast: reverse composition: %w", err)
+	}
+	viaComposition, err := s.loadReverseComposition(ctx, db, composerIDs, seedSet, excludeGrouped, isSelf, maxResults)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("blast: reverse composition: %w", err)
+	}
+	retained, retainedCount, retainedTruncated, err := loadRetention(ctx, db, subject, symbolIDs, composerIDs, s.childSet, excludeGrouped, isSelf, maxResults)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("blast: retention closure: %w", err)
+	}
+	if retainedTruncated {
+		s.truncated = true
+	}
+	return viaComposition, retained, retainedCount, nil
 }
 
 // bfsState carries the mutable traversal state of one blast computation: the
