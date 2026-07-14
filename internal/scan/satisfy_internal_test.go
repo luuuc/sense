@@ -12,52 +12,6 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-// TestSatisfyExceedsBudget proves the performance gate: when the
-// interface×struct product exceeds 500K the pass warns and reports the budget
-// as exceeded, so satisfyInterfaces skips the O(n²) satisfaction scan rather
-// than stalling a large repo.
-func TestSatisfyExceedsBudget(t *testing.T) {
-	var warn bytes.Buffer
-	h := &harness{warn: &warn}
-
-	// One interface, but enough structs that ifaceCount×structs blows the gate
-	// (the stdlib interfaces are added to ifaceCount, so even one declared
-	// interface needs a large struct set; 600K structs clears 500K outright).
-	interfaces := map[int64]*ifaceInfo{1: {}}
-	structs := make(map[int64]*structInfo, 1)
-	structs[1] = &structInfo{}
-
-	// Cheaper than allocating 600K maps: the product is len×len, so make the
-	// struct count large by faking the length via many keys is expensive; use
-	// a count that, multiplied by (1 declared + len(stdlibInterfaces)), exceeds
-	// the gate. len(stdlibInterfaces) is ~12, so 50_000 structs → >600K.
-	for i := int64(2); i <= 50_000; i++ {
-		structs[i] = &structInfo{}
-	}
-
-	if !h.satisfyExceedsBudget(interfaces, structs) {
-		t.Fatal("expected the budget gate to trip for a large struct set")
-	}
-	if warn.Len() == 0 {
-		t.Error("expected a skip warning when the budget is exceeded")
-	}
-}
-
-// TestSatisfyExceedsBudgetWithinLimit confirms a small product does not trip
-// the gate, so the satisfaction scan runs.
-func TestSatisfyExceedsBudgetWithinLimit(t *testing.T) {
-	var warn bytes.Buffer
-	h := &harness{warn: &warn}
-	interfaces := map[int64]*ifaceInfo{1: {}}
-	structs := map[int64]*structInfo{1: {}, 2: {}}
-	if h.satisfyExceedsBudget(interfaces, structs) {
-		t.Fatal("small interface×struct product should be within budget")
-	}
-	if warn.Len() != 0 {
-		t.Errorf("no warning expected within budget, got %q", warn.String())
-	}
-}
-
 // TestSatisfyInterfacesQueryError covers satisfyInterfaces' first failure
 // guard: querying the Go files fails on a closed index and the wrapped error
 // surfaces instead of an empty-but-successful pass.
@@ -275,22 +229,32 @@ func (f *satisfyFakeStore) WriteEdge(context.Context, *model.Edge) (int64, error
 	return 0, f.writeErr
 }
 
-// TestSatisfyInterfacesBudgetSkip covers the budget short-circuit through the
-// full pass: enough structs to blow 500K means no edges are attempted. The
-// trip arithmetic leans on the dormant stdlibInterfaces table: (1 declared +
-// len(stdlibInterfaces)=12) × 50,001 structs ≈ 650K > 500K. If that table
-// ever shrinks below 9 entries this fails on the warn assertion — adjust
-// structCnt, not the gate.
-func TestSatisfyInterfacesBudgetSkip(t *testing.T) {
+// TestSatisfyInterfacesOverBudgetWrites is the G-2 behavior gate: a repo whose
+// interface×struct product would have blown the old 500K budget still gets its
+// satisfaction edges, silently (no skip warning). S has method M so it
+// satisfies I; the 50K method-less filler structs satisfy nothing.
+func TestSatisfyInterfacesOverBudgetWrites(t *testing.T) {
 	var warn bytes.Buffer
-	h := &harness{ctx: context.Background(),
-		idx: &satisfyFakeStore{Adapter: newOpenAdapter(t), structCnt: 50_000, writeErr: errors.New("must not write")},
-		out: io.Discard, warn: &warn}
-	if err := h.satisfyInterfaces(); err != nil {
-		t.Fatalf("budget skip must not error: %v", err)
+	structID := int64(3)
+	f := &recordingSatisfyStore{satisfyFakeStore: satisfyFakeStore{Adapter: newOpenAdapter(t), structCnt: 600_000}}
+	f.syms = []model.Symbol{
+		{ID: 1, Name: "I", Kind: model.KindInterface, FileID: 1},
+		{ID: 2, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: func() *int64 { i := int64(1); return &i }()},
+		{ID: 3, Name: "S", Kind: model.KindClass, FileID: 1},
+		{ID: 4, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: &structID},
 	}
-	if warn.Len() == 0 {
-		t.Error("expected the budget skip warning")
+	for i := int64(0); i < 600_000; i++ {
+		f.syms = append(f.syms, model.Symbol{ID: 100 + i, Kind: model.KindClass, FileID: 1})
+	}
+	h := &harness{ctx: context.Background(), idx: f, out: io.Discard, warn: &warn}
+	if err := h.satisfyInterfaces(); err != nil {
+		t.Fatalf("over-budget pass must not error: %v", err)
+	}
+	if len(f.written) != 1 {
+		t.Fatalf("want exactly 1 satisfaction edge over budget, got %d", len(f.written))
+	}
+	if warn.Len() != 0 {
+		t.Errorf("no skip warning may remain, got %q", warn.String())
 	}
 }
 

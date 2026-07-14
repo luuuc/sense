@@ -9,31 +9,6 @@ import (
 	"github.com/luuuc/sense/internal/model"
 )
 
-// stdlibInterface represents a well-known standard library interface
-// whose method set is hardcoded so structs can satisfy it without
-// indexing the standard library.
-type stdlibInterface struct {
-	qualified string
-	methods   []string
-}
-
-// Unused today: stdlib symbols aren't in the index so there's no target_id to reference.
-// Will produce edges once external symbol stubs are supported.
-var stdlibInterfaces = []stdlibInterface{
-	{"io.Reader", []string{"Read"}},
-	{"io.Writer", []string{"Write"}},
-	{"io.Closer", []string{"Close"}},
-	{"io.ReadWriter", []string{"Read", "Write"}},
-	{"io.ReadCloser", []string{"Read", "Close"}},
-	{"io.WriteCloser", []string{"Write", "Close"}},
-	{"fmt.Stringer", []string{"String"}},
-	{"error", []string{"Error"}},
-	{"sort.Interface", []string{"Len", "Less", "Swap"}},
-	{"encoding.BinaryMarshaler", []string{"MarshalBinary"}},
-	{"json.Marshaler", []string{"MarshalJSON"}},
-	{"json.Unmarshaler", []string{"UnmarshalJSON"}},
-}
-
 type ifaceInfo struct {
 	sym     model.Symbol
 	methods map[string]bool
@@ -72,9 +47,6 @@ func (h *harness) satisfyInterfaces() error {
 
 	interfaces, structs := classifyGoSymbols(syms, goFiles)
 	if len(interfaces) == 0 || len(structs) == 0 {
-		return nil
-	}
-	if h.satisfyExceedsBudget(interfaces, structs) {
 		return nil
 	}
 
@@ -123,18 +95,6 @@ func classifyGoSymbols(syms []model.Symbol, goFiles map[int64]bool) (map[int64]*
 		}
 	}
 	return interfaces, structs
-}
-
-// satisfyExceedsBudget reports whether the interface×struct product exceeds the
-// 500K performance gate, warning and skipping the pass when it does.
-func (h *harness) satisfyExceedsBudget(interfaces map[int64]*ifaceInfo, structs map[int64]*structInfo) bool {
-	ifaceCount := int64(len(interfaces)) + int64(len(stdlibInterfaces))
-	product := ifaceCount * int64(len(structs))
-	if product > 500_000 {
-		_, _ = fmt.Fprintf(h.warn, "satisfy: skipping (interfaces×structs = %d > 500K)\n", product)
-		return true
-	}
-	return false
 }
 
 // collectMethodSets fills each interface's method list and each struct's method
