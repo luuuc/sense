@@ -48,6 +48,19 @@ const (
 	// over the top-500 hubs of teleport/dolt/gitea/pebble: 245 structs
 	// (dolt hash.Hash); ~8x headroom.
 	retentionMaxCarriers = 2000
+	// retentionCommonNameThreshold drives the F-31-09b INTERIM junk screen:
+	// a via-interface with exactly one distinct direct member whose name
+	// occurs as a method name more than this many times index-wide is junk —
+	// its satisfaction edges are fabricated by name+arity matching on a
+	// common member (Next/Close/Get/String), not by a real contract.
+	// Measured margins: every genuine single-member via-interface across six
+	// Go bench indexes sits at ≤25 (dolt VisitGCRoots 14, HasMany 15; pebble
+	// Stat 25); every fabricating interface at ≥49 (Get 49, Next 135,
+	// Close 248, CheckAndSetDefaults 551). Junk iff STRICTLY above. On a
+	// small index common names fall under the threshold and junk can show —
+	// the safe side for an advisory may-retain group. Delete this screen
+	// when satisfaction matching goes param-type-aware (F-31-09b's real fix).
+	retentionCommonNameThreshold = 25
 )
 
 // retentionSubjectKind reports whether a subject can be retained through a
@@ -162,6 +175,16 @@ func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{
 	if len(ifaces) == 0 {
 		return nil, nil
 	}
+	// Screen BEFORE expanding composers — load-bearing ordering: a junk
+	// interface like Closer can carry hundreds of composers that must never
+	// be fetched, so the screen is the perf guard as well as the truth guard.
+	ifaces, err = screenJunkInterfaces(ctx, db, ifaces)
+	if err != nil {
+		return nil, err
+	}
+	if len(ifaces) == 0 {
+		return nil, nil
+	}
 	pairs, err := inboundHolderPairs(ctx, db, ifaces, false)
 	if err != nil {
 		return nil, err
@@ -249,6 +272,150 @@ func orderRetained(ctx context.Context, db *sql.DB, holders []RetainedHolder) {
 		}
 		return holders[i].Symbol.ID < holders[j].Symbol.ID
 	})
+}
+
+// screenJunkInterfaces drops the F-31-09b junk stratum from the candidate
+// via-interfaces: exactly one distinct direct member whose name is common
+// index-wide (see retentionCommonNameThreshold). Multi-member and zero-member
+// (embedded-only) interfaces always pass — their method-SET match is the
+// signal. The frequency lookup is scoped to the candidate member names, never
+// a whole-index scan, and only runs when a single-member candidate exists.
+func screenJunkInterfaces(ctx context.Context, db *sql.DB, ifaces []int64) ([]int64, error) {
+	soleMember, err := soleMemberNames(ctx, db, ifaces)
+	if err != nil {
+		return nil, err
+	}
+	if len(soleMember) == 0 {
+		return ifaces, nil
+	}
+	names := make([]string, 0, len(soleMember))
+	seen := map[string]struct{}{}
+	for _, name := range soleMember {
+		if _, dup := seen[name]; !dup {
+			seen[name] = struct{}{}
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	freq, err := methodNameCounts(ctx, db, names)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]int64, 0, len(ifaces))
+	for _, id := range ifaces {
+		if name, single := soleMember[id]; single && freq[name] > retentionCommonNameThreshold {
+			continue
+		}
+		kept = append(kept, id)
+	}
+	return kept, nil
+}
+
+// soleMemberNames returns, for each interface that declares exactly one
+// distinct direct method name, that name.
+func soleMemberNames(ctx context.Context, db *sql.DB, ifaces []int64) (map[int64]string, error) {
+	members := map[int64]map[string]struct{}{}
+	query := func(placeholders string) string {
+		return `SELECT parent_id, name FROM sense_symbols
+		        WHERE parent_id IN (` + placeholders + `) AND kind = 'method'`
+	}
+	err := queryIDStringRows(ctx, db, ifaces, query, func(id int64, name string) {
+		if members[id] == nil {
+			members[id] = map[string]struct{}{}
+		}
+		members[id][name] = struct{}{}
+	})
+	if err != nil {
+		return nil, err
+	}
+	sole := make(map[int64]string, len(members))
+	for id, names := range members {
+		if len(names) == 1 {
+			for name := range names {
+				sole[id] = name
+			}
+		}
+	}
+	return sole, nil
+}
+
+// methodNameCounts returns the index-wide method-symbol count per name,
+// scoped to the given names.
+func methodNameCounts(ctx context.Context, db *sql.DB, names []string) (map[string]int, error) {
+	out := make(map[string]int, len(names))
+	const chunk = 500
+	for start := 0; start < len(names); start += chunk {
+		end := start + chunk
+		if end > len(names) {
+			end = len(names)
+		}
+		batch := names[start:end]
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(batch))
+		for i, n := range batch {
+			args[i] = n
+		}
+		q := `SELECT name, COUNT(*) FROM sense_symbols
+		      WHERE kind = 'method' AND name IN (` + placeholders + `) GROUP BY name`
+		rows, err := db.QueryContext(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var name string
+			var n int
+			if err := rows.Scan(&name, &n); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[name] = n
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+	return out, nil
+}
+
+// queryIDStringRows runs an (int64, string) two-column query with one IN
+// clause over ids, chunked, feeding each row to visit.
+func queryIDStringRows(ctx context.Context, db *sql.DB, ids []int64, build func(placeholders string) string, visit func(int64, string)) error {
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := db.QueryContext(ctx, build(placeholders), args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			var s string
+			if err := rows.Scan(&id, &s); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			visit(id, s)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		_ = rows.Close()
+	}
+	return nil
 }
 
 // holderPair is one (holder, held) row from the reverse composition/embedding

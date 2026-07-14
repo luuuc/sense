@@ -11,6 +11,7 @@ package blast_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/luuuc/sense/internal/blast"
@@ -299,5 +300,83 @@ func TestRetentionSkipsNonTypeSubjects(t *testing.T) {
 
 	if len(res.RetainedViaInterfaces) != 0 || res.RetainedCount != 0 {
 		t.Errorf("function subject must produce no retained group, got %+v", res.RetainedViaInterfaces)
+	}
+}
+
+// addCommonMethods seeds n method symbols sharing the bare name but with
+// distinct qualified names (T1.Next, T2.Next, …) — the real-repo shape the
+// junk screen's frequency count reads. Distinct qualifieds matter: the
+// adapter upserts same-file same-qualified symbols into one row.
+func addCommonMethods(t *testing.T, fix *fixtureDB, name string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		line := fix.nextLine
+		fix.nextLine += 10
+		if _, err := fix.adapter.WriteSymbol(context.Background(), &model.Symbol{
+			FileID: fix.fileID, Name: name,
+			Qualified: fmt.Sprintf("FreqType%d.%s", i, name),
+			Kind:      model.KindMethod, LineStart: line, LineEnd: line + 5,
+		}); err != nil {
+			t.Fatalf("WriteSymbol %s#%d: %v", name, i, err)
+		}
+	}
+}
+
+// launderedVia wires carrier→iface (satisfaction) and holder→iface
+// (composition) so iface becomes a laundering route for the fixture.
+func launderedVia(t *testing.T, fix *fixtureDB, carrier int64, memberNames ...string) (iface, holder int64) {
+	t.Helper()
+	iface = fix.addSymbolWith(t, "Iface"+memberNames[0], model.KindInterface, nil)
+	for _, m := range memberNames {
+		fix.addSymbolWith(t, m, model.KindMethod, &iface)
+	}
+	holder = fix.addSymbol(t, "HolderVia"+memberNames[0])
+	fix.addEdge(t, carrier, iface, model.EdgeInherits, confConvention)
+	fix.addEdge(t, holder, iface, model.EdgeComposes, 0.9)
+	return iface, holder
+}
+
+// TestRetentionJunkScreen pins the F-31-09b interim screen: a single-member
+// via-interface whose member name is common (index-wide method-name frequency
+// strictly above the threshold) is junk — its holders never surface. The
+// boundary is exact: frequency 25 keeps, 26 screens. Zero-member (embedded-
+// only) interfaces and multi-member interfaces with a common member always
+// pass — the method-SET match is their signal.
+func TestRetentionJunkScreen(t *testing.T) {
+	fix, subject, carrier, _, holder := launderedFixture(t)
+
+	// Junk twin: sole member "Next", 60 same-named methods index-wide.
+	_, junkHolder := launderedVia(t, fix, carrier, "Next")
+	addCommonMethods(t, fix, "Next", 59) // + the member itself = 60 > threshold
+
+	// Boundary pair: exactly 25 total stays, 26 total is screened.
+	_, keptBoundary := launderedVia(t, fix, carrier, "AtBoundary")
+	addCommonMethods(t, fix, "AtBoundary", 24) // 24 + member = 25, kept
+	_, screenedBoundary := launderedVia(t, fix, carrier, "PastBoundary")
+	addCommonMethods(t, fix, "PastBoundary", 25) // 25 + member = 26, screened
+
+	// Zero-direct-member interface (embedded-only shape) is never screened.
+	emptyIface := fix.addSymbolWith(t, "EmbeddedOnlyIface", model.KindInterface, nil)
+	emptyHolder := fix.addSymbol(t, "HolderViaEmpty")
+	fix.addEdge(t, carrier, emptyIface, model.EdgeInherits, confConvention)
+	fix.addEdge(t, emptyHolder, emptyIface, model.EdgeComposes, 0.9)
+
+	// Multi-member interface with one common name (the CommitItr shape) passes.
+	_, multiHolder := launderedVia(t, fix, carrier, "Next", "ResetToRareState")
+
+	res := computeRetention(t, fix, subject)
+
+	got := retainedIDs(res)
+	for id, want := range map[int64]bool{
+		holder:           true,
+		junkHolder:       false,
+		keptBoundary:     true,
+		screenedBoundary: false,
+		emptyHolder:      true,
+		multiHolder:      true,
+	} {
+		if got[id] != want {
+			t.Errorf("holder %d: present=%v, want %v", id, got[id], want)
+		}
 	}
 }
