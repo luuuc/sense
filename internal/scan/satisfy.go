@@ -123,10 +123,10 @@ func collectMethodSets(syms []model.Symbol, interfaces map[int64]*ifaceInfo, str
 		}
 		parentID := *s.ParentID
 		if iface, ok := interfaces[parentID]; ok {
-			iface.methods[s.Name] = arity{}
+			iface.methods[s.Name] = parseMethodArity(s.Snippet)
 		}
 		if st, ok := structs[parentID]; ok {
-			st.methods[s.Name] = arity{}
+			st.methods[s.Name] = parseMethodArity(s.Snippet)
 		}
 	}
 }

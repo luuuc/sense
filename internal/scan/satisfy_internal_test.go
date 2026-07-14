@@ -539,12 +539,20 @@ func TestParseMethodArity(t *testing.T) {
 	// The 200-byte cap: a single-line declaration at or over snippetMaxBytes
 	// may be truncated into a BALANCED wrong parse — cap-length input is
 	// always UNKNOWN.
-	long := "LongOne(" + strings.Repeat("a int, ", 40) + "b int)"
-	if len(long) < snippetMaxBytes {
-		t.Fatalf("fixture must reach the cap")
+	// BALANCED at the cap: the cut lands exactly after the params' closing
+	// paren, so without the length guard this parses cleanly as (1,0) while
+	// the real declaration carried results — the false-clean-parse hole.
+	balanced := "F(" + strings.Repeat("a", snippetMaxBytes-3) + ")"
+	if len(balanced) != snippetMaxBytes {
+		t.Fatalf("fixture must sit exactly at the cap, got %d", len(balanced))
 	}
+	if got := parseMethodArity(balanced); got != unknown {
+		t.Errorf("cap-length snippet must be UNKNOWN even when balanced, got %+v", got)
+	}
+	// And an unbalanced truncation for the ordinary multi-line path.
+	long := "LongOne(" + strings.Repeat("a int, ", 40) + "b int)"
 	if got := parseMethodArity(long[:snippetMaxBytes]); got != unknown {
-		t.Errorf("cap-length snippet must be UNKNOWN, got %+v", got)
+		t.Errorf("cap-length truncation must be UNKNOWN, got %+v", got)
 	}
 
 	// Two-shape equivalence (the load-bearing rows, asserted pairwise).
@@ -577,5 +585,101 @@ func TestArityCompatible(t *testing.T) {
 	}
 	if k(2, 1).compatible(k(2, 2)) {
 		t.Error("results-differ must be incompatible (returns are compared, not just params)")
+	}
+}
+
+// TestSatisfyArityThroughFullPass extends the differential oracle with real
+// snippets: arity now decides where names collide. Iface 40 requires
+// Write(p []byte) (int, error); struct 8 declares it exactly (edge), struct 9
+// declares Write() (a name-only match that MUST drop — the F-31-09a junk
+// class), struct 10's declaration is a truncated multi-line snippet (UNKNOWN
+// → name-only keep, the conservative fallback). The not-UNKNOWN pin: struct
+// 8's parse must be a concrete arity, so this test FAILS the day snippet
+// shape drifts and the junk quietly returns.
+func TestSatisfyArityThroughFullPass(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	syms := []model.Symbol{
+		{ID: 40, Name: "IWriter", Kind: model.KindInterface, FileID: 1},
+		{ID: 41, Name: "Write", Kind: model.KindMethod, FileID: 1, ParentID: pid(40),
+			Snippet: "Write(p []byte) (int, error)"},
+		{ID: 8, Name: "GoodWriter", Kind: model.KindClass, FileID: 1},
+		{ID: 42, Name: "Write", Kind: model.KindMethod, FileID: 1, ParentID: pid(8),
+			Snippet: "func (w *GoodWriter) Write(p []byte) (int, error) {"},
+		{ID: 9, Name: "JunkWriter", Kind: model.KindClass, FileID: 1},
+		{ID: 43, Name: "Write", Kind: model.KindMethod, FileID: 1, ParentID: pid(9),
+			Snippet: "func (w *JunkWriter) Write() {"},
+		{ID: 10, Name: "TruncWriter", Kind: model.KindClass, FileID: 1},
+		{ID: 44, Name: "Write", Kind: model.KindMethod, FileID: 1, ParentID: pid(10),
+			Snippet: "func (w *TruncWriter) Write(p []byte,"},
+	}
+	got := satisfyPairs(t, syms, nil)
+	want := map[[2]int64]bool{
+		{8, 40}:  true, // exact arity match
+		{10, 40}: true, // UNKNOWN keeps (truncated declaration)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("edge set mismatch: got %v want %v", got, want)
+	}
+	for p := range want {
+		if !got[p] {
+			t.Errorf("missing edge %v", p)
+		}
+	}
+	if got[[2]int64{9, 40}] {
+		t.Error("name-only junk (Write() vs Write(p []byte) (int, error)) must drop")
+	}
+
+	// the not-UNKNOWN contract pin: the interface member's snippet must parse
+	// to a concrete arity — if snippet shape ever drifts, this reds.
+	if a := parseMethodArity("Write(p []byte) (int, error)"); !a.known || a.params != 1 || a.results != 2 {
+		t.Errorf("snippet contract drifted: %+v", a)
+	}
+}
+
+// TestSatisfyArityPromotion pins the insert-if-absent threading: a struct
+// satisfying only via a promoted embedded method drops on promoted-arity
+// MISMATCH and survives on match; an embedder's own declaration shadows an
+// embedded one with different arity (Go semantics), order-proof.
+func TestSatisfyArityPromotion(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	syms := []model.Symbol{
+		{ID: 50, Name: "ICloser", Kind: model.KindInterface, FileID: 1},
+		{ID: 51, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(50),
+			Snippet: "Close() error"},
+		// Embedder satisfies only via embedded struct whose Close matches.
+		{ID: 11, Name: "GoodEmbedder", Kind: model.KindClass, FileID: 1},
+		{ID: 12, Name: "GoodInner", Kind: model.KindClass, FileID: 1},
+		{ID: 52, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(12),
+			Snippet: "func (i *GoodInner) Close() error {"},
+		// Embedder whose embedded Close has WRONG arity — must not satisfy.
+		{ID: 13, Name: "JunkEmbedder", Kind: model.KindClass, FileID: 1},
+		{ID: 14, Name: "JunkInner", Kind: model.KindClass, FileID: 1},
+		{ID: 53, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(14),
+			Snippet: "func (i *JunkInner) Close(ctx context.Context) error {"},
+		// Shadowing: own correct Close + embedded wrong-arity Close — own wins.
+		{ID: 15, Name: "Shadower", Kind: model.KindClass, FileID: 1},
+		{ID: 54, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(15),
+			Snippet: "func (s *Shadower) Close() error {"},
+	}
+	includes := []model.Edge{
+		{SourceID: pid(11), TargetID: 12, Kind: model.EdgeIncludes},
+		{SourceID: pid(13), TargetID: 14, Kind: model.EdgeIncludes},
+		{SourceID: pid(15), TargetID: 14, Kind: model.EdgeIncludes}, // wrong-arity embed shadowed by own
+	}
+	got := satisfyPairs(t, syms, includes)
+	for _, expect := range []struct {
+		src  int64
+		want bool
+		why  string
+	}{
+		{11, true, "promoted matching arity must satisfy"},
+		{12, true, "inner itself satisfies"},
+		{13, false, "promoted MISMATCHED arity must not satisfy"},
+		{14, false, "junk inner must not satisfy"},
+		{15, true, "own declaration shadows the wrong-arity embed"},
+	} {
+		if got[[2]int64{expect.src, 50}] != expect.want {
+			t.Errorf("struct %d → ICloser = %v, want %v (%s)", expect.src, !expect.want, expect.want, expect.why)
+		}
 	}
 }
