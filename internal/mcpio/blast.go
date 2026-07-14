@@ -137,6 +137,17 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.AffectedTests = resp.AffectedTests[:0]
 		resp.Truncated = true
 	}
+	// 3c'. Carrier names are enrichment on retained rows, not the rows'
+	// claim: strip them tail-first before any whole row sheds, so a squeeze
+	// costs proof detail before it costs a holder (count- and
+	// gold-preserving; measured live: the 0.7 band sat near budget and the
+	// carrier bytes alone tipped it into dropping rows).
+	for i := len(resp.RetainedViaInterfaces) - 1; i >= 0 && estimateBlastWireTokens(resp) > budget; i-- {
+		if resp.RetainedViaInterfaces[i].Carrier != "" {
+			resp.RetainedViaInterfaces[i].Carrier = ""
+			resp.Truncated = true
+		}
+	}
 	// 3d. Retained holders carry a weaker claim than any direct caller, so
 	// they shed next. RetainedCount is never reduced — a trimmed group is
 	// self-evident from count > len(entries).

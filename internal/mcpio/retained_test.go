@@ -239,3 +239,34 @@ func TestRetainedEntryCarriesConcreteCarrier(t *testing.T) {
 		t.Errorf("carrier for zero-value = %q, want empty", got)
 	}
 }
+
+// TestRetainedCarrierShedsBeforeRows: under budget pressure the carrier
+// names strip tail-first (count- and row-preserving) BEFORE any whole
+// retained row sheds; a row is strictly worth more than its enrichment.
+// Kills both mutants: skipping the carrier shed (rows drop while carriers
+// survive) and inverting its order (head-first stripping).
+func TestRetainedCarrierShedsBeforeRows(t *testing.T) {
+	ctx := context.Background()
+	r := retainedResult(true)
+	for i := range r.RetainedViaInterfaces {
+		r.RetainedViaInterfaces[i].Carrier = model.Symbol{
+			ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.SomeVeryLongCarrierTypeName", FileID: 1,
+		}
+	}
+	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	fullTokens := estimateBlastWireTokens(&full)
+
+	// A budget just below the full size must strip a tail carrier, not a row.
+	squeezed := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	ApplyBlastBudget(&squeezed, fullTokens-1)
+	if len(squeezed.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
+		t.Fatalf("rows shed before carriers: %d rows, want %d", len(squeezed.RetainedViaInterfaces), len(full.RetainedViaInterfaces))
+	}
+	last := len(squeezed.RetainedViaInterfaces) - 1
+	if squeezed.RetainedViaInterfaces[last].Carrier != "" {
+		t.Errorf("tail carrier survived a squeeze that required shedding")
+	}
+	if squeezed.RetainedViaInterfaces[0].Carrier == "" {
+		t.Errorf("head carrier stripped before tail (order inverted)")
+	}
+}
