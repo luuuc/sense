@@ -402,9 +402,12 @@ func satisfyPairs(t *testing.T, syms []model.Symbol, includes []model.Edge) map[
 // pruning: the emitted edge set must equal a naive all-pairs oracle computed
 // with the untouched methodSetSatisfies predicate. The fixture family is
 // chosen to kill the mutants the pruning could hide:
-//   - iface 10 (Read+Close): struct 3 HAS the rarest method but lacks Close —
-//     candidate that must FAIL the re-check (kills skip-re-check);
-//   - iface 11 (Rare): served from a 1-struct bucket;
+//   - iface 10 (Read+Close): its smallest bucket is Close {1,4,5,6} (Read has
+//     five members thanks to struct 7), and struct 6 sits IN that bucket while
+//     lacking Read — a candidate that must FAIL the re-check (kills
+//     skip-re-check; verified by running the mutant, per council pass 2);
+//   - iface 11 (Rare): served from a 2-struct bucket; struct 3 satisfies it
+//     while never being a candidate for iface 10 (not in the Close bucket);
 //   - iface 12 (Ghost): required method exists on NO struct — zero edges;
 //   - struct 4 satisfies iface 10 ONLY through methods promoted from its
 //     embedded struct 5 (kills index-built-before-promotion).
@@ -430,6 +433,10 @@ func TestSatisfyDifferentialOracle(t *testing.T) {
 		{ID: 5, Name: "Embedded", Kind: model.KindClass, FileID: 1},
 		{ID: 35, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(5)},
 		{ID: 36, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(5)},
+		{ID: 6, Name: "CloseOnly", Kind: model.KindClass, FileID: 1},
+		{ID: 37, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(6)},
+		{ID: 7, Name: "ReadOnly", Kind: model.KindClass, FileID: 1},
+		{ID: 38, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(7)},
 	}
 	// Struct 4 embeds struct 5 (its only route to Read+Close).
 	includes := []model.Edge{{SourceID: pid(4), TargetID: 5, Kind: model.EdgeIncludes}}
@@ -439,9 +446,12 @@ func TestSatisfyDifferentialOracle(t *testing.T) {
 	// Naive oracle over the same classified sets, untouched predicate.
 	want := map[[2]int64]bool{
 		{1, 10}: true, {1, 11}: true, // Full satisfies IReadCloser and IRare
-		{3, 11}: true, // HasRareLacksClose: candidate for 10, must fail; satisfies 11
+		{3, 11}: true, // HasRareLacksClose satisfies IRare; never a candidate for 10
 		{4, 10}: true, // Embedder: only via promotion from Embedded
 		{5, 10}: true, // Embedded satisfies IReadCloser directly
+		// CloseOnly (6) and ReadOnly (7) satisfy NOTHING: 6 is the in-bucket
+		// candidate the re-check must reject, 7 only pads the Read bucket so
+		// Close stays strictly smallest.
 	}
 	if len(got) != len(want) {
 		t.Fatalf("edge set mismatch: got %v want %v", got, want)
