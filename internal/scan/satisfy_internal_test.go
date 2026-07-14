@@ -529,6 +529,11 @@ func TestParseMethodArity(t *testing.T) {
 		{"empty snippet", "", unknown},
 		{"backquote struct tag", "Parse(v struct{ A int `json:\"a,b\"` })", unknown},
 		{"no param group", "type Closer interface {", unknown},
+		{"leading paren no name", "(x int) error", unknown},
+		{"receiver group unbalanced", "func (r *T[K,", unknown},
+		{"returns group truncated", "Foo() (int,", unknown},
+		{"empty parens returns", "Foo() ()", known(0, 0)},
+		{"func keyword bare (no receiver)", "func Standalone(a int) error {", known(1, 1)},
 	}
 	for _, c := range cases {
 		if got := parseMethodArity(c.snippet); got != c.want {
