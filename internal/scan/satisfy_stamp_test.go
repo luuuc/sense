@@ -43,3 +43,35 @@ func TestScanStampsSatisfyUnbudgetedMeta(t *testing.T) {
 		t.Errorf("satisfy_unbudgeted = %q after plain rescan, want re-stamped 1 (the pass runs every scan)", got)
 	}
 }
+
+// TestScanStampsSatisfyArityMeta mirrors the unbudgeted stamp for the
+// arity-matching fix: fresh scan stamps, and a PLAIN rescan re-stamps a
+// stripped index because the satisfy pass recomputes every scan.
+func TestScanStampsSatisfyArityMeta(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "kvstore.go"), storeTypeSrc)
+
+	if _, err := scan.Run(context.Background(), quietOpts(root)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := readMetaKey(t, root, "satisfy_arity"); got != "1" {
+		t.Fatalf("satisfy_arity = %q after fresh scan, want 1", got)
+	}
+
+	ctx := context.Background()
+	a, err := sqlite.Open(ctx, filepath.Join(root, ".sense", "index.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	if err := a.DeleteMeta(ctx, "satisfy_arity"); err != nil {
+		t.Fatalf("delete meta: %v", err)
+	}
+	_ = a.Close()
+
+	if _, err := scan.Run(context.Background(), quietOpts(root)); err != nil {
+		t.Fatalf("plain rescan: %v", err)
+	}
+	if got := readMetaKey(t, root, "satisfy_arity"); got != "1" {
+		t.Errorf("satisfy_arity = %q after plain rescan, want re-stamped 1", got)
+	}
+}

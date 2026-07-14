@@ -238,6 +238,19 @@ func computeHealth(ctx context.Context, db *sql.DB, dir string, resp mcpio.Statu
 		}
 	}
 
+	// The satisfy_arity stamp mirrors satisfy_unbudgeted for the arity-aware
+	// matching fix (name-only satisfaction bound ~30% compile-false edges):
+	// the pass recomputes on every scan, so a PLAIN scan heals and the
+	// advisory says scan, not rebuild. Same Go gate.
+	if resp.Index.Symbols > 0 && readMeta(ctx, db, "satisfy_arity") == "" && hasGoFiles(ctx, db) {
+		if h.verdict == "healthy" {
+			h.verdict = "degraded"
+		}
+		if h.detail == "" {
+			h.detail = "index predates arity-aware satisfaction — run 'sense scan'"
+		}
+	}
+
 	return h
 }
 

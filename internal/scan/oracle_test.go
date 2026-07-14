@@ -117,9 +117,9 @@ func oracleDigest(t *testing.T, dbPath string) (digest string, content []string)
 // leave it unchanged, and a refactor that alters derived output fails here
 // loudly. When output changes on purpose, regenerate it (see the capture line
 // in TestScanContentOracleDigest) and update this constant in the same commit.
-// Last regeneration: the satisfy_unbudgeted meta stamp (satisfaction-budget
-// removal) added one meta line; symbols/edges/embeddings unchanged.
-const oracleGolden = "a5fb23c61141369e99b348abf7691778d07eb8de0d16eddf1251b656eb32a7e9"
+// Last regeneration: the satisfy_arity meta stamp (arity-aware satisfaction
+// matching) added one meta line; symbols/edges/embeddings unchanged.
+const oracleGolden = "8c2052f0c221ccc54f70c1e28ce7b7bb910d347d20ec740ba43e53e8653bd72a"
 
 func TestScanContentOracleDigest(t *testing.T) {
 	useFakeEmbedder(t)

@@ -170,6 +170,7 @@ func TestComputeHealthBareCallBindsStamp(t *testing.T) {
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('composes_go', '1')`)
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_unbudgeted', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_arity', '1')`)
 	h = computeHealth(ctx, db, t.TempDir(), resp)
 	if h.verdict != "healthy" {
 		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
@@ -197,6 +198,7 @@ func TestComputeHealthComposesGoStamp(t *testing.T) {
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('parent_linkage', '1')`)
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_unbudgeted', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_arity', '1')`)
 
 	resp := mcpio.StatusResponse{
 		Version: &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: true},
@@ -262,6 +264,7 @@ func TestComputeHealthSatisfyUnbudgetedStamp(t *testing.T) {
 
 	// Stamped: healthy again.
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_unbudgeted', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_arity', '1')`)
 	h = computeHealth(ctx, db, t.TempDir(), resp)
 	if h.verdict != "healthy" {
 		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
@@ -306,6 +309,7 @@ func TestComputeHealthParentLinkageStamp(t *testing.T) {
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('composes_go', '1')`)
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_unbudgeted', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_arity', '1')`)
 	h = computeHealth(ctx, db, t.TempDir(), resp)
 	if h.verdict != "healthy" {
 		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
@@ -636,5 +640,49 @@ func TestComputeCLIFreshnessWatchingAndPending(t *testing.T) {
 		t.Error("expected Pending to be reported")
 	} else if *f.Pending != 1 {
 		t.Errorf("pending = %d, want 1 (one unembedded symbol)", *f.Pending)
+	}
+}
+
+func TestComputeHealthSatisfyArityStamp(t *testing.T) {
+	ctx := context.Background()
+	db := healthTestDB(t)
+	_, _ = db.ExecContext(ctx, `CREATE TABLE sense_meta (key TEXT PRIMARY KEY, value TEXT)`)
+	// Go-only gate, same as satisfy_unbudgeted: only Go computes satisfaction.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files VALUES (1, 'a.go', 'go', 'abc', 1, '2026-01-01T00:00:00Z')`)
+	// Keep the sibling stamp branches quiet so this test observes its own.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('parent_linkage', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('bare_call_binds', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('composes_go', '1')`)
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_unbudgeted', '1')`)
+
+	resp := mcpio.StatusResponse{
+		Version: &mcpio.StatusVersion{SchemaCurrent: true, EmbeddingModelCurrent: true},
+	}
+	resp.Index.Symbols = 5
+	resp.Index.Embeddings = 5
+
+	// No stamp: the index carries name-only satisfaction edges (~30% measured
+	// compile-false). A PLAIN scan heals — the advisory must not demand a rebuild.
+	h := computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "degraded" {
+		t.Errorf("verdict = %q without satisfy_arity stamp, want degraded", h.verdict)
+	}
+	if h.detail != "index predates arity-aware satisfaction — run 'sense scan'" {
+		t.Errorf("detail = %q, want arity message advising a plain scan", h.detail)
+	}
+
+	// Stamped: healthy again.
+	_, _ = db.ExecContext(ctx, `INSERT INTO sense_meta VALUES ('satisfy_arity', '1')`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q with stamp, want healthy", h.verdict)
+	}
+
+	// A non-Go index computes no satisfaction: no advisory.
+	_, _ = db.ExecContext(ctx, `DELETE FROM sense_meta WHERE key = 'satisfy_arity'`)
+	_, _ = db.ExecContext(ctx, `UPDATE sense_files SET language = 'ruby', path = 'a.rb'`)
+	h = computeHealth(ctx, db, t.TempDir(), resp)
+	if h.verdict != "healthy" {
+		t.Errorf("verdict = %q on ruby-only index without stamp, want healthy", h.verdict)
 	}
 }
