@@ -2,36 +2,12 @@ package scan
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/index"
 	"github.com/luuuc/sense/internal/model"
 )
-
-// stdlibInterface represents a well-known standard library interface
-// whose method set is hardcoded so structs can satisfy it without
-// indexing the standard library.
-type stdlibInterface struct {
-	qualified string
-	methods   []string
-}
-
-// Unused today: stdlib symbols aren't in the index so there's no target_id to reference.
-// Will produce edges once external symbol stubs are supported.
-var stdlibInterfaces = []stdlibInterface{
-	{"io.Reader", []string{"Read"}},
-	{"io.Writer", []string{"Write"}},
-	{"io.Closer", []string{"Close"}},
-	{"io.ReadWriter", []string{"Read", "Write"}},
-	{"io.ReadCloser", []string{"Read", "Close"}},
-	{"io.WriteCloser", []string{"Write", "Close"}},
-	{"fmt.Stringer", []string{"String"}},
-	{"error", []string{"Error"}},
-	{"sort.Interface", []string{"Len", "Less", "Swap"}},
-	{"encoding.BinaryMarshaler", []string{"MarshalBinary"}},
-	{"json.Marshaler", []string{"MarshalJSON"}},
-	{"json.Unmarshaler", []string{"UnmarshalJSON"}},
-}
 
 type ifaceInfo struct {
 	sym     model.Symbol
@@ -73,9 +49,6 @@ func (h *harness) satisfyInterfaces() error {
 	if len(interfaces) == 0 || len(structs) == 0 {
 		return nil
 	}
-	if h.satisfyExceedsBudget(interfaces, structs) {
-		return nil
-	}
 
 	collectMethodSets(syms, interfaces, structs)
 	embeddings, err := h.loadEmbeddings()
@@ -87,7 +60,9 @@ func (h *harness) satisfyInterfaces() error {
 	expandInterfaceMethodSets(interfaces, embeddings)
 	promoteEmbeddedMethodSets(structs, interfaces, embeddings)
 
-	written, err := h.writeSatisfactionEdges(interfaces, structs)
+	// Buckets index the FINAL method sets — built any earlier, promoted
+	// methods are missing and embedded satisfiers silently drop.
+	written, err := h.writeSatisfactionEdges(interfaces, indexStructMethods(structs))
 	if err != nil {
 		return fmt.Errorf("satisfy: write edges: %w", err)
 	}
@@ -120,18 +95,6 @@ func classifyGoSymbols(syms []model.Symbol, goFiles map[int64]bool) (map[int64]*
 		}
 	}
 	return interfaces, structs
-}
-
-// satisfyExceedsBudget reports whether the interface×struct product exceeds the
-// 500K performance gate, warning and skipping the pass when it does.
-func (h *harness) satisfyExceedsBudget(interfaces map[int64]*ifaceInfo, structs map[int64]*structInfo) bool {
-	ifaceCount := int64(len(interfaces)) + int64(len(stdlibInterfaces))
-	product := ifaceCount * int64(len(structs))
-	if product > 500_000 {
-		_, _ = fmt.Fprintf(h.warn, "satisfy: skipping (interfaces×structs = %d > 500K)\n", product)
-		return true
-	}
-	return false
 }
 
 // collectMethodSets fills each interface's method list and each struct's method
@@ -214,12 +177,54 @@ func promoteEmbeddedMethodSets(structs map[int64]*structInfo, interfaces map[int
 	}
 }
 
+// indexStructMethods buckets the structs by method name so satisfaction can
+// prune candidates instead of scanning every interface×struct pair. Each
+// bucket is sorted by symbol ID: edge-write order stays deterministic.
+func indexStructMethods(structs map[int64]*structInfo) map[string][]*structInfo {
+	buckets := map[string][]*structInfo{}
+	for _, st := range structs {
+		for m := range st.methods {
+			buckets[m] = append(buckets[m], st)
+		}
+	}
+	for _, b := range buckets {
+		sort.Slice(b, func(i, j int) bool { return b[i].sym.ID < b[j].sym.ID })
+	}
+	return buckets
+}
+
+// candidateStructs bounds the satisfiers of a required method set: a
+// satisfying struct has every required method, so the smallest bucket contains
+// them all. A required method with no bucket means no struct can satisfy —
+// zero candidates, immediately.
+func candidateStructs(required map[string]bool, buckets map[string][]*structInfo) []*structInfo {
+	var smallest []*structInfo
+	first := true
+	for m := range required {
+		b, ok := buckets[m]
+		if !ok {
+			return nil
+		}
+		if first || len(b) < len(smallest) {
+			smallest, first = b, false
+		}
+	}
+	return smallest
+}
+
 // writeSatisfactionEdges writes an inherits edge for every struct whose method
-// set satisfies an interface's, in one transaction.
-func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, structs map[int64]*structInfo) (int, error) {
+// set satisfies an interface's, in one transaction. Interfaces are visited in
+// symbol-ID order and buckets are pre-sorted, so write order is deterministic.
+func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, buckets map[string][]*structInfo) (int, error) {
+	ordered := make([]*ifaceInfo, 0, len(interfaces))
+	for _, iface := range interfaces {
+		ordered = append(ordered, iface)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].sym.ID < ordered[j].sym.ID })
+
 	var written int
 	err := h.idx.InTx(h.ctx, func() error {
-		for _, iface := range interfaces {
+		for _, iface := range ordered {
 			// Post-expansion an empty INDEXED set: interface{}, a
 			// constraint-only interface, or a composite of purely
 			// unresolvable (stdlib) embeds. Everything would satisfy it, so
@@ -227,7 +232,7 @@ func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, struct
 			if len(iface.methods) == 0 {
 				continue
 			}
-			for _, st := range structs {
+			for _, st := range candidateStructs(iface.methods, buckets) {
 				if methodSetSatisfies(st.methods, iface.methods) {
 					if werr := h.writeSatisfactionEdge(st.sym.ID, iface.sym.ID, st.sym.FileID); werr != nil {
 						return werr

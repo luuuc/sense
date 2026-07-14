@@ -223,6 +223,21 @@ func computeHealth(ctx context.Context, db *sql.DB, dir string, resp mcpio.Statu
 		}
 	}
 
+	// The satisfy_unbudgeted stamp records that interface satisfaction ran
+	// without the old 500K budget that silently skipped the whole pass on big
+	// Go repos (dolt-class: zero satisfaction edges). Unlike the stamps
+	// above, the pass recomputes on every scan, so a PLAIN scan heals — the
+	// advisory says scan, not rebuild. Same Go gate: only Go computes
+	// implicit satisfaction.
+	if resp.Index.Symbols > 0 && readMeta(ctx, db, "satisfy_unbudgeted") == "" && hasGoFiles(ctx, db) {
+		if h.verdict == "healthy" {
+			h.verdict = "degraded"
+		}
+		if h.detail == "" {
+			h.detail = "index predates unbudgeted interface satisfaction — run 'sense scan'"
+		}
+	}
+
 	return h
 }
 

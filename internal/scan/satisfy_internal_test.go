@@ -12,52 +12,6 @@ import (
 	"github.com/luuuc/sense/internal/sqlite"
 )
 
-// TestSatisfyExceedsBudget proves the performance gate: when the
-// interface×struct product exceeds 500K the pass warns and reports the budget
-// as exceeded, so satisfyInterfaces skips the O(n²) satisfaction scan rather
-// than stalling a large repo.
-func TestSatisfyExceedsBudget(t *testing.T) {
-	var warn bytes.Buffer
-	h := &harness{warn: &warn}
-
-	// One interface, but enough structs that ifaceCount×structs blows the gate
-	// (the stdlib interfaces are added to ifaceCount, so even one declared
-	// interface needs a large struct set; 600K structs clears 500K outright).
-	interfaces := map[int64]*ifaceInfo{1: {}}
-	structs := make(map[int64]*structInfo, 1)
-	structs[1] = &structInfo{}
-
-	// Cheaper than allocating 600K maps: the product is len×len, so make the
-	// struct count large by faking the length via many keys is expensive; use
-	// a count that, multiplied by (1 declared + len(stdlibInterfaces)), exceeds
-	// the gate. len(stdlibInterfaces) is ~12, so 50_000 structs → >600K.
-	for i := int64(2); i <= 50_000; i++ {
-		structs[i] = &structInfo{}
-	}
-
-	if !h.satisfyExceedsBudget(interfaces, structs) {
-		t.Fatal("expected the budget gate to trip for a large struct set")
-	}
-	if warn.Len() == 0 {
-		t.Error("expected a skip warning when the budget is exceeded")
-	}
-}
-
-// TestSatisfyExceedsBudgetWithinLimit confirms a small product does not trip
-// the gate, so the satisfaction scan runs.
-func TestSatisfyExceedsBudgetWithinLimit(t *testing.T) {
-	var warn bytes.Buffer
-	h := &harness{warn: &warn}
-	interfaces := map[int64]*ifaceInfo{1: {}}
-	structs := map[int64]*structInfo{1: {}, 2: {}}
-	if h.satisfyExceedsBudget(interfaces, structs) {
-		t.Fatal("small interface×struct product should be within budget")
-	}
-	if warn.Len() != 0 {
-		t.Errorf("no warning expected within budget, got %q", warn.String())
-	}
-}
-
 // TestSatisfyInterfacesQueryError covers satisfyInterfaces' first failure
 // guard: querying the Go files fails on a closed index and the wrapped error
 // surfaces instead of an empty-but-successful pass.
@@ -238,11 +192,10 @@ func TestPromoteThroughEmbeddedInterface(t *testing.T) {
 // in-memory symbol set, then lets each test override one downstream call.
 type satisfyFakeStore struct {
 	*sqlite.Adapter
-	syms      []model.Symbol
-	edges     []model.Edge
-	edgesErr  error
-	writeErr  error
-	structCnt int64
+	syms     []model.Symbol
+	edges    []model.Edge
+	edgesErr error
+	writeErr error
 }
 
 func (f *satisfyFakeStore) FileIDsByLanguage(context.Context, string) (map[int64]bool, error) {
@@ -254,15 +207,11 @@ func (f *satisfyFakeStore) Query(context.Context, index.Filter) ([]model.Symbol,
 		return f.syms, nil
 	}
 	iface := int64(1)
-	syms := []model.Symbol{
+	return []model.Symbol{
 		{ID: 1, Name: "I", Kind: model.KindInterface, FileID: 1},
 		{ID: 2, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: &iface},
 		{ID: 3, Name: "S", Kind: model.KindClass, FileID: 1},
-	}
-	for i := int64(0); i < f.structCnt; i++ {
-		syms = append(syms, model.Symbol{ID: 100 + i, Kind: model.KindClass, FileID: 1})
-	}
-	return syms, nil
+	}, nil
 }
 
 func (f *satisfyFakeStore) EdgesOfKind(context.Context, model.EdgeKind) ([]model.Edge, error) {
@@ -275,22 +224,32 @@ func (f *satisfyFakeStore) WriteEdge(context.Context, *model.Edge) (int64, error
 	return 0, f.writeErr
 }
 
-// TestSatisfyInterfacesBudgetSkip covers the budget short-circuit through the
-// full pass: enough structs to blow 500K means no edges are attempted. The
-// trip arithmetic leans on the dormant stdlibInterfaces table: (1 declared +
-// len(stdlibInterfaces)=12) × 50,001 structs ≈ 650K > 500K. If that table
-// ever shrinks below 9 entries this fails on the warn assertion — adjust
-// structCnt, not the gate.
-func TestSatisfyInterfacesBudgetSkip(t *testing.T) {
+// TestSatisfyInterfacesOverBudgetWrites is the G-2 behavior gate: a repo whose
+// interface×struct product would have blown the old 500K budget still gets its
+// satisfaction edges, silently (no skip warning). S has method M so it
+// satisfies I; the 600K method-less filler structs satisfy nothing.
+func TestSatisfyInterfacesOverBudgetWrites(t *testing.T) {
 	var warn bytes.Buffer
-	h := &harness{ctx: context.Background(),
-		idx: &satisfyFakeStore{Adapter: newOpenAdapter(t), structCnt: 50_000, writeErr: errors.New("must not write")},
-		out: io.Discard, warn: &warn}
-	if err := h.satisfyInterfaces(); err != nil {
-		t.Fatalf("budget skip must not error: %v", err)
+	structID := int64(3)
+	f := &recordingSatisfyStore{satisfyFakeStore: satisfyFakeStore{Adapter: newOpenAdapter(t)}}
+	f.syms = []model.Symbol{
+		{ID: 1, Name: "I", Kind: model.KindInterface, FileID: 1},
+		{ID: 2, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: func() *int64 { i := int64(1); return &i }()},
+		{ID: 3, Name: "S", Kind: model.KindClass, FileID: 1},
+		{ID: 4, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: &structID},
 	}
-	if warn.Len() == 0 {
-		t.Error("expected the budget skip warning")
+	for i := int64(0); i < 600_000; i++ {
+		f.syms = append(f.syms, model.Symbol{ID: 100 + i, Kind: model.KindClass, FileID: 1})
+	}
+	h := &harness{ctx: context.Background(), idx: f, out: io.Discard, warn: &warn}
+	if err := h.satisfyInterfaces(); err != nil {
+		t.Fatalf("over-budget pass must not error: %v", err)
+	}
+	if len(f.written) != 1 {
+		t.Fatalf("want exactly 1 satisfaction edge over budget, got %d", len(f.written))
+	}
+	if warn.Len() != 0 {
+		t.Errorf("no skip warning may remain, got %q", warn.String())
 	}
 }
 
@@ -349,5 +308,182 @@ func TestPromoteEmbeddedMethodsUnknownTarget(t *testing.T) {
 	promoteEmbeddedMethods(st, 1, map[int64][]int64{1: {99}}, structs, nil, 3)
 	if len(st.methods) != 1 {
 		t.Errorf("unknown embed target must contribute nothing, got %v", st.methods)
+	}
+}
+
+// mkStruct builds a structInfo with the given symbol id and method names.
+func mkStruct(id int64, methods ...string) *structInfo {
+	st := &structInfo{sym: model.Symbol{ID: id, FileID: 1}, methods: map[string]bool{}}
+	for _, m := range methods {
+		st.methods[m] = true
+	}
+	return st
+}
+
+// TestIndexStructMethods pins the bucket build: every struct appears in the
+// bucket of each of its methods, exactly once, and buckets are sorted by
+// symbol ID so downstream edge writes are deterministic.
+func TestIndexStructMethods(t *testing.T) {
+	structs := map[int64]*structInfo{
+		2: mkStruct(2, "Read", "Close"),
+		1: mkStruct(1, "Read"),
+		3: mkStruct(3, "Write"),
+	}
+	buckets := indexStructMethods(structs)
+	if got := len(buckets["Read"]); got != 2 {
+		t.Fatalf("Read bucket: want 2 structs, got %d", got)
+	}
+	if buckets["Read"][0].sym.ID != 1 || buckets["Read"][1].sym.ID != 2 {
+		t.Errorf("Read bucket must be sorted by symbol ID, got %d,%d",
+			buckets["Read"][0].sym.ID, buckets["Read"][1].sym.ID)
+	}
+	if len(buckets["Close"]) != 1 || len(buckets["Write"]) != 1 {
+		t.Errorf("Close/Write buckets wrong: %d/%d", len(buckets["Close"]), len(buckets["Write"]))
+	}
+	if _, ok := buckets["Flush"]; ok {
+		t.Error("no struct has Flush; bucket must be absent")
+	}
+}
+
+// TestCandidateStructs pins the pruning rule: candidates are EXACTLY the
+// smallest bucket among the required methods (kills the largest-bucket
+// mutant), and a required method with no bucket short-circuits to zero
+// candidates — falling through to any other bucket would emit false 0.9
+// satisfaction edges for interfaces nothing implements.
+func TestCandidateStructs(t *testing.T) {
+	structs := map[int64]*structInfo{
+		1: mkStruct(1, "Read", "Close"),
+		2: mkStruct(2, "Read"),
+		3: mkStruct(3, "Read", "Close", "Rare"),
+	}
+	buckets := indexStructMethods(structs)
+
+	// Rare's bucket (1 struct) is strictly smaller than Read's (3) and Close's (2).
+	got := candidateStructs(map[string]bool{"Read": true, "Close": true, "Rare": true}, buckets)
+	if len(got) != 1 || got[0].sym.ID != 3 {
+		t.Fatalf("candidates must be exactly the smallest (Rare) bucket, got %d structs", len(got))
+	}
+
+	// A required method with NO bucket anywhere → zero candidates, immediately.
+	if got := candidateStructs(map[string]bool{"Read": true, "Missing": true}, buckets); got != nil {
+		t.Fatalf("missing bucket must short-circuit to zero candidates, got %d", len(got))
+	}
+}
+
+// recordingSatisfyStore extends satisfyFakeStore to capture written edges so
+// full-pass tests can compare the emitted set against an oracle.
+type recordingSatisfyStore struct {
+	satisfyFakeStore
+	written []model.Edge
+}
+
+func (r *recordingSatisfyStore) WriteEdge(_ context.Context, e *model.Edge) (int64, error) {
+	r.written = append(r.written, *e)
+	return int64(len(r.written)), nil
+}
+
+// satisfyPairs runs the full satisfyInterfaces pass over the given symbols and
+// includes edges, returning the emitted (struct,interface) pairs.
+func satisfyPairs(t *testing.T, syms []model.Symbol, includes []model.Edge) map[[2]int64]bool {
+	t.Helper()
+	f := &recordingSatisfyStore{satisfyFakeStore: satisfyFakeStore{Adapter: newOpenAdapter(t), syms: syms, edges: includes}}
+	h := &harness{ctx: context.Background(), idx: f, out: io.Discard, warn: io.Discard}
+	if err := h.satisfyInterfaces(); err != nil {
+		t.Fatalf("satisfyInterfaces: %v", err)
+	}
+	pairs := map[[2]int64]bool{}
+	for _, e := range f.written {
+		pairs[[2]int64{*e.SourceID, e.TargetID}] = true
+	}
+	return pairs
+}
+
+// TestSatisfyDifferentialOracle is the correctness anchor for the candidate
+// pruning: the emitted edge set must equal a naive all-pairs oracle computed
+// with the untouched methodSetSatisfies predicate. The fixture family is
+// chosen to kill the mutants the pruning could hide:
+//   - iface 10 (Read+Close): its smallest bucket is Close {1,4,5,6} (Read has
+//     five members thanks to struct 7), and struct 6 sits IN that bucket while
+//     lacking Read — a candidate that must FAIL the re-check (kills
+//     skip-re-check; verified by running the mutant, per council pass 2);
+//   - iface 11 (Rare): served from a 2-struct bucket; struct 3 satisfies it
+//     while never being a candidate for iface 10 (not in the Close bucket);
+//   - iface 12 (Ghost): required method exists on NO struct — zero edges;
+//   - struct 4 satisfies iface 10 ONLY through methods promoted from its
+//     embedded struct 5 (kills index-built-before-promotion).
+func TestSatisfyDifferentialOracle(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	syms := []model.Symbol{
+		{ID: 10, Name: "IReadCloser", Kind: model.KindInterface, FileID: 1},
+		{ID: 20, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(10)},
+		{ID: 21, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(10)},
+		{ID: 11, Name: "IRare", Kind: model.KindInterface, FileID: 1},
+		{ID: 22, Name: "Rare", Kind: model.KindMethod, FileID: 1, ParentID: pid(11)},
+		{ID: 12, Name: "IGhost", Kind: model.KindInterface, FileID: 1},
+		{ID: 23, Name: "Ghost", Kind: model.KindMethod, FileID: 1, ParentID: pid(12)},
+
+		{ID: 1, Name: "Full", Kind: model.KindClass, FileID: 1},
+		{ID: 30, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(1)},
+		{ID: 31, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(1)},
+		{ID: 32, Name: "Rare", Kind: model.KindMethod, FileID: 1, ParentID: pid(1)},
+		{ID: 3, Name: "HasRareLacksClose", Kind: model.KindClass, FileID: 1},
+		{ID: 33, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(3)},
+		{ID: 34, Name: "Rare", Kind: model.KindMethod, FileID: 1, ParentID: pid(3)},
+		{ID: 4, Name: "Embedder", Kind: model.KindClass, FileID: 1},
+		{ID: 5, Name: "Embedded", Kind: model.KindClass, FileID: 1},
+		{ID: 35, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(5)},
+		{ID: 36, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(5)},
+		{ID: 6, Name: "CloseOnly", Kind: model.KindClass, FileID: 1},
+		{ID: 37, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(6)},
+		{ID: 7, Name: "ReadOnly", Kind: model.KindClass, FileID: 1},
+		{ID: 38, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(7)},
+	}
+	// Struct 4 embeds struct 5 (its only route to Read+Close).
+	includes := []model.Edge{{SourceID: pid(4), TargetID: 5, Kind: model.EdgeIncludes}}
+
+	got := satisfyPairs(t, syms, includes)
+
+	// Naive oracle over the same classified sets, untouched predicate.
+	want := map[[2]int64]bool{
+		{1, 10}: true, {1, 11}: true, // Full satisfies IReadCloser and IRare
+		{3, 11}: true, // HasRareLacksClose satisfies IRare; never a candidate for 10
+		{4, 10}: true, // Embedder: only via promotion from Embedded
+		{5, 10}: true, // Embedded satisfies IReadCloser directly
+		// CloseOnly (6) and ReadOnly (7) satisfy NOTHING: 6 is the in-bucket
+		// candidate the re-check must reject, 7 only pads the Read bucket so
+		// Close stays strictly smallest.
+	}
+	if len(got) != len(want) {
+		t.Fatalf("edge set mismatch: got %v want %v", got, want)
+	}
+	for p := range want {
+		if !got[p] {
+			t.Errorf("missing edge %v", p)
+		}
+	}
+}
+
+// TestSatisfyUbiquitousMethodInterfaces pins the degenerate CPU shape: many
+// one-method interfaces sharing a ubiquitous method. Every candidate is a true
+// satisfier, so the "cost" is exactly the correct output, not wasted checks.
+func TestSatisfyUbiquitousMethodInterfaces(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	var syms []model.Symbol
+	const nIfaces, nStructs = 5, 4
+	for i := int64(0); i < nIfaces; i++ {
+		id := 10 + i
+		syms = append(syms,
+			model.Symbol{ID: id, Name: "I", Kind: model.KindInterface, FileID: 1},
+			model.Symbol{ID: 100 + i, Name: "Reset", Kind: model.KindMethod, FileID: 1, ParentID: pid(id)})
+	}
+	for s := int64(0); s < nStructs; s++ {
+		id := 50 + s
+		syms = append(syms,
+			model.Symbol{ID: id, Name: "S", Kind: model.KindClass, FileID: 1},
+			model.Symbol{ID: 200 + s, Name: "Reset", Kind: model.KindMethod, FileID: 1, ParentID: pid(id)})
+	}
+	got := satisfyPairs(t, syms, nil)
+	if len(got) != nIfaces*nStructs {
+		t.Fatalf("ubiquitous shape: want %d edges (all true), got %d", nIfaces*nStructs, len(got))
 	}
 }
