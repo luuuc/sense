@@ -249,6 +249,13 @@ func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, bucket
 
 	var written int
 	err := h.idx.InTx(h.ctx, func() error {
+		// The pass owns its edge set and rewrites it wholesale: clear every
+		// previously-written satisfaction edge (this pass's exact output
+		// signature) so a TIGHTENING of the matcher reaches existing indexes
+		// — upsert semantics alone would keep stale junk forever.
+		if err := h.clearSatisfactionEdges(); err != nil {
+			return err
+		}
 		for _, iface := range ordered {
 			// Post-expansion an empty INDEXED set: interface{}, a
 			// constraint-only interface, or a composite of purely
@@ -311,6 +318,23 @@ func methodSetSatisfies(methods, required map[string]arity) bool {
 		}
 	}
 	return true
+}
+
+// clearSatisfactionEdges deletes the satisfaction pass's owned edge set:
+// inherits edges at convention confidence targeting Go-file interfaces —
+// exactly what writeSatisfactionEdge emits and nothing else.
+func (h *harness) clearSatisfactionEdges() error {
+	_, err := h.idx.DB().ExecContext(h.ctx, `
+		DELETE FROM sense_edges WHERE kind = 'inherits' AND confidence = ?
+		AND target_id IN (
+			SELECT s.id FROM sense_symbols s
+			JOIN sense_files f ON f.id = s.file_id
+			WHERE s.kind = 'interface' AND f.language = 'go')`,
+		extract.ConfidenceConvention)
+	if err != nil {
+		return fmt.Errorf("satisfy: clear stale edges: %w", err)
+	}
+	return nil
 }
 
 func (h *harness) writeSatisfactionEdge(structID, ifaceID, fileID int64) error {
