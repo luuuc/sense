@@ -148,14 +148,12 @@ func SiblingSymbolIDs(ctx context.Context, db *sql.DB, symbolID int64) ([]int64,
 // composer that also calls the subject is recorded under the calls edge, never
 // bucketed as a composer. Because it selects `composes` edges only, the test
 // call-sites that dominate the caller list (calls/tests edges) are excluded by
-// construction. Seeds, the subject's own members (childSet / isSelf), and ids
-// already placed in another edge-kind group (excludeGrouped) are skipped; output
-// is ordered by id and capped to maxResults.
-func (s *bfsState) loadReverseComposition(ctx context.Context, db *sql.DB, seedIDs []int64, seedSet, excludeGrouped map[int64]struct{}, isSelf selfMethodFn, maxResults int) ([]model.Symbol, error) {
-	composerIDs, err := inboundComposers(ctx, db, seedIDs)
-	if err != nil {
-		return nil, err
-	}
+// construction. composerIDs is the inboundComposers result for the seeds —
+// fetched once by Compute and shared with the retention closure's fixpoint.
+// Seeds, the subject's own members (childSet / isSelf), and ids already placed
+// in another edge-kind group (excludeGrouped) are skipped; output is ordered by
+// id and capped to maxResults.
+func (s *bfsState) loadReverseComposition(ctx context.Context, db *sql.DB, composerIDs []int64, seedSet, excludeGrouped map[int64]struct{}, isSelf selfMethodFn, maxResults int) ([]model.Symbol, error) {
 	kept := make([]int64, 0, len(composerIDs))
 	for _, id := range composerIDs {
 		if _, isSeed := seedSet[id]; isSeed {

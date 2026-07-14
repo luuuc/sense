@@ -306,13 +306,27 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	// under the calls edge and never bucketed here. excludeGrouped keeps the
 	// one-node-one-group invariant against the inherits/includes buckets above.
 	excludeGrouped := symbolIDSet(subclasses, viaIncludes)
-	viaComposition, err := state.loadReverseComposition(ctx, db, symbolIDs, seedSet, excludeGrouped, isSelf, opts.MaxResults)
+	// Fetched once and shared: the composition group and the retention
+	// closure's fixpoint level 1 read the same reverse-composes set.
+	composerIDs, err := inboundComposers(ctx, db, symbolIDs)
+	if err != nil {
+		return Result{}, fmt.Errorf("blast: reverse composition: %w", err)
+	}
+	viaComposition, err := state.loadReverseComposition(ctx, db, composerIDs, seedSet, excludeGrouped, isSelf, opts.MaxResults)
 	if err != nil {
 		return Result{}, fmt.Errorf("blast: reverse composition: %w", err)
 	}
 	// Count any composer the BFS did not visit (pruned by confidence) into the
 	// total so total_affected never under-reports what the response surfaces.
 	totalAffectedCount += countUnvisited(viaComposition, affectedSet)
+
+	retained, retainedCount, retainedTruncated, err := loadRetention(ctx, db, subject, symbolIDs, composerIDs, state.childSet, excludeGrouped, isSelf, opts.MaxResults)
+	if err != nil {
+		return Result{}, fmt.Errorf("blast: retention closure: %w", err)
+	}
+	if retainedTruncated {
+		state.truncated = true
+	}
 
 	return Result{
 		Symbol:                 subject,
@@ -331,6 +345,8 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
+		RetainedViaInterfaces:  retained,
+		RetainedCount:          retainedCount,
 		SymbolTiers:            symbolTiers,
 		Truncated:              state.truncated,
 	}, nil
