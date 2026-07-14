@@ -772,3 +772,27 @@ func TestSatisfyComposedInterfaceArity(t *testing.T) {
 		t.Error("junk Write() must not satisfy the composed interface — expansion lost arity")
 	}
 }
+
+// TestClearSatisfactionEdgesError surfaces the delete failing (closed index):
+// the transaction must abort rather than write alongside a failed clear.
+func TestClearSatisfactionEdgesError(t *testing.T) {
+	h := &harness{ctx: context.Background(), idx: newClosedAdapter(t), out: io.Discard, warn: io.Discard}
+	if err := h.clearSatisfactionEdges(); err == nil {
+		t.Fatal("expected the clear to surface a closed-index error")
+	}
+}
+
+// BenchmarkParseMethodArity pins the parser's cost claim: a short forward
+// byte-walk, no allocation on the hot path.
+func BenchmarkParseMethodArity(b *testing.B) {
+	snippets := []string{
+		"Close(ctx context.Context) error",
+		"func (b *Batch) Set(key, value []byte, o *WriteOptions) error {",
+		"func (m *Map[K, V]) Get(k K) (V, bool) {",
+		"Iterate(ctx context.Context, cb func(k, v []byte) error)",
+	}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		parseMethodArity(snippets[i%len(snippets)])
+	}
+}
