@@ -3,20 +3,36 @@ package scan
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/index"
 	"github.com/luuuc/sense/internal/model"
 )
 
+// arity is the (params, results) slot count parsed from a method's
+// declaration snippet. The zero value means the snippet didn't parse
+// (multi-line declaration, truncation, unmodeled construct); name-only
+// matching applies — UNKNOWN can only ever KEEP an edge, never drop one.
+type arity struct {
+	params, results int
+	known           bool
+}
+
+// compatible reports whether two parsed arities allow satisfaction: either
+// side UNKNOWN falls back to name-only matching; both known require equality.
+func (a arity) compatible(b arity) bool {
+	return !a.known || !b.known || a == b
+}
+
 type ifaceInfo struct {
 	sym     model.Symbol
-	methods map[string]bool
+	methods map[string]arity
 }
 
 type structInfo struct {
 	sym     model.Symbol
-	methods map[string]bool
+	methods map[string]arity
 }
 
 // satisfyInterfaces is a post-extraction pass that computes implicit
@@ -84,12 +100,12 @@ func classifyGoSymbols(syms []model.Symbol, goFiles map[int64]bool) (map[int64]*
 		case model.KindInterface:
 			interfaces[s.ID] = &ifaceInfo{
 				sym:     *s,
-				methods: map[string]bool{},
+				methods: map[string]arity{},
 			}
 		case model.KindClass:
 			structs[s.ID] = &structInfo{
 				sym:     *s,
-				methods: map[string]bool{},
+				methods: map[string]arity{},
 			}
 		default:
 		}
@@ -107,10 +123,10 @@ func collectMethodSets(syms []model.Symbol, interfaces map[int64]*ifaceInfo, str
 		}
 		parentID := *s.ParentID
 		if iface, ok := interfaces[parentID]; ok {
-			iface.methods[s.Name] = true
+			iface.methods[s.Name] = parseMethodArity(s.Snippet)
 		}
 		if st, ok := structs[parentID]; ok {
-			st.methods[s.Name] = true
+			st.methods[s.Name] = parseMethodArity(s.Snippet)
 		}
 	}
 }
@@ -159,8 +175,17 @@ func expandInterfaceMethods(id int64, interfaces map[int64]*ifaceInfo, embedding
 			continue
 		}
 		expandInterfaceMethods(embeddedID, interfaces, embeddings, expanded, visiting)
-		for m := range embedded.methods {
-			iface.methods[m] = true
+		for m, ar := range embedded.methods {
+			if have, ok := iface.methods[m]; ok {
+				// Same name from two sources: arity agreement keeps it;
+				// disagreement collapses to UNKNOWN so map order never
+				// decides which declaration wins.
+				if have != ar {
+					iface.methods[m] = arity{}
+				}
+				continue
+			}
+			iface.methods[m] = ar
 		}
 	}
 	delete(visiting, id)
@@ -172,8 +197,38 @@ func expandInterfaceMethods(id int64, interfaces map[int64]*ifaceInfo, embedding
 // satisfaction. An embedded interface field delegates its whole (expanded)
 // method set, so interface targets union in full.
 func promoteEmbeddedMethodSets(structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, embeddings map[int64][]int64) {
+	// Snapshot each struct's OWN method names before any promotion mutates
+	// the maps: own declarations shadow embedded ones (Go), while two
+	// EMBEDDED sources disagreeing on an absent name collapse to UNKNOWN —
+	// embed order must never pick a winner and drop a compile-true edge.
+	own := make(map[int64]map[string]bool, len(structs))
 	for id, st := range structs {
-		promoteEmbeddedMethods(st, id, embeddings, structs, interfaces, 3)
+		names := make(map[string]bool, len(st.methods))
+		for m := range st.methods {
+			names[m] = true
+		}
+		own[id] = names
+	}
+	for id, st := range structs {
+		promoteEmbeddedMethods(st, id, own, embeddings, structs, interfaces, 3)
+	}
+}
+
+// mergePromoted folds one embedded source's method set into the embedder:
+// names the embedder declares itself are never touched; a name two embedded
+// sources disagree on collapses to UNKNOWN (conservative: keeps the edge).
+func mergePromoted(st *structInfo, ownNames map[string]bool, promoted map[string]arity) {
+	for m, ar := range promoted {
+		if ownNames[m] {
+			continue
+		}
+		if have, ok := st.methods[m]; ok {
+			if have != ar {
+				st.methods[m] = arity{}
+			}
+			continue
+		}
+		st.methods[m] = ar
 	}
 }
 
@@ -197,7 +252,7 @@ func indexStructMethods(structs map[int64]*structInfo) map[string][]*structInfo 
 // satisfying struct has every required method, so the smallest bucket contains
 // them all. A required method with no bucket means no struct can satisfy —
 // zero candidates, immediately.
-func candidateStructs(required map[string]bool, buckets map[string][]*structInfo) []*structInfo {
+func candidateStructs(required map[string]arity, buckets map[string][]*structInfo) []*structInfo {
 	var smallest []*structInfo
 	first := true
 	for m := range required {
@@ -224,6 +279,13 @@ func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, bucket
 
 	var written int
 	err := h.idx.InTx(h.ctx, func() error {
+		// The pass owns its edge set and rewrites it wholesale: clear every
+		// previously-written satisfaction edge (this pass's exact output
+		// signature) so a TIGHTENING of the matcher reaches existing indexes
+		// — upsert semantics alone would keep stale junk forever.
+		if err := h.clearSatisfactionEdges(); err != nil {
+			return err
+		}
 		for _, iface := range ordered {
 			// Post-expansion an empty INDEXED set: interface{}, a
 			// constraint-only interface, or a composite of purely
@@ -246,7 +308,7 @@ func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, bucket
 	return written, err
 }
 
-func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int64, structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, depth int) {
+func promoteEmbeddedMethods(st *structInfo, id int64, own map[int64]map[string]bool, embeddings map[int64][]int64, structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, depth int) {
 	if depth <= 0 {
 		return
 	}
@@ -254,29 +316,46 @@ func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int
 		if iface, ok := interfaces[embeddedID]; ok {
 			// An embedded interface value delegates its whole method set;
 			// the set is already fully expanded, no recursion needed.
-			for m := range iface.methods {
-				st.methods[m] = true
-			}
+			mergePromoted(st, own[id], iface.methods)
 			continue
 		}
 		embedded, ok := structs[embeddedID]
 		if !ok {
 			continue
 		}
-		promoteEmbeddedMethods(embedded, embeddedID, embeddings, structs, interfaces, depth-1)
-		for m := range embedded.methods {
-			st.methods[m] = true
-		}
+		promoteEmbeddedMethods(embedded, embeddedID, own, embeddings, structs, interfaces, depth-1)
+		mergePromoted(st, own[id], embedded.methods)
 	}
 }
 
-func methodSetSatisfies(methods, required map[string]bool) bool {
-	for m := range required {
-		if !methods[m] {
+func methodSetSatisfies(methods, required map[string]arity) bool {
+	for m, want := range required {
+		have, ok := methods[m]
+		if !ok {
+			return false
+		}
+		if !have.compatible(want) {
 			return false
 		}
 	}
 	return true
+}
+
+// clearSatisfactionEdges deletes the satisfaction pass's owned edge set:
+// inherits edges at convention confidence targeting Go-file interfaces —
+// exactly what writeSatisfactionEdge emits and nothing else.
+func (h *harness) clearSatisfactionEdges() error {
+	_, err := h.idx.DB().ExecContext(h.ctx, `
+		DELETE FROM sense_edges WHERE kind = 'inherits' AND confidence = ?
+		AND target_id IN (
+			SELECT s.id FROM sense_symbols s
+			JOIN sense_files f ON f.id = s.file_id
+			WHERE s.kind = 'interface' AND f.language = 'go')`,
+		extract.ConfidenceConvention)
+	if err != nil {
+		return fmt.Errorf("satisfy: clear stale edges: %w", err)
+	}
+	return nil
 }
 
 func (h *harness) writeSatisfactionEdge(structID, ifaceID, fileID int64) error {
@@ -289,3 +368,108 @@ func (h *harness) writeSatisfactionEdge(structID, ifaceID, fileID int64) error {
 	})
 	return err
 }
+
+// parseMethodArity derives the (params, results) slot counts from a method's
+// stored declaration snippet. Both snippet shapes parse through one path:
+// interface members (`Close() error`) and receiver forms
+// (`func (r *T) Close() error {`) — the receiver group is skipped so the
+// param group is always the one after the method name. The zero value
+// (UNKNOWN) is returned for every construct the walker does not model:
+// truncated multi-line declarations, cap-length snippets (a 200-byte cut can
+// BALANCE into a wrong parse), backquoted struct tags, or missing groups.
+// UNKNOWN can only ever keep an edge, never drop one.
+func parseMethodArity(snippet string) arity {
+	s := strings.TrimSpace(snippet)
+	if s == "" || len(snippet) >= snippetMaxBytes || strings.ContainsRune(s, '`') {
+		return arity{}
+	}
+	if strings.HasPrefix(s, "func") {
+		// Go does not require a space before the receiver group: `func(r *T)`
+		// is legal source. A method named exactly `func` is impossible, so
+		// `func` followed by any spacing then `(` is always the receiver.
+		rest := strings.TrimLeft(s[4:], " \t")
+		if strings.HasPrefix(rest, "(") {
+			_, end, _, ok := scanGroup(rest, 0)
+			if !ok {
+				return arity{}
+			}
+			s = strings.TrimSpace(rest[end:])
+		} else if len(s) > 4 && (s[4] == ' ' || s[4] == '\t') {
+			s = rest // plain function declaration
+		}
+	}
+	open := strings.IndexByte(s, '(')
+	if open <= 0 { // no param group, or no method name before it
+		return arity{}
+	}
+	commas, end, content, ok := scanGroup(s, open)
+	if !ok {
+		return arity{}
+	}
+	params := 0
+	if content {
+		params = commas + 1
+	}
+	results, ok := countResults(s[end:])
+	if !ok {
+		return arity{}
+	}
+	return arity{params: params, results: results, known: true}
+}
+
+// scanGroup walks one balanced group starting at s[i] == '(' with a combined
+// depth counter across (), [] and {} — commas inside brackets or braces never
+// count as slot separators (generic receivers, Pair[K, V] params, inline
+// structs). Returns the top-level comma count, the index just past the
+// closing paren, whether the group has any content, and ok=false when the
+// group never closes (a truncated multi-line declaration).
+func scanGroup(s string, i int) (commas, end int, content, ok bool) {
+	depth := 0
+	for j := i; j < len(s); j++ {
+		switch s[j] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+			if depth == 0 {
+				return commas, j + 1, content, true
+			}
+		case ',':
+			if depth == 1 {
+				commas++
+			}
+		default:
+			if depth >= 1 && !isSpaceByte(s[j]) {
+				content = true
+			}
+		}
+	}
+	return 0, 0, false, false
+}
+
+// countResults classifies the text after the param group: nothing (or only
+// the body's opening brace) → 0; a parenthesized group → its slot count; any
+// bare type → 1 (a bare result can never contain a top-level comma — Go
+// requires parentheses for tuples).
+func countResults(rest string) (int, bool) {
+	rest = strings.TrimSpace(rest)
+	if cut := strings.IndexByte(rest, '{'); cut >= 0 && !strings.HasPrefix(rest, "(") {
+		rest = strings.TrimSpace(rest[:cut])
+	}
+	if rest == "" {
+		return 0, true
+	}
+	if rest[0] == '(' {
+		commas, _, content, ok := scanGroup(rest, 0)
+		if !ok {
+			return 0, false
+		}
+		if !content {
+			return 0, true
+		}
+		return commas + 1, true
+	}
+	return 1, true
+}
+
+func isSpaceByte(b byte) bool { return b == ' ' || b == '\t' }

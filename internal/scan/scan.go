@@ -424,6 +424,12 @@ func finalizeScan(ctx context.Context, idx *sqlite.Adapter, h *harness, senseDir
 	if err := idx.WriteMeta(ctx, "satisfy_unbudgeted", "1"); err != nil {
 		_, _ = fmt.Fprintf(h.warn, "warn: write satisfy_unbudgeted: %v\n", err)
 	}
+	// satisfy_arity records that satisfaction edges were matched on name AND
+	// signature slot counts (F-31-09a): pre-fix indexes carry ~30% measured
+	// compile-false edges. Same unconditional placement — a plain scan heals.
+	if err := idx.WriteMeta(ctx, "satisfy_arity", "1"); err != nil {
+		_, _ = fmt.Fprintf(h.warn, "warn: write satisfy_arity: %v\n", err)
+	}
 
 	if h.fullyLinked {
 		if err := idx.WriteMeta(ctx, "parent_linkage", "1"); err != nil {
