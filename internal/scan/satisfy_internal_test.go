@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/luuuc/sense/internal/index"
@@ -492,5 +493,89 @@ func TestSatisfyUbiquitousMethodInterfaces(t *testing.T) {
 	got := satisfyPairs(t, syms, nil)
 	if len(got) != nIfaces*nStructs {
 		t.Fatalf("ubiquitous shape: want %d edges (all true), got %d", nIfaces*nStructs, len(got))
+	}
+}
+
+// TestParseMethodArity is the parser's input contract (council pass 1, Beck's
+// matrix): every construct the walker models parses to exact slot counts;
+// every construct it does not model returns UNKNOWN — never a miscount. The
+// two-shape equivalence rows are load-bearing: interface members and
+// receiver-form declarations of the same signature MUST parse equal.
+func TestParseMethodArity(t *testing.T) {
+	known := func(p, r int) arity { return arity{params: p, results: r, known: true} }
+	unknown := arity{}
+	cases := []struct {
+		name, snippet string
+		want          arity
+	}{
+		{"iface empty both", "Close()", known(0, 0)},
+		{"recv empty both", "func (r *T) Close() {", known(0, 0)},
+		{"iface bare return", "Close() error", known(0, 1)},
+		{"recv bare return", "func (r *T) Close() error {", known(0, 1)},
+		{"iface tuple return", "Next() (*CommitMeta, error)", known(0, 2)},
+		{"parenthesized single return", "Sum() (int)", known(0, 1)},
+		{"grouped params", "Set(key, value []byte, o *WriteOptions)", known(3, 0)},
+		{"func-typed param", "Iterate(ctx context.Context, cb func(k, v []byte) error)", known(2, 0)},
+		{"func-typed return", "Handler() func(a, b int) bool", known(0, 1)},
+		{"variadic", "Printf(format string, args ...interface{})", known(2, 0)},
+		{"generic tuple return", "Next(ctx context.Context) (K, V, error)", known(1, 3)},
+		{"generic receiver", "func (m *Map[K, V]) Get(k K) (V, bool) {", known(1, 2)},
+		{"bracket-comma param", "Do(p Pair[K, V])", known(1, 0)},
+		{"brace-comma param", "Apply(s struct{ a, b int })", known(1, 0)},
+		{"map return", "Snapshot() map[string]int", known(0, 1)},
+		{"one-line body literal commas", "func (t T) Pair() point { return point{1, 2} }", known(0, 1)},
+		{"the flagship junk pair A", "Close(ctx context.Context) error", known(1, 1)},
+		{"truncated multi-line", "NewIterator(ctx context.Context,", unknown},
+		{"empty snippet", "", unknown},
+		{"backquote struct tag", "Parse(v struct{ A int `json:\"a,b\"` })", unknown},
+		{"no param group", "type Closer interface {", unknown},
+	}
+	for _, c := range cases {
+		if got := parseMethodArity(c.snippet); got != c.want {
+			t.Errorf("%s: parseMethodArity(%q) = %+v, want %+v", c.name, c.snippet, got, c.want)
+		}
+	}
+
+	// The 200-byte cap: a single-line declaration at or over snippetMaxBytes
+	// may be truncated into a BALANCED wrong parse — cap-length input is
+	// always UNKNOWN.
+	long := "LongOne(" + strings.Repeat("a int, ", 40) + "b int)"
+	if len(long) < snippetMaxBytes {
+		t.Fatalf("fixture must reach the cap")
+	}
+	if got := parseMethodArity(long[:snippetMaxBytes]); got != unknown {
+		t.Errorf("cap-length snippet must be UNKNOWN, got %+v", got)
+	}
+
+	// Two-shape equivalence (the load-bearing rows, asserted pairwise).
+	pairs := [][2]string{
+		{"Close() error", "func (r *reader) Close() error {"},
+		{"Get(k K) (V, bool)", "func (m *Map[K, V]) Get(k K) (V, bool) {"},
+		{"Set(key, value []byte, o *WriteOptions) error", "func (b *Batch) Set(key, value []byte, o *WriteOptions) error {"},
+	}
+	for _, p := range pairs {
+		a, b := parseMethodArity(p[0]), parseMethodArity(p[1])
+		if !a.known || !b.known || a != b {
+			t.Errorf("shape equivalence: %q=%+v vs %q=%+v", p[0], a, p[1], b)
+		}
+	}
+}
+
+// TestArityCompatible pins the asymmetry: UNKNOWN on either side keeps the
+// name-only fallback; both known require equality on BOTH params and results.
+func TestArityCompatible(t *testing.T) {
+	k := func(p, r int) arity { return arity{params: p, results: r, known: true} }
+	u := arity{}
+	if !u.compatible(k(1, 1)) || !k(1, 1).compatible(u) || !u.compatible(u) {
+		t.Error("UNKNOWN must always be compatible (keep the edge)")
+	}
+	if !k(2, 1).compatible(k(2, 1)) {
+		t.Error("equal arities must be compatible")
+	}
+	if k(2, 1).compatible(k(1, 1)) {
+		t.Error("params-differ must be incompatible")
+	}
+	if k(2, 1).compatible(k(2, 2)) {
+		t.Error("results-differ must be incompatible (returns are compared, not just params)")
 	}
 }

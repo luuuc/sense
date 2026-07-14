@@ -3,6 +3,7 @@ package scan
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/index"
@@ -322,3 +323,103 @@ func (h *harness) writeSatisfactionEdge(structID, ifaceID, fileID int64) error {
 	})
 	return err
 }
+
+// parseMethodArity derives the (params, results) slot counts from a method's
+// stored declaration snippet. Both snippet shapes parse through one path:
+// interface members (`Close() error`) and receiver forms
+// (`func (r *T) Close() error {`) — the receiver group is skipped so the
+// param group is always the one after the method name. The zero value
+// (UNKNOWN) is returned for every construct the walker does not model:
+// truncated multi-line declarations, cap-length snippets (a 200-byte cut can
+// BALANCE into a wrong parse), backquoted struct tags, or missing groups.
+// UNKNOWN can only ever keep an edge, never drop one.
+func parseMethodArity(snippet string) arity {
+	s := strings.TrimSpace(snippet)
+	if s == "" || len(snippet) >= snippetMaxBytes || strings.ContainsRune(s, '`') {
+		return arity{}
+	}
+	if strings.HasPrefix(s, "func ") {
+		s = strings.TrimSpace(s[5:])
+		if strings.HasPrefix(s, "(") { // receiver group
+			_, end, _, ok := scanGroup(s, 0)
+			if !ok {
+				return arity{}
+			}
+			s = strings.TrimSpace(s[end:])
+		}
+	}
+	open := strings.IndexByte(s, '(')
+	if open <= 0 { // no param group, or no method name before it
+		return arity{}
+	}
+	commas, end, content, ok := scanGroup(s, open)
+	if !ok {
+		return arity{}
+	}
+	params := 0
+	if content {
+		params = commas + 1
+	}
+	results, ok := countResults(s[end:])
+	if !ok {
+		return arity{}
+	}
+	return arity{params: params, results: results, known: true}
+}
+
+// scanGroup walks one balanced group starting at s[i] == '(' with a combined
+// depth counter across (), [] and {} — commas inside brackets or braces never
+// count as slot separators (generic receivers, Pair[K, V] params, inline
+// structs). Returns the top-level comma count, the index just past the
+// closing paren, whether the group has any content, and ok=false when the
+// group never closes (a truncated multi-line declaration).
+func scanGroup(s string, i int) (commas, end int, content, ok bool) {
+	depth := 0
+	for j := i; j < len(s); j++ {
+		switch s[j] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+			if depth == 0 {
+				return commas, j + 1, content, true
+			}
+		case ',':
+			if depth == 1 {
+				commas++
+			}
+		default:
+			if depth >= 1 && !isSpaceByte(s[j]) {
+				content = true
+			}
+		}
+	}
+	return 0, 0, false, false
+}
+
+// countResults classifies the text after the param group: nothing (or only
+// the body's opening brace) → 0; a parenthesized group → its slot count; any
+// bare type → 1 (a bare result can never contain a top-level comma — Go
+// requires parentheses for tuples).
+func countResults(rest string) (int, bool) {
+	rest = strings.TrimSpace(rest)
+	if cut := strings.IndexByte(rest, '{'); cut >= 0 && !strings.HasPrefix(rest, "(") && !strings.Contains(rest[:cut], "func(") && !strings.Contains(rest[:cut], "func (") {
+		rest = strings.TrimSpace(rest[:cut])
+	}
+	if rest == "" {
+		return 0, true
+	}
+	if rest[0] == '(' {
+		commas, _, content, ok := scanGroup(rest, 0)
+		if !ok {
+			return 0, false
+		}
+		if !content {
+			return 0, true
+		}
+		return commas + 1, true
+	}
+	return 1, true
+}
+
+func isSpaceByte(b byte) bool { return b == ' ' || b == '\t' }
