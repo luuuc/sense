@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.26] - 2026-07-14
+
+### Bug Fixes
+
+- satisfaction matching goes arity-aware — measured 30% of big-repo edges were compile-false
+- stamp satisfy_arity and advise a plain scan on pre-fix Go indexes
+- satisfaction pass clears its stale edges before rewriting
+- close three review-found satisfaction holes
+
+### Refactoring
+
+- thread method arity through the satisfaction pass
+- snippet arity parser for satisfaction matching
 ## [1.11.25] - 2026-07-14
 
 ### Bug Fixes
