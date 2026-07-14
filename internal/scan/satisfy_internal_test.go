@@ -93,7 +93,7 @@ func TestPromoteEmbeddedMethods(t *testing.T) {
 		1: {2},
 	}
 
-	promoteEmbeddedMethods(outer, 1, embeddings, structs, nil, 3)
+	promoteEmbeddedMethods(outer, 1, map[int64]map[string]bool{}, embeddings, structs, nil, 3)
 
 	if !hasMethod(outer.methods, "Read") {
 		t.Error("expected Read promoted from embedded struct")
@@ -114,7 +114,7 @@ func TestPromoteEmbeddedMethodsDepthLimit(t *testing.T) {
 	structs := map[int64]*structInfo{1: a, 2: b, 3: c}
 	embeddings := map[int64][]int64{1: {2}, 2: {3}}
 
-	promoteEmbeddedMethods(a, 1, embeddings, structs, nil, 1)
+	promoteEmbeddedMethods(a, 1, map[int64]map[string]bool{}, embeddings, structs, nil, 1)
 
 	// Depth=1 means we only go one hop. b's methods get promoted,
 	// but c's methods should not (they need depth=2).
@@ -328,7 +328,7 @@ func TestLoadEmbeddingsSkipsNilSource(t *testing.T) {
 func TestPromoteEmbeddedMethodsUnknownTarget(t *testing.T) {
 	st := &structInfo{methods: map[string]arity{"Own": {}}}
 	structs := map[int64]*structInfo{1: st}
-	promoteEmbeddedMethods(st, 1, map[int64][]int64{1: {99}}, structs, nil, 3)
+	promoteEmbeddedMethods(st, 1, map[int64]map[string]bool{}, map[int64][]int64{1: {99}}, structs, nil, 3)
 	if len(st.methods) != 1 {
 		t.Errorf("unknown embed target must contribute nothing, got %v", st.methods)
 	}
@@ -556,6 +556,8 @@ func TestParseMethodArity(t *testing.T) {
 		{"returns group truncated", "Foo() (int,", unknown},
 		{"empty parens returns", "Foo() ()", known(0, 0)},
 		{"func keyword bare (no receiver)", "func Standalone(a int) error {", known(1, 1)},
+		{"receiver without space", "func(r *T) Close() error {", known(0, 1)},
+		{"receiver after tab", "func\t(r *T) Close() error {", known(0, 1)},
 	}
 	for _, c := range cases {
 		if got := parseMethodArity(c.snippet); got != c.want {
@@ -708,5 +710,65 @@ func TestSatisfyArityPromotion(t *testing.T) {
 		if got[[2]int64{expect.src, 50}] != expect.want {
 			t.Errorf("struct %d → ICloser = %v, want %v (%s)", expect.src, !expect.want, expect.want, expect.why)
 		}
+	}
+}
+
+// TestPromoteSiblingEmbedConflict is Rams's witness (council pass 2): struct S
+// embeds A (which embeds B carrying m()) and C (carrying m(int)). Go's depth
+// rule resolves S.m to C's m(int) — S genuinely satisfies I{ m(int) }. Sibling
+// disagreement must collapse to UNKNOWN (keep the edge), never let embed order
+// pick a winner and drop a compile-true satisfier.
+func TestPromoteSiblingEmbedConflict(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	syms := []model.Symbol{
+		{ID: 60, Name: "IM", Kind: model.KindInterface, FileID: 1},
+		{ID: 61, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: pid(60),
+			Snippet: "M(x int)"},
+		{ID: 20, Name: "S", Kind: model.KindClass, FileID: 1},
+		{ID: 21, Name: "A", Kind: model.KindClass, FileID: 1},
+		{ID: 22, Name: "B", Kind: model.KindClass, FileID: 1},
+		{ID: 62, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: pid(22),
+			Snippet: "func (b *B) M() {"},
+		{ID: 23, Name: "C", Kind: model.KindClass, FileID: 1},
+		{ID: 63, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: pid(23),
+			Snippet: "func (c *C) M(x int) {"},
+	}
+	includes := []model.Edge{
+		{SourceID: pid(20), TargetID: 21, Kind: model.EdgeIncludes}, // S embeds A (first)
+		{SourceID: pid(21), TargetID: 22, Kind: model.EdgeIncludes}, // A embeds B
+		{SourceID: pid(20), TargetID: 23, Kind: model.EdgeIncludes}, // S embeds C (second)
+	}
+	got := satisfyPairs(t, syms, includes)
+	if !got[[2]int64{20, 60}] {
+		t.Error("sibling-embed arity conflict must collapse to UNKNOWN and keep S -> IM")
+	}
+}
+
+// TestSatisfyComposedInterfaceArity requires arity to survive interface
+// EXPANSION: IRW acquires Write(p []byte) (int, error) only through an
+// embedded interface. The junk struct's Write() must drop and the true
+// implementor must survive — if expansion loses arity, the junk class
+// silently returns on every composed interface (the common Go shape).
+func TestSatisfyComposedInterfaceArity(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	syms := []model.Symbol{
+		{ID: 70, Name: "IWrite", Kind: model.KindInterface, FileID: 1},
+		{ID: 71, Name: "Write", Kind: model.KindMethod, FileID: 1, ParentID: pid(70),
+			Snippet: "Write(p []byte) (int, error)"},
+		{ID: 72, Name: "IRW", Kind: model.KindInterface, FileID: 1}, // embeds IWrite only
+		{ID: 24, Name: "TrueWriter", Kind: model.KindClass, FileID: 1},
+		{ID: 73, Name: "Write", Kind: model.KindMethod, FileID: 1, ParentID: pid(24),
+			Snippet: "func (w *TrueWriter) Write(p []byte) (int, error) {"},
+		{ID: 25, Name: "JunkW", Kind: model.KindClass, FileID: 1},
+		{ID: 74, Name: "Write", Kind: model.KindMethod, FileID: 1, ParentID: pid(25),
+			Snippet: "func (w *JunkW) Write() {"},
+	}
+	includes := []model.Edge{{SourceID: pid(72), TargetID: 70, Kind: model.EdgeIncludes}}
+	got := satisfyPairs(t, syms, includes)
+	if !got[[2]int64{24, 72}] {
+		t.Error("true implementor must satisfy the composed interface (arity survives expansion)")
+	}
+	if got[[2]int64{25, 72}] {
+		t.Error("junk Write() must not satisfy the composed interface — expansion lost arity")
 	}
 }

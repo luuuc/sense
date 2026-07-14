@@ -197,8 +197,38 @@ func expandInterfaceMethods(id int64, interfaces map[int64]*ifaceInfo, embedding
 // satisfaction. An embedded interface field delegates its whole (expanded)
 // method set, so interface targets union in full.
 func promoteEmbeddedMethodSets(structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, embeddings map[int64][]int64) {
+	// Snapshot each struct's OWN method names before any promotion mutates
+	// the maps: own declarations shadow embedded ones (Go), while two
+	// EMBEDDED sources disagreeing on an absent name collapse to UNKNOWN —
+	// embed order must never pick a winner and drop a compile-true edge.
+	own := make(map[int64]map[string]bool, len(structs))
 	for id, st := range structs {
-		promoteEmbeddedMethods(st, id, embeddings, structs, interfaces, 3)
+		names := make(map[string]bool, len(st.methods))
+		for m := range st.methods {
+			names[m] = true
+		}
+		own[id] = names
+	}
+	for id, st := range structs {
+		promoteEmbeddedMethods(st, id, own, embeddings, structs, interfaces, 3)
+	}
+}
+
+// mergePromoted folds one embedded source's method set into the embedder:
+// names the embedder declares itself are never touched; a name two embedded
+// sources disagree on collapses to UNKNOWN (conservative: keeps the edge).
+func mergePromoted(st *structInfo, ownNames map[string]bool, promoted map[string]arity) {
+	for m, ar := range promoted {
+		if ownNames[m] {
+			continue
+		}
+		if have, ok := st.methods[m]; ok {
+			if have != ar {
+				st.methods[m] = arity{}
+			}
+			continue
+		}
+		st.methods[m] = ar
 	}
 }
 
@@ -278,7 +308,7 @@ func (h *harness) writeSatisfactionEdges(interfaces map[int64]*ifaceInfo, bucket
 	return written, err
 }
 
-func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int64, structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, depth int) {
+func promoteEmbeddedMethods(st *structInfo, id int64, own map[int64]map[string]bool, embeddings map[int64][]int64, structs map[int64]*structInfo, interfaces map[int64]*ifaceInfo, depth int) {
 	if depth <= 0 {
 		return
 	}
@@ -286,24 +316,15 @@ func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int
 		if iface, ok := interfaces[embeddedID]; ok {
 			// An embedded interface value delegates its whole method set;
 			// the set is already fully expanded, no recursion needed.
-			// Insert-if-absent: the embedder's own declaration shadows.
-			for m, ar := range iface.methods {
-				if _, ok := st.methods[m]; !ok {
-					st.methods[m] = ar
-				}
-			}
+			mergePromoted(st, own[id], iface.methods)
 			continue
 		}
 		embedded, ok := structs[embeddedID]
 		if !ok {
 			continue
 		}
-		promoteEmbeddedMethods(embedded, embeddedID, embeddings, structs, interfaces, depth-1)
-		for m, ar := range embedded.methods {
-			if _, ok := st.methods[m]; !ok {
-				st.methods[m] = ar
-			}
-		}
+		promoteEmbeddedMethods(embedded, embeddedID, own, embeddings, structs, interfaces, depth-1)
+		mergePromoted(st, own[id], embedded.methods)
 	}
 }
 
@@ -362,14 +383,19 @@ func parseMethodArity(snippet string) arity {
 	if s == "" || len(snippet) >= snippetMaxBytes || strings.ContainsRune(s, '`') {
 		return arity{}
 	}
-	if strings.HasPrefix(s, "func ") {
-		s = strings.TrimSpace(s[5:])
-		if strings.HasPrefix(s, "(") { // receiver group
-			_, end, _, ok := scanGroup(s, 0)
+	if strings.HasPrefix(s, "func") {
+		// Go does not require a space before the receiver group: `func(r *T)`
+		// is legal source. A method named exactly `func` is impossible, so
+		// `func` followed by any spacing then `(` is always the receiver.
+		rest := strings.TrimLeft(s[4:], " \t")
+		if strings.HasPrefix(rest, "(") {
+			_, end, _, ok := scanGroup(rest, 0)
 			if !ok {
 				return arity{}
 			}
-			s = strings.TrimSpace(s[end:])
+			s = strings.TrimSpace(rest[end:])
+		} else if len(s) > 4 && (s[4] == ' ' || s[4] == '\t') {
+			s = rest // plain function declaration
 		}
 	}
 	open := strings.IndexByte(s, '(')
@@ -427,7 +453,7 @@ func scanGroup(s string, i int) (commas, end int, content, ok bool) {
 // requires parentheses for tuples).
 func countResults(rest string) (int, bool) {
 	rest = strings.TrimSpace(rest)
-	if cut := strings.IndexByte(rest, '{'); cut >= 0 && !strings.HasPrefix(rest, "(") && !strings.Contains(rest[:cut], "func(") && !strings.Contains(rest[:cut], "func (") {
+	if cut := strings.IndexByte(rest, '{'); cut >= 0 && !strings.HasPrefix(rest, "(") {
 		rest = strings.TrimSpace(rest[:cut])
 	}
 	if rest == "" {
