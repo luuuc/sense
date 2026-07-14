@@ -128,12 +128,16 @@ func TestCollectBlastFileIDsIncludesEdgeKindGroups(t *testing.T) {
 		AffectedViaComposition: []model.Symbol{{ID: 9, FileID: 99}},
 		AffectedSubclasses:     []model.Symbol{{ID: 8, FileID: 88}},
 		AffectedViaIncludes:    []model.Symbol{{ID: 7, FileID: 77}},
+		// a retained holder's file is likewise reachable only via its group
+		RetainedViaInterfaces: []blast.RetainedHolder{
+			{Symbol: model.Symbol{ID: 6, FileID: 66}, Via: model.Symbol{ID: 5, FileID: 1}},
+		},
 	}
 	got := map[int64]bool{}
 	for _, id := range CollectBlastFileIDs(r) {
 		got[id] = true
 	}
-	for _, want := range []int64{1, 2, 99, 88, 77} {
+	for _, want := range []int64{1, 2, 99, 88, 77, 66} {
 		if !got[want] {
 			t.Errorf("CollectBlastFileIDs missing file id %d (edge-kind group file not collected)", want)
 		}

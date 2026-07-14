@@ -306,7 +306,7 @@ func TestRetentionSkipsNonTypeSubjects(t *testing.T) {
 
 // addCommonMethods seeds n method symbols sharing the bare name but with
 // distinct qualified names (T1.Next, T2.Next, …) — the real-repo shape the
-// junk screen's frequency count reads. Distinct qualifieds matter: the
+// junk screen's frequency count reads. Distinct qualified names matter: the
 // adapter upserts same-file same-qualified symbols into one row.
 func addCommonMethods(t *testing.T, fix *fixtureDB, name string, n int) {
 	t.Helper()
@@ -485,5 +485,44 @@ func TestRetentionDualInterfaceAttribution(t *testing.T) {
 	}
 	if seen != 1 {
 		t.Errorf("holder appears %d times, want exactly once", seen)
+	}
+}
+
+// TestRetentionCarrierSetCapTrips: a direct-composer fan wider than the
+// carrier-set cap truncates the closure (order-defined: the ID-ascending
+// prefix is admitted) and flags Truncated.
+func TestRetentionCarrierSetCapTrips(t *testing.T) {
+	if testing.Short() {
+		t.Skip("wide-fan fixture")
+	}
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "WideSubject")
+	for i := 0; i < 2100; i++ { // > retentionMaxCarriers (2000)
+		c := fix.addSymbol(t, fmt.Sprintf("WideCarrier%04d", i))
+		fix.addEdge(t, c, subject, model.EdgeComposes, 0.9)
+	}
+
+	res := computeRetention(t, fix, subject)
+
+	if !res.Truncated {
+		t.Errorf("Truncated must be set when the carrier-set cap trips")
+	}
+}
+
+// TestRetentionAllInterfacesScreened: when every candidate via-interface is
+// junk, the group is empty — the screen's empty result short-circuits before
+// any composer expansion.
+func TestRetentionAllInterfacesScreened(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "SubjectA")
+	carrier := fix.addSymbol(t, "CarrierC")
+	fix.addEdge(t, carrier, subject, model.EdgeComposes, 0.9)
+	_, _ = launderedVia(t, fix, carrier, "Close")
+	addCommonMethods(t, fix, "Close", 40)
+
+	res := computeRetention(t, fix, subject)
+
+	if len(res.RetainedViaInterfaces) != 0 || res.RetainedCount != 0 {
+		t.Errorf("all-junk candidates must leave the group empty, got %+v", res.RetainedViaInterfaces)
 	}
 }

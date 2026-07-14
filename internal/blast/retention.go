@@ -127,18 +127,7 @@ func carrierClosure(ctx context.Context, db *sql.DB, seedIDs, directComposerIDs 
 			return nil, false, fmt.Errorf("blast: retention closure cancelled: %w", err)
 		}
 		var next []int64
-		for _, id := range level { // ID-ascending: truncation is order-defined
-			if _, seen := carriers[id]; seen {
-				continue
-			}
-			if admitted >= retentionMaxCarriers {
-				truncated = true
-				break
-			}
-			carriers[id] = struct{}{}
-			admitted++
-			next = append(next, id)
-		}
+		next, admitted, truncated = admitCarrierLevel(carriers, level, admitted)
 		if truncated || len(next) == 0 {
 			break
 		}
@@ -148,16 +137,38 @@ func carrierClosure(ctx context.Context, db *sql.DB, seedIDs, directComposerIDs 
 		}
 		level = mergeSources(nil, pairs)
 	}
-	if len(level) > 0 && !truncated {
-		// The depth cap cut a live frontier.
-		for _, id := range level {
-			if _, seen := carriers[id]; !seen {
-				truncated = true
-				break
-			}
+	return carriers, truncated || liveFrontierRemains(carriers, level), nil
+}
+
+// admitCarrierLevel admits one fixpoint level into the carrier set in
+// ID-ascending order, so a size-cap truncation is order-defined rather than
+// map-defined. Returns the newly admitted IDs, the running admission count,
+// and whether the cap tripped.
+func admitCarrierLevel(carriers map[int64]struct{}, level []int64, admitted int) ([]int64, int, bool) {
+	var next []int64
+	for _, id := range level {
+		if _, seen := carriers[id]; seen {
+			continue
+		}
+		if admitted >= retentionMaxCarriers {
+			return next, admitted, true
+		}
+		carriers[id] = struct{}{}
+		admitted++
+		next = append(next, id)
+	}
+	return next, admitted, false
+}
+
+// liveFrontierRemains reports whether the level the depth cap cut still held
+// unvisited carriers — the closure is then incomplete and must say so.
+func liveFrontierRemains(carriers map[int64]struct{}, level []int64) bool {
+	for _, id := range level {
+		if _, seen := carriers[id]; !seen {
+			return true
 		}
 	}
-	return carriers, truncated, nil
+	return false
 }
 
 // launderOneRound performs the single laundering round: the interfaces any
