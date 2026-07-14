@@ -386,8 +386,8 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 	}
 	if len(resp.RetainedViaInterfaces) > 0 {
 		resp.RetainedCount = r.RetainedCount
-		resp.RetainedNote = "each entry may retain " + r.Symbol.Name + ": its `via` interface field can hold a " +
-			r.Symbol.Name + " carrier, one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
+		resp.RetainedNote = "each entry may retain " + r.Symbol.Name + ": its `via` interface field can hold a carrier of " +
+			r.Symbol.Name + ", one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
 	}
 
 	examples := tier2All

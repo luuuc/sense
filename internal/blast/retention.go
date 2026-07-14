@@ -11,6 +11,7 @@
 // compose across interface indirections, and the measured mutual fixpoint on
 // dolt grew 47→357 holders with junk-shaped extras (pitch design table). An
 // agent that needs the deeper tail blasts a returned holder.
+
 package blast
 
 import (

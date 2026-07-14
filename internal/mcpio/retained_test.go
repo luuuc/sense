@@ -8,6 +8,7 @@ package mcpio
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -181,5 +182,40 @@ func TestApplyBlastBudgetShedsDuplicativeContentFirst(t *testing.T) {
 	}
 	if !resp.Truncated {
 		t.Errorf("Truncated must be set")
+	}
+}
+
+// TestApplyBlastBudgetKeepsDirectCallersWhileSheddingRetained pins the shed
+// ORDER between steps 3d and 4: with a budget that shedding retained alone
+// satisfies, every direct caller survives — a weaker may-claim must never
+// outlive a stronger one.
+func TestApplyBlastBudgetKeepsDirectCallersWhileSheddingRetained(t *testing.T) {
+	r := retainedResult(true)
+	for i := int64(0); i < 4; i++ {
+		r.DirectCallers = append(r.DirectCallers, model.Symbol{
+			ID: 10 + i, Name: fmt.Sprintf("Caller%d", i), Qualified: fmt.Sprintf("Caller%d", i),
+			FileID: 1, LineStart: int(100 + i)})
+	}
+	r.TotalAffected = len(r.DirectCallers)
+	resp := BuildBlastResponse(context.Background(), r, retainedFiles, nil)
+	resp.AffectedTests = nil
+	resp.References.Examples = nil
+
+	noRetained := resp
+	noRetained.RetainedViaInterfaces = nil
+	// +8 covers the `"truncated":true` the shed itself adds; still far under
+	// one retained entry's cost, so only the retained shed can satisfy it.
+	budget := estimateBlastWireTokens(&noRetained) + 8
+
+	ApplyBlastBudget(&resp, budget)
+
+	if len(resp.DirectCallers) != 5 {
+		t.Errorf("direct callers = %d, want all 5 (retained must shed before any direct caller)", len(resp.DirectCallers))
+	}
+	if len(resp.RetainedViaInterfaces) >= 2 {
+		t.Errorf("retained entries = %d, want trimmed below 2", len(resp.RetainedViaInterfaces))
+	}
+	if resp.RetainedCount != 2 {
+		t.Errorf("RetainedCount = %d, want 2", resp.RetainedCount)
 	}
 }
