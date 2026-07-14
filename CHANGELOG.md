@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.25] - 2026-07-14
+
+### Bug Fixes
+
+- remove the 500K satisfaction budget — big Go repos get their interface edges
+- stamp satisfy_unbudgeted and advise a plain scan on pre-fix Go indexes
+
+### Refactoring
+
+- prune satisfaction candidates via rarest-method buckets
 ## [1.11.24] - 2026-07-13
 
 ### Bug Fixes
