@@ -192,11 +192,10 @@ func TestPromoteThroughEmbeddedInterface(t *testing.T) {
 // in-memory symbol set, then lets each test override one downstream call.
 type satisfyFakeStore struct {
 	*sqlite.Adapter
-	syms      []model.Symbol
-	edges     []model.Edge
-	edgesErr  error
-	writeErr  error
-	structCnt int64
+	syms     []model.Symbol
+	edges    []model.Edge
+	edgesErr error
+	writeErr error
 }
 
 func (f *satisfyFakeStore) FileIDsByLanguage(context.Context, string) (map[int64]bool, error) {
@@ -208,15 +207,11 @@ func (f *satisfyFakeStore) Query(context.Context, index.Filter) ([]model.Symbol,
 		return f.syms, nil
 	}
 	iface := int64(1)
-	syms := []model.Symbol{
+	return []model.Symbol{
 		{ID: 1, Name: "I", Kind: model.KindInterface, FileID: 1},
 		{ID: 2, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: &iface},
 		{ID: 3, Name: "S", Kind: model.KindClass, FileID: 1},
-	}
-	for i := int64(0); i < f.structCnt; i++ {
-		syms = append(syms, model.Symbol{ID: 100 + i, Kind: model.KindClass, FileID: 1})
-	}
-	return syms, nil
+	}, nil
 }
 
 func (f *satisfyFakeStore) EdgesOfKind(context.Context, model.EdgeKind) ([]model.Edge, error) {
@@ -232,11 +227,11 @@ func (f *satisfyFakeStore) WriteEdge(context.Context, *model.Edge) (int64, error
 // TestSatisfyInterfacesOverBudgetWrites is the G-2 behavior gate: a repo whose
 // interface×struct product would have blown the old 500K budget still gets its
 // satisfaction edges, silently (no skip warning). S has method M so it
-// satisfies I; the 50K method-less filler structs satisfy nothing.
+// satisfies I; the 600K method-less filler structs satisfy nothing.
 func TestSatisfyInterfacesOverBudgetWrites(t *testing.T) {
 	var warn bytes.Buffer
 	structID := int64(3)
-	f := &recordingSatisfyStore{satisfyFakeStore: satisfyFakeStore{Adapter: newOpenAdapter(t), structCnt: 600_000}}
+	f := &recordingSatisfyStore{satisfyFakeStore: satisfyFakeStore{Adapter: newOpenAdapter(t)}}
 	f.syms = []model.Symbol{
 		{ID: 1, Name: "I", Kind: model.KindInterface, FileID: 1},
 		{ID: 2, Name: "M", Kind: model.KindMethod, FileID: 1, ParentID: func() *int64 { i := int64(1); return &i }()},

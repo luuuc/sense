@@ -117,8 +117,8 @@ func oracleDigest(t *testing.T, dbPath string) (digest string, content []string)
 // leave it unchanged, and a refactor that alters derived output fails here
 // loudly. When output changes on purpose, regenerate it (see the capture line
 // in TestScanContentOracleDigest) and update this constant in the same commit.
-// Last regeneration: the composes_go meta stamp (Go composition-edge fix)
-// added one meta line; symbols/edges/embeddings unchanged.
+// Last regeneration: the satisfy_unbudgeted meta stamp (satisfaction-budget
+// removal) added one meta line; symbols/edges/embeddings unchanged.
 const oracleGolden = "a5fb23c61141369e99b348abf7691778d07eb8de0d16eddf1251b656eb32a7e9"
 
 func TestScanContentOracleDigest(t *testing.T) {
