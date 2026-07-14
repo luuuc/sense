@@ -9,14 +9,29 @@ import (
 	"github.com/luuuc/sense/internal/model"
 )
 
+// arity is the (params, results) slot count parsed from a method's
+// declaration snippet. The zero value means the snippet didn't parse
+// (multi-line declaration, truncation, unmodeled construct); name-only
+// matching applies — UNKNOWN can only ever KEEP an edge, never drop one.
+type arity struct {
+	params, results int
+	known           bool
+}
+
+// compatible reports whether two parsed arities allow satisfaction: either
+// side UNKNOWN falls back to name-only matching; both known require equality.
+func (a arity) compatible(b arity) bool {
+	return !a.known || !b.known || a == b
+}
+
 type ifaceInfo struct {
 	sym     model.Symbol
-	methods map[string]bool
+	methods map[string]arity
 }
 
 type structInfo struct {
 	sym     model.Symbol
-	methods map[string]bool
+	methods map[string]arity
 }
 
 // satisfyInterfaces is a post-extraction pass that computes implicit
@@ -84,12 +99,12 @@ func classifyGoSymbols(syms []model.Symbol, goFiles map[int64]bool) (map[int64]*
 		case model.KindInterface:
 			interfaces[s.ID] = &ifaceInfo{
 				sym:     *s,
-				methods: map[string]bool{},
+				methods: map[string]arity{},
 			}
 		case model.KindClass:
 			structs[s.ID] = &structInfo{
 				sym:     *s,
-				methods: map[string]bool{},
+				methods: map[string]arity{},
 			}
 		default:
 		}
@@ -107,10 +122,10 @@ func collectMethodSets(syms []model.Symbol, interfaces map[int64]*ifaceInfo, str
 		}
 		parentID := *s.ParentID
 		if iface, ok := interfaces[parentID]; ok {
-			iface.methods[s.Name] = true
+			iface.methods[s.Name] = arity{}
 		}
 		if st, ok := structs[parentID]; ok {
-			st.methods[s.Name] = true
+			st.methods[s.Name] = arity{}
 		}
 	}
 }
@@ -159,8 +174,17 @@ func expandInterfaceMethods(id int64, interfaces map[int64]*ifaceInfo, embedding
 			continue
 		}
 		expandInterfaceMethods(embeddedID, interfaces, embeddings, expanded, visiting)
-		for m := range embedded.methods {
-			iface.methods[m] = true
+		for m, ar := range embedded.methods {
+			if have, ok := iface.methods[m]; ok {
+				// Same name from two sources: arity agreement keeps it;
+				// disagreement collapses to UNKNOWN so map order never
+				// decides which declaration wins.
+				if have != ar {
+					iface.methods[m] = arity{}
+				}
+				continue
+			}
+			iface.methods[m] = ar
 		}
 	}
 	delete(visiting, id)
@@ -197,7 +221,7 @@ func indexStructMethods(structs map[int64]*structInfo) map[string][]*structInfo 
 // satisfying struct has every required method, so the smallest bucket contains
 // them all. A required method with no bucket means no struct can satisfy —
 // zero candidates, immediately.
-func candidateStructs(required map[string]bool, buckets map[string][]*structInfo) []*structInfo {
+func candidateStructs(required map[string]arity, buckets map[string][]*structInfo) []*structInfo {
 	var smallest []*structInfo
 	first := true
 	for m := range required {
@@ -254,8 +278,11 @@ func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int
 		if iface, ok := interfaces[embeddedID]; ok {
 			// An embedded interface value delegates its whole method set;
 			// the set is already fully expanded, no recursion needed.
-			for m := range iface.methods {
-				st.methods[m] = true
+			// Insert-if-absent: the embedder's own declaration shadows.
+			for m, ar := range iface.methods {
+				if _, ok := st.methods[m]; !ok {
+					st.methods[m] = ar
+				}
 			}
 			continue
 		}
@@ -264,15 +291,21 @@ func promoteEmbeddedMethods(st *structInfo, id int64, embeddings map[int64][]int
 			continue
 		}
 		promoteEmbeddedMethods(embedded, embeddedID, embeddings, structs, interfaces, depth-1)
-		for m := range embedded.methods {
-			st.methods[m] = true
+		for m, ar := range embedded.methods {
+			if _, ok := st.methods[m]; !ok {
+				st.methods[m] = ar
+			}
 		}
 	}
 }
 
-func methodSetSatisfies(methods, required map[string]bool) bool {
-	for m := range required {
-		if !methods[m] {
+func methodSetSatisfies(methods, required map[string]arity) bool {
+	for m, want := range required {
+		have, ok := methods[m]
+		if !ok {
+			return false
+		}
+		if !have.compatible(want) {
 			return false
 		}
 	}

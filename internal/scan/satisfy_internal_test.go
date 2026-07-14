@@ -64,15 +64,15 @@ func TestSatisfyInterfacesSymbolQueryError(t *testing.T) {
 }
 
 func TestMethodSetSatisfies(t *testing.T) {
-	methods := map[string]bool{"Read": true, "Write": true, "Close": true}
+	methods := map[string]arity{"Read": {}, "Write": {}, "Close": {}}
 
-	if !methodSetSatisfies(methods, map[string]bool{"Read": true, "Write": true}) {
+	if !methodSetSatisfies(methods, map[string]arity{"Read": {}, "Write": {}}) {
 		t.Error("should satisfy subset")
 	}
-	if !methodSetSatisfies(methods, map[string]bool{"Read": true, "Write": true, "Close": true}) {
+	if !methodSetSatisfies(methods, map[string]arity{"Read": {}, "Write": {}, "Close": {}}) {
 		t.Error("should satisfy exact set")
 	}
-	if methodSetSatisfies(methods, map[string]bool{"Read": true, "Flush": true}) {
+	if methodSetSatisfies(methods, map[string]arity{"Read": {}, "Flush": {}}) {
 		t.Error("should not satisfy with missing method")
 	}
 	if !methodSetSatisfies(methods, nil) {
@@ -81,8 +81,8 @@ func TestMethodSetSatisfies(t *testing.T) {
 }
 
 func TestPromoteEmbeddedMethods(t *testing.T) {
-	outer := &structInfo{methods: map[string]bool{"Own": true}}
-	inner := &structInfo{methods: map[string]bool{"Read": true, "Write": true}}
+	outer := &structInfo{methods: map[string]arity{"Own": {}}}
+	inner := &structInfo{methods: map[string]arity{"Read": {}, "Write": {}}}
 
 	structs := map[int64]*structInfo{
 		1: outer,
@@ -94,21 +94,21 @@ func TestPromoteEmbeddedMethods(t *testing.T) {
 
 	promoteEmbeddedMethods(outer, 1, embeddings, structs, nil, 3)
 
-	if !outer.methods["Read"] {
+	if !hasMethod(outer.methods, "Read") {
 		t.Error("expected Read promoted from embedded struct")
 	}
-	if !outer.methods["Write"] {
+	if !hasMethod(outer.methods, "Write") {
 		t.Error("expected Write promoted from embedded struct")
 	}
-	if !outer.methods["Own"] {
+	if !hasMethod(outer.methods, "Own") {
 		t.Error("expected Own to remain")
 	}
 }
 
 func TestPromoteEmbeddedMethodsDepthLimit(t *testing.T) {
-	a := &structInfo{methods: map[string]bool{}}
-	b := &structInfo{methods: map[string]bool{}}
-	c := &structInfo{methods: map[string]bool{"Deep": true}}
+	a := &structInfo{methods: map[string]arity{}}
+	b := &structInfo{methods: map[string]arity{}}
+	c := &structInfo{methods: map[string]arity{"Deep": {}}}
 
 	structs := map[int64]*structInfo{1: a, 2: b, 3: c}
 	embeddings := map[int64][]int64{1: {2}, 2: {3}}
@@ -117,7 +117,7 @@ func TestPromoteEmbeddedMethodsDepthLimit(t *testing.T) {
 
 	// Depth=1 means we only go one hop. b's methods get promoted,
 	// but c's methods should not (they need depth=2).
-	if a.methods["Deep"] {
+	if hasMethod(a.methods, "Deep") {
 		t.Error("expected depth limit to prevent promoting from 2 hops away")
 	}
 }
@@ -128,10 +128,10 @@ func TestPromoteEmbeddedMethodsDepthLimit(t *testing.T) {
 // diamonds dedupe, and unknown targets contribute nothing.
 func TestExpandInterfaceMethodSets(t *testing.T) {
 	interfaces := map[int64]*ifaceInfo{
-		1: {methods: map[string]bool{"A": true}},
-		2: {methods: map[string]bool{"B": true}},
-		3: {methods: map[string]bool{}},
-		4: {methods: map[string]bool{"D": true}},
+		1: {methods: map[string]arity{"A": {}}},
+		2: {methods: map[string]arity{"B": {}}},
+		3: {methods: map[string]arity{}},
+		4: {methods: map[string]arity{"D": {}}},
 	}
 	// 3 embeds 2 embeds 1 (chain, deeper than one hop); 4 embeds 1 and 2
 	// (diamond: A arrives via both paths); 2 also embeds an unknown target.
@@ -143,14 +143,14 @@ func TestExpandInterfaceMethodSets(t *testing.T) {
 	expandInterfaceMethodSets(interfaces, embeddings)
 
 	for _, m := range []string{"A", "B"} {
-		if !interfaces[3].methods[m] {
+		if !hasMethod(interfaces[3].methods, m) {
 			t.Errorf("chain: interface 3 missing %s after expansion", m)
 		}
 	}
 	if len(interfaces[4].methods) != 3 { // A, B, D — diamond dedupes
 		t.Errorf("diamond: expected 3 methods on interface 4, got %v", interfaces[4].methods)
 	}
-	if !interfaces[2].methods["A"] || len(interfaces[2].methods) != 2 {
+	if !hasMethod(interfaces[2].methods, "A") || len(interfaces[2].methods) != 2 {
 		t.Errorf("unknown target must contribute nothing: %v", interfaces[2].methods)
 	}
 }
@@ -159,12 +159,12 @@ func TestExpandInterfaceMethodSets(t *testing.T) {
 // (illegal Go, but the index can contain mid-edit or misresolved code).
 func TestExpandInterfaceMethodSetsCycle(t *testing.T) {
 	interfaces := map[int64]*ifaceInfo{
-		1: {methods: map[string]bool{"A": true}},
-		2: {methods: map[string]bool{"B": true}},
+		1: {methods: map[string]arity{"A": {}}},
+		2: {methods: map[string]arity{"B": {}}},
 	}
 	embeddings := map[int64][]int64{1: {2}, 2: {1}}
 	expandInterfaceMethodSets(interfaces, embeddings) // must terminate
-	if !interfaces[1].methods["B"] {
+	if !hasMethod(interfaces[1].methods, "B") {
 		t.Error("cycle: interface 1 should still union interface 2's methods")
 	}
 }
@@ -173,8 +173,8 @@ func TestExpandInterfaceMethodSetsCycle(t *testing.T) {
 // embedded interface VALUE (the pageState shape): the interface's expanded
 // method set delegates wholesale onto the struct.
 func TestPromoteThroughEmbeddedInterface(t *testing.T) {
-	iface := &ifaceInfo{methods: map[string]bool{"A": true, "B": true}}
-	st := &structInfo{methods: map[string]bool{"Own": true}}
+	iface := &ifaceInfo{methods: map[string]arity{"A": {}, "B": {}}}
+	st := &structInfo{methods: map[string]arity{"Own": {}}}
 	structs := map[int64]*structInfo{1: st}
 	interfaces := map[int64]*ifaceInfo{7: iface}
 	embeddings := map[int64][]int64{1: {7}}
@@ -182,7 +182,7 @@ func TestPromoteThroughEmbeddedInterface(t *testing.T) {
 	promoteEmbeddedMethodSets(structs, interfaces, embeddings)
 
 	for _, m := range []string{"A", "B", "Own"} {
-		if !st.methods[m] {
+		if !hasMethod(st.methods, m) {
 			t.Errorf("struct missing %s after embedded-interface promotion", m)
 		}
 	}
@@ -303,7 +303,7 @@ func TestLoadEmbeddingsSkipsNilSource(t *testing.T) {
 // TestPromoteEmbeddedMethodsUnknownTarget pins the skip for a target that is
 // neither a known interface nor a known struct (stdlib, unresolved).
 func TestPromoteEmbeddedMethodsUnknownTarget(t *testing.T) {
-	st := &structInfo{methods: map[string]bool{"Own": true}}
+	st := &structInfo{methods: map[string]arity{"Own": {}}}
 	structs := map[int64]*structInfo{1: st}
 	promoteEmbeddedMethods(st, 1, map[int64][]int64{1: {99}}, structs, nil, 3)
 	if len(st.methods) != 1 {
@@ -313,11 +313,18 @@ func TestPromoteEmbeddedMethodsUnknownTarget(t *testing.T) {
 
 // mkStruct builds a structInfo with the given symbol id and method names.
 func mkStruct(id int64, methods ...string) *structInfo {
-	st := &structInfo{sym: model.Symbol{ID: id, FileID: 1}, methods: map[string]bool{}}
+	st := &structInfo{sym: model.Symbol{ID: id, FileID: 1}, methods: map[string]arity{}}
 	for _, m := range methods {
-		st.methods[m] = true
+		st.methods[m] = arity{}
 	}
 	return st
+}
+
+// hasMethod reports name membership in an arity method set (test helper for
+// the pre-arity boolean assertions).
+func hasMethod(methods map[string]arity, name string) bool {
+	_, ok := methods[name]
+	return ok
 }
 
 // TestIndexStructMethods pins the bucket build: every struct appears in the
@@ -359,13 +366,13 @@ func TestCandidateStructs(t *testing.T) {
 	buckets := indexStructMethods(structs)
 
 	// Rare's bucket (1 struct) is strictly smaller than Read's (3) and Close's (2).
-	got := candidateStructs(map[string]bool{"Read": true, "Close": true, "Rare": true}, buckets)
+	got := candidateStructs(map[string]arity{"Read": {}, "Close": {}, "Rare": {}}, buckets)
 	if len(got) != 1 || got[0].sym.ID != 3 {
 		t.Fatalf("candidates must be exactly the smallest (Rare) bucket, got %d structs", len(got))
 	}
 
 	// A required method with NO bucket anywhere → zero candidates, immediately.
-	if got := candidateStructs(map[string]bool{"Read": true, "Missing": true}, buckets); got != nil {
+	if got := candidateStructs(map[string]arity{"Read": {}, "Missing": {}}, buckets); got != nil {
 		t.Fatalf("missing bucket must short-circuit to zero candidates, got %d", len(got))
 	}
 }
