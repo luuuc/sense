@@ -167,3 +167,114 @@ func buildFanInGraph(ctx context.Context, a *sqlite.Adapter, n, branching int) e
 		return nil
 	})
 }
+
+// BenchmarkBlastRetention exercises the retention closure itself — the
+// existing benchmarks are calls-only graphs where the pass early-exits, so
+// they can't see its cost. The synthetic shape mirrors the measured worst
+// hub (teleport-scale): a subject with a wide direct composer fan, carrier
+// chains several levels deep, each carrier satisfying interfaces with their
+// own composer fans.
+func BenchmarkBlastRetention(b *testing.B) {
+	b.ReportAllocs()
+	ctx := context.Background()
+	dbPath := filepath.Join(b.TempDir(), "retention-bench.db")
+	adapter, err := sqlite.Open(ctx, dbPath)
+	if err != nil {
+		b.Fatalf("sqlite.Open: %v", err)
+	}
+	b.Cleanup(func() { _ = adapter.Close() })
+
+	if err := buildRetentionGraph(ctx, adapter, 200, 5, 40); err != nil {
+		b.Fatalf("build graph: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+dbPath)
+	if err != nil {
+		b.Fatalf("sql.Open: %v", err)
+	}
+	b.Cleanup(func() { _ = db.Close() })
+
+	const subjectID int64 = 1
+	for b.Loop() {
+		res, err := blast.Compute(ctx, db, []int64{subjectID}, blast.Options{MaxHops: 3})
+		if err != nil {
+			b.Fatalf("Compute: %v", err)
+		}
+		if res.RetainedCount == 0 {
+			b.Fatalf("RetainedCount = 0 — retention graph failed to wire up")
+		}
+	}
+}
+
+// buildRetentionGraph writes a class subject with `fan` direct composers,
+// carrier chains `depth` deep behind each, and `ifaces` satisfied interfaces
+// each composed by two holders — a composes+inherits topology at the scale of
+// the measured worst real closure (245 carriers).
+func buildRetentionGraph(ctx context.Context, a *sqlite.Adapter, fan, depth, ifaces int) error {
+	return a.InTx(ctx, func() error {
+		fileID, err := a.WriteFile(ctx, &model.File{
+			Path: "bench/retention.go", Language: "go", Hash: "bench-ret",
+			Symbols: 1, IndexedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return fmt.Errorf("write file: %w", err)
+		}
+		writeSym := func(name string, kind model.SymbolKind) (int64, error) {
+			return a.WriteSymbol(ctx, &model.Symbol{
+				FileID: fileID, Name: name, Qualified: "bench." + name,
+				Kind: kind, LineStart: 1, LineEnd: 2,
+			})
+		}
+		writeEdge := func(src, tgt int64, kind model.EdgeKind) error {
+			_, err := a.WriteEdge(ctx, &model.Edge{
+				SourceID: &src, TargetID: tgt, Kind: kind, FileID: fileID, Confidence: 0.9,
+			})
+			return err
+		}
+		subject, err := writeSym("Subject", model.KindClass)
+		if err != nil {
+			return err
+		}
+		var carriers []int64
+		for i := 0; i < fan; i++ {
+			prev := subject
+			for d := 0; d < depth; d++ {
+				c, err := writeSym(fmt.Sprintf("Carrier%d_%d", i, d), model.KindClass)
+				if err != nil {
+					return err
+				}
+				if err := writeEdge(c, prev, model.EdgeComposes); err != nil {
+					return err
+				}
+				carriers = append(carriers, c)
+				prev = c
+			}
+		}
+		for i := 0; i < ifaces; i++ {
+			iface, err := writeSym(fmt.Sprintf("Iface%d", i), model.KindInterface)
+			if err != nil {
+				return err
+			}
+			if _, err := a.WriteSymbol(ctx, &model.Symbol{
+				FileID: fileID, Name: fmt.Sprintf("VisitRare%d", i),
+				Qualified: fmt.Sprintf("bench.Iface%d.VisitRare%d", i, i),
+				Kind:      model.KindMethod, ParentID: &iface, LineStart: 3, LineEnd: 4,
+			}); err != nil {
+				return err
+			}
+			if err := writeEdge(carriers[i%len(carriers)], iface, model.EdgeInherits); err != nil {
+				return err
+			}
+			for h := 0; h < 2; h++ {
+				holder, err := writeSym(fmt.Sprintf("Holder%d_%d", i, h), model.KindClass)
+				if err != nil {
+					return err
+				}
+				if err := writeEdge(holder, iface, model.EdgeComposes); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}

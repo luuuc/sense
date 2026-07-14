@@ -36,3 +36,112 @@ func TestBlastResponseOmitsEmptyRetainedGroup(t *testing.T) {
 		}
 	}
 }
+
+// retainedResult builds a Result with one direct caller and two retained
+// holders — the comparison base for the pins below.
+func retainedResult(withRetained bool) blast.Result {
+	r := blast.Result{
+		Symbol:        model.Symbol{ID: 1, Name: "Widget", Qualified: "Widget", FileID: 1},
+		Risk:          blast.RiskLow,
+		RiskReasons:   []string{"1 direct caller"},
+		AffectedTests: []string{},
+		DirectCallers: []model.Symbol{
+			{ID: 2, Name: "CarrierC", Qualified: "CarrierC", FileID: 1, LineStart: 10},
+		},
+		TotalAffected: 1,
+	}
+	if withRetained {
+		r.RetainedViaInterfaces = []blast.RetainedHolder{
+			{Symbol: model.Symbol{ID: 5, Name: "HolderH", Qualified: "HolderH", FileID: 2, LineStart: 30, LineEnd: 40},
+				Via: model.Symbol{ID: 3, Name: "RareIface", Qualified: "RareIface", FileID: 1}},
+			{Symbol: model.Symbol{ID: 6, Name: "HolderK", Qualified: "HolderK", FileID: 2, LineStart: 50, LineEnd: 60},
+				Via: model.Symbol{ID: 4, Name: "OtherIface", Qualified: "OtherIface", FileID: 1}},
+		}
+		r.RetainedCount = 2
+	}
+	return r
+}
+
+func retainedFiles(id int64) (string, bool) {
+	switch id {
+	case 1:
+		return "app/widget.go", true
+	case 2:
+		return "app/holder.go", true
+	}
+	return "", false
+}
+
+// TestBuildBlastResponseRendersRetainedGroup: the group renders with the
+// may-retain relation naming the via-interface, the full count, the depth-1
+// note — and it stays OUT of every existing accounting surface
+// (references.count, production/test segmentation, affected_files,
+// total_affected, completeness).
+func TestBuildBlastResponseRendersRetainedGroup(t *testing.T) {
+	ctx := context.Background()
+	base := BuildBlastResponse(ctx, retainedResult(false), retainedFiles, nil)
+	resp := BuildBlastResponse(ctx, retainedResult(true), retainedFiles, nil)
+
+	if len(resp.RetainedViaInterfaces) != 2 {
+		t.Fatalf("retained entries = %d, want 2", len(resp.RetainedViaInterfaces))
+	}
+	first := resp.RetainedViaInterfaces[0]
+	if first.Relation != "may retain Widget via RareIface" {
+		t.Errorf("relation = %q, want may-retain wording with the via-interface", first.Relation)
+	}
+	if first.File != "app/holder.go" || first.Ref == "" {
+		t.Errorf("entry must carry file and ref, got file=%q ref=%q", first.File, first.Ref)
+	}
+	if resp.RetainedCount != 2 {
+		t.Errorf("RetainedCount = %d, want 2", resp.RetainedCount)
+	}
+	if !strings.Contains(resp.RetainedNote, "one interface indirection") {
+		t.Errorf("group note must state the depth-1 bound, got %q", resp.RetainedNote)
+	}
+
+	// Exclusion pins: every existing accounting surface is byte-equal.
+	if resp.References.Count != base.References.Count {
+		t.Errorf("references.count changed: %d vs %d", resp.References.Count, base.References.Count)
+	}
+	if resp.ProductionAffected != base.ProductionAffected || resp.TestAffected != base.TestAffected {
+		t.Errorf("segmentation changed: prod %d vs %d, test %d vs %d",
+			resp.ProductionAffected, base.ProductionAffected, resp.TestAffected, base.TestAffected)
+	}
+	if resp.AffectedFiles != base.AffectedFiles {
+		t.Errorf("affected_files changed: %d vs %d", resp.AffectedFiles, base.AffectedFiles)
+	}
+	if resp.TotalAffected != base.TotalAffected {
+		t.Errorf("total_affected changed: %d vs %d", resp.TotalAffected, base.TotalAffected)
+	}
+	if resp.Completeness == nil || base.Completeness == nil ||
+		resp.Completeness.Verdict != base.Completeness.Verdict {
+		t.Errorf("completeness verdict must not react to the retained group")
+	}
+	if resp.SenseMetrics != base.SenseMetrics {
+		t.Errorf("sense metrics changed: %+v vs %+v", resp.SenseMetrics, base.SenseMetrics)
+	}
+}
+
+// TestApplyBlastBudgetTrimsRetainedBeforeDirect: under budget pressure the
+// retained entries shed before any direct caller, the count survives
+// untrimmed, and the response flags truncation.
+func TestApplyBlastBudgetTrimsRetainedBeforeDirect(t *testing.T) {
+	resp := BuildBlastResponse(context.Background(), retainedResult(true), retainedFiles, nil)
+	resp.IndirectCallers = nil // isolate the retained trim step
+
+	tiny := 1 // force every trim step to fire
+	ApplyBlastBudget(&resp, tiny)
+
+	if len(resp.RetainedViaInterfaces) != 0 {
+		t.Errorf("retained entries must shed under budget, got %d", len(resp.RetainedViaInterfaces))
+	}
+	if resp.RetainedCount != 2 {
+		t.Errorf("RetainedCount = %d, want 2 (never reduced by trimming)", resp.RetainedCount)
+	}
+	if len(resp.DirectCallers) != 1 {
+		t.Errorf("the last direct caller must survive, got %d", len(resp.DirectCallers))
+	}
+	if !resp.Truncated {
+		t.Errorf("Truncated must be set")
+	}
+}

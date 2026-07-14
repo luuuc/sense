@@ -118,6 +118,14 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.IndirectCallers = resp.IndirectCallers[:n-trimStep(n)]
 		resp.Truncated = true
 	}
+	// 3b. Retained holders carry a weaker claim than any direct caller, so
+	// they shed next. RetainedCount is never reduced — a trimmed group is
+	// self-evident from count > len(entries).
+	for estimateJSONTokens(resp) > budget && len(resp.RetainedViaInterfaces) > 0 {
+		n := len(resp.RetainedViaInterfaces)
+		resp.RetainedViaInterfaces = resp.RetainedViaInterfaces[:n-trimStep(n)]
+		resp.Truncated = true
+	}
 	// 4. Direct callers last; keep at least one. total_affected still
 	// reports how many exist beyond what is shown.
 	for estimateJSONTokens(resp) > budget && len(resp.DirectCallers) > 1 {
@@ -326,6 +334,30 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 		entry := BlastCaller{Symbol: qualifiedOrName(s), File: file, Relation: "includes " + r.Symbol.Name, LineStart: s.LineStart, LineEnd: s.LineEnd, Ref: FormatRef(file, s.LineStart)}
 		resp.AffectedViaIncludes = append(resp.AffectedViaIncludes, entry)
 		tier2All = append(tier2All, entry)
+	}
+
+	// Retained holders are a MAY-claim, weaker than every affected_* group:
+	// they stay out of tier2All (references.count), the production/test
+	// segmentation, affected_files, and the completeness arithmetic — their
+	// own count field is the only place they are tallied.
+	for _, rh := range r.RetainedViaInterfaces {
+		var file string
+		if path, ok := files(rh.Symbol.FileID); ok {
+			file = path
+		}
+		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, BlastCaller{
+			Symbol:    qualifiedOrName(rh.Symbol),
+			File:      file,
+			Relation:  "may retain " + r.Symbol.Name + " via " + rh.Via.Name,
+			LineStart: rh.Symbol.LineStart,
+			LineEnd:   rh.Symbol.LineEnd,
+			Ref:       FormatRef(file, rh.Symbol.LineStart),
+		})
+	}
+	if len(resp.RetainedViaInterfaces) > 0 {
+		resp.RetainedCount = r.RetainedCount
+		resp.RetainedNote = "may-retain holders: structs whose interface-typed field a carrier of " + r.Symbol.Name +
+			" satisfies, one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
 	}
 
 	examples := tier2All
