@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/model"
@@ -378,5 +379,111 @@ func TestRetentionJunkScreen(t *testing.T) {
 		if got[id] != want {
 			t.Errorf("holder %d: present=%v, want %v", id, got[id], want)
 		}
+	}
+}
+
+// TestRetentionResultCapSetsTruncated: more holders than MaxResults trims the
+// list, flags Truncated, and leaves RetainedCount at the full size.
+func TestRetentionResultCapSetsTruncated(t *testing.T) {
+	fix, subject, carrier, _, _ := launderedFixture(t)
+	iface2, _ := launderedVia(t, fix, carrier, "VisitCapThing")
+	extra := fix.addSymbol(t, "CapHolderB")
+	fix.addEdge(t, extra, iface2, model.EdgeComposes, 0.9)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{subject},
+		blast.Options{MaxHops: 3, MinConfidence: 0.1, MaxResults: 2})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	if len(res.RetainedViaInterfaces) != 2 {
+		t.Errorf("holders enumerated = %d, want 2 (capped)", len(res.RetainedViaInterfaces))
+	}
+	if res.RetainedCount != 3 {
+		t.Errorf("RetainedCount = %d, want 3 (full size survives the cap)", res.RetainedCount)
+	}
+	if !res.Truncated {
+		t.Errorf("Truncated must be set when the retained cap bites")
+	}
+}
+
+// TestRetentionLevelCapSetsTruncated: a composition chain deeper than the
+// fixpoint level cap flags Truncated instead of walking forever.
+func TestRetentionLevelCapSetsTruncated(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "ChainSubject")
+	prev := subject
+	for i := 0; i < 25; i++ { // depth > retentionMaxLevels (20)
+		next := fix.addSymbol(t, fmt.Sprintf("ChainCarrier%02d", i))
+		fix.addEdge(t, next, prev, model.EdgeComposes, 0.9)
+		prev = next
+	}
+
+	res := computeRetention(t, fix, subject)
+
+	if !res.Truncated {
+		t.Errorf("Truncated must be set when the level cap cuts a live frontier")
+	}
+}
+
+// TestRetentionDeterministicOrder: production holders come first in ID order;
+// a test-path holder sorts last even with the lowest ID.
+func TestRetentionDeterministicOrder(t *testing.T) {
+	fix, subject, _, iface, holder := launderedFixture(t)
+
+	testFileID, err := fix.adapter.WriteFile(context.Background(), &model.File{
+		Path: "spec/fixture_spec.rb", Language: "ruby", Hash: "spec",
+		Symbols: 1, IndexedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	testHolder, err := fix.adapter.WriteSymbol(context.Background(), &model.Symbol{
+		FileID: testFileID, Name: "SpecHolder", Qualified: "SpecHolder",
+		Kind: model.KindClass, LineStart: 1, LineEnd: 5,
+	})
+	if err != nil {
+		t.Fatalf("WriteSymbol: %v", err)
+	}
+	fix.addEdge(t, testHolder, iface, model.EdgeComposes, 0.9)
+	prodHolder := fix.addSymbol(t, "SecondProdHolder")
+	fix.addEdge(t, prodHolder, iface, model.EdgeComposes, 0.9)
+
+	res := computeRetention(t, fix, subject)
+
+	want := []int64{holder, prodHolder, testHolder}
+	if len(res.RetainedViaInterfaces) != len(want) {
+		t.Fatalf("holders = %d, want %d", len(res.RetainedViaInterfaces), len(want))
+	}
+	for i, id := range want {
+		if res.RetainedViaInterfaces[i].Symbol.ID != id {
+			t.Errorf("holder[%d] = %d, want %d (production-first, then ID)",
+				i, res.RetainedViaInterfaces[i].Symbol.ID, id)
+		}
+	}
+}
+
+// TestRetentionDualInterfaceAttribution: a holder reaching the subject through
+// two via-interfaces appears once, attributed to the lowest interface ID.
+func TestRetentionDualInterfaceAttribution(t *testing.T) {
+	fix, subject, carrier, iface, holder := launderedFixture(t)
+	iface2 := fix.addSymbolWith(t, "SecondRareIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitOtherRareThing", model.KindMethod, &iface2)
+	fix.addEdge(t, carrier, iface2, model.EdgeInherits, confConvention)
+	fix.addEdge(t, holder, iface2, model.EdgeComposes, 0.9)
+
+	res := computeRetention(t, fix, subject)
+
+	seen := 0
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == holder {
+			seen++
+			if rh.Via.ID != iface {
+				t.Errorf("Via = %d, want lowest interface ID %d", rh.Via.ID, iface)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Errorf("holder appears %d times, want exactly once", seen)
 	}
 }
