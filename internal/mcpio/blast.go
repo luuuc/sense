@@ -378,16 +378,20 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 		if path, ok := files(rh.Symbol.FileID); ok {
 			file = path
 		}
-		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, BlastRetained{
+		entry := BlastRetained{
 			Symbol: qualifiedOrName(rh.Symbol),
 			Ref:    FormatRef(file, rh.Symbol.LineStart),
 			Via:    rh.Via.Name,
-		})
+		}
+		if rh.Carrier.ID != 0 {
+			entry.Carrier = qualifiedOrName(rh.Carrier)
+		}
+		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, entry)
 	}
 	if len(resp.RetainedViaInterfaces) > 0 {
 		resp.RetainedCount = r.RetainedCount
 		resp.RetainedNote = "each entry may retain " + r.Symbol.Name + ": its `via` interface field can hold a carrier of " +
-			r.Symbol.Name + ", one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
+			r.Symbol.Name + " (one satisfier is named in `carrier`), one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
 	}
 
 	examples := tier2All

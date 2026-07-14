@@ -526,3 +526,44 @@ func TestRetentionAllInterfacesScreened(t *testing.T) {
 		t.Errorf("all-junk candidates must leave the group empty, got %+v", res.RetainedViaInterfaces)
 	}
 }
+
+// TestRetainedHolderNamesConcreteCarrier: each retained row must name a
+// concrete carrier that satisfies its via-interface: the fact the laundering
+// round proves and the consumer otherwise re-derives one graph join per
+// interface (measured: 30 follow-up lookups on the dolt hub, cell 5).
+func TestRetainedHolderNamesConcreteCarrier(t *testing.T) {
+	fix, subject, carrier, _, holder := launderedFixture(t)
+
+	res := computeRetention(t, fix, subject)
+
+	found := false
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == holder {
+			found = true
+			if rh.Carrier.ID != carrier {
+				t.Errorf("Carrier = %d, want concrete carrier %d", rh.Carrier.ID, carrier)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("holder missing from RetainedViaInterfaces: %+v", res.RetainedViaInterfaces)
+	}
+}
+
+// TestRetainedCarrierDeterministicOnMultiSatisfier: when several carriers
+// satisfy the via-interface, the lowest-ID carrier is recorded (mirrors the
+// lowest-via rule) so output is stable run to run.
+func TestRetainedCarrierDeterministicOnMultiSatisfier(t *testing.T) {
+	fix, subject, carrier, iface, holder := launderedFixture(t)
+	carrier2 := fix.addSymbol(t, "CarrierD")
+	fix.addEdge(t, carrier2, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, carrier2, iface, model.EdgeInherits, confConvention)
+
+	res := computeRetention(t, fix, subject)
+
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == holder && rh.Carrier.ID != carrier {
+			t.Errorf("Carrier = %d, want lowest-ID satisfier %d (not %d)", rh.Carrier.ID, carrier, carrier2)
+		}
+	}
+}

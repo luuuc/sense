@@ -219,3 +219,23 @@ func TestApplyBlastBudgetKeepsDirectCallersWhileSheddingRetained(t *testing.T) {
 		t.Errorf("RetainedCount = %d, want 2", resp.RetainedCount)
 	}
 }
+
+// TestRetainedEntryCarriesConcreteCarrier: the wire entry names the concrete
+// carrier the laundering round proved, so the consumer writes the retention
+// row without a per-interface graph join. Name only: the group must stay
+// lean enough to survive the hub-subject budget.
+func TestRetainedEntryCarriesConcreteCarrier(t *testing.T) {
+	ctx := context.Background()
+	r := retainedResult(true)
+	r.RetainedViaInterfaces[0].Carrier = model.Symbol{ID: 2, Name: "CarrierC", Qualified: "pkg.CarrierC", FileID: 1}
+	resp := BuildBlastResponse(ctx, r, retainedFiles, nil)
+
+	if got := resp.RetainedViaInterfaces[0].Carrier; got != "pkg.CarrierC" {
+		t.Errorf("carrier = %q, want %q", got, "pkg.CarrierC")
+	}
+	// A zero-valued carrier (defensive: hydration miss) renders empty and is
+	// omitted from the wire, never rendered as a phantom name.
+	if got := resp.RetainedViaInterfaces[1].Carrier; got != "" {
+		t.Errorf("carrier for zero-value = %q, want empty", got)
+	}
+}

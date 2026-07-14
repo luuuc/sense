@@ -37,6 +37,19 @@ import (
 type RetainedHolder struct {
 	Symbol model.Symbol
 	Via    model.Symbol
+	// Carrier is one concrete satisfier of Via that carries the subject:
+	// the laundering round's own proof, surfaced so the consumer does not
+	// re-derive it with a per-interface graph join. When several carriers
+	// satisfy Via, the lowest-ID one is recorded (mirrors the Via rule).
+	Carrier model.Symbol
+}
+
+// retainedRoute is the laundering evidence for one holder: the via-interface
+// its field is typed as, and the concrete carrier proving the interface can
+// hold the subject.
+type retainedRoute struct {
+	via     int64
+	carrier int64
 }
 
 const (
@@ -178,9 +191,9 @@ func liveFrontierRemains(carriers map[int64]struct{}, level []int64) bool {
 // those interfaces' reverse composers/embedders. Returns holder → lowest-ID
 // via-interface so a holder reachable through several interfaces appears
 // once, deterministically.
-func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{}) (map[int64]int64, error) {
+func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{}) (map[int64]retainedRoute, error) {
 	base := sortedIDSet(carriers)
-	ifaces, err := forwardInterfaceTargets(ctx, db, base)
+	ifaces, ifaceCarrier, err := forwardInterfaceTargets(ctx, db, base)
 	if err != nil {
 		return nil, err
 	}
@@ -201,10 +214,10 @@ func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{
 	if err != nil {
 		return nil, err
 	}
-	holderVia := make(map[int64]int64, len(pairs))
+	holderVia := make(map[int64]retainedRoute, len(pairs))
 	for _, p := range pairs {
-		if via, ok := holderVia[p.source]; !ok || p.target < via {
-			holderVia[p.source] = p.target
+		if route, ok := holderVia[p.source]; !ok || p.target < route.via {
+			holderVia[p.source] = retainedRoute{via: p.target, carrier: ifaceCarrier[p.target]}
 		}
 	}
 	return holderVia, nil
@@ -214,7 +227,7 @@ func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{
 // (which includes the seeds — a carrier belongs to the composition group),
 // the subject's own members, and symbols already placed in another edge-kind
 // group (the one-node-one-group invariant).
-func excludeRetained(holderVia map[int64]int64, carriers, childSet, excludeGrouped map[int64]struct{}) []int64 {
+func excludeRetained(holderVia map[int64]retainedRoute, carriers, childSet, excludeGrouped map[int64]struct{}) []int64 {
 	kept := make([]int64, 0, len(holderVia))
 	for id := range holderVia {
 		if _, isCarrier := carriers[id]; isCarrier {
@@ -236,13 +249,13 @@ func excludeRetained(holderVia map[int64]int64, carriers, childSet, excludeGroup
 // subject's self-members, orders production-first then by ID, and applies the
 // result cap. The returned count is the full post-exclusion size, never the
 // capped one, so a capped list is self-evident to the consumer.
-func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia map[int64]int64, isSelf selfMethodFn, maxResults int) ([]RetainedHolder, int, bool, error) {
+func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia map[int64]retainedRoute, isSelf selfMethodFn, maxResults int) ([]RetainedHolder, int, bool, error) {
 	if len(kept) == 0 {
 		return nil, 0, false, nil
 	}
 	allIDs := append([]int64{}, kept...)
 	for _, id := range kept {
-		allIDs = append(allIDs, holderVia[id])
+		allIDs = append(allIDs, holderVia[id].via, holderVia[id].carrier)
 	}
 	syms, err := loadSymbols(ctx, db, allIDs)
 	if err != nil {
@@ -254,7 +267,8 @@ func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia ma
 		if !ok || isSelf(sym) {
 			continue
 		}
-		holders = append(holders, RetainedHolder{Symbol: sym, Via: syms[holderVia[id]]})
+		route := holderVia[id]
+		holders = append(holders, RetainedHolder{Symbol: sym, Via: syms[route.via], Carrier: syms[route.carrier]})
 	}
 	fullCount := len(holders)
 	orderRetained(ctx, db, holders)
@@ -487,7 +501,10 @@ func inboundHolderPairs(ctx context.Context, db *sql.DB, ids []int64, includesOn
 // TARGET's symbol kind, never on edge confidence: Go satisfaction edges ride
 // convention confidence but Rust/TS declared implements are full-confidence,
 // and both launder.
-func forwardInterfaceTargets(ctx context.Context, db *sql.DB, ids []int64) ([]int64, error) {
+// forwardInterfaceTargets returns the interface-kind inherit targets of ids,
+// plus each interface's lowest-ID satisfying carrier, the laundering proof
+// that rides into RetainedHolder.Carrier.
+func forwardInterfaceTargets(ctx context.Context, db *sql.DB, ids []int64) ([]int64, map[int64]int64, error) {
 	query := func(placeholders string) string {
 		return `SELECT DISTINCT e.source_id, e.target_id FROM sense_edges e
 		        JOIN sense_symbols s ON s.id = e.target_id
@@ -497,13 +514,17 @@ func forwardInterfaceTargets(ctx context.Context, db *sql.DB, ids []int64) ([]in
 	}
 	pairs, err := queryHolderPairs(ctx, db, ids, query)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	set := make(map[int64]struct{}, len(pairs))
+	carrier := make(map[int64]int64, len(pairs))
 	for _, p := range pairs {
 		set[p.target] = struct{}{}
+		if lowest, ok := carrier[p.target]; !ok || p.source < lowest {
+			carrier[p.target] = p.source
+		}
 	}
-	return sortedIDSet(set), nil
+	return sortedIDSet(set), carrier, nil
 }
 
 // nonInterfaceIDs filters ids down to symbols whose kind is not interface.

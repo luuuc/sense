@@ -435,6 +435,12 @@ type BlastRetained struct {
 	Symbol string `json:"symbol"`
 	Ref    string `json:"ref"`
 	Via    string `json:"via"`
+	// Carrier names one concrete satisfier of Via that carries the subject,
+	// the proof the laundering computed anyway. Name only (no ref): measured
+	// on the dolt hub, the group must fit the default token budget without
+	// tripping its own shed (cell-5 evidence: consumers re-derived this with
+	// ~30 lookups when it was absent).
+	Carrier string `json:"carrier,omitempty"`
 }
 
 // Completeness is a single, machine-branchable verdict on whether the
