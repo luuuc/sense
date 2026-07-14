@@ -438,9 +438,15 @@ type BlastRetained struct {
 	// Carrier names one concrete satisfier of Via that carries the subject,
 	// the proof the laundering computed anyway. Name only (no ref): measured
 	// on the dolt hub, the group must fit the default token budget without
-	// tripping its own shed (cell-5 evidence: consumers re-derived this with
-	// ~30 lookups when it was absent).
+	// tripping its own shed (measured: consumers re-derived this with
+	// ~30 lookups per session when it was absent).
 	Carrier string `json:"carrier,omitempty"`
+	// Chain is the declared containment path from Carrier down to the
+	// subject (">"-joined type names). Every hop is a composes/includes
+	// edge the index holds, making the row a statable structural fact;
+	// without it agents re-verify each row by hand and lose the session
+	// to it (measured on the dolt hub). Sheds tail-first before Carrier does.
+	Chain string `json:"chain,omitempty"`
 }
 
 // Completeness is a single, machine-branchable verdict on whether the

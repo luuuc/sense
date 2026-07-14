@@ -6,6 +6,7 @@ import (
 	"math"
 	"path"
 	"sort"
+	"strings"
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/model"
@@ -137,11 +138,18 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.AffectedTests = resp.AffectedTests[:0]
 		resp.Truncated = true
 	}
-	// 3c'. Carrier names are enrichment on retained rows, not the rows'
-	// claim: strip them tail-first before any whole row sheds, so a squeeze
-	// costs proof detail before it costs a holder (count- and
-	// gold-preserving; measured live: the 0.7 band sat near budget and the
-	// carrier bytes alone tipped it into dropping rows).
+	// 3c'. Chains and carrier names are enrichment on retained rows, not the
+	// rows' claim: strip them tail-first (chains, the heavier field, first)
+	// before any whole row sheds, so a squeeze costs proof detail before it
+	// costs a holder (count- and gold-preserving; measured live: the 0.7
+	// band sat near budget and the carrier bytes alone tipped it into
+	// dropping rows).
+	for i := len(resp.RetainedViaInterfaces) - 1; i >= 0 && estimateBlastWireTokens(resp) > budget; i-- {
+		if resp.RetainedViaInterfaces[i].Chain != "" {
+			resp.RetainedViaInterfaces[i].Chain = ""
+			resp.Truncated = true
+		}
+	}
 	for i := len(resp.RetainedViaInterfaces) - 1; i >= 0 && estimateBlastWireTokens(resp) > budget; i-- {
 		if resp.RetainedViaInterfaces[i].Carrier != "" {
 			resp.RetainedViaInterfaces[i].Carrier = ""
@@ -397,12 +405,22 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 		if rh.Carrier.ID != 0 {
 			entry.Carrier = qualifiedOrName(rh.Carrier)
 		}
+		if len(rh.Chain) > 0 {
+			names := make([]string, 0, len(rh.Chain))
+			for _, s := range rh.Chain {
+				names = append(names, qualifiedOrName(s))
+			}
+			entry.Chain = strings.Join(names, " > ")
+		}
 		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, entry)
 	}
 	if len(resp.RetainedViaInterfaces) > 0 {
 		resp.RetainedCount = r.RetainedCount
-		resp.RetainedNote = "each entry may retain " + r.Symbol.Name + ": its `via` interface field can hold a carrier of " +
-			r.Symbol.Name + " (one satisfier is named in `carrier`), one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
+		resp.RetainedNote = "each row may retain " + r.Symbol.Name + ", one interface indirection deep, and every part but one " +
+			"is an INDEXED STRUCTURAL FACT: the holder declares a field typed `via`; `carrier` is a concrete satisfier of " +
+			"`via`; `chain` is the declared containment path from carrier to " + r.Symbol.Name + ". The one unverified part " +
+			"is which satisfier lands at runtime - cite rows with their chain; verify installation sites only where proof " +
+			"is demanded. Not counted in total_affected; blast a listed holder to go deeper."
 	}
 
 	examples := tier2All

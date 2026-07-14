@@ -42,6 +42,11 @@ type RetainedHolder struct {
 	// re-derive it with a per-interface graph join. When several carriers
 	// satisfy Via, the lowest-ID one is recorded (mirrors the Via rule).
 	Carrier model.Symbol
+	// Chain is the declared containment path from Carrier down to the
+	// subject (inclusive on both ends): every hop is a composes/includes
+	// edge the index holds, so the whole path is a statable structural
+	// fact. Only the runtime choice of satisfier stays a may-claim.
+	Chain []model.Symbol
 }
 
 // retainedRoute is the laundering evidence for one holder: the via-interface
@@ -98,7 +103,7 @@ func loadRetention(ctx context.Context, db *sql.DB, subject model.Symbol, seedID
 	if !retentionSubjectKind(subject.Kind) {
 		return nil, 0, false, nil
 	}
-	carriers, truncated, err := carrierClosure(ctx, db, seedIDs, directComposerIDs)
+	carriers, parents, truncated, err := carrierClosure(ctx, db, seedIDs, directComposerIDs)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -107,7 +112,7 @@ func loadRetention(ctx context.Context, db *sql.DB, subject model.Symbol, seedID
 		return nil, 0, false, err
 	}
 	kept := excludeRetained(holderVia, carriers, childSet, excludeGrouped)
-	holders, fullCount, capped, err := hydrateRetained(ctx, db, kept, holderVia, isSelf, maxResults)
+	holders, fullCount, capped, err := hydrateRetained(ctx, db, kept, holderVia, chainContext{parents: parents, seeds: seedIDs}, isSelf, maxResults)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -120,25 +125,39 @@ func loadRetention(ctx context.Context, db *sql.DB, subject model.Symbol, seedID
 // fetched for the composition group, plus the seeds' embedders; deeper levels
 // query both edge kinds at once. The visited set terminates cycles; the
 // level and size caps are backstops that flag truncation.
-func carrierClosure(ctx context.Context, db *sql.DB, seedIDs, directComposerIDs []int64) (map[int64]struct{}, bool, error) {
+func carrierClosure(ctx context.Context, db *sql.DB, seedIDs, directComposerIDs []int64) (map[int64]struct{}, map[int64]int64, bool, error) {
 	carriers := make(map[int64]struct{}, len(seedIDs))
 	for _, id := range seedIDs {
 		carriers[id] = struct{}{}
 	}
+	// parents records which already-admitted node each carrier declaredly
+	// contains (the pair target that admitted it): the containment tree the
+	// chain field renders. Level-1 entries hang off the primary seed.
+	parents := make(map[int64]int64)
 	embedders, err := inboundHolderPairs(ctx, db, seedIDs, true)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
+	}
+	seedParent := int64(0)
+	if len(seedIDs) > 0 {
+		seedParent = seedIDs[0]
+	}
+	for _, id := range directComposerIDs {
+		recordParent(parents, carriers, id, seedParent)
+	}
+	for _, p := range embedders {
+		recordParent(parents, carriers, p.source, p.target)
 	}
 	level, err := nonInterfaceIDs(ctx, db, mergeSources(directComposerIDs, embedders))
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	admitted := 0
 	truncated := false
 	for depth := 0; len(level) > 0 && depth < retentionMaxLevels; depth++ {
 		if err := ctx.Err(); err != nil {
-			return nil, false, fmt.Errorf("blast: retention closure cancelled: %w", err)
+			return nil, nil, false, fmt.Errorf("blast: retention closure cancelled: %w", err)
 		}
 		var next []int64
 		next, admitted, truncated = admitCarrierLevel(carriers, level, admitted)
@@ -147,11 +166,58 @@ func carrierClosure(ctx context.Context, db *sql.DB, seedIDs, directComposerIDs 
 		}
 		pairs, err := inboundHolderPairs(ctx, db, next, false)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
+		}
+		for _, p := range pairs {
+			recordParent(parents, carriers, p.source, p.target)
 		}
 		level = mergeSources(nil, pairs)
 	}
-	return carriers, truncated || liveFrontierRemains(carriers, level), nil
+	return carriers, parents, truncated || liveFrontierRemains(carriers, level), nil
+}
+
+// recordParent stores the containment parent for a node not yet admitted to
+// the carrier set, keeping the lowest-ID parent when several pairs admit the
+// same node so chains are stable run to run.
+func recordParent(parents map[int64]int64, carriers map[int64]struct{}, node, parent int64) {
+	if _, seen := carriers[node]; seen {
+		return
+	}
+	if cur, ok := parents[node]; !ok || parent < cur {
+		parents[node] = parent
+	}
+}
+
+// chainContext carries what hydration needs to render a containment chain:
+// the parent tree and the seed set the chain terminates on.
+type chainContext struct {
+	parents map[int64]int64
+	seeds   []int64
+}
+
+// chainIDs walks the parent tree from start down to the first seed hit,
+// returning the full path including start and the terminal seed. The walk is
+// bounded by the closure's own depth cap; a break in the tree returns the
+// partial path rather than guessing.
+func (c chainContext) chainIDs(start int64) []int64 {
+	seeds := make(map[int64]struct{}, len(c.seeds))
+	for _, s := range c.seeds {
+		seeds[s] = struct{}{}
+	}
+	path := []int64{start}
+	cur := start
+	for range retentionMaxLevels + 2 {
+		if _, done := seeds[cur]; done {
+			return path
+		}
+		next, ok := c.parents[cur]
+		if !ok {
+			return path
+		}
+		path = append(path, next)
+		cur = next
+	}
+	return path
 }
 
 // admitCarrierLevel admits one fixpoint level into the carrier set in
@@ -249,13 +315,17 @@ func excludeRetained(holderVia map[int64]retainedRoute, carriers, childSet, excl
 // subject's self-members, orders production-first then by ID, and applies the
 // result cap. The returned count is the full post-exclusion size, never the
 // capped one, so a capped list is self-evident to the consumer.
-func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia map[int64]retainedRoute, isSelf selfMethodFn, maxResults int) ([]RetainedHolder, int, bool, error) {
+func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia map[int64]retainedRoute, chains chainContext, isSelf selfMethodFn, maxResults int) ([]RetainedHolder, int, bool, error) {
 	if len(kept) == 0 {
 		return nil, 0, false, nil
 	}
 	allIDs := append([]int64{}, kept...)
+	chainByHolder := make(map[int64][]int64, len(kept))
 	for _, id := range kept {
 		allIDs = append(allIDs, holderVia[id].via, holderVia[id].carrier)
+		path := chains.chainIDs(holderVia[id].carrier)
+		chainByHolder[id] = path
+		allIDs = append(allIDs, path...)
 	}
 	syms, err := loadSymbols(ctx, db, allIDs)
 	if err != nil {
@@ -268,7 +338,13 @@ func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia ma
 			continue
 		}
 		route := holderVia[id]
-		holders = append(holders, RetainedHolder{Symbol: sym, Via: syms[route.via], Carrier: syms[route.carrier]})
+		chain := make([]model.Symbol, 0, len(chainByHolder[id]))
+		for _, cid := range chainByHolder[id] {
+			if cs, ok := syms[cid]; ok {
+				chain = append(chain, cs)
+			}
+		}
+		holders = append(holders, RetainedHolder{Symbol: sym, Via: syms[route.via], Carrier: syms[route.carrier], Chain: chain})
 	}
 	fullCount := len(holders)
 	orderRetained(ctx, db, holders)

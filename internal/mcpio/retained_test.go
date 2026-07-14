@@ -270,3 +270,37 @@ func TestRetainedCarrierShedsBeforeRows(t *testing.T) {
 		t.Errorf("head carrier stripped before tail (order inverted)")
 	}
 }
+
+// TestRetainedEntryRendersChainAndShedOrder: the chain renders as a
+// ">"-joined containment path (a statable structural fact), and under
+// pressure enrichments strip in evidence-weight order: chains tail-first,
+// then carriers, then whole rows.
+func TestRetainedEntryRendersChainAndShedOrder(t *testing.T) {
+	ctx := context.Background()
+	r := retainedResult(true)
+	for i := range r.RetainedViaInterfaces {
+		r.RetainedViaInterfaces[i].Carrier = model.Symbol{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1}
+		r.RetainedViaInterfaces[i].Chain = []model.Symbol{
+			{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1},
+			{ID: 1, Name: "Widget", Qualified: "Widget", FileID: 1},
+		}
+	}
+	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	if got := full.RetainedViaInterfaces[0].Chain; got != "pkg.CarrierType > Widget" {
+		t.Fatalf("chain = %q, want %q", got, "pkg.CarrierType > Widget")
+	}
+	fullTokens := estimateBlastWireTokens(&full)
+
+	squeezed := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	ApplyBlastBudget(&squeezed, fullTokens-1)
+	if len(squeezed.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
+		t.Fatalf("rows shed before enrichments")
+	}
+	last := len(squeezed.RetainedViaInterfaces) - 1
+	if squeezed.RetainedViaInterfaces[last].Chain != "" {
+		t.Errorf("tail chain survived a squeeze that required shedding")
+	}
+	if squeezed.RetainedViaInterfaces[last].Carrier == "" {
+		t.Errorf("carrier stripped while chains remained (order inverted)")
+	}
+}
