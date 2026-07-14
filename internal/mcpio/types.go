@@ -36,6 +36,7 @@ const ServerInstructions = "When Sense is available and indexed, prefer Sense to
 	"Sense provides pre-indexed results that are faster and more complete.\n\n" +
 	"WHEN TO USE SENSE TOOLS:\n" +
 	"- Symbol relationships, callers, dependencies → sense_graph\n" +
+	"- Who holds/embeds X, which structs carry it → sense_graph (composed_by)\n" +
 	"- \"What would break if I changed X?\", impact analysis → sense_blast\n" +
 	"- Conceptual/semantic code search (not exact string match) → sense_search\n" +
 	"- Project patterns and conventions → sense_conventions\n" +
@@ -338,6 +339,19 @@ type BlastResponse struct {
 	AffectedSubclasses     []BlastCaller `json:"affected_subclasses"`
 	AffectedViaComposition []BlastCaller `json:"affected_via_composition"`
 	AffectedViaIncludes    []BlastCaller `json:"affected_via_includes"`
+
+	// RetainedViaInterfaces lists may-retain holders: structs holding the
+	// subject only behind an interface-typed field whose concrete satisfier
+	// is a carrier of the subject, one interface indirection deep. A weaker
+	// claim than the affected_* groups — it never feeds total_affected,
+	// references.count, or the production/test segmentation, and it is
+	// omitted entirely when empty (languages without interface symbols never
+	// produce it). RetainedCount is the full computed size and is never
+	// reduced by budget trimming, so a trimmed list is self-evident from
+	// retained_via_interfaces_count > len(retained_via_interfaces).
+	RetainedViaInterfaces []BlastCaller `json:"retained_via_interfaces,omitempty"`
+	RetainedCount         int           `json:"retained_via_interfaces_count,omitempty"`
+	RetainedNote          string        `json:"retained_note,omitempty"`
 
 	// Tier 2 — references (composes/inherits/includes). Count + top examples.
 	References BlastTierSummary `json:"references"`

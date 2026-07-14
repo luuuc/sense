@@ -201,6 +201,17 @@ type Result struct {
 	// Keyed by symbol ID. Used by response shapers to cap output.
 	SymbolTiers map[int64]Tier
 
+	// RetainedViaInterfaces lists the interface-laundered may-retain holders
+	// (see RetainedHolder): structs holding the subject only behind an
+	// interface-typed field whose concrete satisfier carries the subject.
+	// Computed one interface indirection deep from the carrier closure; a
+	// weaker claim than the caller lists, so it never feeds TotalAffected.
+	RetainedViaInterfaces []RetainedHolder
+	// RetainedCount is the full computed holder count BEFORE the result cap,
+	// so a capped RetainedViaInterfaces list is self-evident from
+	// RetainedCount > len(RetainedViaInterfaces).
+	RetainedCount int
+
 	Truncated bool
 }
 
