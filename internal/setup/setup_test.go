@@ -859,6 +859,12 @@ func TestGuidanceMarkdownContent(t *testing.T) {
 	if !strings.Contains(guidanceMarkdown, "grepping a name") {
 		t.Error("guidanceMarkdown must include the name-vs-string grep routing rule")
 	}
+	if !strings.Contains(guidanceMarkdown, "holds/embeds") || !strings.Contains(guidanceMarkdown, "composed_by") {
+		t.Error("guidanceMarkdown must route who-holds/embeds questions to sense_graph composed_by")
+	}
+	if !strings.Contains(guidanceMarkdown, "retains X transitively") || !strings.Contains(guidanceMarkdown, "retained_via_interfaces") {
+		t.Error("guidanceMarkdown must route retention/lifecycle-audit questions to sense_blast")
+	}
 	if strings.Contains(guidanceMarkdown, "FIRST action in every conversation") {
 		t.Error("guidanceMarkdown must not include cold-start protocol (now handled by SessionStart hook)")
 	}
@@ -874,6 +880,12 @@ func TestGuidanceMarkdownContent(t *testing.T) {
 	}
 	if strings.Contains(mcpio.ServerInstructions, "sense.orient") {
 		t.Error("ServerInstructions must not reference the removed orient tool")
+	}
+	if !strings.Contains(mcpio.ServerInstructions, "holds/embeds") {
+		t.Error("ServerInstructions must route who-holds/embeds questions to sense_graph")
+	}
+	if !strings.Contains(mcpio.ServerInstructions, "retained_via_interfaces") {
+		t.Error("ServerInstructions must route retention questions to sense_blast")
 	}
 	if lines := strings.Count(guidanceMarkdown, "\n"); lines > 20 {
 		t.Errorf("guidanceMarkdown should be ≤20 lines, got %d", lines)

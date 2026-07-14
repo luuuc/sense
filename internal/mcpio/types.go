@@ -37,6 +37,7 @@ const ServerInstructions = "When Sense is available and indexed, prefer Sense to
 	"WHEN TO USE SENSE TOOLS:\n" +
 	"- Symbol relationships, callers, dependencies → sense_graph\n" +
 	"- Who holds/embeds X, which structs carry it → sense_graph (composed_by)\n" +
+	"- What retains X transitively, incl. behind interface fields (lifecycle audit) → sense_blast (retained_via_interfaces)\n" +
 	"- \"What would break if I changed X?\", impact analysis → sense_blast\n" +
 	"- Conceptual/semantic code search (not exact string match) → sense_search\n" +
 	"- Project patterns and conventions → sense_conventions\n" +
