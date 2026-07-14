@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.27] - 2026-07-14
+
+### Bug Fixes
+
+- add retained-via-interfaces result and wire structure
+- retention closure surfaces interface-laundered holders
+- screen fabricated single-common-member interfaces from laundering
+- render the retained group with may-retain accounting isolation
+- route retention and composition questions in the guidance surfaces
+- price the blast budget at the wire and shed duplication first
 ## [1.11.26] - 2026-07-14
 
 ### Bug Fixes
