@@ -351,3 +351,170 @@ func TestPromoteEmbeddedMethodsUnknownTarget(t *testing.T) {
 		t.Errorf("unknown embed target must contribute nothing, got %v", st.methods)
 	}
 }
+
+// mkStruct builds a structInfo with the given symbol id and method names.
+func mkStruct(id int64, methods ...string) *structInfo {
+	st := &structInfo{sym: model.Symbol{ID: id, FileID: 1}, methods: map[string]bool{}}
+	for _, m := range methods {
+		st.methods[m] = true
+	}
+	return st
+}
+
+// TestIndexStructMethods pins the bucket build: every struct appears in the
+// bucket of each of its methods, exactly once, and buckets are sorted by
+// symbol ID so downstream edge writes are deterministic.
+func TestIndexStructMethods(t *testing.T) {
+	structs := map[int64]*structInfo{
+		2: mkStruct(2, "Read", "Close"),
+		1: mkStruct(1, "Read"),
+		3: mkStruct(3, "Write"),
+	}
+	buckets := indexStructMethods(structs)
+	if got := len(buckets["Read"]); got != 2 {
+		t.Fatalf("Read bucket: want 2 structs, got %d", got)
+	}
+	if buckets["Read"][0].sym.ID != 1 || buckets["Read"][1].sym.ID != 2 {
+		t.Errorf("Read bucket must be sorted by symbol ID, got %d,%d",
+			buckets["Read"][0].sym.ID, buckets["Read"][1].sym.ID)
+	}
+	if len(buckets["Close"]) != 1 || len(buckets["Write"]) != 1 {
+		t.Errorf("Close/Write buckets wrong: %d/%d", len(buckets["Close"]), len(buckets["Write"]))
+	}
+	if _, ok := buckets["Flush"]; ok {
+		t.Error("no struct has Flush; bucket must be absent")
+	}
+}
+
+// TestCandidateStructs pins the pruning rule: candidates are EXACTLY the
+// smallest bucket among the required methods (kills the largest-bucket
+// mutant), and a required method with no bucket short-circuits to zero
+// candidates — falling through to any other bucket would emit false 0.9
+// satisfaction edges for interfaces nothing implements.
+func TestCandidateStructs(t *testing.T) {
+	structs := map[int64]*structInfo{
+		1: mkStruct(1, "Read", "Close"),
+		2: mkStruct(2, "Read"),
+		3: mkStruct(3, "Read", "Close", "Rare"),
+	}
+	buckets := indexStructMethods(structs)
+
+	// Rare's bucket (1 struct) is strictly smaller than Read's (3) and Close's (2).
+	got := candidateStructs(map[string]bool{"Read": true, "Close": true, "Rare": true}, buckets)
+	if len(got) != 1 || got[0].sym.ID != 3 {
+		t.Fatalf("candidates must be exactly the smallest (Rare) bucket, got %d structs", len(got))
+	}
+
+	// A required method with NO bucket anywhere → zero candidates, immediately.
+	if got := candidateStructs(map[string]bool{"Read": true, "Missing": true}, buckets); got != nil {
+		t.Fatalf("missing bucket must short-circuit to zero candidates, got %d", len(got))
+	}
+}
+
+// recordingSatisfyStore extends satisfyFakeStore to capture written edges so
+// full-pass tests can compare the emitted set against an oracle.
+type recordingSatisfyStore struct {
+	satisfyFakeStore
+	written []model.Edge
+}
+
+func (r *recordingSatisfyStore) WriteEdge(_ context.Context, e *model.Edge) (int64, error) {
+	r.written = append(r.written, *e)
+	return int64(len(r.written)), nil
+}
+
+// satisfyPairs runs the full satisfyInterfaces pass over the given symbols and
+// includes edges, returning the emitted (struct,interface) pairs.
+func satisfyPairs(t *testing.T, syms []model.Symbol, includes []model.Edge) map[[2]int64]bool {
+	t.Helper()
+	f := &recordingSatisfyStore{satisfyFakeStore: satisfyFakeStore{Adapter: newOpenAdapter(t), syms: syms, edges: includes}}
+	h := &harness{ctx: context.Background(), idx: f, out: io.Discard, warn: io.Discard}
+	if err := h.satisfyInterfaces(); err != nil {
+		t.Fatalf("satisfyInterfaces: %v", err)
+	}
+	pairs := map[[2]int64]bool{}
+	for _, e := range f.written {
+		pairs[[2]int64{*e.SourceID, e.TargetID}] = true
+	}
+	return pairs
+}
+
+// TestSatisfyDifferentialOracle is the correctness anchor for the candidate
+// pruning: the emitted edge set must equal a naive all-pairs oracle computed
+// with the untouched methodSetSatisfies predicate. The fixture family is
+// chosen to kill the mutants the pruning could hide:
+//   - iface 10 (Read+Close): struct 3 HAS the rarest method but lacks Close —
+//     candidate that must FAIL the re-check (kills skip-re-check);
+//   - iface 11 (Rare): served from a 1-struct bucket;
+//   - iface 12 (Ghost): required method exists on NO struct — zero edges;
+//   - struct 4 satisfies iface 10 ONLY through methods promoted from its
+//     embedded struct 5 (kills index-built-before-promotion).
+func TestSatisfyDifferentialOracle(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	syms := []model.Symbol{
+		{ID: 10, Name: "IReadCloser", Kind: model.KindInterface, FileID: 1},
+		{ID: 20, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(10)},
+		{ID: 21, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(10)},
+		{ID: 11, Name: "IRare", Kind: model.KindInterface, FileID: 1},
+		{ID: 22, Name: "Rare", Kind: model.KindMethod, FileID: 1, ParentID: pid(11)},
+		{ID: 12, Name: "IGhost", Kind: model.KindInterface, FileID: 1},
+		{ID: 23, Name: "Ghost", Kind: model.KindMethod, FileID: 1, ParentID: pid(12)},
+
+		{ID: 1, Name: "Full", Kind: model.KindClass, FileID: 1},
+		{ID: 30, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(1)},
+		{ID: 31, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(1)},
+		{ID: 32, Name: "Rare", Kind: model.KindMethod, FileID: 1, ParentID: pid(1)},
+		{ID: 3, Name: "HasRareLacksClose", Kind: model.KindClass, FileID: 1},
+		{ID: 33, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(3)},
+		{ID: 34, Name: "Rare", Kind: model.KindMethod, FileID: 1, ParentID: pid(3)},
+		{ID: 4, Name: "Embedder", Kind: model.KindClass, FileID: 1},
+		{ID: 5, Name: "Embedded", Kind: model.KindClass, FileID: 1},
+		{ID: 35, Name: "Read", Kind: model.KindMethod, FileID: 1, ParentID: pid(5)},
+		{ID: 36, Name: "Close", Kind: model.KindMethod, FileID: 1, ParentID: pid(5)},
+	}
+	// Struct 4 embeds struct 5 (its only route to Read+Close).
+	includes := []model.Edge{{SourceID: pid(4), TargetID: 5, Kind: model.EdgeIncludes}}
+
+	got := satisfyPairs(t, syms, includes)
+
+	// Naive oracle over the same classified sets, untouched predicate.
+	want := map[[2]int64]bool{
+		{1, 10}: true, {1, 11}: true, // Full satisfies IReadCloser and IRare
+		{3, 11}: true, // HasRareLacksClose: candidate for 10, must fail; satisfies 11
+		{4, 10}: true, // Embedder: only via promotion from Embedded
+		{5, 10}: true, // Embedded satisfies IReadCloser directly
+	}
+	if len(got) != len(want) {
+		t.Fatalf("edge set mismatch: got %v want %v", got, want)
+	}
+	for p := range want {
+		if !got[p] {
+			t.Errorf("missing edge %v", p)
+		}
+	}
+}
+
+// TestSatisfyUbiquitousMethodInterfaces pins the degenerate CPU shape: many
+// one-method interfaces sharing a ubiquitous method. Every candidate is a true
+// satisfier, so the "cost" is exactly the correct output, not wasted checks.
+func TestSatisfyUbiquitousMethodInterfaces(t *testing.T) {
+	pid := func(i int64) *int64 { return &i }
+	var syms []model.Symbol
+	const nIfaces, nStructs = 5, 4
+	for i := int64(0); i < nIfaces; i++ {
+		id := 10 + i
+		syms = append(syms,
+			model.Symbol{ID: id, Name: "I", Kind: model.KindInterface, FileID: 1},
+			model.Symbol{ID: 100 + i, Name: "Reset", Kind: model.KindMethod, FileID: 1, ParentID: pid(id)})
+	}
+	for s := int64(0); s < nStructs; s++ {
+		id := 50 + s
+		syms = append(syms,
+			model.Symbol{ID: id, Name: "S", Kind: model.KindClass, FileID: 1},
+			model.Symbol{ID: 200 + s, Name: "Reset", Kind: model.KindMethod, FileID: 1, ParentID: pid(id)})
+	}
+	got := satisfyPairs(t, syms, nil)
+	if len(got) != nIfaces*nStructs {
+		t.Fatalf("ubiquitous shape: want %d edges (all true), got %d", nIfaces*nStructs, len(got))
+	}
+}
