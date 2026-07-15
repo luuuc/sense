@@ -82,15 +82,13 @@ func spanIndirectByFile(hops []blast.CallerHop, directCallers []model.Symbol) []
 
 // shedRetainedField strips one enrichment field from retained rows,
 // tail-first in trimStep batches, until the response fits the budget or
-// every row's field is empty. Reports whether anything was stripped.
-func shedRetainedField(resp *BlastResponse, budget int, field func(*BlastRetained) *string) bool {
-	stripped := false
+// every row's field is empty.
+func shedRetainedField(resp *BlastResponse, budget int, field func(*BlastRetained) *string) {
 	i := len(resp.RetainedViaInterfaces) - 1
 	for i >= 0 && estimateBlastWireTokens(resp) > budget {
 		for range trimStep(i + 1) {
 			if f := field(&resp.RetainedViaInterfaces[i]); *f != "" {
 				*f = ""
-				stripped = true
 				// Set at the first strip so the flag's own bytes are
 				// priced by every estimate from here on; a post-loop set
 				// would break the fit this pass just found and push the
@@ -104,7 +102,6 @@ func shedRetainedField(resp *BlastResponse, budget int, field func(*BlastRetaine
 			}
 		}
 	}
-	return stripped
 }
 
 // ApplyBlastBudget trims a blast response in least-relevant-first order
