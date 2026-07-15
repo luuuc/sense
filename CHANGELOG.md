@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.28] - 2026-07-15
+
+### Enhancements
+
+- name a concrete carrier on each retained_via_interfaces entry
+- shed retained carrier names before whole rows under budget
+- render the declared containment chain on retained rows
+- council pass-1 amendments for retained-row evidence
+- disclose enrichment trims with a priced retained_trimmed flag
+
+### Refactoring
+
+- drop shedRetainedField's unused return
 ## [1.11.27] - 2026-07-14
 
 ### Bug Fixes
