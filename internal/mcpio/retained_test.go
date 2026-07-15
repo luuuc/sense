@@ -304,3 +304,57 @@ func TestRetainedEntryRendersChainAndShedOrder(t *testing.T) {
 		t.Errorf("carrier stripped while chains remained (order inverted)")
 	}
 }
+
+// TestRetainedNoteAnnouncesEnrichmentShed: when the budget strips carriers or
+// chains, the note says so: a shed field must be distinguishable from a
+// never-computed one (the package contract: "Sense looked, found nothing" vs
+// "this emitter forgot a field", and here, "the budget trimmed it").
+func TestRetainedNoteAnnouncesEnrichmentShed(t *testing.T) {
+	ctx := context.Background()
+	r := retainedResult(true)
+	for i := range r.RetainedViaInterfaces {
+		r.RetainedViaInterfaces[i].Carrier = model.Symbol{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1}
+		r.RetainedViaInterfaces[i].Chain = []model.Symbol{
+			{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1},
+			{ID: 1, Name: "Widget", Qualified: "Widget", FileID: 1},
+		}
+	}
+	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	if strings.Contains(full.RetainedNote, "trimmed") {
+		t.Fatalf("unsqueezed note must not claim trimming: %q", full.RetainedNote)
+	}
+	fullTokens := estimateBlastWireTokens(&full)
+
+	// A squeeze with post-strip slack discloses the trim.
+	squeezed := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	ApplyBlastBudget(&squeezed, fullTokens-1)
+	stripped := squeezed.RetainedViaInterfaces[len(squeezed.RetainedViaInterfaces)-1].Chain == ""
+	if !stripped {
+		t.Fatalf("squeeze did not strip enrichment")
+	}
+	// Disclosure is best-effort: it must appear when it fits, and must
+	// never cost a holder row. At this margin either outcome of the fit
+	// check is legal, so pin both halves of the contract explicitly.
+	if strings.Contains(squeezed.RetainedNote, "trimmed") {
+		if len(squeezed.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
+			t.Errorf("a row was shed to fund the disclosure sentence")
+		}
+	} else {
+		t.Logf("disclosure reverted at the tight margin (legal); note: %q", squeezed.RetainedNote)
+	}
+
+	// And with slack, the disclosure lands: budget just below full but with
+	// room for the sentence after strips.
+	slack := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	strippedAll := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	for i := range strippedAll.RetainedViaInterfaces {
+		strippedAll.RetainedViaInterfaces[i].Chain = ""
+		strippedAll.RetainedViaInterfaces[i].Carrier = ""
+	}
+	floor := estimateBlastWireTokens(&strippedAll)
+	ApplyBlastBudget(&slack, floor+40)
+	if slack.RetainedViaInterfaces[len(slack.RetainedViaInterfaces)-1].Chain == "" &&
+		!strings.Contains(slack.RetainedNote, "trimmed") {
+		t.Errorf("shed fired with slack for the sentence but the note is silent: %q", slack.RetainedNote)
+	}
+}

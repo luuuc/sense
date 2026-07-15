@@ -80,6 +80,30 @@ func spanIndirectByFile(hops []blast.CallerHop, directCallers []model.Symbol) []
 	return append(ordered, deferred...)
 }
 
+// shedRetainedField strips one enrichment field from retained rows,
+// tail-first in trimStep batches, until the response fits the budget or
+// every row's field is empty. Reports whether anything was stripped.
+func shedRetainedField(resp *BlastResponse, budget int, field func(*BlastRetained) *string) bool {
+	stripped := false
+	i := len(resp.RetainedViaInterfaces) - 1
+	for i >= 0 && estimateBlastWireTokens(resp) > budget {
+		for range trimStep(i + 1) {
+			if f := field(&resp.RetainedViaInterfaces[i]); *f != "" {
+				*f = ""
+				stripped = true
+			}
+			i--
+			if i < 0 {
+				break
+			}
+		}
+	}
+	if stripped {
+		resp.Truncated = true
+	}
+	return stripped
+}
+
 // ApplyBlastBudget trims a blast response in least-relevant-first order
 // until its estimated token count fits within budget. Summary counts
 // (total_affected, tests_affected_count, references.count) are never
@@ -124,7 +148,7 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.IndirectCallers = resp.IndirectCallers[:n-trimStep(n)]
 		resp.Truncated = true
 	}
-	// 3b. Tier-2 reference examples are pure duplication under pressure —
+	// 4. Tier-2 reference examples are pure duplication under pressure;
 	// every example is an entry the subclass/composition/includes lists
 	// already enumerate in full — so they shed before any content-bearing
 	// group. references.count keeps the magnitude.
@@ -132,31 +156,34 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.References.Examples = resp.References.Examples[:0]
 		resp.Truncated = true
 	}
-	// 3c. The affected-test sample is illustrative; tests_affected_count
+	// 5. The affected-test sample is illustrative; tests_affected_count
 	// carries the true total, so the sample empties before answer content.
 	if estimateBlastWireTokens(resp) > budget && len(resp.AffectedTests) > 0 {
 		resp.AffectedTests = resp.AffectedTests[:0]
 		resp.Truncated = true
 	}
-	// 3c'. Chains and carrier names are enrichment on retained rows, not the
+	// 6. Chains and carrier names are enrichment on retained rows, not the
 	// rows' claim: strip them tail-first (chains, the heavier field, first)
 	// before any whole row sheds, so a squeeze costs proof detail before it
 	// costs a holder (count- and gold-preserving; measured live: the 0.7
 	// band sat near budget and the carrier bytes alone tipped it into
-	// dropping rows).
-	for i := len(resp.RetainedViaInterfaces) - 1; i >= 0 && estimateBlastWireTokens(resp) > budget; i-- {
-		if resp.RetainedViaInterfaces[i].Chain != "" {
-			resp.RetainedViaInterfaces[i].Chain = ""
-			resp.Truncated = true
+	// dropping rows). Strips batch by trimStep: the estimator re-marshals
+	// the whole response per probe, and one-field-per-marshal cost 8.2ms on
+	// a 100-row hub (measured) for precision no consumer can observe.
+	shedEnrichment := shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Chain })
+	shedEnrichment = shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Carrier }) || shedEnrichment
+	if shedEnrichment {
+		// Disclose the trim so an absent field is distinguishable from a
+		// never-computed one. Best-effort: if the sentence itself would
+		// push a fitting response back over budget, silence beats shedding
+		// a holder row to fund the disclosure.
+		fit := estimateBlastWireTokens(resp) <= budget
+		resp.RetainedNote += " Some rows had carrier/chain trimmed for budget: an absent field is trimmed, not unknown."
+		if fit && estimateBlastWireTokens(resp) > budget {
+			resp.RetainedNote = strings.TrimSuffix(resp.RetainedNote, " Some rows had carrier/chain trimmed for budget: an absent field is trimmed, not unknown.")
 		}
 	}
-	for i := len(resp.RetainedViaInterfaces) - 1; i >= 0 && estimateBlastWireTokens(resp) > budget; i-- {
-		if resp.RetainedViaInterfaces[i].Carrier != "" {
-			resp.RetainedViaInterfaces[i].Carrier = ""
-			resp.Truncated = true
-		}
-	}
-	// 3d. Retained holders carry a weaker claim than any direct caller, so
+	// 7. Retained holders carry a weaker claim than any direct caller, so
 	// they shed next. RetainedCount is never reduced — a trimmed group is
 	// self-evident from count > len(entries).
 	for estimateBlastWireTokens(resp) > budget && len(resp.RetainedViaInterfaces) > 0 {
@@ -164,7 +191,7 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.RetainedViaInterfaces = resp.RetainedViaInterfaces[:n-trimStep(n)]
 		resp.Truncated = true
 	}
-	// 4. Direct callers last; keep at least one. total_affected still
+	// 8. Direct callers last; keep at least one. total_affected still
 	// reports how many exist beyond what is shown.
 	for estimateBlastWireTokens(resp) > budget && len(resp.DirectCallers) > 1 {
 		n := len(resp.DirectCallers)
@@ -416,11 +443,10 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 	}
 	if len(resp.RetainedViaInterfaces) > 0 {
 		resp.RetainedCount = r.RetainedCount
-		resp.RetainedNote = "each row may retain " + r.Symbol.Name + ", one interface indirection deep, and every part but one " +
-			"is an INDEXED STRUCTURAL FACT: the holder declares a field typed `via`; `carrier` is a concrete satisfier of " +
-			"`via`; `chain` is the declared containment path from carrier to " + r.Symbol.Name + ". The one unverified part " +
-			"is which satisfier lands at runtime - cite rows with their chain; verify installation sites only where proof " +
-			"is demanded. Not counted in total_affected; blast a listed holder to go deeper."
+		resp.RetainedNote = "each row may retain " + r.Symbol.Name + ", one interface indirection deep. As indexed: the " +
+			"holder declares a field typed as `via`; `carrier` is a concrete satisfier of `via`; `chain` is a declared " +
+			"containment path from carrier to " + r.Symbol.Name + ". Which satisfier lands at runtime is unverified. " +
+			"Not counted in total_affected; blast a listed holder to go deeper."
 	}
 
 	examples := tier2All
