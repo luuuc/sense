@@ -300,61 +300,113 @@ func TestRetainedEntryRendersChainAndShedOrder(t *testing.T) {
 	if squeezed.RetainedViaInterfaces[last].Chain != "" {
 		t.Errorf("tail chain survived a squeeze that required shedding")
 	}
-	if squeezed.RetainedViaInterfaces[last].Carrier == "" {
-		t.Errorf("carrier stripped while chains remained (order inverted)")
+	anyChain := false
+	for _, e := range squeezed.RetainedViaInterfaces {
+		anyChain = anyChain || e.Chain != ""
+	}
+	for _, e := range squeezed.RetainedViaInterfaces {
+		if e.Carrier == "" && anyChain {
+			t.Errorf("a carrier stripped while chains remained (order inverted)")
+		}
 	}
 }
 
-// TestRetainedNoteAnnouncesEnrichmentShed: when the budget strips carriers or
-// chains, the note says so: a shed field must be distinguishable from a
-// never-computed one (the package contract: "Sense looked, found nothing" vs
-// "this emitter forgot a field", and here, "the budget trimmed it").
-func TestRetainedNoteAnnouncesEnrichmentShed(t *testing.T) {
+// TestRetainedTrimmedFlagDisclosesEnrichmentShed: when the budget strips
+// carriers or chains, retained_trimmed must be true: a shed field must be
+// distinguishable from a never-computed one. The flag is set during the
+// strip and priced through every later estimate, so the disclosure holds
+// unconditionally in every band and can never surprise a later shed stage.
+func TestRetainedTrimmedFlagDisclosesEnrichmentShed(t *testing.T) {
 	ctx := context.Background()
-	r := retainedResult(true)
-	for i := range r.RetainedViaInterfaces {
-		r.RetainedViaInterfaces[i].Carrier = model.Symbol{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1}
-		r.RetainedViaInterfaces[i].Chain = []model.Symbol{
-			{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1},
-			{ID: 1, Name: "Widget", Qualified: "Widget", FileID: 1},
-		}
-	}
+	r := heavyRetainedResult(12)
 	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
-	if strings.Contains(full.RetainedNote, "trimmed") {
-		t.Fatalf("unsqueezed note must not claim trimming: %q", full.RetainedNote)
+	if full.RetainedTrimmed {
+		t.Fatalf("unsqueezed response must not claim trimming")
 	}
 	fullTokens := estimateBlastWireTokens(&full)
-
-	// A squeeze with post-strip slack discloses the trim.
-	squeezed := BuildBlastResponse(ctx, r, retainedFiles, nil)
-	ApplyBlastBudget(&squeezed, fullTokens-1)
-	stripped := squeezed.RetainedViaInterfaces[len(squeezed.RetainedViaInterfaces)-1].Chain == ""
-	if !stripped {
-		t.Fatalf("squeeze did not strip enrichment")
-	}
-	// Disclosure is best-effort: it must appear when it fits, and must
-	// never cost a holder row. At this margin either outcome of the fit
-	// check is legal, so pin both halves of the contract explicitly.
-	if strings.Contains(squeezed.RetainedNote, "trimmed") {
-		if len(squeezed.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
-			t.Errorf("a row was shed to fund the disclosure sentence")
-		}
-	} else {
-		t.Logf("disclosure reverted at the tight margin (legal); note: %q", squeezed.RetainedNote)
+	floor := strippedFloor(ctx, r)
+	slackBudget := floor + 60
+	if slackBudget >= fullTokens {
+		t.Fatalf("fixture too light: floor=%d full=%d leaves no slack window", floor, fullTokens)
 	}
 
-	// And with slack, the disclosure lands: budget just below full but with
-	// room for the sentence after strips.
+	// Enrichment band: strips fire, rows survive, flag set, budget held.
 	slack := BuildBlastResponse(ctx, r, retainedFiles, nil)
-	strippedAll := BuildBlastResponse(ctx, r, retainedFiles, nil)
-	for i := range strippedAll.RetainedViaInterfaces {
-		strippedAll.RetainedViaInterfaces[i].Chain = ""
-		strippedAll.RetainedViaInterfaces[i].Carrier = ""
+	ApplyBlastBudget(&slack, slackBudget)
+	if len(slack.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
+		t.Fatalf("rows shed in the enrichment band: %d vs %d", len(slack.RetainedViaInterfaces), len(full.RetainedViaInterfaces))
 	}
-	floor := estimateBlastWireTokens(&strippedAll)
-	ApplyBlastBudget(&slack, floor+40)
-	if slack.RetainedViaInterfaces[len(slack.RetainedViaInterfaces)-1].Chain == "" &&
-		!strings.Contains(slack.RetainedNote, "trimmed") {
-		t.Errorf("shed fired with slack for the sentence but the note is silent: %q", slack.RetainedNote)
+	if slack.RetainedViaInterfaces[len(slack.RetainedViaInterfaces)-1].Chain != "" {
+		t.Fatalf("budget below full must strip enrichment")
 	}
+	if !slack.RetainedTrimmed {
+		t.Errorf("enrichment stripped but retained_trimmed is false")
+	}
+	if estimateBlastWireTokens(&slack) > slackBudget {
+		t.Errorf("response exceeds its budget in the enrichment band")
+	}
+
+	// Sub-floor: flag still true, budget held, and rows shed identically
+	// to a control whose flag and strips are pre-applied, so the disclosure
+	// never changes a shedding decision beyond its own priced bytes.
+	for _, budget := range []int{floor - 1, floor - 40, floor - 120} {
+		got := BuildBlastResponse(ctx, r, retainedFiles, nil)
+		ApplyBlastBudget(&got, budget)
+		control := BuildBlastResponse(ctx, r, retainedFiles, nil)
+		for i := range control.RetainedViaInterfaces {
+			control.RetainedViaInterfaces[i].Chain = ""
+			control.RetainedViaInterfaces[i].Carrier = ""
+		}
+		control.Truncated = true
+		control.RetainedTrimmed = true
+		ApplyBlastBudget(&control, budget)
+		if len(got.RetainedViaInterfaces) != len(control.RetainedViaInterfaces) {
+			t.Errorf("budget %d: disclosure changed row shedding: %d rows vs control %d",
+				budget, len(got.RetainedViaInterfaces), len(control.RetainedViaInterfaces))
+		}
+		if !got.RetainedTrimmed {
+			t.Errorf("budget %d: enrichments stripped but retained_trimmed is false", budget)
+		}
+		if estimateBlastWireTokens(&got) > budget {
+			t.Errorf("budget %d: response exceeds its budget", budget)
+		}
+	}
+}
+
+// heavyRetainedResult builds a hub-shaped result: n retained rows with
+// long chains, so stripping enrichments frees far more than the
+// disclosure sentence costs (the 2-row fixture's window was empty and
+// hid a vacuous assertion).
+func heavyRetainedResult(n int) blast.Result {
+	r := retainedResult(true)
+	rows := make([]blast.RetainedHolder, 0, n)
+	for i := range n {
+		id := int64(200 + i*10)
+		rows = append(rows, blast.RetainedHolder{
+			Symbol:  model.Symbol{ID: id, Name: "Holder", Qualified: "pkg.subsystem.HolderNumber" + string(rune('A'+i)), FileID: 2, LineStart: 30 + i, LineEnd: 40 + i},
+			Via:     model.Symbol{ID: id + 1, Name: "RareIface", Qualified: "pkg.RareIface", FileID: 1},
+			Carrier: model.Symbol{ID: id + 2, Name: "Carrier", Qualified: "pkg.deep.CarrierImplementation", FileID: 1},
+			Chain: []model.Symbol{
+				{ID: id + 2, Name: "Carrier", Qualified: "pkg.deep.CarrierImplementation", FileID: 1},
+				{ID: id + 3, Name: "Mid", Qualified: "pkg.middle.IntermediateContainer", FileID: 1},
+				{ID: id + 4, Name: "Inner", Qualified: "pkg.inner.InnerHolderStructure", FileID: 1},
+				{ID: 1, Name: "Widget", Qualified: "Widget", FileID: 1},
+			},
+		})
+	}
+	r.RetainedViaInterfaces = rows
+	r.RetainedCount = n
+	return r
+}
+
+// strippedFloor is the wire size of the fixture with every enrichment
+// removed: the point below which whole rows must shed.
+func strippedFloor(ctx context.Context, r blast.Result) int {
+	resp := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	for i := range resp.RetainedViaInterfaces {
+		resp.RetainedViaInterfaces[i].Chain = ""
+		resp.RetainedViaInterfaces[i].Carrier = ""
+	}
+	resp.Truncated = true
+	return estimateBlastWireTokens(&resp)
 }

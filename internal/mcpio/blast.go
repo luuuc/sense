@@ -91,15 +91,18 @@ func shedRetainedField(resp *BlastResponse, budget int, field func(*BlastRetaine
 			if f := field(&resp.RetainedViaInterfaces[i]); *f != "" {
 				*f = ""
 				stripped = true
+				// Set at the first strip so the flag's own bytes are
+				// priced by every estimate from here on; a post-loop set
+				// would break the fit this pass just found and push the
+				// NEXT pass into stripping out of order.
+				resp.Truncated = true
+				resp.RetainedTrimmed = true
 			}
 			i--
 			if i < 0 {
 				break
 			}
 		}
-	}
-	if stripped {
-		resp.Truncated = true
 	}
 	return stripped
 }
@@ -170,19 +173,11 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 	// dropping rows). Strips batch by trimStep: the estimator re-marshals
 	// the whole response per probe, and one-field-per-marshal cost 8.2ms on
 	// a 100-row hub (measured) for precision no consumer can observe.
-	shedEnrichment := shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Chain })
-	shedEnrichment = shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Carrier }) || shedEnrichment
-	if shedEnrichment {
-		// Disclose the trim so an absent field is distinguishable from a
-		// never-computed one. Best-effort: if the sentence itself would
-		// push a fitting response back over budget, silence beats shedding
-		// a holder row to fund the disclosure.
-		fit := estimateBlastWireTokens(resp) <= budget
-		resp.RetainedNote += " Some rows had carrier/chain trimmed for budget: an absent field is trimmed, not unknown."
-		if fit && estimateBlastWireTokens(resp) > budget {
-			resp.RetainedNote = strings.TrimSuffix(resp.RetainedNote, " Some rows had carrier/chain trimmed for budget: an absent field is trimmed, not unknown.")
-		}
-	}
+	// Stripping sets retained_trimmed, which is priced through every
+	// subsequent estimate like any other content, so no later stage can be
+	// surprised by it and no revert dance is needed.
+	shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Chain })
+	shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Carrier })
 	// 7. Retained holders carry a weaker claim than any direct caller, so
 	// they shed next. RetainedCount is never reduced — a trimmed group is
 	// self-evident from count > len(entries).

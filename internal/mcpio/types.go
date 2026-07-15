@@ -356,6 +356,13 @@ type BlastResponse struct {
 	RetainedViaInterfaces []BlastRetained `json:"retained_via_interfaces,omitempty"`
 	RetainedCount         int             `json:"retained_via_interfaces_count,omitempty"`
 	RetainedNote          string          `json:"retained_note,omitempty"`
+	// RetainedTrimmed is true when the budget stripped carrier/chain
+	// enrichments from retained rows: an absent enrichment on a row is
+	// then trimmed, not unknown. A flag rather than note prose so it is
+	// machine-branchable and cheap enough to survive its own pricing (a
+	// sentence-sized disclosure could never fit the lazy shed's boundary
+	// slack; measured: the shed lands within one shed-unit of budget).
+	RetainedTrimmed bool `json:"retained_trimmed,omitempty"`
 
 	// Tier 2 — references (composes/inherits/includes). Count + top examples.
 	References BlastTierSummary `json:"references"`
