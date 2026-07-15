@@ -6,6 +6,7 @@ import (
 	"math"
 	"path"
 	"sort"
+	"strings"
 
 	"github.com/luuuc/sense/internal/blast"
 	"github.com/luuuc/sense/internal/model"
@@ -79,6 +80,30 @@ func spanIndirectByFile(hops []blast.CallerHop, directCallers []model.Symbol) []
 	return append(ordered, deferred...)
 }
 
+// shedRetainedField strips one enrichment field from retained rows,
+// tail-first in trimStep batches, until the response fits the budget or
+// every row's field is empty.
+func shedRetainedField(resp *BlastResponse, budget int, field func(*BlastRetained) *string) {
+	i := len(resp.RetainedViaInterfaces) - 1
+	for i >= 0 && estimateBlastWireTokens(resp) > budget {
+		for range trimStep(i + 1) {
+			if f := field(&resp.RetainedViaInterfaces[i]); *f != "" {
+				*f = ""
+				// Set at the first strip so the flag's own bytes are
+				// priced by every estimate from here on; a post-loop set
+				// would break the fit this pass just found and push the
+				// NEXT pass into stripping out of order.
+				resp.Truncated = true
+				resp.RetainedTrimmed = true
+			}
+			i--
+			if i < 0 {
+				break
+			}
+		}
+	}
+}
+
 // ApplyBlastBudget trims a blast response in least-relevant-first order
 // until its estimated token count fits within budget. Summary counts
 // (total_affected, tests_affected_count, references.count) are never
@@ -123,7 +148,7 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.IndirectCallers = resp.IndirectCallers[:n-trimStep(n)]
 		resp.Truncated = true
 	}
-	// 3b. Tier-2 reference examples are pure duplication under pressure —
+	// 4. Tier-2 reference examples are pure duplication under pressure;
 	// every example is an entry the subclass/composition/includes lists
 	// already enumerate in full — so they shed before any content-bearing
 	// group. references.count keeps the magnitude.
@@ -131,13 +156,26 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.References.Examples = resp.References.Examples[:0]
 		resp.Truncated = true
 	}
-	// 3c. The affected-test sample is illustrative; tests_affected_count
+	// 5. The affected-test sample is illustrative; tests_affected_count
 	// carries the true total, so the sample empties before answer content.
 	if estimateBlastWireTokens(resp) > budget && len(resp.AffectedTests) > 0 {
 		resp.AffectedTests = resp.AffectedTests[:0]
 		resp.Truncated = true
 	}
-	// 3d. Retained holders carry a weaker claim than any direct caller, so
+	// 6. Chains and carrier names are enrichment on retained rows, not the
+	// rows' claim: strip them tail-first (chains, the heavier field, first)
+	// before any whole row sheds, so a squeeze costs proof detail before it
+	// costs a holder (count- and gold-preserving; measured live: the 0.7
+	// band sat near budget and the carrier bytes alone tipped it into
+	// dropping rows). Strips batch by trimStep: the estimator re-marshals
+	// the whole response per probe, and one-field-per-marshal cost 8.2ms on
+	// a 100-row hub (measured) for precision no consumer can observe.
+	// Stripping sets retained_trimmed, which is priced through every
+	// subsequent estimate like any other content, so no later stage can be
+	// surprised by it and no revert dance is needed.
+	shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Chain })
+	shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Carrier })
+	// 7. Retained holders carry a weaker claim than any direct caller, so
 	// they shed next. RetainedCount is never reduced — a trimmed group is
 	// self-evident from count > len(entries).
 	for estimateBlastWireTokens(resp) > budget && len(resp.RetainedViaInterfaces) > 0 {
@@ -145,7 +183,7 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 		resp.RetainedViaInterfaces = resp.RetainedViaInterfaces[:n-trimStep(n)]
 		resp.Truncated = true
 	}
-	// 4. Direct callers last; keep at least one. total_affected still
+	// 8. Direct callers last; keep at least one. total_affected still
 	// reports how many exist beyond what is shown.
 	for estimateBlastWireTokens(resp) > budget && len(resp.DirectCallers) > 1 {
 		n := len(resp.DirectCallers)
@@ -378,16 +416,29 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 		if path, ok := files(rh.Symbol.FileID); ok {
 			file = path
 		}
-		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, BlastRetained{
+		entry := BlastRetained{
 			Symbol: qualifiedOrName(rh.Symbol),
 			Ref:    FormatRef(file, rh.Symbol.LineStart),
 			Via:    rh.Via.Name,
-		})
+		}
+		if rh.Carrier.ID != 0 {
+			entry.Carrier = qualifiedOrName(rh.Carrier)
+		}
+		if len(rh.Chain) > 0 {
+			names := make([]string, 0, len(rh.Chain))
+			for _, s := range rh.Chain {
+				names = append(names, qualifiedOrName(s))
+			}
+			entry.Chain = strings.Join(names, " > ")
+		}
+		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, entry)
 	}
 	if len(resp.RetainedViaInterfaces) > 0 {
 		resp.RetainedCount = r.RetainedCount
-		resp.RetainedNote = "each entry may retain " + r.Symbol.Name + ": its `via` interface field can hold a carrier of " +
-			r.Symbol.Name + ", one interface indirection deep. Not counted in total_affected; blast a listed holder to go deeper."
+		resp.RetainedNote = "each row may retain " + r.Symbol.Name + ", one interface indirection deep. As indexed: the " +
+			"holder declares a field typed as `via`; `carrier` is a concrete satisfier of `via`; `chain` is a declared " +
+			"containment path from carrier to " + r.Symbol.Name + ". Which satisfier lands at runtime is unverified. " +
+			"Not counted in total_affected; blast a listed holder to go deeper."
 	}
 
 	examples := tier2All

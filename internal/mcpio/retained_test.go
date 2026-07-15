@@ -219,3 +219,194 @@ func TestApplyBlastBudgetKeepsDirectCallersWhileSheddingRetained(t *testing.T) {
 		t.Errorf("RetainedCount = %d, want 2", resp.RetainedCount)
 	}
 }
+
+// TestRetainedEntryCarriesConcreteCarrier: the wire entry names the concrete
+// carrier the laundering round proved, so the consumer writes the retention
+// row without a per-interface graph join. Name only: the group must stay
+// lean enough to survive the hub-subject budget.
+func TestRetainedEntryCarriesConcreteCarrier(t *testing.T) {
+	ctx := context.Background()
+	r := retainedResult(true)
+	r.RetainedViaInterfaces[0].Carrier = model.Symbol{ID: 2, Name: "CarrierC", Qualified: "pkg.CarrierC", FileID: 1}
+	resp := BuildBlastResponse(ctx, r, retainedFiles, nil)
+
+	if got := resp.RetainedViaInterfaces[0].Carrier; got != "pkg.CarrierC" {
+		t.Errorf("carrier = %q, want %q", got, "pkg.CarrierC")
+	}
+	// A zero-valued carrier (defensive: hydration miss) renders empty and is
+	// omitted from the wire, never rendered as a phantom name.
+	if got := resp.RetainedViaInterfaces[1].Carrier; got != "" {
+		t.Errorf("carrier for zero-value = %q, want empty", got)
+	}
+}
+
+// TestRetainedCarrierShedsBeforeRows: under budget pressure the carrier
+// names strip tail-first (count- and row-preserving) BEFORE any whole
+// retained row sheds; a row is strictly worth more than its enrichment.
+// Kills both mutants: skipping the carrier shed (rows drop while carriers
+// survive) and inverting its order (head-first stripping).
+func TestRetainedCarrierShedsBeforeRows(t *testing.T) {
+	ctx := context.Background()
+	r := retainedResult(true)
+	for i := range r.RetainedViaInterfaces {
+		r.RetainedViaInterfaces[i].Carrier = model.Symbol{
+			ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.SomeVeryLongCarrierTypeName", FileID: 1,
+		}
+	}
+	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	fullTokens := estimateBlastWireTokens(&full)
+
+	// A budget just below the full size must strip a tail carrier, not a row.
+	squeezed := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	ApplyBlastBudget(&squeezed, fullTokens-1)
+	if len(squeezed.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
+		t.Fatalf("rows shed before carriers: %d rows, want %d", len(squeezed.RetainedViaInterfaces), len(full.RetainedViaInterfaces))
+	}
+	last := len(squeezed.RetainedViaInterfaces) - 1
+	if squeezed.RetainedViaInterfaces[last].Carrier != "" {
+		t.Errorf("tail carrier survived a squeeze that required shedding")
+	}
+	if squeezed.RetainedViaInterfaces[0].Carrier == "" {
+		t.Errorf("head carrier stripped before tail (order inverted)")
+	}
+}
+
+// TestRetainedEntryRendersChainAndShedOrder: the chain renders as a
+// ">"-joined containment path (a statable structural fact), and under
+// pressure enrichments strip in evidence-weight order: chains tail-first,
+// then carriers, then whole rows.
+func TestRetainedEntryRendersChainAndShedOrder(t *testing.T) {
+	ctx := context.Background()
+	r := retainedResult(true)
+	for i := range r.RetainedViaInterfaces {
+		r.RetainedViaInterfaces[i].Carrier = model.Symbol{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1}
+		r.RetainedViaInterfaces[i].Chain = []model.Symbol{
+			{ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.CarrierType", FileID: 1},
+			{ID: 1, Name: "Widget", Qualified: "Widget", FileID: 1},
+		}
+	}
+	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	if got := full.RetainedViaInterfaces[0].Chain; got != "pkg.CarrierType > Widget" {
+		t.Fatalf("chain = %q, want %q", got, "pkg.CarrierType > Widget")
+	}
+	fullTokens := estimateBlastWireTokens(&full)
+
+	squeezed := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	ApplyBlastBudget(&squeezed, fullTokens-1)
+	if len(squeezed.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
+		t.Fatalf("rows shed before enrichments")
+	}
+	last := len(squeezed.RetainedViaInterfaces) - 1
+	if squeezed.RetainedViaInterfaces[last].Chain != "" {
+		t.Errorf("tail chain survived a squeeze that required shedding")
+	}
+	anyChain := false
+	for _, e := range squeezed.RetainedViaInterfaces {
+		anyChain = anyChain || e.Chain != ""
+	}
+	for _, e := range squeezed.RetainedViaInterfaces {
+		if e.Carrier == "" && anyChain {
+			t.Errorf("a carrier stripped while chains remained (order inverted)")
+		}
+	}
+}
+
+// TestRetainedTrimmedFlagDisclosesEnrichmentShed: when the budget strips
+// carriers or chains, retained_trimmed must be true: a shed field must be
+// distinguishable from a never-computed one. The flag is set during the
+// strip and priced through every later estimate, so the disclosure holds
+// unconditionally in every band and can never surprise a later shed stage.
+func TestRetainedTrimmedFlagDisclosesEnrichmentShed(t *testing.T) {
+	ctx := context.Background()
+	r := heavyRetainedResult(12)
+	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	if full.RetainedTrimmed {
+		t.Fatalf("unsqueezed response must not claim trimming")
+	}
+	fullTokens := estimateBlastWireTokens(&full)
+	floor := strippedFloor(ctx, r)
+	slackBudget := floor + 60
+	if slackBudget >= fullTokens {
+		t.Fatalf("fixture too light: floor=%d full=%d leaves no slack window", floor, fullTokens)
+	}
+
+	// Enrichment band: strips fire, rows survive, flag set, budget held.
+	slack := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	ApplyBlastBudget(&slack, slackBudget)
+	if len(slack.RetainedViaInterfaces) != len(full.RetainedViaInterfaces) {
+		t.Fatalf("rows shed in the enrichment band: %d vs %d", len(slack.RetainedViaInterfaces), len(full.RetainedViaInterfaces))
+	}
+	if slack.RetainedViaInterfaces[len(slack.RetainedViaInterfaces)-1].Chain != "" {
+		t.Fatalf("budget below full must strip enrichment")
+	}
+	if !slack.RetainedTrimmed {
+		t.Errorf("enrichment stripped but retained_trimmed is false")
+	}
+	if estimateBlastWireTokens(&slack) > slackBudget {
+		t.Errorf("response exceeds its budget in the enrichment band")
+	}
+
+	// Sub-floor: flag still true, budget held, and rows shed identically
+	// to a control whose flag and strips are pre-applied, so the disclosure
+	// never changes a shedding decision beyond its own priced bytes.
+	for _, budget := range []int{floor - 1, floor - 40, floor - 120} {
+		got := BuildBlastResponse(ctx, r, retainedFiles, nil)
+		ApplyBlastBudget(&got, budget)
+		control := BuildBlastResponse(ctx, r, retainedFiles, nil)
+		for i := range control.RetainedViaInterfaces {
+			control.RetainedViaInterfaces[i].Chain = ""
+			control.RetainedViaInterfaces[i].Carrier = ""
+		}
+		control.Truncated = true
+		control.RetainedTrimmed = true
+		ApplyBlastBudget(&control, budget)
+		if len(got.RetainedViaInterfaces) != len(control.RetainedViaInterfaces) {
+			t.Errorf("budget %d: disclosure changed row shedding: %d rows vs control %d",
+				budget, len(got.RetainedViaInterfaces), len(control.RetainedViaInterfaces))
+		}
+		if !got.RetainedTrimmed {
+			t.Errorf("budget %d: enrichments stripped but retained_trimmed is false", budget)
+		}
+		if estimateBlastWireTokens(&got) > budget {
+			t.Errorf("budget %d: response exceeds its budget", budget)
+		}
+	}
+}
+
+// heavyRetainedResult builds a hub-shaped result: n retained rows with
+// long chains, so stripping enrichments frees far more than the
+// disclosure sentence costs (the 2-row fixture's window was empty and
+// hid a vacuous assertion).
+func heavyRetainedResult(n int) blast.Result {
+	r := retainedResult(true)
+	rows := make([]blast.RetainedHolder, 0, n)
+	for i := range n {
+		id := int64(200 + i*10)
+		rows = append(rows, blast.RetainedHolder{
+			Symbol:  model.Symbol{ID: id, Name: "Holder", Qualified: "pkg.subsystem.HolderNumber" + string(rune('A'+i)), FileID: 2, LineStart: 30 + i, LineEnd: 40 + i},
+			Via:     model.Symbol{ID: id + 1, Name: "RareIface", Qualified: "pkg.RareIface", FileID: 1},
+			Carrier: model.Symbol{ID: id + 2, Name: "Carrier", Qualified: "pkg.deep.CarrierImplementation", FileID: 1},
+			Chain: []model.Symbol{
+				{ID: id + 2, Name: "Carrier", Qualified: "pkg.deep.CarrierImplementation", FileID: 1},
+				{ID: id + 3, Name: "Mid", Qualified: "pkg.middle.IntermediateContainer", FileID: 1},
+				{ID: id + 4, Name: "Inner", Qualified: "pkg.inner.InnerHolderStructure", FileID: 1},
+				{ID: 1, Name: "Widget", Qualified: "Widget", FileID: 1},
+			},
+		})
+	}
+	r.RetainedViaInterfaces = rows
+	r.RetainedCount = n
+	return r
+}
+
+// strippedFloor is the wire size of the fixture with every enrichment
+// removed: the point below which whole rows must shed.
+func strippedFloor(ctx context.Context, r blast.Result) int {
+	resp := BuildBlastResponse(ctx, r, retainedFiles, nil)
+	for i := range resp.RetainedViaInterfaces {
+		resp.RetainedViaInterfaces[i].Chain = ""
+		resp.RetainedViaInterfaces[i].Carrier = ""
+	}
+	resp.Truncated = true
+	return estimateBlastWireTokens(&resp)
+}

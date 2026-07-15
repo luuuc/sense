@@ -526,3 +526,186 @@ func TestRetentionAllInterfacesScreened(t *testing.T) {
 		t.Errorf("all-junk candidates must leave the group empty, got %+v", res.RetainedViaInterfaces)
 	}
 }
+
+// TestRetainedHolderNamesConcreteCarrier: each retained row must name a
+// concrete carrier that satisfies its via-interface: the fact the laundering
+// round proves and the consumer otherwise re-derives one graph join per
+// interface (measured: 30 follow-up lookups on the dolt hub, cell 5).
+func TestRetainedHolderNamesConcreteCarrier(t *testing.T) {
+	fix, subject, carrier, _, holder := launderedFixture(t)
+
+	res := computeRetention(t, fix, subject)
+
+	found := false
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == holder {
+			found = true
+			if rh.Carrier.ID != carrier {
+				t.Errorf("Carrier = %d, want concrete carrier %d", rh.Carrier.ID, carrier)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("holder missing from RetainedViaInterfaces: %+v", res.RetainedViaInterfaces)
+	}
+}
+
+// TestRetainedCarrierDeterministicOnMultiSatisfier: when several carriers
+// satisfy the via-interface, the lowest-ID carrier is recorded (mirrors the
+// lowest-via rule) so output is stable run to run.
+func TestRetainedCarrierDeterministicOnMultiSatisfier(t *testing.T) {
+	fix, subject, carrier, iface, holder := launderedFixture(t)
+	carrier2 := fix.addSymbol(t, "CarrierD")
+	fix.addEdge(t, carrier2, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, carrier2, iface, model.EdgeInherits, confConvention)
+
+	res := computeRetention(t, fix, subject)
+
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == holder && rh.Carrier.ID != carrier {
+			t.Errorf("Carrier = %d, want lowest-ID satisfier %d (not %d)", rh.Carrier.ID, carrier, carrier2)
+		}
+	}
+}
+
+// TestRetainedRowCarriesDeclaredChain: each retained row names the declared
+// containment chain from its carrier down to the subject, so the row is a
+// statable structural fact rather than an unverifiable hint (measured:
+// agents re-verify hedged rows by hand and lose the wall to it).
+func TestRetainedRowCarriesDeclaredChain(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "SubjectA")
+	c1 := fix.addSymbol(t, "DirectCarrier")
+	c2 := fix.addSymbol(t, "DeepCarrier")
+	iface := fix.addSymbolWith(t, "DeepIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitDeepThing", model.KindMethod, &iface)
+	holder := fix.addSymbol(t, "DeepHolder")
+	fix.addEdge(t, c1, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, c2, c1, model.EdgeComposes, 0.9)
+	fix.addEdge(t, c2, iface, model.EdgeInherits, confConvention)
+	fix.addEdge(t, holder, iface, model.EdgeComposes, 0.9)
+
+	res := computeRetention(t, fix, subject)
+
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID != holder {
+			continue
+		}
+		got := make([]int64, 0, len(rh.Chain))
+		for _, s := range rh.Chain {
+			got = append(got, s.ID)
+		}
+		want := []int64{c2, c1, subject}
+		if len(got) != len(want) {
+			t.Fatalf("chain IDs = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("chain[%d] = %d, want %d (carrier down to subject)", i, got[i], want[i])
+			}
+		}
+		return
+	}
+	t.Fatalf("holder missing from retained rows")
+}
+
+// TestRetainedChainDepthOne: a carrier composing the subject directly chains
+// [carrier, subject].
+func TestRetainedChainDepthOne(t *testing.T) {
+	fix, subject, carrier, _, holder := launderedFixture(t)
+
+	res := computeRetention(t, fix, subject)
+
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == holder {
+			if len(rh.Chain) != 2 || rh.Chain[0].ID != carrier || rh.Chain[1].ID != subject {
+				ids := []int64{}
+				for _, s := range rh.Chain {
+					ids = append(ids, s.ID)
+				}
+				t.Fatalf("chain = %v, want [%d %d]", ids, carrier, subject)
+			}
+			return
+		}
+	}
+	t.Fatalf("holder missing")
+}
+
+// TestRetainedChainDiamondPicksLowestParent: when two level-1 parents both
+// compose the same inner carrier (a containment diamond), the rendered chain
+// goes through the lowest-ID parent. Kills the recordParent tie-break mutant
+// (lowest flipped to highest): pair order from SELECT DISTINCT carries no
+// guarantee, so the rule is the only thing standing between a diamond and
+// run-to-run chain flapping.
+func TestRetainedChainDiamondPicksLowestParent(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "SubjectA")
+	p1 := fix.addSymbol(t, "ParentLow")
+	p2 := fix.addSymbol(t, "ParentHigh")
+	inner := fix.addSymbol(t, "InnerCarrier")
+	iface := fix.addSymbolWith(t, "DiamondIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitDiamondThing", model.KindMethod, &iface)
+	holder := fix.addSymbol(t, "DiamondHolder")
+	fix.addEdge(t, p1, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, p2, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, inner, p1, model.EdgeComposes, 0.9)
+	fix.addEdge(t, inner, p2, model.EdgeComposes, 0.9)
+	fix.addEdge(t, inner, iface, model.EdgeInherits, confConvention)
+	fix.addEdge(t, holder, iface, model.EdgeComposes, 0.9)
+
+	res := computeRetention(t, fix, subject)
+
+	assertChain(t, res, holder, []int64{inner, p1, subject})
+}
+
+// TestRetainedChainNonSeedCycle: a composes cycle among non-seed carriers
+// must not corrupt the parent tree. Kills the already-admitted-guard mutant
+// in recordParent: without the guard, the cycle's back edge re-parents an
+// admitted node onto its own descendant and the chain walk emits a garbage
+// bound-length path instead of the true one. The cycle partner is created
+// with a LOWER ID than the true parent so the lowest-ID rule cannot mask
+// the guard's absence.
+func TestRetainedChainNonSeedCycle(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "SubjectA")
+	cyc := fix.addSymbol(t, "CyclePartner") // lower ID than trueParent
+	trueParent := fix.addSymbol(t, "TrueParent")
+	deep := fix.addSymbol(t, "DeepCarrier")
+	iface := fix.addSymbolWith(t, "CycleChainIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitCycleChainThing", model.KindMethod, &iface)
+	holder := fix.addSymbol(t, "CycleChainHolder")
+	fix.addEdge(t, trueParent, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, deep, trueParent, model.EdgeComposes, 0.9)
+	fix.addEdge(t, cyc, deep, model.EdgeComposes, 0.9)
+	fix.addEdge(t, deep, cyc, model.EdgeComposes, 0.9)
+	fix.addEdge(t, cyc, iface, model.EdgeInherits, confConvention)
+	fix.addEdge(t, holder, iface, model.EdgeComposes, 0.9)
+
+	res := computeRetention(t, fix, subject)
+
+	assertChain(t, res, holder, []int64{cyc, deep, trueParent, subject})
+}
+
+// assertChain fails unless the holder's rendered chain is exactly want.
+func assertChain(t *testing.T, res blast.Result, holder int64, want []int64) {
+	t.Helper()
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID != holder {
+			continue
+		}
+		got := make([]int64, 0, len(rh.Chain))
+		for _, s := range rh.Chain {
+			got = append(got, s.ID)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("chain = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("chain[%d] = %d, want %d (full: %v vs %v)", i, got[i], want[i], got, want)
+			}
+		}
+		return
+	}
+	t.Fatalf("holder %d missing from retained rows", holder)
+}
