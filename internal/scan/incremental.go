@@ -47,10 +47,15 @@ func RunIncremental(ctx context.Context, opts IncrementalOptions) (*Result, erro
 	}
 
 	h := &harness{
-		ctx:           ctx,
-		idx:           opts.Idx,
-		out:           out,
-		warn:          warn,
+		ctx:  ctx,
+		idx:  opts.Idx,
+		out:  out,
+		warn: warn,
+		// root anchors the go.mod module-table walk; without it the Go path
+		// lane would be inert on incremental rescans and healed bands would
+		// regress on the first touched caller file (the load-bearing
+		// incremental leg).
+		root:          opts.Root,
 		progress:      newProgress(out, true),
 		collector:     newWarningCollector(),
 		parsers:       parsers.parsers,
@@ -174,6 +179,7 @@ func buildIncrementalResult(h *harness, opts IncrementalOptions, elapsed time.Du
 		Edges:      h.edges,
 		Embedded:   h.embedded,
 		Unresolved: h.unresolved,
+		External:   h.droppedExternal,
 		Warnings:   h.collector.count(),
 		Duration:   elapsed,
 		Phases:     phases,

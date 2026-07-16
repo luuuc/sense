@@ -46,11 +46,13 @@ func (w *walker) emitFieldCompositions(structNode *sitter.Node, structQualified 
 		line := extract.Line(fd.StartPosition())
 		for _, target := range w.composeTargets(fd.ChildByFieldName("type"), typeParams) {
 			if err := w.emit.Edge(extract.EmittedEdge{
-				SourceQualified: structQualified,
-				TargetQualified: target,
-				Kind:            model.EdgeComposes,
-				Line:            &line,
-				Confidence:      extract.ConfidenceStatic,
+				SourceQualified:  structQualified,
+				TargetQualified:  target.qualified,
+				Kind:             model.EdgeComposes,
+				Line:             &line,
+				Confidence:       extract.ConfidenceStatic,
+				TargetImportPath: target.importPath,
+				TargetInPackage:  target.inPackage,
 			}); err != nil {
 				return err
 			}
@@ -64,7 +66,9 @@ func (w *walker) emitFieldCompositions(structNode *sitter.Node, structQualified 
 // (pkg.Registry[T]) keeps its package prefix. Function types and inline
 // struct/interface literals hold behavior or their own fields, not a named
 // has-a target — they and every other unlisted shape compose nothing.
-func (w *walker) composeTargets(typeNode *sitter.Node, typeParams map[string]bool) []string {
+// Qualified types carry their import-path annotation so the resolver's path
+// lane can refuse the same-basename shadow bind the literal text invites.
+func (w *walker) composeTargets(typeNode *sitter.Node, typeParams map[string]bool) []emitTarget {
 	if typeNode == nil {
 		return nil
 	}
@@ -74,9 +78,9 @@ func (w *walker) composeTargets(typeNode *sitter.Node, typeParams map[string]boo
 		if name == "" || goPredeclaredTypes[name] || typeParams[name] {
 			return nil
 		}
-		return []string{w.qualify(name)}
+		return []emitTarget{{qualified: w.qualify(name)}}
 	case "qualified_type":
-		return []string{extract.Text(typeNode, w.source)}
+		return []emitTarget{w.qualifiedTypeTarget(typeNode)}
 	case "pointer_type", "parenthesized_type":
 		return w.composeTargets(typeNode.NamedChild(0), typeParams)
 	case "slice_type", "array_type":
@@ -97,11 +101,11 @@ func (w *walker) composeTargets(typeNode *sitter.Node, typeParams map[string]boo
 // composeTypeArgTargets extracts compose targets from a generic type's
 // argument list. Each argument arrives wrapped in a type_elem node whose
 // children are the type expressions themselves.
-func (w *walker) composeTypeArgTargets(args *sitter.Node, typeParams map[string]bool) []string {
+func (w *walker) composeTypeArgTargets(args *sitter.Node, typeParams map[string]bool) []emitTarget {
 	if args == nil {
 		return nil
 	}
-	var targets []string
+	var targets []emitTarget
 	for i := uint(0); i < args.NamedChildCount(); i++ {
 		arg := args.NamedChild(i)
 		if arg == nil || arg.Kind() != "type_elem" {

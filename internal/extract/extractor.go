@@ -300,6 +300,16 @@ type EmittedEdge struct {
 	Kind            model.EdgeKind
 	Line            *int
 	Confidence      float64
+	// TargetImportPath is the fully-qualified import path of the package the
+	// target's qualifier or declared type resolved to in the emitting file's
+	// own import table. Empty means unknown: the edge resolves through the
+	// legacy name-keyed lanes exactly as before the field existed. When set,
+	// TargetInPackage carries the within-package remainder ("Func", "Type",
+	// "Type.Method") a path-aware resolver binds, while TargetQualified keeps
+	// the legacy text so an unverifiable path degrades to old behavior.
+	// Language-neutral by contract; today only the Go extractor emits it.
+	TargetImportPath string
+	TargetInPackage  string
 }
 
 // Emitter receives streamed extraction output. Returning an error

@@ -59,6 +59,7 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extrac
 		emit:        emit,
 		pkg:         packageName(tree.RootNode(), source),
 		pkgBindings: map[string]string{},
+		imports:     collectImports(tree.RootNode(), source),
 	}
 	if err := w.walkTopLevel(tree.RootNode()); err != nil {
 		return err
@@ -75,6 +76,7 @@ type walker struct {
 	emit        extract.Emitter
 	pkg         string            // package name, used to prefix every qualified name
 	pkgBindings map[string]string // unqualified name → qualified name for package-level consts and vars
+	imports     map[string]string // file-block import table: in-file name → import path (imports.go)
 }
 
 // walkTopLevel iterates the direct named children of source_file in
@@ -375,17 +377,19 @@ func (w *walker) emitInterfaceEmbeddings(ifaceNode *sitter.Node, ifaceQualified 
 		if te.NamedChildCount() != 1 {
 			continue
 		}
-		target := w.embedTargetName(te.NamedChild(0))
-		if target == "" {
+		target := w.embedTarget(te.NamedChild(0))
+		if target.qualified == "" {
 			continue
 		}
 		line := extract.Line(te.StartPosition())
 		if err := w.emit.Edge(extract.EmittedEdge{
-			SourceQualified: ifaceQualified,
-			TargetQualified: target,
-			Kind:            model.EdgeIncludes,
-			Line:            &line,
-			Confidence:      extract.ConfidenceStatic,
+			SourceQualified:  ifaceQualified,
+			TargetQualified:  target.qualified,
+			Kind:             model.EdgeIncludes,
+			Line:             &line,
+			Confidence:       extract.ConfidenceStatic,
+			TargetImportPath: target.importPath,
+			TargetInPackage:  target.inPackage,
 		}); err != nil {
 			return err
 		}
@@ -393,23 +397,24 @@ func (w *walker) emitInterfaceEmbeddings(ifaceNode *sitter.Node, ifaceQualified 
 	return nil
 }
 
-// embedTargetName resolves an embedded type node to its qualified target
-// name; non-name terms (unions, approximations, literals) yield "".
-func (w *walker) embedTargetName(typeNode *sitter.Node) string {
+// embedTarget resolves an embedded type node to its qualified target and
+// optional import-path annotation; non-name terms (unions, approximations,
+// literals) yield a zero target. A generic base recurses through the same
+// switch, so a qualified base (pkg.Registry[T]) keeps its package prefix and
+// its annotation instead of being glued onto the current package.
+func (w *walker) embedTarget(typeNode *sitter.Node) emitTarget {
 	if typeNode == nil {
-		return ""
+		return emitTarget{}
 	}
 	switch typeNode.Kind() {
 	case "type_identifier":
-		return w.qualify(extract.Text(typeNode, w.source))
+		return emitTarget{qualified: w.qualify(extract.Text(typeNode, w.source))}
 	case "qualified_type":
-		return extract.Text(typeNode, w.source)
+		return w.qualifiedTypeTarget(typeNode)
 	case "generic_type":
-		if base := typeNode.ChildByFieldName("type"); base != nil {
-			return w.qualify(extract.Text(base, w.source))
-		}
+		return w.embedTarget(typeNode.ChildByFieldName("type"))
 	}
-	return ""
+	return emitTarget{}
 }
 
 // emitEmbeddings walks a struct_type's field declarations and emits
@@ -427,14 +432,16 @@ func (w *walker) emitEmbeddings(structNode *sitter.Node, structQualified string)
 		if fd.ChildByFieldName("name") != nil {
 			continue
 		}
-		if target := w.embedTargetName(fd.ChildByFieldName("type")); target != "" {
+		if target := w.embedTarget(fd.ChildByFieldName("type")); target.qualified != "" {
 			line := extract.Line(fd.StartPosition())
 			if err := w.emit.Edge(extract.EmittedEdge{
-				SourceQualified: structQualified,
-				TargetQualified: target,
-				Kind:            model.EdgeIncludes,
-				Line:            &line,
-				Confidence:      extract.ConfidenceStatic,
+				SourceQualified:  structQualified,
+				TargetQualified:  target.qualified,
+				Kind:             model.EdgeIncludes,
+				Line:             &line,
+				Confidence:       extract.ConfidenceStatic,
+				TargetImportPath: target.importPath,
+				TargetInPackage:  target.inPackage,
 			}); err != nil {
 				return err
 			}
@@ -583,18 +590,18 @@ func (w *walker) emitCall(call *sitter.Node, source string, types map[string]loc
 	if fn == nil {
 		return nil
 	}
-	var target string
+	var target emitTarget
 	confidence := extract.ConfidenceStatic
 	switch fn.Kind() {
 	case "identifier":
-		target = extract.Text(fn, w.source)
+		target.qualified = extract.Text(fn, w.source)
 		// A bare call through a local binding (closure, func param, method
 		// value) cannot statically reach an indexed symbol — the local
 		// shadows package scope, so a same-named match downstream is always
 		// a coincidence (the emitConstRefs precedent, minus goBuiltins:
 		// builtin names stay because a package-block `func min` shadows the
 		// builtin and its bare calls are real edges).
-		if locals[target] {
+		if locals[target.qualified] {
 			return nil
 		}
 	case "selector_expression":
@@ -602,16 +609,18 @@ func (w *walker) emitCall(call *sitter.Node, source string, types map[string]loc
 	default:
 		return nil
 	}
-	if target == "" {
+	if target.qualified == "" {
 		return nil
 	}
 	line := extract.Line(call.StartPosition())
 	return w.emit.Edge(extract.EmittedEdge{
-		SourceQualified: source,
-		TargetQualified: target,
-		Kind:            model.EdgeCalls,
-		Line:            &line,
-		Confidence:      confidence,
+		SourceQualified:  source,
+		TargetQualified:  target.qualified,
+		Kind:             model.EdgeCalls,
+		Line:             &line,
+		Confidence:       confidence,
+		TargetImportPath: target.importPath,
+		TargetInPackage:  target.inPackage,
 	})
 }
 
@@ -697,7 +706,7 @@ func receiverType(recv *sitter.Node, source []byte) string {
 		if t == nil {
 			continue
 		}
-		return unwrapTypeName(t, source)
+		return unwrapTypeName(t, source).name
 	}
 	return ""
 }

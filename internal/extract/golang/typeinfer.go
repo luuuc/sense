@@ -21,6 +21,44 @@ type localType struct {
 	name       string  // unqualified type name (e.g. "Order")
 	elemName   string  // element type for slices/arrays (for range resolution)
 	confidence float64 // 1.0 for explicit declarations, 0.8 for inferred
+	// importPath / elemImportPath carry the import path of a qualified
+	// declared type (`sctx.Context` → the sctx import's path), resolved
+	// through the file's import table at collection time. Empty for
+	// in-package types. A qualified type whose qualifier has no table entry
+	// enters no type claim at all (locals-only): today's behavior, never a
+	// bare name that would later glue onto the current package.
+	importPath     string
+	elemImportPath string
+}
+
+// typeRef is a syntactic type reference: the base type name and, when the
+// type was written qualified (`pkg.Type`), its package qualifier as written.
+type typeRef struct {
+	name      string
+	qualifier string
+}
+
+// typedLocal resolves syntactic type refs into a localType through the
+// import table, applying the no-entry rule per ref (an unresolvable
+// qualifier drops that ref's claim). The bool reports whether any claim
+// survived.
+func (w *walker) typedLocal(tr, elem typeRef, confidence float64) (localType, bool) {
+	lt := localType{confidence: confidence}
+	if tr.name != "" {
+		if tr.qualifier == "" {
+			lt.name = tr.name
+		} else if path, ok := w.imports[tr.qualifier]; ok {
+			lt.name, lt.importPath = tr.name, path
+		}
+	}
+	if elem.name != "" {
+		if elem.qualifier == "" {
+			lt.elemName = elem.name
+		} else if path, ok := w.imports[elem.qualifier]; ok {
+			lt.elemName, lt.elemImportPath = elem.name, path
+		}
+	}
+	return lt, lt.name != "" || lt.elemName != ""
 }
 
 // buildTypeMap scans a function/method declaration for local variable
@@ -36,11 +74,25 @@ func (w *walker) buildTypeMap(funcNode *sitter.Node) (map[string]localType, map[
 
 	w.collectReceiverTypes(funcNode.ChildByFieldName("receiver"), types, locals)
 	w.collectParamTypes(funcNode.ChildByFieldName("parameters"), types, locals)
+	// Named results declare locals too (`func g() (ctx *sctx.Context)`);
+	// an unnamed result list holds no parameter_declaration and no-ops.
+	w.collectParamTypes(funcNode.ChildByFieldName("result"), types, locals)
 
 	body := funcNode.ChildByFieldName("body")
 	if body == nil {
 		return types, locals
 	}
+	// Func-literal parameters are function-scope bindings the walk below
+	// would otherwise miss entirely; an operand shadowing an import name
+	// (`func(log log.Logger) { log.Error() }`) must resolve as the local.
+	// Flat collection over the whole body is the file's existing
+	// flow-insensitive convention; over-registering a name errs toward a
+	// miss, never a wrong bind.
+	_ = extract.WalkNamedDescendants(body, "func_literal", func(n *sitter.Node) error {
+		w.collectParamTypes(n.ChildByFieldName("parameters"), types, locals)
+		w.collectParamTypes(n.ChildByFieldName("result"), types, locals)
+		return nil
+	})
 	_ = extract.WalkNamedDescendants(body, "var_declaration", func(n *sitter.Node) error {
 		w.collectVarDecl(n, types, locals)
 		return nil
@@ -68,9 +120,11 @@ func (w *walker) collectReceiverTypes(recv *sitter.Node, types map[string]localT
 			continue
 		}
 		name := extract.Text(pd.ChildByFieldName("name"), w.source)
-		typeName := unwrapTypeName(pd.ChildByFieldName("type"), w.source)
+		// A method receiver is never a qualified type (Go forbids methods
+		// on other packages' types), so only the bare name matters.
+		typeName := unwrapTypeName(pd.ChildByFieldName("type"), w.source).name
 		if name != "" && typeName != "" {
-			types[name] = localType{typeName, "", extract.ConfidenceStatic}
+			types[name] = localType{name: typeName, confidence: extract.ConfidenceStatic}
 			locals[name] = true
 		}
 	}
@@ -91,14 +145,15 @@ func (w *walker) collectParamTypes(params *sitter.Node, types map[string]localTy
 		// when the type doesn't unwrap to a name (func-typed params are the
 		// closure carriers behind G-10's bare-call false binds). The type
 		// map entry still requires a resolved name.
-		typeName, elemName := resolveTypeAndElem(pd.ChildByFieldName("type"), w.source)
+		tr, elem := resolveTypeAndElem(pd.ChildByFieldName("type"), w.source)
+		lt, typed := w.typedLocal(tr, elem, extract.ConfidenceStatic)
 		for j := uint(0); j < pd.NamedChildCount(); j++ {
 			ch := pd.NamedChild(j)
 			if ch.Kind() == "identifier" {
 				name := extract.Text(ch, w.source)
 				locals[name] = true
-				if typeName != "" || elemName != "" {
-					types[name] = localType{typeName, elemName, extract.ConfidenceStatic}
+				if typed {
+					types[name] = lt
 				}
 			}
 		}
@@ -113,14 +168,15 @@ func (w *walker) collectVarDecl(n *sitter.Node, types map[string]localType, loca
 			continue
 		}
 		typeNode := spec.ChildByFieldName("type")
-		typeName, elemName := resolveTypeAndElem(typeNode, w.source)
+		tr, elem := resolveTypeAndElem(typeNode, w.source)
+		lt, typed := w.typedLocal(tr, elem, extract.ConfidenceStatic)
 		for j := uint(0); j < spec.NamedChildCount(); j++ {
 			ch := spec.NamedChild(j)
 			if ch.Kind() == "identifier" {
 				name := extract.Text(ch, w.source)
 				locals[name] = true
-				if typeName != "" || elemName != "" {
-					types[name] = localType{typeName, elemName, extract.ConfidenceStatic}
+				if typed {
+					types[name] = lt
 				}
 			}
 		}
@@ -174,8 +230,8 @@ func (w *walker) collectRangeVars(rc *sitter.Node, types map[string]localType, l
 	if valueName == "" || valueName == "_" {
 		return
 	}
-	if elemName := w.rangeElemType(right, types); elemName != "" {
-		types[valueName] = localType{elemName, "", extract.ConfidenceStatic}
+	if elem := w.rangeElemType(right, types); elem.name != "" {
+		types[valueName] = localType{name: elem.name, importPath: elem.qualifier, confidence: extract.ConfidenceStatic}
 	}
 }
 
@@ -210,48 +266,82 @@ func rangeValueNode(left *sitter.Node) *sitter.Node {
 
 // rangeElemType determines the element type produced by ranging over `right`,
 // reading a known slice/array variable's element type or a composite literal's.
-func (w *walker) rangeElemType(right *sitter.Node, types map[string]localType) string {
+// The returned typeRef's qualifier is ALREADY an import path when it came from
+// the type map (localType stores resolved paths); a composite literal's ref is
+// resolved through typedLocal by the caller's map entry construction; so this
+// resolves it here to keep one convention: qualifier = import path or "".
+func (w *walker) rangeElemType(right *sitter.Node, types map[string]localType) typeRef {
 	switch right.Kind() {
 	case "identifier":
 		if lt, ok := types[extract.Text(right, w.source)]; ok {
-			return lt.elemName
+			return typeRef{name: lt.elemName, qualifier: lt.elemImportPath}
 		}
 	case "composite_literal":
 		if typeNode := right.ChildByFieldName("type"); typeNode != nil {
-			return sliceElemType(typeNode, w.source)
+			elem := sliceElemType(typeNode, w.source)
+			if elem.qualifier == "" {
+				return elem
+			}
+			if path, ok := w.imports[elem.qualifier]; ok {
+				return typeRef{name: elem.name, qualifier: path}
+			}
+			return typeRef{}
 		}
 	}
-	return ""
+	return typeRef{}
 }
 
-// resolveSelector attempts to resolve a selector_expression callee
-// (e.g. `x.Method`) using the local type map. Returns the target
-// qualified name and confidence. When the operand is a known local
-// variable without a resolved type, confidence drops to 0.8;
-// unknown operands (likely package references like `fmt`) stay at 1.0.
-func (w *walker) resolveSelector(sel *sitter.Node, types map[string]localType, locals map[string]bool) (string, float64) {
+// resolveSelector resolves a selector_expression callee (e.g. `x.Method`)
+// following Go's scope nesting: function scope first (the local type map
+// and locals set), then the file block (the import table), then package
+// fallthrough. Returns the target and confidence:
+//
+//   - typed local: `pkg.Type.Method` at the type's inference confidence;
+//   - known local with unknown type: raw text at ConfidenceAmbiguous;
+//   - import-table match: raw text annotated with the import path, which
+//     the resolver's path lane decides terminally;
+//   - neither local nor import: by Go's scope law the operand is a
+//     package-level identifier of the current package, provably NOT a
+//     package qualifier: its dotted text used to ride at 1.0 and could
+//     exact-bind into a same-named indexed package. It now rides at
+//     ConfidenceUnresolved so the gated fallback demotes it to a guess.
+func (w *walker) resolveSelector(sel *sitter.Node, types map[string]localType, locals map[string]bool) (emitTarget, float64) {
 	operand := sel.ChildByFieldName("operand")
 	field := sel.ChildByFieldName("field")
 	if operand == nil || field == nil {
-		return extract.Text(sel, w.source), extract.ConfidenceStatic
+		return emitTarget{qualified: extract.Text(sel, w.source)}, extract.ConfidenceStatic
 	}
 	if operand.Kind() != "identifier" {
-		return extract.Text(sel, w.source), extract.ConfidenceStatic
+		return emitTarget{qualified: extract.Text(sel, w.source)}, extract.ConfidenceStatic
 	}
 	varName := extract.Text(operand, w.source)
 	methodName := extract.Text(field, w.source)
 	if varName == "" || methodName == "" {
-		return "", 0
+		return emitTarget{}, 0
 	}
 	lt, ok := types[varName]
-	if !ok || lt.name == "" {
-		confidence := extract.ConfidenceStatic
-		if locals[varName] || ok {
-			confidence = extract.ConfidenceAmbiguous
+	if ok && lt.name != "" {
+		if lt.importPath != "" {
+			// Cross-package declared type: the legacy text stays the raw
+			// selector (exact inert degradation when no module table
+			// exists); the annotation carries Type.Method for the path
+			// lane's dir-scoped bind and embedding walk.
+			return emitTarget{
+				qualified:  varName + "." + methodName,
+				importPath: lt.importPath,
+				inPackage:  lt.name + "." + methodName,
+			}, lt.confidence
 		}
-		return varName + "." + methodName, confidence
+		return emitTarget{qualified: w.qualify(lt.name) + "." + methodName}, lt.confidence
 	}
-	return w.qualify(lt.name) + "." + methodName, lt.confidence
+	text := varName + "." + methodName
+	if locals[varName] || ok {
+		return emitTarget{qualified: text}, extract.ConfidenceAmbiguous
+	}
+	if path, imported := w.imports[varName]; imported {
+		return emitTarget{qualified: text, importPath: path, inPackage: methodName}, extract.ConfidenceStatic
+	}
+	return emitTarget{qualified: text}, extract.ConfidenceUnresolved
 }
 
 // inferType attempts to determine the type of a value expression by dispatching
@@ -280,12 +370,12 @@ func (w *walker) inferFromComposite(val *sitter.Node) (localType, bool) {
 	}
 	if typeNode != nil {
 		if typeNode.Kind() == "slice_type" || typeNode.Kind() == "array_type" {
-			if elemName := sliceElemType(typeNode, w.source); elemName != "" {
-				return localType{"", elemName, extract.ConfidenceStatic}, true
+			if elem := sliceElemType(typeNode, w.source); elem.name != "" {
+				return w.typedLocal(typeRef{}, elem, extract.ConfidenceStatic)
 			}
 		}
-		if typeName := unwrapTypeName(typeNode, w.source); typeName != "" {
-			return localType{typeName, "", extract.ConfidenceStatic}, true
+		if tr := unwrapTypeName(typeNode, w.source); tr.name != "" {
+			return w.typedLocal(tr, typeRef{}, extract.ConfidenceStatic)
 		}
 	}
 	return localType{}, false
@@ -297,8 +387,8 @@ func (w *walker) inferFromUnary(val *sitter.Node) (localType, bool) {
 	if operand == nil || operand.Kind() != "composite_literal" {
 		return localType{}, false
 	}
-	if typeName := unwrapTypeName(operand.NamedChild(0), w.source); typeName != "" {
-		return localType{typeName, "", extract.ConfidenceStatic}, true
+	if tr := unwrapTypeName(operand.NamedChild(0), w.source); tr.name != "" {
+		return w.typedLocal(tr, typeRef{}, extract.ConfidenceStatic)
 	}
 	return localType{}, false
 }
@@ -310,7 +400,7 @@ func (w *walker) inferFromCall(val *sitter.Node) (localType, bool) {
 		return localType{}, false
 	}
 	if typeName := constructorType(extract.Text(fn, w.source)); typeName != "" {
-		return localType{typeName, "", extract.ConfidenceAmbiguous}, true
+		return localType{name: typeName, confidence: extract.ConfidenceAmbiguous}, true
 	}
 	return localType{}, false
 }
@@ -331,34 +421,42 @@ func constructorType(funcName string) string {
 	return typeName
 }
 
-// resolveTypeAndElem extracts the type name and optional element type
-// from a type node. For slice/array types, elemName is the element
-// type; for plain types, elemName is empty.
-func resolveTypeAndElem(typeNode *sitter.Node, source []byte) (typeName, elemName string) {
+// resolveTypeAndElem extracts the type ref and optional element type ref
+// from a type node. For slice/array types the element ref is set; for
+// plain types it is zero.
+func resolveTypeAndElem(typeNode *sitter.Node, source []byte) (tr, elem typeRef) {
 	if typeNode == nil {
-		return "", ""
+		return typeRef{}, typeRef{}
 	}
 	if typeNode.Kind() == "slice_type" || typeNode.Kind() == "array_type" {
-		elem := sliceElemType(typeNode, source)
-		return "", elem
+		return typeRef{}, sliceElemType(typeNode, source)
 	}
-	return unwrapTypeName(typeNode, source), ""
+	return unwrapTypeName(typeNode, source), typeRef{}
 }
 
-// sliceElemType extracts the element type from a slice_type or
+// sliceElemType extracts the element type ref from a slice_type or
 // array_type node via the `element` field.
-func sliceElemType(typeNode *sitter.Node, source []byte) string {
+func sliceElemType(typeNode *sitter.Node, source []byte) typeRef {
 	elem := typeNode.ChildByFieldName("element")
 	return unwrapTypeName(elem, source)
 }
 
 // unwrapTypeName peels pointer and generic wrappers off a type
-// expression to get at the base type_identifier.
-func unwrapTypeName(t *sitter.Node, source []byte) string {
+// expression to get at the base type_identifier or qualified_type,
+// returning the name and (for qualified types) the qualifier as written.
+func unwrapTypeName(t *sitter.Node, source []byte) typeRef {
 	for t != nil {
 		switch t.Kind() {
 		case "type_identifier":
-			return extract.Text(t, source)
+			return typeRef{name: extract.Text(t, source)}
+		case "qualified_type":
+			// extract.Text of a missing field is "", and an empty name is
+			// no claim to every consumer, so parser-tolerance needs no
+			// branch of its own here.
+			return typeRef{
+				name:      extract.Text(t.ChildByFieldName("name"), source),
+				qualifier: extract.Text(t.ChildByFieldName("package"), source),
+			}
 		case "pointer_type":
 			// `*T` has exactly one named child — the inner type.
 			t = t.NamedChild(0)
@@ -367,13 +465,12 @@ func unwrapTypeName(t *sitter.Node, source []byte) string {
 				t = name
 				continue
 			}
-			return ""
+			return typeRef{}
 		default:
-			// Qualified types like `pkg.Type` (qualified_type node)
-			// land here. Skip — cross-package resolution is 01-03's
-			// job, not Tier-Basic's.
-			return ""
+			// Function types, map types, inline literals and every other
+			// unlisted shape carry no single base name to bind against.
+			return typeRef{}
 		}
 	}
-	return ""
+	return typeRef{}
 }
