@@ -195,6 +195,58 @@ func TestGoPathLaneTestDirectionAndLanguageGates(t *testing.T) {
 	}
 }
 
+func TestDottedGoTargetAtUnresolvedSkipsExactMatch(t *testing.T) {
+	// A Go extractor emits `pkgvar.Method` at ConfidenceUnresolved when the
+	// operand is provably not a package qualifier (neither local nor
+	// imported). Its dotted text must NOT exact-bind into a same-named
+	// indexed package at face value; it flows to the gated fallback and
+	// lands demoted below blast's floor.
+	refs := []model.SymbolRef{
+		{ID: 1, Qualified: "log.Error", FileID: 1, Language: "go", Path: "modules/log/log.go"},
+		{ID: 2, Qualified: "caller.f", FileID: 2, Language: "go", Path: "cmd/caller/main.go"},
+	}
+	ix := resolve.NewIndex(refs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "log.Error",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   2,
+		BaseConfidence: 0.5,
+	})
+	if !ok {
+		t.Fatal("the demoted guess should still resolve for dead-code liveness")
+	}
+	if r.Confidence > 0.3 {
+		t.Fatalf("provable non-qualifier bound at %v, want demotion to <= 0.3", r.Confidence)
+	}
+
+	// Control: the same shape at full confidence (a real qualifier the
+	// import table vouched for never rides 0.5) still exact-binds.
+	r, ok = ix.Resolve(resolve.Request{
+		Target:         "log.Error",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   2,
+		BaseConfidence: 1.0,
+	})
+	if !ok || r.Confidence != 1.0 {
+		t.Fatalf("full-confidence dotted target must keep exact match, got %+v ok=%v", r, ok)
+	}
+
+	// Control: a non-Go source with a dotted 0.5 target keeps today's
+	// exact-match behavior (the skip is Go-gated).
+	refs = append(refs, model.SymbolRef{ID: 3, Qualified: "log.Error", FileID: 3, Language: "ruby", Path: "app/log.rb"},
+		model.SymbolRef{ID: 4, Qualified: "app.caller", FileID: 4, Language: "ruby", Path: "app/caller.rb"})
+	ix = resolve.NewIndex(refs)
+	r, ok = ix.Resolve(resolve.Request{
+		Target:         "log.Error",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   4,
+		BaseConfidence: 0.5,
+	})
+	if !ok || r.SymbolID != 3 || r.Confidence != 0.5 {
+		t.Fatalf("ruby dotted target must keep exact match, got %+v ok=%v", r, ok)
+	}
+}
+
 func TestWithGoModulesHygiene(t *testing.T) {
 	// Empty paths are skipped; the same (path, dir) listed twice (nested
 	// walks can revisit) collapses to one entry and still binds; an exact

@@ -590,18 +590,18 @@ func (w *walker) emitCall(call *sitter.Node, source string, types map[string]loc
 	if fn == nil {
 		return nil
 	}
-	var target string
+	var target emitTarget
 	confidence := extract.ConfidenceStatic
 	switch fn.Kind() {
 	case "identifier":
-		target = extract.Text(fn, w.source)
+		target.qualified = extract.Text(fn, w.source)
 		// A bare call through a local binding (closure, func param, method
 		// value) cannot statically reach an indexed symbol — the local
 		// shadows package scope, so a same-named match downstream is always
 		// a coincidence (the emitConstRefs precedent, minus goBuiltins:
 		// builtin names stay because a package-block `func min` shadows the
 		// builtin and its bare calls are real edges).
-		if locals[target] {
+		if locals[target.qualified] {
 			return nil
 		}
 	case "selector_expression":
@@ -609,16 +609,18 @@ func (w *walker) emitCall(call *sitter.Node, source string, types map[string]loc
 	default:
 		return nil
 	}
-	if target == "" {
+	if target.qualified == "" {
 		return nil
 	}
 	line := extract.Line(call.StartPosition())
 	return w.emit.Edge(extract.EmittedEdge{
-		SourceQualified: source,
-		TargetQualified: target,
-		Kind:            model.EdgeCalls,
-		Line:            &line,
-		Confidence:      confidence,
+		SourceQualified:  source,
+		TargetQualified:  target.qualified,
+		Kind:             model.EdgeCalls,
+		Line:             &line,
+		Confidence:       confidence,
+		TargetImportPath: target.importPath,
+		TargetInPackage:  target.inPackage,
 	})
 }
 

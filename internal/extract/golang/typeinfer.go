@@ -224,34 +224,46 @@ func (w *walker) rangeElemType(right *sitter.Node, types map[string]localType) s
 	return ""
 }
 
-// resolveSelector attempts to resolve a selector_expression callee
-// (e.g. `x.Method`) using the local type map. Returns the target
-// qualified name and confidence. When the operand is a known local
-// variable without a resolved type, confidence drops to 0.8;
-// unknown operands (likely package references like `fmt`) stay at 1.0.
-func (w *walker) resolveSelector(sel *sitter.Node, types map[string]localType, locals map[string]bool) (string, float64) {
+// resolveSelector resolves a selector_expression callee (e.g. `x.Method`)
+// following Go's scope nesting: function scope first (the local type map
+// and locals set), then the file block (the import table), then package
+// fallthrough. Returns the target and confidence:
+//
+//   - typed local: `pkg.Type.Method` at the type's inference confidence;
+//   - known local with unknown type: raw text at ConfidenceAmbiguous;
+//   - import-table match: raw text annotated with the import path, which
+//     the resolver's path lane decides terminally;
+//   - neither local nor import: by Go's scope law the operand is a
+//     package-level identifier of the current package, provably NOT a
+//     package qualifier: its dotted text used to ride at 1.0 and could
+//     exact-bind into a same-named indexed package. It now rides at
+//     ConfidenceUnresolved so the gated fallback demotes it to a guess.
+func (w *walker) resolveSelector(sel *sitter.Node, types map[string]localType, locals map[string]bool) (emitTarget, float64) {
 	operand := sel.ChildByFieldName("operand")
 	field := sel.ChildByFieldName("field")
 	if operand == nil || field == nil {
-		return extract.Text(sel, w.source), extract.ConfidenceStatic
+		return emitTarget{qualified: extract.Text(sel, w.source)}, extract.ConfidenceStatic
 	}
 	if operand.Kind() != "identifier" {
-		return extract.Text(sel, w.source), extract.ConfidenceStatic
+		return emitTarget{qualified: extract.Text(sel, w.source)}, extract.ConfidenceStatic
 	}
 	varName := extract.Text(operand, w.source)
 	methodName := extract.Text(field, w.source)
 	if varName == "" || methodName == "" {
-		return "", 0
+		return emitTarget{}, 0
 	}
 	lt, ok := types[varName]
-	if !ok || lt.name == "" {
-		confidence := extract.ConfidenceStatic
-		if locals[varName] || ok {
-			confidence = extract.ConfidenceAmbiguous
-		}
-		return varName + "." + methodName, confidence
+	if ok && lt.name != "" {
+		return emitTarget{qualified: w.qualify(lt.name) + "." + methodName}, lt.confidence
 	}
-	return w.qualify(lt.name) + "." + methodName, lt.confidence
+	text := varName + "." + methodName
+	if locals[varName] || ok {
+		return emitTarget{qualified: text}, extract.ConfidenceAmbiguous
+	}
+	if path, imported := w.imports[varName]; imported {
+		return emitTarget{qualified: text, importPath: path, inPackage: methodName}, extract.ConfidenceStatic
+	}
+	return emitTarget{qualified: text}, extract.ConfidenceUnresolved
 }
 
 // inferType attempts to determine the type of a value expression by dispatching

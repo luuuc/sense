@@ -295,6 +295,84 @@ type Embedder struct {
 	}
 }
 
+func TestQualifierCallsCarryImportPath(t *testing.T) {
+	r := parse(t, `package cmd
+
+import (
+	"fmt"
+	repo_model "code.gitea.io/gitea/models/repo"
+)
+
+func run() {
+	fmt.Println("x")
+	repo_model.Search()
+}
+`)
+	e := findEdge(r, "cmd.run", "fmt.Println", "calls")
+	if e == nil {
+		t.Fatal("missing stdlib qualifier call edge")
+	}
+	if e.TargetImportPath != "fmt" || e.TargetInPackage != "Println" {
+		t.Errorf("stdlib qualifier annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+	e = findEdge(r, "cmd.run", "repo_model.Search", "calls")
+	if e == nil {
+		t.Fatal("missing aliased qualifier call edge")
+	}
+	if e.TargetImportPath != "code.gitea.io/gitea/models/repo" || e.TargetInPackage != "Search" {
+		t.Errorf("aliased qualifier annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
+func TestQualifierConsultationOrderIsGoScopeNesting(t *testing.T) {
+	// Function scope shadows the file block: an untyped local named like an
+	// import must take the local branch (ambiguous, no annotation), never
+	// the import table.
+	r := parse(t, `package p
+
+import "fmt"
+
+func f() {
+	fmt := helper()
+	fmt.Print()
+}
+`)
+	e := findEdge(r, "p.f", "fmt.Print", "calls")
+	if e == nil {
+		t.Fatal("missing shadowed-local call edge")
+	}
+	if e.TargetImportPath != "" {
+		t.Errorf("local shadow must not consult the import table, got %q", e.TargetImportPath)
+	}
+	if e.Confidence != 0.8 {
+		t.Errorf("known local with unknown type keeps the ambiguous confidence, got %v", e.Confidence)
+	}
+}
+
+func TestUnknownOperandIsNotAPackageQualifier(t *testing.T) {
+	// An operand that is neither a local nor an import-table name is, by
+	// Go's scope law, a package-level identifier, never a package
+	// qualifier. The old @1.0 emission let its dotted text exact-bind into
+	// a same-named indexed package; it now rides ConfidenceUnresolved so
+	// the resolver's gated fallback demotes it.
+	r := parse(t, `package p
+
+func f() {
+	log.Error("boom")
+}
+`)
+	e := findEdge(r, "p.f", "log.Error", "calls")
+	if e == nil {
+		t.Fatal("missing unknown-operand call edge")
+	}
+	if e.TargetImportPath != "" {
+		t.Errorf("unknown operand must carry no annotation, got %q", e.TargetImportPath)
+	}
+	if e.Confidence != 0.5 {
+		t.Errorf("unknown operand must ride ConfidenceUnresolved, got %v", e.Confidence)
+	}
+}
+
 func TestQualifiedTypeTargetTolerantShapes(t *testing.T) {
 	// A node without package/name fields (parser-tolerance territory) keeps
 	// the literal text and claims no path.

@@ -408,7 +408,12 @@ func (ix *Index) resolveQualified(target string, req Request, gatedKind bool) (R
 	// not type the receiver, so the name is a leaf, not a qualified name. Any
 	// exact byQualified hit on it is a coincidence with a same-named symbol;
 	// skip the shortcut and let the gated fallback handle (and demote) it.
-	if _, targetSep := unqualifiedNameSep(target); targetSep == "" && req.BaseConfidence <= extract.ConfidenceUnresolved {
+	// A DOTTED Go target at that confidence is the same claim one notch up:
+	// the extractor proved the operand is not a package qualifier (neither a
+	// local nor in the file's import table), so a byQualified hit on its
+	// text is a same-named-package coincidence, not a resolution.
+	if _, targetSep := unqualifiedNameSep(target); req.BaseConfidence <= extract.ConfidenceUnresolved &&
+		(targetSep == "" || (targetSep == "." && ix.fileLang[req.SourceFileID] == "go")) {
 		return Result{}, false, false
 	}
 
