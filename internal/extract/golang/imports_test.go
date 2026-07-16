@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
+
+	"github.com/luuuc/sense/internal/extract"
 )
 
 func parseImports(t *testing.T, src string) map[string]string {
@@ -161,6 +163,166 @@ func TestCollectImportsMalformedSpecs(t *testing.T) {
 	if got := parseImports(t, src); len(got) != 0 {
 		t.Errorf("malformed specs must contribute nothing, got %v", got)
 	}
+}
+
+// The three fabrication doors: a qualified type reaching an edge as literal
+// text lets byQualified bind stdlib/third-party names to same-named local
+// packages. Emission keeps the legacy text (TargetQualified) and adds the
+// import-path annotation the resolver's path lane decides on.
+
+func TestComposeQualifiedTypeCarriesImportPath(t *testing.T) {
+	r := parse(t, `package storage
+
+import (
+	"context"
+	sctx "code.gitea.io/gitea/services/context"
+)
+
+type LocalStorage struct {
+	ctx  context.Context
+	base sctx.Base
+}
+`)
+	e := findEdge(r, "storage.LocalStorage", "context.Context", "composes")
+	if e == nil {
+		t.Fatal("missing composes edge for stdlib-typed field")
+	}
+	if e.TargetImportPath != "context" || e.TargetInPackage != "Context" {
+		t.Errorf("stdlib field annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+	e = findEdge(r, "storage.LocalStorage", "sctx.Base", "composes")
+	if e == nil {
+		t.Fatal("missing composes edge for aliased local field")
+	}
+	if e.TargetImportPath != "code.gitea.io/gitea/services/context" || e.TargetInPackage != "Base" {
+		t.Errorf("aliased field annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
+func TestComposeUnknownQualifierStaysLegacy(t *testing.T) {
+	// A qualifier with no import-table entry (partial parse, missing import)
+	// must keep today's behavior exactly: literal text, no annotation.
+	r := parse(t, `package p
+
+type X struct {
+	f zzz.T
+}
+`)
+	e := findEdge(r, "p.X", "zzz.T", "composes")
+	if e == nil {
+		t.Fatal("missing composes edge for unknown qualifier")
+	}
+	if e.TargetImportPath != "" || e.TargetInPackage != "" {
+		t.Errorf("unknown qualifier must carry no annotation, got %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
+func TestEmbeddedQualifiedTypesCarryImportPath(t *testing.T) {
+	r := parse(t, `package p
+
+import (
+	"context"
+	"io"
+)
+
+type Wrapped struct {
+	context.Context
+}
+
+type Iface interface {
+	io.Reader
+}
+`)
+	e := findEdge(r, "p.Wrapped", "context.Context", "includes")
+	if e == nil {
+		t.Fatal("missing includes edge for embedded stdlib type")
+	}
+	if e.TargetImportPath != "context" || e.TargetInPackage != "Context" {
+		t.Errorf("embedded struct annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+	e = findEdge(r, "p.Iface", "io.Reader", "includes")
+	if e == nil {
+		t.Fatal("missing includes edge for embedded interface")
+	}
+	if e.TargetImportPath != "io" || e.TargetInPackage != "Reader" {
+		t.Errorf("embedded interface annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+	// In-package embeds stay un-annotated: the legacy qualified name is
+	// already exact.
+	r = parse(t, `package p
+
+type Base struct{}
+
+type Sub struct {
+	Base
+}
+`)
+	e = findEdge(r, "p.Sub", "p.Base", "includes")
+	if e == nil {
+		t.Fatal("missing in-package includes edge")
+	}
+	if e.TargetImportPath != "" {
+		t.Errorf("in-package embed must carry no annotation, got %q", e.TargetImportPath)
+	}
+}
+
+func TestGenericQualifiedBaseCarriesImportPath(t *testing.T) {
+	r := parse(t, `package p
+
+import reg "example.com/mod/registry"
+
+type Holder struct {
+	r reg.Registry[int]
+}
+
+type Embedder struct {
+	reg.Registry[int]
+}
+`)
+	e := findEdge(r, "p.Holder", "reg.Registry", "composes")
+	if e == nil {
+		t.Fatal("missing composes edge for generic qualified base")
+	}
+	if e.TargetImportPath != "example.com/mod/registry" || e.TargetInPackage != "Registry" {
+		t.Errorf("generic compose annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+	e = findEdge(r, "p.Embedder", "reg.Registry", "includes")
+	if e == nil {
+		t.Fatal("missing includes edge for generic qualified embed")
+	}
+	if e.TargetImportPath != "example.com/mod/registry" || e.TargetInPackage != "Registry" {
+		t.Errorf("generic embed annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
+func TestQualifiedTypeTargetTolerantShapes(t *testing.T) {
+	// A node without package/name fields (parser-tolerance territory) keeps
+	// the literal text and claims no path.
+	parser := sitter.NewParser()
+	defer parser.Close()
+	if err := parser.SetLanguage(Extractor{}.Grammar()); err != nil {
+		t.Fatal(err)
+	}
+	src := []byte("package p\n\ntype X struct{ f T }\n")
+	tree := parser.Parse(src, nil)
+	defer tree.Close()
+	w := &walker{source: src, imports: map[string]string{"T": "never/used"}}
+	var ident *sitter.Node
+	_ = extractWalk(tree.RootNode(), "type_identifier", func(n *sitter.Node) { ident = n })
+	if ident == nil {
+		t.Fatal("no type_identifier found")
+	}
+	got := w.qualifiedTypeTarget(ident)
+	if got.qualified == "" || got.importPath != "" {
+		t.Errorf("tolerant shape = %+v, want literal text with no annotation", got)
+	}
+}
+
+func extractWalk(n *sitter.Node, kind string, fn func(*sitter.Node)) error {
+	return extract.WalkNamedDescendants(n, kind, func(m *sitter.Node) error {
+		fn(m)
+		return nil
+	})
 }
 
 func TestCollectImportsCgoAndEmpty(t *testing.T) {

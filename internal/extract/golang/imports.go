@@ -20,6 +20,34 @@ import (
 	"github.com/luuuc/sense/internal/extract"
 )
 
+// emitTarget pairs an edge's legacy target text with its optional
+// import-path annotation. Qualified holds exactly what the pre-annotation
+// extractor emitted (so an unverifiable path degrades to old behavior);
+// importPath/inPackage are set only when the qualifier resolved through the
+// file's import table.
+type emitTarget struct {
+	qualified  string
+	importPath string
+	inPackage  string
+}
+
+// qualifiedTypeTarget builds the emitTarget for a qualified_type node.
+// A qualifier with no import-table entry (partial parse, missing import)
+// yields the literal text un-annotated: today's behavior, never a fabricated
+// path claim.
+func (w *walker) qualifiedTypeTarget(n *sitter.Node) emitTarget {
+	text := extract.Text(n, w.source)
+	pkgNode := n.ChildByFieldName("package")
+	nameNode := n.ChildByFieldName("name")
+	if pkgNode == nil || nameNode == nil {
+		return emitTarget{qualified: text}
+	}
+	if path, ok := w.imports[extract.Text(pkgNode, w.source)]; ok {
+		return emitTarget{qualified: text, importPath: path, inPackage: extract.Text(nameNode, w.source)}
+	}
+	return emitTarget{qualified: text}
+}
+
 // collectImports walks the source file's import declarations into a
 // name → path table. Dot imports and blank imports bind no per-name
 // qualifier, so they produce no entry. Aliased imports key by the alias.

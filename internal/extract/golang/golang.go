@@ -377,17 +377,19 @@ func (w *walker) emitInterfaceEmbeddings(ifaceNode *sitter.Node, ifaceQualified 
 		if te.NamedChildCount() != 1 {
 			continue
 		}
-		target := w.embedTargetName(te.NamedChild(0))
-		if target == "" {
+		target := w.embedTarget(te.NamedChild(0))
+		if target.qualified == "" {
 			continue
 		}
 		line := extract.Line(te.StartPosition())
 		if err := w.emit.Edge(extract.EmittedEdge{
-			SourceQualified: ifaceQualified,
-			TargetQualified: target,
-			Kind:            model.EdgeIncludes,
-			Line:            &line,
-			Confidence:      extract.ConfidenceStatic,
+			SourceQualified:  ifaceQualified,
+			TargetQualified:  target.qualified,
+			Kind:             model.EdgeIncludes,
+			Line:             &line,
+			Confidence:       extract.ConfidenceStatic,
+			TargetImportPath: target.importPath,
+			TargetInPackage:  target.inPackage,
 		}); err != nil {
 			return err
 		}
@@ -395,23 +397,24 @@ func (w *walker) emitInterfaceEmbeddings(ifaceNode *sitter.Node, ifaceQualified 
 	return nil
 }
 
-// embedTargetName resolves an embedded type node to its qualified target
-// name; non-name terms (unions, approximations, literals) yield "".
-func (w *walker) embedTargetName(typeNode *sitter.Node) string {
+// embedTarget resolves an embedded type node to its qualified target and
+// optional import-path annotation; non-name terms (unions, approximations,
+// literals) yield a zero target. A generic base recurses through the same
+// switch, so a qualified base (pkg.Registry[T]) keeps its package prefix and
+// its annotation instead of being glued onto the current package.
+func (w *walker) embedTarget(typeNode *sitter.Node) emitTarget {
 	if typeNode == nil {
-		return ""
+		return emitTarget{}
 	}
 	switch typeNode.Kind() {
 	case "type_identifier":
-		return w.qualify(extract.Text(typeNode, w.source))
+		return emitTarget{qualified: w.qualify(extract.Text(typeNode, w.source))}
 	case "qualified_type":
-		return extract.Text(typeNode, w.source)
+		return w.qualifiedTypeTarget(typeNode)
 	case "generic_type":
-		if base := typeNode.ChildByFieldName("type"); base != nil {
-			return w.qualify(extract.Text(base, w.source))
-		}
+		return w.embedTarget(typeNode.ChildByFieldName("type"))
 	}
-	return ""
+	return emitTarget{}
 }
 
 // emitEmbeddings walks a struct_type's field declarations and emits
@@ -429,14 +432,16 @@ func (w *walker) emitEmbeddings(structNode *sitter.Node, structQualified string)
 		if fd.ChildByFieldName("name") != nil {
 			continue
 		}
-		if target := w.embedTargetName(fd.ChildByFieldName("type")); target != "" {
+		if target := w.embedTarget(fd.ChildByFieldName("type")); target.qualified != "" {
 			line := extract.Line(fd.StartPosition())
 			if err := w.emit.Edge(extract.EmittedEdge{
-				SourceQualified: structQualified,
-				TargetQualified: target,
-				Kind:            model.EdgeIncludes,
-				Line:            &line,
-				Confidence:      extract.ConfidenceStatic,
+				SourceQualified:  structQualified,
+				TargetQualified:  target.qualified,
+				Kind:             model.EdgeIncludes,
+				Line:             &line,
+				Confidence:       extract.ConfidenceStatic,
+				TargetImportPath: target.importPath,
+				TargetInPackage:  target.inPackage,
 			}); err != nil {
 				return err
 			}

@@ -2033,10 +2033,10 @@ type Approx interface {
 	}
 }
 
-func TestEmbedTargetNameNil(t *testing.T) {
+func TestEmbedTargetNil(t *testing.T) {
 	w := &walker{}
-	if got := w.embedTargetName(nil); got != "" {
-		t.Errorf("nil type node must resolve to no target, got %q", got)
+	if got := w.embedTarget(nil); got.qualified != "" {
+		t.Errorf("nil type node must resolve to no target, got %q", got.qualified)
 	}
 }
 
