@@ -373,6 +373,126 @@ func f() {
 	}
 }
 
+func TestQualifiedReceiverParamCarriesImportPath(t *testing.T) {
+	// The core starved-band shape: a receiver-holding parameter declared with a
+	// qualified type. The legacy text stays `var.Method` (exact inert
+	// degradation); the annotation carries the path and Type.Method.
+	r := parse(t, `package pkgs
+
+import sctx "code.gitea.io/gitea/services/context"
+
+func DeletePackage(ctx *sctx.Context) {
+	ctx.FormString("version")
+}
+`)
+	e := findEdge(r, "pkgs.DeletePackage", "ctx.FormString", "calls")
+	if e == nil {
+		t.Fatal("missing qualified-receiver call edge")
+	}
+	if e.TargetImportPath != "code.gitea.io/gitea/services/context" || e.TargetInPackage != "Context.FormString" {
+		t.Errorf("annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+	if e.Confidence != 1.0 {
+		t.Errorf("declared qualified receiver keeps declared confidence, got %v", e.Confidence)
+	}
+}
+
+func TestQualifiedVarAndCompositeCarryImportPath(t *testing.T) {
+	r := parse(t, `package p
+
+import (
+	"io"
+	cfg "example.com/mod/config"
+)
+
+func f() {
+	var w io.Writer
+	w.Write(nil)
+	c := cfg.Store{}
+	c.Load()
+}
+`)
+	e := findEdge(r, "p.f", "w.Write", "calls")
+	if e == nil {
+		t.Fatal("missing var-decl call edge")
+	}
+	if e.TargetImportPath != "io" || e.TargetInPackage != "Writer.Write" {
+		t.Errorf("var annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+	e = findEdge(r, "p.f", "c.Load", "calls")
+	if e == nil {
+		t.Fatal("missing composite short-var call edge")
+	}
+	if e.TargetImportPath != "example.com/mod/config" || e.TargetInPackage != "Store.Load" {
+		t.Errorf("composite annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
+func TestFuncLiteralParamsShadowImports(t *testing.T) {
+	// A func literal's parameters were invisible to the type map: a callback
+	// param named like an import would import-match and bind path-verified
+	// into that package. The param must win (Go's function scope).
+	r := parse(t, `package p
+
+import "code.gitea.io/gitea/modules/log"
+
+func f() {
+	g := func(log log.Logger) {
+		log.Error("boom")
+	}
+	g(nil)
+}
+`)
+	e := findEdge(r, "p.f", "log.Error", "calls")
+	if e == nil {
+		t.Fatal("missing func-literal call edge")
+	}
+	// The param's declared type IS log.Logger, so the annotation points at
+	// the type's package with Type.Method, NOT at a package function Error.
+	if e.TargetInPackage != "Logger.Error" {
+		t.Errorf("func-literal param must type the receiver, got %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
+func TestNamedResultsEnterTheTypeMap(t *testing.T) {
+	r := parse(t, `package p
+
+import sctx "code.gitea.io/gitea/services/context"
+
+func g() (ctx *sctx.Context, err error) {
+	ctx.Do()
+	return
+}
+`)
+	e := findEdge(r, "p.g", "ctx.Do", "calls")
+	if e == nil {
+		t.Fatal("missing named-result call edge")
+	}
+	if e.TargetImportPath != "code.gitea.io/gitea/services/context" || e.TargetInPackage != "Context.Do" {
+		t.Errorf("named-result annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
+func TestRangeElementCarriesImportPath(t *testing.T) {
+	r := parse(t, `package p
+
+import m "example.com/mod/model"
+
+func f(items []m.Item) {
+	for _, it := range items {
+		it.Process()
+	}
+}
+`)
+	e := findEdge(r, "p.f", "it.Process", "calls")
+	if e == nil {
+		t.Fatal("missing range-element call edge")
+	}
+	if e.TargetImportPath != "example.com/mod/model" || e.TargetInPackage != "Item.Process" {
+		t.Errorf("range-element annotation = %q/%q", e.TargetImportPath, e.TargetInPackage)
+	}
+}
+
 func TestQualifiedTypeTargetTolerantShapes(t *testing.T) {
 	// A node without package/name fields (parser-tolerance territory) keeps
 	// the literal text and claims no path.

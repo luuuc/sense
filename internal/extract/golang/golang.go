@@ -706,7 +706,7 @@ func receiverType(recv *sitter.Node, source []byte) string {
 		if t == nil {
 			continue
 		}
-		return unwrapTypeName(t, source)
+		return unwrapTypeName(t, source).name
 	}
 	return ""
 }
