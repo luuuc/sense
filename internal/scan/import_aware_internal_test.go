@@ -124,12 +124,23 @@ func TestDBGoEmbeddingsSkipsFileLevelEdges(t *testing.T) {
 	if _, err := adapter.WriteEdge(ctx, &model.Edge{TargetID: sid, Kind: model.EdgeIncludes, FileID: fid, Confidence: 1.0}); err != nil {
 		t.Fatal(err)
 	}
+	// A satisfaction edge is inherits-kind: it must NEVER enter the walk map
+	// (a struct does not acquire methods from interfaces it satisfies; a
+	// union with inherits would launder satisfaction into the verified band;
+	// mutant M2's kill case, at the construction seam).
+	sid2, err := adapter.WriteSymbol(ctx, &model.Symbol{FileID: fid, Name: "S", Qualified: "p.S", Kind: model.KindClass, LineStart: 2, LineEnd: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.WriteEdge(ctx, &model.Edge{SourceID: &sid2, TargetID: sid, Kind: model.EdgeInherits, FileID: fid, Confidence: 0.9}); err != nil {
+		t.Fatal(err)
+	}
 	h := &harness{ctx: ctx, idx: adapter}
-	m, err := h.dbGoEmbeddings(map[int64]string{sid: "p.B"})
+	m, err := h.dbGoEmbeddings(map[int64]string{sid: "p.B", sid2: "p.S"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(m) != 0 {
-		t.Fatalf("file-level edge entered the walk map: %v", m)
+		t.Fatalf("non-includes or file-level edges entered the walk map: %v", m)
 	}
 }

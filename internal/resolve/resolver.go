@@ -230,6 +230,17 @@ func (ix *Index) Resolve(req Request) (Result, bool) {
 		if r, ok, handled := ix.resolveGoImportPath(req); handled {
 			return r, ok
 		}
+		// Diverted to the legacy lane (no module table, or an ambiguous
+		// module path). A receiver-typed annotation (Type.Method) proves the
+		// legacy text's first segment is a local variable, never a package
+		// qualifier, so an exact match on that text is a same-named-package
+		// coincidence: clamp it to the ambiguous ceiling, exactly the
+		// confidence such selectors carried before their types entered the
+		// map. Qualifier calls (dotless TargetInPackage) stay unclamped: in
+		// module-less trees their dotted text can be a real in-tree bind.
+		if strings.Contains(req.TargetInPackage, ".") && req.BaseConfidence > ambiguousConfidence {
+			req.BaseConfidence = ambiguousConfidence
+		}
 	}
 
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)

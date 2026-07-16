@@ -141,6 +141,23 @@ func TestGoPathLaneInertWithoutModules(t *testing.T) {
 	if r.SymbolID != 1 && r.SymbolID != 3 {
 		t.Fatalf("legacy lane bound %+v, want a byQualified candidate", r)
 	}
+
+	// A RECEIVER-TYPED annotation that diverts must not exceed the ambiguous
+	// ceiling: pre-annotation, a cross-package typed local never entered the
+	// type map and its selector text rode at 0.8, so an exact match on
+	// `log.Error` beside an indexed package `log` was a clamped coincidence,
+	// never a verified bind (the divert-confidence door).
+	refs := append(goRefs(), model.SymbolRef{ID: 9, Qualified: "log.Error", FileID: 30, Language: "go", Path: "modules/log/api.go"})
+	ix = resolve.NewIndex(refs)
+	req = goReq("Logger.Error", "corp/elsewhere/log")
+	req.Target = "log.Error"
+	r, ok = ix.Resolve(req)
+	if !ok || r.SymbolID != 9 {
+		t.Fatalf("diverted receiver selector = %+v ok=%v", r, ok)
+	}
+	if r.Confidence > 0.8 {
+		t.Fatalf("diverted receiver-typed bind rode %v, want <= ambiguous (0.8)", r.Confidence)
+	}
 }
 
 func TestGoPathLaneAmbiguousModulePathFallsThrough(t *testing.T) {
