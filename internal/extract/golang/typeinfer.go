@@ -450,12 +450,13 @@ func unwrapTypeName(t *sitter.Node, source []byte) typeRef {
 		case "type_identifier":
 			return typeRef{name: extract.Text(t, source)}
 		case "qualified_type":
-			pkgNode := t.ChildByFieldName("package")
-			nameNode := t.ChildByFieldName("name")
-			if pkgNode == nil || nameNode == nil {
-				return typeRef{}
+			// extract.Text of a missing field is "", and an empty name is
+			// no claim to every consumer, so parser-tolerance needs no
+			// branch of its own here.
+			return typeRef{
+				name:      extract.Text(t.ChildByFieldName("name"), source),
+				qualifier: extract.Text(t.ChildByFieldName("package"), source),
 			}
-			return typeRef{name: extract.Text(nameNode, source), qualifier: extract.Text(pkgNode, source)}
 		case "pointer_type":
 			// `*T` has exactly one named child — the inner type.
 			t = t.NamedChild(0)
