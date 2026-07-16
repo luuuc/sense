@@ -59,6 +59,7 @@ func (Extractor) Extract(tree *sitter.Tree, source []byte, _ string, emit extrac
 		emit:        emit,
 		pkg:         packageName(tree.RootNode(), source),
 		pkgBindings: map[string]string{},
+		imports:     collectImports(tree.RootNode(), source),
 	}
 	if err := w.walkTopLevel(tree.RootNode()); err != nil {
 		return err
@@ -75,6 +76,7 @@ type walker struct {
 	emit        extract.Emitter
 	pkg         string            // package name, used to prefix every qualified name
 	pkgBindings map[string]string // unqualified name → qualified name for package-level consts and vars
+	imports     map[string]string // file-block import table: in-file name → import path (imports.go)
 }
 
 // walkTopLevel iterates the direct named children of source_file in
