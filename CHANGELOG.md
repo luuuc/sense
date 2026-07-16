@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.11.29] - 2026-07-16
+
+### Bug Fixes
+
+- collect Go per-file import tables
+- add the import-path lane for Go targets
+- route Go qualified-type edges through the import table
+- Go qualifier calls follow scope nesting; non-qualifiers stop riding 1.0
+- Go declared types carry their import path into the type map
+- walk Go embedding chains for path-verified method calls
+- cover the type-inference corners and the resolve pass error legs
+- true dedup rationale; reuse sortedKeys
+- clamp diverted receiver-typed binds; kill the walk-map union mutant
 ## [1.11.28] - 2026-07-15
 
 ### Enhancements
