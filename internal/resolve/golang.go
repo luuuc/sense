@@ -61,8 +61,10 @@ func (ix *Index) WithGoModules(mods []GoModule) *Index {
 		return ix.goModules[i].Path < ix.goModules[j].Path
 	})
 	ix.goAmbiguousModules = ambiguous
-	// Dedup after the ambiguity pass: the same (path, dir) listed twice
-	// (nested walks can revisit) collapses to one entry.
+	// Dedup after the ambiguity pass: WithGoModules is exported, so the
+	// same (path, dir) listed twice by ANY caller collapses to one entry
+	// rather than counting as ambiguity (the scan walk itself visits each
+	// go.mod once).
 	deduped := ix.goModules[:0]
 	var prev GoModule
 	for i, m := range ix.goModules {
@@ -186,11 +188,7 @@ func sortedKeys(m map[string]bool) []string {
 // apply: an import can only reach the directory's non-test package, and the
 // test gate enforces exactly that for production sources.
 func (ix *Index) dirScopedCandidates(dir string, req Request) []model.SymbolRef {
-	pkgs := make([]string, 0, len(ix.dirGoPackages[dir]))
-	for pkg := range ix.dirGoPackages[dir] {
-		pkgs = append(pkgs, pkg)
-	}
-	sort.Strings(pkgs)
+	pkgs := sortedKeys(ix.dirGoPackages[dir])
 	var matches []model.SymbolRef
 	for _, pkg := range pkgs {
 		for _, m := range ix.byQualified[pkg+"."+req.TargetInPackage] {
