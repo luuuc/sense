@@ -63,6 +63,10 @@ type Index struct {
 	// default) leaves the lane inert; see WithGoModules.
 	goModules          []GoModule
 	goAmbiguousModules map[string]bool
+	// goEmbeddings is the Go embedding adjacency (embedder qualified name →
+	// embedded qualified names) the path lane's method walk traverses; built
+	// by scan from resolved includes edges only. See WithGoEmbeddings.
+	goEmbeddings map[string][]string
 }
 
 // NewIndex builds an Index from the bulk SymbolRefs output. The input

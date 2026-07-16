@@ -574,6 +574,11 @@ type harness struct {
 	// resolveAndWriteEdges.
 	pendingEdges []pendingEdge
 
+	// goLaneActive records (set by buildResolver) that some pending edge
+	// carries an import-path annotation, so the resolve pass builds the Go
+	// module table and embedding adjacency. Always false for non-Go repos.
+	goLaneActive bool
+
 	// pendingParents holds symbols whose ParentQualified missed the
 	// per-file map in writeFileInner (cross-file receiver methods).
 	// Appended only from writeFileInner — the parse phase is parallel —
@@ -1320,54 +1325,37 @@ func (h *harness) resolveAndWriteEdges() error {
 	macroCallers := map[int64][]int64{}       // macro symbol ID -> model source IDs
 	macroCollaborators := map[int64][]int64{} // macro symbol ID -> collaborator class IDs
 
-	var written, ambiguous int
-	var drops dropCounts
+	st := &edgeResolveState{
+		resolver:           resolver,
+		qualByID:           qualByID,
+		macroCallers:       macroCallers,
+		macroCollaborators: macroCollaborators,
+	}
 	err = h.idx.InTx(h.ctx, func() error {
 		edgeStmt, serr := h.idx.PrepareEdgeStmt(h.ctx)
 		if serr != nil {
 			return fmt.Errorf("prepare edge stmt: %w", serr)
 		}
 		defer func() { _ = edgeStmt.Close() }()
+		st.edgeStmt = edgeStmt
 
+		// Phase 1: includes edges resolve and write first: their resolved
+		// pairs, unioned with the persisted adjacency, are the Go embedding
+		// map phase 2's method calls walk. Non-Go scans skip the union (no
+		// pending edge carries an import annotation) and both phases behave
+		// as the single loop always did.
+		if err := h.resolveIncludesPhase(st); err != nil {
+			return err
+		}
+
+		// Phase 2: everything else.
 		for _, pe := range h.pendingEdges {
-			r, ok := resolver.Resolve(resolve.Request{
-				Target:                pe.TargetName,
-				Kind:                  pe.Kind,
-				SourceFileID:          pe.FileID,
-				SourceQualified:       pe.SourceQualified,
-				SourceParentQualified: pe.SourceParentQualified,
-				BaseConfidence:        pe.Confidence,
-				TargetImportPath:      pe.TargetImportPath,
-				TargetInPackage:       pe.TargetInPackage,
-			})
-			if !ok {
-				drops.record(r.External)
+			if pe.Kind == model.EdgeIncludes {
 				continue
 			}
-			if r.Ambiguous {
-				ambiguous++
+			if _, err := h.resolveOnePending(st, pe); err != nil {
+				return err
 			}
-			// Bucket the edge for mixin expansion (model -> macro / macro ->
-			// collaborator), both keyed by the macro's symbol ID.
-			recordMixinEdge(pe.SourceID, r.SymbolID, pe.SourceQualified, qualByID, macroCallers, macroCollaborators)
-			edge := &model.Edge{
-				SourceID:   int64Ptr(pe.SourceID),
-				TargetID:   r.SymbolID,
-				Kind:       pe.Kind,
-				FileID:     pe.FileID,
-				Line:       pe.Line,
-				Confidence: r.Confidence,
-			}
-			if edge.SourceID != nil {
-				if _, werr := sqlite.ExecEdgeStmt(h.ctx, edgeStmt, edge); werr != nil {
-					return fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
-				}
-			} else {
-				if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
-					return fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
-				}
-			}
-			written++
 		}
 
 		// Synthesize the direct model -> collaborator edges bridged by each
@@ -1376,17 +1364,135 @@ func (h *harness) resolveAndWriteEdges() error {
 		if werr != nil {
 			return werr
 		}
-		written += n
+		st.written += n
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	h.edges += written
-	h.unresolved += drops.unresolved
-	h.droppedExternal += drops.external
-	h.ambiguous += ambiguous
+	h.edges += st.written
+	h.unresolved += st.drops.unresolved
+	h.droppedExternal += st.drops.external
+	h.ambiguous += st.ambiguous
 	return nil
+}
+
+// edgeResolveState bundles the resolve pass's per-edge loop state so the
+// includes-first and remainder phases run an identical body.
+type edgeResolveState struct {
+	resolver           *resolve.Index
+	edgeStmt           *sql.Stmt
+	qualByID           map[int64]string
+	macroCallers       map[int64][]int64
+	macroCollaborators map[int64][]int64
+	written, ambiguous int
+	drops              dropCounts
+}
+
+// resolveIncludesPhase resolves and writes every pending includes edge, and,
+// when the Go path lane is active, attaches the embedding adjacency to the
+// resolver: persisted includes edges (excluding files re-scanned this run,
+// whose DB rows may be stale pre-edit state) unioned with the pairs this
+// phase just resolved. Built from resolved symbol pairs, the map admits only
+// binds the path lane verified: a stdlib/third-party embed was dropped and
+// contributes no hop, and satisfaction edges (inherits kind) never enter.
+func (h *harness) resolveIncludesPhase(st *edgeResolveState) error {
+	var goEmb map[string][]string
+	if h.goLaneActive {
+		var err error
+		if goEmb, err = h.dbGoEmbeddings(st.qualByID); err != nil {
+			return err
+		}
+	}
+	for _, pe := range h.pendingEdges {
+		if pe.Kind != model.EdgeIncludes {
+			continue
+		}
+		targetID, err := h.resolveOnePending(st, pe)
+		if err != nil {
+			return err
+		}
+		if targetID != 0 && goEmb != nil {
+			src, dst := st.qualByID[pe.SourceID], st.qualByID[targetID]
+			if src != "" && dst != "" {
+				goEmb[src] = append(goEmb[src], dst)
+			}
+		}
+	}
+	if goEmb != nil {
+		st.resolver.WithGoEmbeddings(goEmb)
+	}
+	return nil
+}
+
+// dbGoEmbeddings loads the persisted includes adjacency (embedder qualified
+// name → embedded qualified names) for the walk map. Edges owned by files
+// re-scanned this run are excluded: their fresh rows are in pendingEdges and
+// their DB rows may reflect the pre-edit file.
+func (h *harness) dbGoEmbeddings(qualByID map[int64]string) (map[string][]string, error) {
+	m := map[string][]string{}
+	edges, err := h.idx.EdgesOfKind(h.ctx, model.EdgeIncludes)
+	if err != nil {
+		return nil, fmt.Errorf("load includes adjacency: %w", err)
+	}
+	changed := make(map[int64]bool, len(h.changedFileIDs))
+	for _, id := range h.changedFileIDs {
+		changed[id] = true
+	}
+	for _, e := range edges {
+		if e.SourceID == nil || changed[e.FileID] {
+			continue
+		}
+		src, dst := qualByID[*e.SourceID], qualByID[e.TargetID]
+		if src != "" && dst != "" {
+			m[src] = append(m[src], dst)
+		}
+	}
+	return m, nil
+}
+
+// resolveOnePending resolves and writes one pending edge, returning the
+// bound target symbol id (0 when the edge dropped).
+func (h *harness) resolveOnePending(st *edgeResolveState, pe pendingEdge) (int64, error) {
+	r, ok := st.resolver.Resolve(resolve.Request{
+		Target:                pe.TargetName,
+		Kind:                  pe.Kind,
+		SourceFileID:          pe.FileID,
+		SourceQualified:       pe.SourceQualified,
+		SourceParentQualified: pe.SourceParentQualified,
+		BaseConfidence:        pe.Confidence,
+		TargetImportPath:      pe.TargetImportPath,
+		TargetInPackage:       pe.TargetInPackage,
+	})
+	if !ok {
+		st.drops.record(r.External)
+		return 0, nil
+	}
+	if r.Ambiguous {
+		st.ambiguous++
+	}
+	// Bucket the edge for mixin expansion (model -> macro / macro ->
+	// collaborator), both keyed by the macro's symbol ID.
+	recordMixinEdge(pe.SourceID, r.SymbolID, pe.SourceQualified, st.qualByID, st.macroCallers, st.macroCollaborators)
+	edge := &model.Edge{
+		SourceID:   int64Ptr(pe.SourceID),
+		TargetID:   r.SymbolID,
+		Kind:       pe.Kind,
+		FileID:     pe.FileID,
+		Line:       pe.Line,
+		Confidence: r.Confidence,
+	}
+	if edge.SourceID != nil {
+		if _, werr := sqlite.ExecEdgeStmt(h.ctx, st.edgeStmt, edge); werr != nil {
+			return 0, fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
+		}
+	} else {
+		if _, werr := h.idx.WriteEdge(h.ctx, edge); werr != nil {
+			return 0, fmt.Errorf("write edge source=%d target=%s: %w", pe.SourceID, pe.TargetName, werr)
+		}
+	}
+	st.written++
+	return r.SymbolID, nil
 }
 
 // dropCounts separates the two ok=false outcomes of Resolve: a name that
@@ -1410,8 +1516,10 @@ func (d *dropCounts) record(external bool) {
 // entirely for non-Go repos and pre-annotation extractors).
 func (h *harness) buildResolver(refs []model.SymbolRef) *resolve.Index {
 	resolver := resolve.NewIndex(refs).WithInheritance(h.buildAncestry())
+	h.goLaneActive = false
 	for i := range h.pendingEdges {
 		if h.pendingEdges[i].TargetImportPath != "" {
+			h.goLaneActive = true
 			return resolver.WithGoModules(h.collectGoModules())
 		}
 	}

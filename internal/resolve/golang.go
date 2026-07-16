@@ -76,6 +76,17 @@ func (ix *Index) WithGoModules(mods []GoModule) *Index {
 	return ix
 }
 
+// WithGoEmbeddings attaches the Go embedding adjacency (embedder qualified
+// name → embedded types' qualified names) and returns the Index for
+// chaining. Built by scan from resolved includes edges ONLY: satisfaction
+// edges are inherits-kind and must never enter (a struct does not acquire
+// methods from interfaces it satisfies; a fabricated hop would launder a
+// shadow bind into the verified band). Nil leaves the walk a no-op.
+func (ix *Index) WithGoEmbeddings(embeddings map[string][]string) *Index {
+	ix.goEmbeddings = embeddings
+	return ix
+}
+
 // resolveGoImportPath is the path lane. The bool handled reports whether the
 // lane claimed the request: true means its answer is TERMINAL (a hit, or a
 // drop that must not leaf-fall-back); false diverts to the legacy lane (no
@@ -104,9 +115,68 @@ func (ix *Index) resolveGoImportPath(req Request) (Result, bool, bool) {
 	dir := path.Clean(path.Join(mod.Dir, strings.TrimPrefix(req.TargetImportPath, mod.Path)))
 	matches := ix.dirScopedCandidates(dir, req)
 	if len(matches) == 0 {
+		// A Type.Method target whose method misses its own type may reach
+		// the method through Go embedding (APIContext → Context → Base).
+		if i := strings.LastIndex(req.TargetInPackage, "."); i > 0 {
+			if r, ok := ix.resolveGoEmbedded(dir, req.TargetInPackage[:i], req.TargetInPackage[i+1:], req); ok {
+				return r, true, true
+			}
+		}
 		return Result{}, false, true
 	}
 	return pickBest(matches, req.SourceFileID, req.BaseConfidence), true, true
+}
+
+// resolveGoEmbedded walks the embedding chain of dir's `typeName` looking
+// for `method`, reusing resolveInherited's mechanics: breadth-first,
+// per-depth collection before pickBest decides (Go's shadowing rule: the
+// shallowest declaration wins; two at the same depth are a compile-time
+// ambiguity and ride the clamp), seen-guard for cycles, maxAncestryDepth as
+// the runaway cap (deliberately deeper than satisfy's promotion depth 3;
+// deeper is MORE correct for call binding; do not "align" them down).
+func (ix *Index) resolveGoEmbedded(dir, typeName, method string, req Request) (Result, bool) {
+	if len(ix.goEmbeddings) == 0 {
+		return Result{}, false
+	}
+	seen := map[string]bool{}
+	var frontier []string
+	for _, pkg := range sortedKeys(ix.dirGoPackages[dir]) {
+		q := pkg + "." + typeName
+		if len(ix.byQualified[q]) > 0 {
+			seen[q] = true
+			frontier = append(frontier, ix.goEmbeddings[q]...)
+		}
+	}
+	for depth := 0; depth < maxAncestryDepth && len(frontier) > 0; depth++ {
+		var matches []model.SymbolRef
+		var next []string
+		for _, anc := range frontier {
+			if seen[anc] {
+				continue
+			}
+			seen[anc] = true
+			matches = append(matches, ix.byQualified[anc+"."+method]...)
+			next = append(next, ix.goEmbeddings[anc]...)
+		}
+		matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
+		matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
+		if len(matches) > 0 {
+			return pickBest(matches, req.SourceFileID, req.BaseConfidence), true
+		}
+		frontier = next
+	}
+	return Result{}, false
+}
+
+// sortedKeys returns a map's keys sorted, so candidate order never depends
+// on map iteration.
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // dirScopedCandidates finds symbols named <pkg>.<TargetInPackage> for each Go

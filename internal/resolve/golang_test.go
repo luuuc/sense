@@ -195,6 +195,98 @@ func TestGoPathLaneTestDirectionAndLanguageGates(t *testing.T) {
 	}
 }
 
+func embedRefs() []model.SymbolRef {
+	return []model.SymbolRef{
+		{ID: 1, Qualified: "context.Base", FileID: 10, Language: "go", Path: "services/context/base.go"},
+		{ID: 2, Qualified: "context.Base.FormString", FileID: 10, Language: "go", Path: "services/context/base.go"},
+		{ID: 3, Qualified: "context.Context", FileID: 11, Language: "go", Path: "services/context/context.go"},
+		{ID: 4, Qualified: "context.APIContext", FileID: 12, Language: "go", Path: "services/context/api.go"},
+		{ID: 5, Qualified: "caller.ListHooks", FileID: 20, Language: "go", Path: "routers/api/caller.go"},
+		{ID: 6, Qualified: "iface.I", FileID: 30, Language: "go", Path: "lib/iface/i.go"},
+		{ID: 7, Qualified: "iface.I.M", FileID: 30, Language: "go", Path: "lib/iface/i.go"},
+		{ID: 8, Qualified: "impl.S", FileID: 31, Language: "go", Path: "lib/impl/s.go"},
+	}
+}
+
+func TestGoEmbeddingWalkBindsInheritedMethods(t *testing.T) {
+	// APIContext embeds Context embeds *Base; FormString lives on Base. A
+	// path-verified receiver typed APIContext binds through the chain at
+	// BaseConfidence (the resolveInherited policy: as certain as the chain).
+	ix := resolve.NewIndex(embedRefs()).
+		WithGoModules(giteaModules()).
+		WithGoEmbeddings(map[string][]string{
+			"context.APIContext": {"context.Context"},
+			"context.Context":    {"context.Base"},
+		})
+
+	r, ok := ix.Resolve(goReqFrom(20, "Context.FormString", "code.gitea.io/gitea/services/context"))
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("depth-1 walk = %+v ok=%v, want Base.FormString (ID 2)", r, ok)
+	}
+	if r.Confidence != 1.0 || r.Ambiguous {
+		t.Fatalf("unique chain bind keeps BaseConfidence, got %+v", r)
+	}
+
+	r, ok = ix.Resolve(goReqFrom(20, "APIContext.FormString", "code.gitea.io/gitea/services/context"))
+	if !ok || r.SymbolID != 2 {
+		t.Fatalf("depth-2 walk = %+v ok=%v, want Base.FormString (ID 2)", r, ok)
+	}
+
+	// A method nowhere on the chain still drops terminally.
+	r, ok = ix.Resolve(goReqFrom(20, "APIContext.NoSuch", "code.gitea.io/gitea/services/context"))
+	if ok {
+		t.Fatalf("chain miss must drop, got %+v", r)
+	}
+}
+
+func TestGoEmbeddingWalkNeverClimbsIntoInterfaces(t *testing.T) {
+	// Mutant M2's kill case: S satisfies I (an inherits-kind satisfaction
+	// edge); M is declared only on I. The walk map is built from includes
+	// edges only, so S.M must NOT bind through the satisfaction relation.
+	ix := resolve.NewIndex(embedRefs()).
+		WithGoModules(giteaModules()).
+		WithGoEmbeddings(map[string][]string{
+			// deliberately NO entry for impl.S: satisfaction is not embedding
+		})
+	r, ok := ix.Resolve(goReqFrom(20, "S.M", "code.gitea.io/gitea/lib/impl"))
+	if ok {
+		t.Fatalf("satisfaction must not feed the walk, got %+v", r)
+	}
+	if r.External {
+		t.Fatal("an in-tree chain miss is not External")
+	}
+}
+
+func TestGoEmbeddingWalkGuards(t *testing.T) {
+	// A cycle in the map (mid-edit index states) terminates; two ancestors
+	// at the same depth declaring the method resolve ambiguous, clamped.
+	refs := append(embedRefs(),
+		model.SymbolRef{ID: 9, Qualified: "context.Alt", FileID: 13, Language: "go", Path: "services/context/alt.go"},
+		model.SymbolRef{ID: 10, Qualified: "context.Alt.FormString", FileID: 13, Language: "go", Path: "services/context/alt.go"},
+	)
+	ix := resolve.NewIndex(refs).
+		WithGoModules(giteaModules()).
+		WithGoEmbeddings(map[string][]string{
+			"context.APIContext": {"context.Base", "context.Alt"},
+			"context.Base":       {"context.APIContext"}, // cycle
+		})
+	r, ok := ix.Resolve(goReqFrom(20, "APIContext.FormString", "code.gitea.io/gitea/services/context"))
+	if !ok {
+		t.Fatal("same-depth double declaration must still bind")
+	}
+	if !r.Ambiguous {
+		t.Fatalf("two same-depth ancestors must clamp ambiguous, got %+v", r)
+	}
+	// The cycle would loop forever without the seen guard; reaching here
+	// with any result is the guard's proof.
+}
+
+func goReqFrom(fileID int64, inPkg, importPath string) resolve.Request {
+	req := goReq(inPkg, importPath)
+	req.SourceFileID = fileID
+	return req
+}
+
 func TestDottedGoTargetAtUnresolvedSkipsExactMatch(t *testing.T) {
 	// A Go extractor emits `pkgvar.Method` at ConfidenceUnresolved when the
 	// operand is provably not a package qualifier (neither local nor
