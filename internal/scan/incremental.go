@@ -174,6 +174,7 @@ func buildIncrementalResult(h *harness, opts IncrementalOptions, elapsed time.Du
 		Edges:      h.edges,
 		Embedded:   h.embedded,
 		Unresolved: h.unresolved,
+		External:   h.droppedExternal,
 		Warnings:   h.collector.count(),
 		Duration:   elapsed,
 		Phases:     phases,

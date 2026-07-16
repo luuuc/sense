@@ -10,6 +10,8 @@
 package resolve
 
 import (
+	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/luuuc/sense/internal/extract"
@@ -49,6 +51,18 @@ type Index struct {
 	// that step a no-op; WithInheritance populates it from the scan's pending
 	// inherits edges.
 	ancestry map[string][]string
+	// fileDir maps a file id to its slash-separated directory; dirGoPackages
+	// maps a directory to the Go package clauses declared in it (a Go symbol's
+	// qualified name leads with its package). Both are built unconditionally in
+	// NewIndex (O(files)) and consumed only by the Go path lane (golang.go).
+	fileDir       map[int64]string
+	dirGoPackages map[string]map[string]bool
+	// goModules is the go.mod module table (longest-path-first) the path lane
+	// matches import paths against; goAmbiguousModules holds module paths two
+	// directories both declared, which divert to the legacy lane. Nil (the
+	// default) leaves the lane inert; see WithGoModules.
+	goModules          []GoModule
+	goAmbiguousModules map[string]bool
 }
 
 // NewIndex builds an Index from the bulk SymbolRefs output. The input
@@ -61,6 +75,8 @@ func NewIndex(refs []model.SymbolRef) *Index {
 		fileLang:        make(map[int64]string),
 		fileIsTest:      make(map[int64]bool),
 		fileModelModule: make(map[int64]bool),
+		fileDir:         make(map[int64]string),
+		dirGoPackages:   make(map[string]map[string]bool),
 	}
 	for _, r := range refs {
 		ix.byQualified[r.Qualified] = append(ix.byQualified[r.Qualified], r)
@@ -71,6 +87,20 @@ func NewIndex(refs []model.SymbolRef) *Index {
 		}
 		if r.Path != "" {
 			ix.fileIsTest[r.FileID] = isTestPath(r.Path)
+			ix.fileDir[r.FileID] = path.Dir(filepath.ToSlash(r.Path))
+		}
+		if r.Language == "go" {
+			// A Go symbol's qualified name leads with its package clause;
+			// recording it per directory gives the path lane the directory's
+			// real package names (which may differ from the import path's
+			// basename, and may include an external _test package).
+			if pkg, _, found := strings.Cut(r.Qualified, "."); found && r.Path != "" {
+				dir := ix.fileDir[r.FileID]
+				if ix.dirGoPackages[dir] == nil {
+					ix.dirGoPackages[dir] = map[string]bool{}
+				}
+				ix.dirGoPackages[dir][pkg] = true
+			}
 		}
 		if isDjangoModelModuleRef(r) {
 			ix.fileModelModule[r.FileID] = true
@@ -107,6 +137,16 @@ type Request struct {
 	SourceQualified       string
 	SourceParentQualified string
 	BaseConfidence        float64
+	// TargetImportPath is the fully-qualified import path of the package the
+	// extractor resolved the target's qualifier or declared type from (the
+	// source file's own import table). Empty means unknown: the request takes
+	// the legacy name-keyed lanes exactly as before the field existed. When
+	// set (today only Go emits it), the path lane in golang.go decides the
+	// edge terminally; TargetInPackage carries the within-package remainder
+	// ("Func", "Type", "Type.Method") that lane binds. Target still carries
+	// the legacy text so a diverted request degrades to old behavior.
+	TargetImportPath string
+	TargetInPackage  string
 }
 
 // Result is the output of a successful resolution. Ambiguous is set
@@ -119,6 +159,11 @@ type Result struct {
 	SymbolID   int64
 	Confidence float64
 	Ambiguous  bool
+	// External marks an ok=false result where the path lane proved the target
+	// lives outside the indexed tree (stdlib / third-party import path). The
+	// scan summary counts these separately from unresolved: a jump in the
+	// external count between scans is the operator's misclassification signal.
+	External bool
 }
 
 // ambiguousConfidence is the ceiling applied whenever resolution has
@@ -172,6 +217,17 @@ const nameCollisionConfidence = extract.ConfidenceNameCollision
 //
 //  4. No match ⇒ ok=false.
 func (ix *Index) Resolve(req Request) (Result, bool) {
+	// Go path lane (golang.go): a path-annotated target from a Go source is
+	// decided terminally by its import path and never reaches the name-keyed
+	// lookups below: the byQualified match on shadowed text is exactly the
+	// fabrication mechanism the lane exists to close. This single branch IS
+	// the guard; nothing past it may consult TargetImportPath.
+	if req.TargetImportPath != "" && ix.fileLang[req.SourceFileID] == "go" {
+		if r, ok, handled := ix.resolveGoImportPath(req); handled {
+			return r, ok
+		}
+	}
+
 	target := rewriteReceiver(req.Target, req.SourceQualified, req.SourceParentQualified)
 	gatedKind := req.Kind == model.EdgeCalls || req.Kind == model.EdgeTests || req.Kind == model.EdgeReferences
 

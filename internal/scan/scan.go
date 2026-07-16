@@ -83,6 +83,7 @@ type Result struct {
 	Embedded       int // symbols whose embeddings were generated/updated
 	EmbeddingDebt  int // symbols needing embeddings (deferred to background)
 	Unresolved     int // edges whose target name matched no symbol; dropped
+	External       int // edges whose import path proved the target lives outside the tree; dropped
 	Ambiguous      int // edges resolved via ambiguous (multi-match) fallback
 	Warnings       int // per-file failures logged; scan continues past them
 	DefaultIgnored int // directories skipped by default ignore patterns
@@ -476,6 +477,7 @@ func buildResult(h *harness, embeddingDebt int, elapsed time.Duration, phases Ph
 		Embedded:       h.embedded,
 		EmbeddingDebt:  embeddingDebt,
 		Unresolved:     h.unresolved,
+		External:       h.droppedExternal,
 		Ambiguous:      h.ambiguous,
 		Warnings:       h.collector.count(),
 		DefaultIgnored: h.defaultIgnored,
@@ -491,8 +493,17 @@ func printScanSummary(out io.Writer, opts Options, res *Result, elapsed time.Dur
 	_, _ = fmt.Fprintf(out, "scanned %d files (%d indexed, %d changed, %d skipped) in %s\n",
 		res.Files, res.Indexed, res.Changed, res.Skipped, elapsed)
 	if res.Edges > 0 || res.Unresolved > 0 {
-		_, _ = fmt.Fprintf(out, "edges: %d resolved, %d unresolved, %d ambiguous\n",
-			res.Edges, res.Unresolved, res.Ambiguous)
+		// The external count prints only when non-zero so non-Go scans keep
+		// their exact historical summary line; a JUMP in this number between
+		// scans of the same repo is the operator's signal that import-path
+		// classification regressed.
+		if res.External > 0 {
+			_, _ = fmt.Fprintf(out, "edges: %d resolved, %d unresolved, %d ambiguous, %d external (dropped)\n",
+				res.Edges, res.Unresolved, res.Ambiguous, res.External)
+		} else {
+			_, _ = fmt.Fprintf(out, "edges: %d resolved, %d unresolved, %d ambiguous\n",
+				res.Edges, res.Unresolved, res.Ambiguous)
+		}
 	}
 	if res.DefaultIgnored > 0 {
 		_, _ = fmt.Fprintf(out, "skipped %d directories (default ignores: %s)\n",
@@ -669,17 +680,18 @@ type harness struct {
 	changedFileIDs []int64
 
 	// Tallies for Result.
-	files          int
-	indexed        int
-	changed        int
-	skipped        int
-	removed        int
-	symbols        int
-	edges          int
-	embedded       int
-	unresolved     int
-	ambiguous      int
-	defaultIgnored int
+	files           int
+	indexed         int
+	changed         int
+	skipped         int
+	removed         int
+	symbols         int
+	edges           int
+	embedded        int
+	unresolved      int
+	droppedExternal int
+	ambiguous       int
+	defaultIgnored  int
 }
 
 // indexedFile is the minimum the test-association pass needs to know
@@ -710,6 +722,10 @@ type pendingEdge struct {
 	FileID                int64
 	Line                  *int
 	Confidence            float64
+	// TargetImportPath/TargetInPackage mirror extract.EmittedEdge: the
+	// import-path annotation the resolver's Go path lane binds terminally.
+	TargetImportPath string
+	TargetInPackage  string
 }
 
 func (h *harness) closeParsers() {
@@ -1157,6 +1173,8 @@ func (h *harness) writeFileInner(fr *fileResult) (int, error) {
 			FileID:                fileID,
 			Line:                  e.Line,
 			Confidence:            e.Confidence,
+			TargetImportPath:      e.TargetImportPath,
+			TargetInPackage:       e.TargetInPackage,
 		})
 	}
 
@@ -1284,7 +1302,7 @@ func (h *harness) resolveAndWriteEdges() error {
 	if err != nil {
 		return fmt.Errorf("load symbols for edge resolution: %w", err)
 	}
-	resolver := resolve.NewIndex(refs).WithInheritance(h.buildAncestry())
+	resolver := h.buildResolver(refs)
 
 	qualByID := make(map[int64]string, len(refs))
 	fileByID := make(map[int64]int64, len(refs))
@@ -1302,7 +1320,8 @@ func (h *harness) resolveAndWriteEdges() error {
 	macroCallers := map[int64][]int64{}       // macro symbol ID -> model source IDs
 	macroCollaborators := map[int64][]int64{} // macro symbol ID -> collaborator class IDs
 
-	var written, unresolved, ambiguous int
+	var written, ambiguous int
+	var drops dropCounts
 	err = h.idx.InTx(h.ctx, func() error {
 		edgeStmt, serr := h.idx.PrepareEdgeStmt(h.ctx)
 		if serr != nil {
@@ -1318,9 +1337,11 @@ func (h *harness) resolveAndWriteEdges() error {
 				SourceQualified:       pe.SourceQualified,
 				SourceParentQualified: pe.SourceParentQualified,
 				BaseConfidence:        pe.Confidence,
+				TargetImportPath:      pe.TargetImportPath,
+				TargetInPackage:       pe.TargetInPackage,
 			})
 			if !ok {
-				unresolved++
+				drops.record(r.External)
 				continue
 			}
 			if r.Ambiguous {
@@ -1362,9 +1383,39 @@ func (h *harness) resolveAndWriteEdges() error {
 		return err
 	}
 	h.edges += written
-	h.unresolved += unresolved
+	h.unresolved += drops.unresolved
+	h.droppedExternal += drops.external
 	h.ambiguous += ambiguous
 	return nil
+}
+
+// dropCounts separates the two ok=false outcomes of Resolve: a name that
+// matched nothing (unresolved) and a target the path lane proved external.
+type dropCounts struct {
+	unresolved int
+	external   int
+}
+
+func (d *dropCounts) record(external bool) {
+	if external {
+		d.external++
+		return
+	}
+	d.unresolved++
+}
+
+// buildResolver assembles the resolve pass's Index: the name maps from refs,
+// the inherits ancestry, and, only when some pending edge carries an
+// import-path annotation, the go.mod module table (the disk walk is skipped
+// entirely for non-Go repos and pre-annotation extractors).
+func (h *harness) buildResolver(refs []model.SymbolRef) *resolve.Index {
+	resolver := resolve.NewIndex(refs).WithInheritance(h.buildAncestry())
+	for i := range h.pendingEdges {
+		if h.pendingEdges[i].TargetImportPath != "" {
+			return resolver.WithGoModules(h.collectGoModules())
+		}
+	}
+	return resolver
 }
 
 // recordMixinEdge buckets a resolved edge for later mixin expansion, keyed by
