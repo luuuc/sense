@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -336,12 +337,12 @@ func TestReadSymbolGraphDwarfedDirectCallersStillFold(t *testing.T) {
 	methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "status", Qualified: "App\\Models\\Server\\status", Kind: model.KindMethod, ParentID: &classID, LineStart: 5, LineEnd: 12})
 
 	for i := 0; i < 3; i++ {
-		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "D" + string(rune('A'+i)), Qualified: "D" + string(rune('A'+i)), Kind: model.KindFunction, LineStart: 20 + 10*i, LineEnd: 25 + 10*i})
+		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: fmt.Sprintf("D%d", i), Qualified: fmt.Sprintf("D%d", i), Kind: model.KindFunction, LineStart: 20 + 10*i, LineEnd: 25 + 10*i})
 		mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
 	}
 	memberIDs := make([]int64, 0, 30)
 	for i := 0; i < 30; i++ {
-		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "M" + string(rune('A'+i%26)) + string(rune('a'+i/26)), Qualified: "M" + string(rune('A'+i%26)) + string(rune('a'+i/26)), Kind: model.KindFunction, LineStart: 60 + 5*i, LineEnd: 63 + 5*i})
+		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: fmt.Sprintf("M%d", i), Qualified: fmt.Sprintf("M%d", i), Kind: model.KindFunction, LineStart: 60 + 5*i, LineEnd: 63 + 5*i})
 		mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
 		memberIDs = append(memberIDs, id)
 	}
@@ -362,5 +363,73 @@ func TestReadSymbolGraphDwarfedDirectCallersStillFold(t *testing.T) {
 	}
 	if folded != 30 {
 		t.Errorf("dwarfed direct set must not suppress the fold: folded %d of 30 member callers", folded)
+	}
+	directListed := 0
+	for _, e := range gr.Root.Inbound {
+		if e.Target.Name != "" && len(e.Target.Name) > 1 && e.Target.Name[0] == 'D' {
+			directListed++
+		}
+	}
+	if directListed != 3 {
+		t.Errorf("the 3 direct callers must stay listed alongside the fold, got %d", directListed)
+	}
+}
+
+// The suppression constants, pinned at their boundaries. Any drift of the
+// sufficient-evidence floor (3) or the dwarf ratio (5) flips at least one
+// of these rows: 2 direct callers are below the floor and always fold;
+// 3 direct with 14 member callers sit just inside the ratio and keep the
+// precise answer; 3 direct with 15 member callers are exactly dwarfed and
+// fold.
+func TestReadSymbolGraphFoldBoundaries(t *testing.T) {
+	cases := []struct {
+		name     string
+		direct   int
+		member   int
+		wantFold bool
+	}{
+		{"below floor always folds", 2, 1, true},
+		{"at floor, inside ratio, suppressed", 3, 14, false},
+		{"at floor, exactly dwarfed, folds", 3, 15, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, fileID := newFoldAdapter(t)
+			ctx := context.Background()
+
+			classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "K", Qualified: "K", Kind: model.KindClass, LineStart: 1, LineEnd: 900})
+			methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "run", Qualified: "K\\run", Kind: model.KindMethod, ParentID: &classID, LineStart: 2, LineEnd: 4})
+			for i := 0; i < c.direct; i++ {
+				id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: fmt.Sprintf("D%d", i), Qualified: fmt.Sprintf("D%d", i), Kind: model.KindFunction, LineStart: 10 + 4*i, LineEnd: 12 + 4*i})
+				mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+			}
+			memberIDs := make([]int64, 0, c.member)
+			for i := 0; i < c.member; i++ {
+				id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: fmt.Sprintf("M%d", i), Qualified: fmt.Sprintf("M%d", i), Kind: model.KindFunction, LineStart: 100 + 4*i, LineEnd: 102 + 4*i})
+				mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+				memberIDs = append(memberIDs, id)
+			}
+
+			gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
+			if err != nil {
+				t.Fatalf("ReadSymbolGraph: %v", err)
+			}
+			got := map[int64]bool{}
+			for _, e := range gr.Root.Inbound {
+				got[e.Target.ID] = true
+			}
+			folded := 0
+			for _, id := range memberIDs {
+				if got[id] {
+					folded++
+				}
+			}
+			if c.wantFold && folded != c.member {
+				t.Errorf("want all %d member callers folded, got %d", c.member, folded)
+			}
+			if !c.wantFold && folded != 0 {
+				t.Errorf("want fold suppressed, got %d member callers", folded)
+			}
+		})
 	}
 }
