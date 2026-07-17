@@ -271,19 +271,40 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 	for _, e := range sc.Inbound {
 		seen[e.Target.ID] = struct{}{}
 	}
+	folded, err := a.collectMemberCallerEdges(ctx, childIDs, exclude, seen)
+	if err != nil {
+		return err
+	}
+	// Keep the precise class-level answer only when it is sufficient
+	// evidence (at the floor) AND not dwarfed by the member-derived set;
+	// a class-level list one tenth the size of what its methods carry is
+	// incidental, not complete (pelican Server: 3 direct vs 28 folded).
+	direct := countUsageEdges(sc.Inbound)
+	if direct >= memberFoldSufficientCallers &&
+		len(folded) < memberFoldDwarfRatio*direct {
+		return nil
+	}
+	sc.Inbound = append(sc.Inbound, folded...)
+	return nil
+}
+
+// collectMemberCallerEdges gathers the deduped inbound caller edges of the
+// given member symbols, applying the same filters blast uses: temporal
+// edges and low-confidence guesses (name-collision fallbacks stamped below
+// the traversal floor) are dropped, excluded ids (the container and its
+// own members) never count, and seen is updated so each caller appears
+// once.
+func (a *Adapter) collectMemberCallerEdges(ctx context.Context, childIDs []int64, exclude, seen map[int64]struct{}) ([]model.EdgeRef, error) {
 	var folded []model.EdgeRef
 	for _, cid := range childIDs {
 		refs, err := a.loadEdges(ctx, cid, false)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, e := range refs {
 			if e.Target.ID == 0 || e.Edge.Kind == model.EdgeTemporal {
 				continue
 			}
-			// Don't fold low-confidence guesses (e.g. name-collision
-			// fallbacks stamped below the traversal floor) into the class's
-			// callers — that would re-admit exactly what blast filters out.
 			if e.Edge.Confidence < extract.ConfidenceUnresolved {
 				continue
 			}
@@ -297,17 +318,7 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 			folded = append(folded, e)
 		}
 	}
-	// Keep the precise class-level answer only when it is sufficient
-	// evidence (at the floor) AND not dwarfed by the member-derived set;
-	// a class-level list one tenth the size of what its methods carry is
-	// incidental, not complete (pelican Server: 3 direct vs 28 folded).
-	direct := countUsageEdges(sc.Inbound)
-	if direct >= memberFoldSufficientCallers &&
-		len(folded) < memberFoldDwarfRatio*direct {
-		return nil
-	}
-	sc.Inbound = append(sc.Inbound, folded...)
-	return nil
+	return folded, nil
 }
 
 // foldMemberCallees enriches a container symbol's outbound edges with the
