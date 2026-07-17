@@ -18,6 +18,7 @@ func detectFrameworkIdioms(symbols []symbolRow, edges []edgeRow, symbolByID map[
 	out = append(out, detectReactHooks(symbols, edges, symbolByID, filePathByID)...)
 	out = append(out, detectGoTypeAliases(symbols, edges, symbolByID, filePathByID)...)
 	out = append(out, detectGoMiddleware(symbols, edges, symbolByID, filePathByID)...)
+	out = append(out, detectPHPTestStyle(symbols, edges, symbolByID, filePathByID)...)
 	return out
 }
 

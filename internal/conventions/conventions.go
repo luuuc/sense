@@ -117,6 +117,7 @@ func Detect(ctx context.Context, db *sql.DB, opts Options) ([]Convention, int, e
 	conventions = dedupeRenderedRows(conventions)
 	enrichEdgeCounts(conventions, symbols, edges, filePathByID)
 	refineRubySignificance(conventions)
+	refinePHPSignificance(conventions)
 
 	sort.Slice(conventions, func(i, j int) bool {
 		return conventionLess(conventions[i], conventions[j])
