@@ -28,6 +28,9 @@ set -uo pipefail
 
 BENCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_ROOT="$(cd "$BENCH_DIR/.." && pwd)"
+# Path law: remember whether the operator pinned RESULTS_DIR before we resolve it,
+# so the model-scoping default below never clobbers an explicit override.
+_RESULTS_DIR_PRESET="${RESULTS_DIR:-}"
 # Resolves SCENARIOS_DIR + RESULTS_DIR for the global or VERTICAL bench.
 source "$BENCH_DIR/lib/bench-paths.sh"
 # Subscription-throttle pacing for this METERED arm (default-on; BENCH_THROTTLE_PACING=0
@@ -52,6 +55,14 @@ while [[ $# -gt 0 ]]; do case "$1" in
   *) echo "unknown arg: $1" >&2; exit 1;;
 esac; done
 [[ -n "$REPO" ]] || { echo "need --repo" >&2; exit 1; }
+
+# Path law (write-side, forward-only): a VERTICAL run is ALWAYS model-scoped, so
+# results land at verticals/<v>/results/<model>/<arm>/<repo>. Defaulting BENCH_MODEL
+# from the session model prevents a model-less landing. Global runs (no VERTICAL)
+# skip this. An operator who pinned BENCH_MODEL or RESULTS_DIR still wins.
+if [[ -n "${VERTICAL:-}" && -z "${BENCH_MODEL:-}" && -z "$_RESULTS_DIR_PRESET" ]]; then
+  BENCH_MODEL="$MODEL"; unset RESULTS_DIR; source "$BENCH_DIR/lib/bench-paths.sh"
+fi
 
 command -v codex >/dev/null || { echo "codex CLI not found in PATH" >&2; exit 1; }
 command -v sense >/dev/null || { echo "sense not found in PATH (needed for the sense arm)" >&2; exit 1; }
@@ -82,6 +93,25 @@ SCEN="$SCENARIOS_DIR/$REPO.yaml"
 SCEN_NAME=$(python3 -c "import yaml;print(yaml.safe_load(open('$SCEN'))['name'])")
 PROMPT=$(python3 "$LIB_DIR/scenario.py" "$SCEN" --prompt)
 SVER="$(sense --version 2>/dev/null | head -1 || echo '')"
+# Provenance (parity with bench-sense-local.sh): run_meta is the on-disk source of
+# record. sense_* describe the binary under test (git on PROJECT_ROOT, the Sense
+# repo), gated to the sense arm in the emitter. scenario_version is the sha256 of
+# the scored files (yaml + rubric sibling); pitch/purpose/link are env-fed.
+SENSE_REF="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo '')"
+SENSE_DIRTY="false"; [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null)" ]] && SENSE_DIRTY="true"
+SENSE_RELEASE="$(git -C "$PROJECT_ROOT" describe --tags --exact-match 2>/dev/null || echo '')"
+SENSE_PITCH="${SENSE_PITCH:-}"; SENSE_PURPOSE="${SENSE_PURPOSE:-}"; SENSE_LINK="${SENSE_LINK:-}"
+RUBRIC="${SCEN%.yaml}.rubric.yaml"
+SCEN_VER=$(python3 - "$SCEN" "$RUBRIC" <<'PY'
+import hashlib, os, sys
+h = hashlib.sha256()
+for p in sys.argv[1:]:
+    if os.path.exists(p):
+        with open(p, "rb") as f:
+            h.update(f.read())
+print("sha256:" + h.hexdigest()[:16])
+PY
+)
 
 if [[ -n "$SESSION_TIMEOUT" ]]; then SECS="$SESSION_TIMEOUT"; else
   SECS=$(python3 -c "import sys;sys.path.insert(0,'$LIB_DIR');from scorer import TIME_CEILINGS,DEFAULT_TIME_CEILING;print(max(600,TIME_CEILINGS.get('$REPO',DEFAULT_TIME_CEILING)))")
@@ -100,7 +130,18 @@ for tool in "${TOOLS[@]}"; do
   # Inter-arm spacing so the second arm starts in a less-drained window.
   [ "$arm_idx" -gt 0 ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between arms (next $tool/$REPO)"
   arm_idx=$(( arm_idx + 1 ))
-  out="$RESULTS_DIR/$tool/$REPO"; mkdir -p "$out"
+  # Monotonic, never-overwrite run numbering (mirrors bench-sense-local.sh):
+  # each run lands in the next free run-N of its cell across invocations, so a
+  # re-run adds and never clobbers a prior transcript. Readers prefer run-*/
+  # and fall back to a bare cell dir only for legacy runs.
+  cell_dir="$RESULTS_DIR/$tool/$REPO"
+  next_n=1
+  for _d in "$cell_dir"/run-*; do
+    [[ -d "$_d" ]] || continue
+    _n="${_d##*/run-}"
+    [[ "$_n" =~ ^[0-9]+$ ]] && (( _n >= next_n )) && next_n=$((_n + 1))
+  done
+  out="$cell_dir/run-$next_n"; mkdir -p "$out"
   echo "[codex] $tool/$REPO model=$MODEL sandbox=$SANDBOX timeout=${SECS}s" >&2
 
   # Fairness normalization (idempotent, every arm, every run). Mirrors the strip
@@ -163,6 +204,7 @@ PY
   fi
 
   raw="$out/codex-raw.jsonl"
+  ts_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   start=$(date +%s)
   ( cd "$repo_dir" && PATH="$run_path" "${TO[@]}" codex "${args[@]}" "$PROMPT" ) \
       > "$raw" 2> "$out/codex.log"
@@ -183,20 +225,46 @@ PY
   fi
 
   commit=$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || echo "")
-  ver=""; [[ "$tool" == sense ]] && ver="$SVER"
-  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" > "$out/run_meta.json" <<'PY'
+  # sense_* binary provenance rides only on the sense arm, mirroring ver.
+  ver=""; ref=""; dirty="false"; release=""
+  if [[ "$tool" == sense ]]; then
+    ver="$SVER"; ref="$SENSE_REF"; dirty="$SENSE_DIRTY"; release="$SENSE_RELEASE"
+  fi
+  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" \
+              "$ts_iso" "$SECS" "$ref" "$dirty" "$release" \
+              "$SENSE_PITCH" "$SENSE_PURPOSE" "$SENSE_LINK" \
+              "$SCEN_VER" "$SCEN" > "$out/run_meta.json" <<'PY'
 import json, sys
-tool, repo, scen, wall, model, commit, ver, rc = sys.argv[1:9]
+(tool, repo, scen, wall, model, commit, ver, rc,
+ ts, timeout, ref, dirty, release,
+ pitch, purpose, link, scen_ver, scen_file) = sys.argv[1:19]
+rc = int(rc)
 meta = {
     "tool": tool, "repo": repo, "scenario": scen,
-    "wall_time_seconds": int(wall), "model": model,
+    "wall_time_seconds": int(wall),
+    "session_timeout_seconds": int(timeout),
+    "timestamp": ts,
+    "model": model,
     "repo_commit": commit or None, "tool_version": ver or None,
     "harness": "codex", "provider": "codex",
     "auth_mode": "subscription_cli", "mode": "single_prompt",
-    "codex_exit_code": int(rc),
+    "codex_exit_code": rc,
     "cost_usd_note": "codex runs on a ChatGPT subscription; per-token cost not meaningful",
+    # Provenance: run_meta is the on-disk source of record. sense_* ride on the
+    # sense arm only; the release TAG (not sense_ref) is the final-data match key.
+    "sense_ref": ref or None,
+    "sense_dirty": dirty == "true",
+    "sense_release": release or None,
+    "sense_pitch": pitch or None,
+    "sense_purpose": purpose or None,
+    "sense_link": link or None,
+    "scenario_version": scen_ver or None,
+    "scenario_file": scen_file or None,
+    # valid retires _invalid-* folder renaming; error stays for the scorer.
+    "valid": rc == 0,
+    "void_reason": None if rc == 0 else "codex_session_failed",
 }
-if int(rc) != 0:
+if rc != 0:
     meta["error"] = "codex_session_failed"
 print(json.dumps(meta, indent=2))
 PY
