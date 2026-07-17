@@ -34,6 +34,22 @@ const routePrefixPattern = extract.PrefixRoute + "%"
 // wallpapering `sense dead` on Django repos.
 const djangoRelatedPrefixPattern = extract.PrefixDjangoRelated + "%"
 
+// laravelBindingPrefixPattern matches the synthetic laravel-binding:*
+// container-binding symbols (laravel-binding:App\Contracts\Gateway →
+// StripeGateway). They are plumbing for the consumer → binding → concrete
+// chain; a binding no site consumes has no incoming edge and would
+// otherwise surface as a dead public constant, so it is excluded from
+// dead-code analysis like route:*. Contains a `\`, which is not a LIKE
+// metacharacter in SQLite, so no ESCAPE clause is needed.
+const laravelBindingPrefixPattern = extract.PrefixLaravelBinding + "%"
+
+// laravelListenPrefixPattern and laravelMiddlewarePrefixPattern match the
+// synthetic event-wiring and middleware-alias symbols; plumbing for the
+// dispatch-site → wiring → handler chains, excluded like laravel-binding.
+const laravelListenPrefixPattern = extract.PrefixLaravelListen + "%"
+
+const laravelMiddlewarePrefixPattern = extract.PrefixLaravelMiddleware + "%"
+
 type Options struct {
 	Language        string
 	Domain          string

@@ -328,7 +328,7 @@ func (ix *Index) resolveInherited(target string, req Request) (Result, bool) {
 		return Result{}, false
 	}
 	leaf, sep := unqualifiedNameSep(target)
-	if sep != "#" && sep != "." {
+	if sep != "#" && sep != "." && !ix.phpInheritedDispatch(sep, req) {
 		return Result{}, false
 	}
 	recvType := strings.TrimSuffix(target, sep+leaf)
@@ -641,7 +641,10 @@ func unqualifiedName(qualified string) string {
 func unqualifiedNameSep(qualified string) (name, sep string) {
 	best := -1
 	bestSep := ""
-	for _, s := range []string{"::", "#", "."} {
+	// `\` is PHP's namespace/member separator (App\Models\Order\total); no
+	// other language's qualified names contain it, so listing it here only
+	// gives PHP targets a leaf for the fallback lanes.
+	for _, s := range []string{"::", "#", ".", `\`} {
 		if i := strings.LastIndex(qualified, s); i > best {
 			best = i
 			bestSep = s

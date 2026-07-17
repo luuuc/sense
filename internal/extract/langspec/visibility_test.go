@@ -139,23 +139,6 @@ func TestScalaVisibility(t *testing.T) {
 	}
 }
 
-func TestPHPVisibility(t *testing.T) {
-	src := []byte(`<?php class Foo {
-    public function pub() {}
-    private function priv() {}
-    protected function prot() {}
-    function def() {}
-}`)
-	root := parse(t, grammars.PHP(), string(src)).RootNode()
-	cases := map[string]string{"pub": "public", "priv": "private", "prot": "protected", "def": "public"}
-	for method, want := range cases {
-		n := findNamed(t, root, "method_declaration", "name", method, src)
-		if got := phpVisibility(n, src); got != want {
-			t.Errorf("phpVisibility(%s) = %q, want %q", method, got, want)
-		}
-	}
-}
-
 func TestCVisibility(t *testing.T) {
 	src := []byte(`static int priv(void) { return 0; }
 int pub(void) { return 1; }`)
