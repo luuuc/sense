@@ -218,6 +218,37 @@ def battery(clone, symbol, contract_file, files, texts):
               r"\b|require[^\n]*" + re.escape(base.lower()) + r")")
     add(f"class X({base}) / < {base}", "subclass",
         regex=r"class\s+\w+\s*\([^)]*\b" + re.escape(base) + r"\b|<\s*" + re.escape(base) + r"\b")
+    # PKG-IMPORT (the import law): in Go the dependents of a symbol are almost
+    # always importers of its defining PACKAGE, so one
+    # `grep -rl '"<module>/<pkgdir>'` enumerates a superset, and file-level
+    # cited credit accepts ANY line pin, so the dump scores full recall
+    # (measured probe: a 366-file dump = cited_recall 1.00 against a 30-file
+    # gold; scored with gold.score_gold_recall). Precision does NOT protect it
+    # (0.08 there): the kill is cover alone (K7 in slot_verdict), so `usable`
+    # stays False here to keep K1's precision-floor semantics. Quoted-prefix
+    # needle: subpackage importers count; in-package deps need no import line
+    # and are counted covered. Root-package anchors match exact (`"<module>"`);
+    # a bare-module prefix would match every internal import.
+    gomod = os.path.join(clone, "go.mod")
+    if os.path.exists(gomod):
+        mod = re.search(r"^module\s+(\S+)", open(gomod).read(), re.M)
+        pkgdir = os.path.dirname(contract_file) if contract_file else ""
+        if mod:
+            needle = '"' + mod.group(1) + ("/" + pkgdir if pkgdir else '"')
+            in_pkg = {f for f in files
+                      if os.path.dirname(f) == (pkgdir or "")}
+            hit_deps = {f for f in files if needle in texts[f]} | in_pkg
+            matched.setdefault("pkg-import", set()).update(hit_deps)
+            row = {"pattern": f"import {needle}", "kind": "pkg-import",
+                   "cover": round(len(hit_deps) / len(files), 3) if files else 0.0}
+            row_hits = rg_files(clone, needle, fixed=True)
+            if row_hits is not None:
+                hits_all = set(row_hits) | in_pkg
+                inter = sum(1 for h in hits_all if h in fileset)
+                row["repo_hits"] = len(hits_all)
+                row["precision"] = round(inter / len(hits_all), 3) if hits_all else None
+            row["usable"] = False
+            results.append(row)
     add(f"field: {base}", "annotation",
         regex=r'\w+\s*:\s*["\']?' + re.escape(base) + r'["\']?\b')
     for acc in harvest_accessors(clone, contract_file, symbol):
@@ -302,7 +333,16 @@ def measure(clone, symbol, file_hint, sense):
     hit_list = rg_files(clone, base, fixed=True)
     hits = len(hit_list) if hit_list is not None else -1
     grep_found = sum(1 for h in hit_list or [] if h in set(files))
+    # Retained ring size (K7's exemption): retention gold lives OUTSIDE the
+    # importer set (pebble Batch banked win; grpc-go Attributes 55 import-proof
+    # files), so an import-superset kill is only sound when this escape is
+    # below the survivor floor.
+    ret_files = {(r.get("file") or r.get("ref", "").split(":")[0])
+                 for r in (d.get("retained_via_interfaces") or [])
+                 if isinstance(r, dict)}
+    ret_prod = {f for f in ret_files if f and not TEST_PATH.search(f)}
     out["bar2"] = {"prod_dependent_files": len(files),
+                   "retained_prod_files": len(ret_prod),
                    "grep_invisible": len(invisible),
                    "invisible_ratio": round(len(invisible) / len(files), 3) if files else 0.0,
                    "invisible_files": invisible[:20],
@@ -363,6 +403,17 @@ def slot_verdict(out):
                      f"{ta['cover']}, {ta.get('repo_hits', '?')} repo hits) — the "
                      "GO-NAMING LAW; noise does not protect it, receiver checks are "
                      "window-resolvable (dolt DoltDB dry-run class, 2026-07-13)")
+    pi = next((r for r in bat if r["kind"] == "pkg-import"), {})
+    if pi.get("cover", 0) >= COVER_THRESHOLD \
+            and b2.get("retained_prod_files", 0) < SURVIVOR_FLOOR:
+        kills.append(f"K7 defining-package import superset covers the deps (cover "
+                     f"{pi['cover']}, {pi.get('repo_hits', '?')} repo hits) and the "
+                     f"retained ring offers no escape "
+                     f"({b2.get('retained_prod_files', 0)} prod files < {SURVIVOR_FLOOR}) "
+                     "- the IMPORT LAW; precision does not protect it, file-level "
+                     "cited credit accepts any line pin (probe: a 366-file dump "
+                     "scored 1.00; retention exemption = the pebble Batch "
+                     "banked-win backtest)")
     if kills:
         return "BALLAST-ONLY", kills
     prec = tok.get("precision")
