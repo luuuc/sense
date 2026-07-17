@@ -323,3 +323,44 @@ func TestReadSymbolGraphRealCallerStillSuppressesFoldBesideSynthetic(t *testing.
 		t.Error("a genuine direct caller must still suppress the method-caller fold")
 	}
 }
+
+// A class-level caller set at the sufficient-evidence floor is still folded
+// when the member-derived set dwarfs it (the ratio guard). Regression:
+// pelican Server carried exactly 3 direct callers, which suppressed a fold
+// hiding 28 method-derived callers and re-created the collapse one notch up.
+func TestReadSymbolGraphDwarfedDirectCallersStillFold(t *testing.T) {
+	a, fileID := newFoldAdapter(t)
+	ctx := context.Background()
+
+	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Server", Qualified: "App\\Models\\Server", Kind: model.KindClass, LineStart: 1, LineEnd: 400})
+	methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "status", Qualified: "App\\Models\\Server\\status", Kind: model.KindMethod, ParentID: &classID, LineStart: 5, LineEnd: 12})
+
+	for i := 0; i < 3; i++ {
+		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "D" + string(rune('A'+i)), Qualified: "D" + string(rune('A'+i)), Kind: model.KindFunction, LineStart: 20 + 10*i, LineEnd: 25 + 10*i})
+		mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+	}
+	memberIDs := make([]int64, 0, 30)
+	for i := 0; i < 30; i++ {
+		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "M" + string(rune('A'+i%26)) + string(rune('a'+i/26)), Qualified: "M" + string(rune('A'+i%26)) + string(rune('a'+i/26)), Kind: model.KindFunction, LineStart: 60 + 5*i, LineEnd: 63 + 5*i})
+		mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+		memberIDs = append(memberIDs, id)
+	}
+
+	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
+	if err != nil {
+		t.Fatalf("ReadSymbolGraph: %v", err)
+	}
+	got := map[int64]bool{}
+	for _, e := range gr.Root.Inbound {
+		got[e.Target.ID] = true
+	}
+	folded := 0
+	for _, id := range memberIDs {
+		if got[id] {
+			folded++
+		}
+	}
+	if folded != 30 {
+		t.Errorf("dwarfed direct set must not suppress the fold: folded %d of 30 member callers", folded)
+	}
+}

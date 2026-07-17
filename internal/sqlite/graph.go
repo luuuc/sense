@@ -216,6 +216,13 @@ func isUsageEdge(k model.EdgeKind) bool {
 // mcpserver.InterfaceResolutionThreshold, which this mirrors in value.
 const memberFoldSufficientCallers = 3
 
+// memberFoldDwarfRatio guards the suppression itself: even at the floor,
+// a class-level caller set dwarfed by this many times more member-derived
+// callers is not the complete answer (pelican Server: exactly 3 direct
+// callers suppressed a fold hiding 28 method callers, a 9.3x gap that a
+// ratio of 10 missed by two edges).
+const memberFoldDwarfRatio = 5
+
 // countUsageEdges counts above-floor usage edges: real call/reference
 // signals, as opposed to structural edges or low-confidence resolution
 // guesses. A synthetic counterpart (django-related:*, route:*, i18n:*, …)
@@ -248,15 +255,6 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 	if !isContainerExpandKind(sc.Symbol.Kind) {
 		return nil
 	}
-	// Only skip enrichment when the container already has enough real direct
-	// callers of its own to stand as the answer; below the floor, the
-	// class-level set is incidental (the "a referenced class looks unused"
-	// case, and its PHP sibling where one constructor edge hid every
-	// method-derived caller). A structural edge (inherits/composes) or a
-	// low-confidence name-collision guess never counts toward the floor.
-	if countUsageEdges(sc.Inbound) >= memberFoldSufficientCallers {
-		return nil
-	}
 	childIDs, err := a.childSymbolIDs(ctx, sc.Symbol.ID)
 	if err != nil {
 		return err
@@ -273,6 +271,7 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 	for _, e := range sc.Inbound {
 		seen[e.Target.ID] = struct{}{}
 	}
+	var folded []model.EdgeRef
 	for _, cid := range childIDs {
 		refs, err := a.loadEdges(ctx, cid, false)
 		if err != nil {
@@ -295,9 +294,19 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 				continue
 			}
 			seen[e.Target.ID] = struct{}{}
-			sc.Inbound = append(sc.Inbound, e)
+			folded = append(folded, e)
 		}
 	}
+	// Keep the precise class-level answer only when it is sufficient
+	// evidence (at the floor) AND not dwarfed by the member-derived set;
+	// a class-level list one tenth the size of what its methods carry is
+	// incidental, not complete (pelican Server: 3 direct vs 28 folded).
+	direct := countUsageEdges(sc.Inbound)
+	if direct >= memberFoldSufficientCallers &&
+		len(folded) < memberFoldDwarfRatio*direct {
+		return nil
+	}
+	sc.Inbound = append(sc.Inbound, folded...)
 	return nil
 }
 
