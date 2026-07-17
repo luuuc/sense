@@ -205,22 +205,37 @@ func isUsageEdge(k model.EdgeKind) bool {
 	return k == model.EdgeCalls || k == model.EdgeReferences
 }
 
-// hasUsageEdge reports whether edges contains at least one above-floor
-// usage edge — a real call/reference signal, as opposed to a structural
-// edge or a low-confidence resolution guess. Used by both fold paths:
-// against Inbound it means "has a real caller", against Outbound it means
-// "has a real callee". A synthetic counterpart (django-related:*, route:*,
-// i18n:*, …) is declaration-site plumbing, not real usage, so it neither
-// counts as a caller nor as a callee here — one such edge must not starve
-// the fold of every method-derived caller.
-func hasUsageEdge(edges []model.EdgeRef) bool {
+// memberFoldSufficientCallers is the floor at which a container's own
+// usage callers count as sufficient evidence to skip the member-caller
+// fold. Below it, the class-level caller set is treated as incidental
+// rather than complete: a class whose consumers reach it through resolved
+// methods (the PHP shape: laravelio Thread carried 1 class-level call
+// edge against 66 method-level ones) may still collect one or two direct
+// edges (a constructor call, a static create), and those must not hide
+// every method-derived caller. Same "sufficient evidence" notion as
+// mcpserver.InterfaceResolutionThreshold, which this mirrors in value.
+const memberFoldSufficientCallers = 3
+
+// countUsageEdges counts above-floor usage edges: real call/reference
+// signals, as opposed to structural edges or low-confidence resolution
+// guesses. A synthetic counterpart (django-related:*, route:*, i18n:*, …)
+// is declaration-site plumbing, not real usage, so it does not count.
+func countUsageEdges(edges []model.EdgeRef) int {
+	n := 0
 	for _, e := range edges {
 		if isUsageEdge(e.Edge.Kind) && e.Edge.Confidence >= extract.ConfidenceUnresolved &&
 			!extract.IsSyntheticQualified(e.Target.Qualified) {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
+}
+
+// hasUsageEdge reports whether edges contains at least one above-floor
+// usage edge. Used by the callee fold path: against Outbound it means
+// "has a real callee".
+func hasUsageEdge(edges []model.EdgeRef) bool {
+	return countUsageEdges(edges) > 0
 }
 
 // foldMemberCallers enriches a container symbol's inbound edges with the
@@ -233,12 +248,13 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 	if !isContainerExpandKind(sc.Symbol.Kind) {
 		return nil
 	}
-	// Only enrich when the container has no real direct caller of its own —
-	// the "a referenced class looks unused" case (graph returned [] while
-	// blast found callers via the class's methods). A structural edge
-	// (inherits/composes) or a low-confidence name-collision guess is not a
-	// real caller, so those do not suppress enrichment.
-	if hasUsageEdge(sc.Inbound) {
+	// Only skip enrichment when the container already has enough real direct
+	// callers of its own to stand as the answer; below the floor, the
+	// class-level set is incidental (the "a referenced class looks unused"
+	// case, and its PHP sibling where one constructor edge hid every
+	// method-derived caller). A structural edge (inherits/composes) or a
+	// low-confidence name-collision guess never counts toward the floor.
+	if countUsageEdges(sc.Inbound) >= memberFoldSufficientCallers {
 		return nil
 	}
 	childIDs, err := a.childSymbolIDs(ctx, sc.Symbol.ID)

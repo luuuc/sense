@@ -78,18 +78,23 @@ func TestReadSymbolGraphFoldsMemberCallers(t *testing.T) {
 	}
 }
 
-// When a class already has direct callers, the precise answer is kept — method
-// callers are not folded in to dilute it.
+// When a class already has enough direct callers of its own (the sufficient-
+// evidence floor), the precise answer is kept; method callers are not folded
+// in to dilute it.
 func TestReadSymbolGraphDirectCallersNotDiluted(t *testing.T) {
 	a, fileID := newFoldAdapter(t)
 	ctx := context.Background()
 
 	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Acct", Qualified: "Acct", Kind: model.KindClass, LineStart: 1, LineEnd: 30})
 	methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "debit", Qualified: "Acct#debit", Kind: model.KindMethod, ParentID: &classID, LineStart: 3, LineEnd: 6})
-	directID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Direct", Qualified: "Direct", Kind: model.KindFunction, LineStart: 10, LineEnd: 14})
 	indirectID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Indirect", Qualified: "Indirect", Kind: model.KindFunction, LineStart: 16, LineEnd: 20})
 
-	mustEdge(t, a, &model.Edge{SourceID: &directID, TargetID: classID, Kind: model.EdgeReferences, FileID: fileID, Confidence: 1.0})
+	var directIDs []int64
+	for i, name := range []string{"DirectA", "DirectB", "DirectC"} {
+		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: name, Qualified: name, Kind: model.KindFunction, LineStart: 10 + 10*i, LineEnd: 14 + 10*i})
+		mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: classID, Kind: model.EdgeReferences, FileID: fileID, Confidence: 1.0})
+		directIDs = append(directIDs, id)
+	}
 	mustEdge(t, a, &model.Edge{SourceID: &indirectID, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
 
 	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
@@ -98,7 +103,7 @@ func TestReadSymbolGraphDirectCallersNotDiluted(t *testing.T) {
 	}
 	var direct, indirect bool
 	for _, e := range gr.Root.Inbound {
-		if e.Target.ID == directID {
+		if e.Target.ID == directIDs[0] {
 			direct = true
 		}
 		if e.Target.ID == indirectID {
@@ -109,7 +114,47 @@ func TestReadSymbolGraphDirectCallersNotDiluted(t *testing.T) {
 		t.Error("direct caller missing")
 	}
 	if indirect {
-		t.Error("method-caller should not be folded when direct callers already exist")
+		t.Error("method-caller should not be folded when the class has enough direct callers")
+	}
+}
+
+// A container with only ONE direct caller still folds its member callers in:
+// a single class-level edge is not sufficient evidence that the caller set is
+// complete. Regression: laravelio's Thread had 1 class-level call edge
+// (CreateThread) and 66 method-level caller edges; graph answered
+// called_by=1 with completeness "complete" while blast's verified band held
+// 12 dependents: the PHP shape, where good method resolution starves the
+// class node.
+func TestReadSymbolGraphFewDirectCallersStillFold(t *testing.T) {
+	a, fileID := newFoldAdapter(t)
+	ctx := context.Background()
+
+	classID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "Thread", Qualified: "App\\Models\\Thread", Kind: model.KindClass, LineStart: 1, LineEnd: 90})
+	methodID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "feed", Qualified: "App\\Models\\Thread\\feed", Kind: model.KindMethod, ParentID: &classID, LineStart: 5, LineEnd: 12})
+	directID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "handle", Qualified: "App\\Jobs\\CreateThread\\handle", Kind: model.KindFunction, LineStart: 20, LineEnd: 30})
+	methodCallerID := mustSym(t, a, &model.Symbol{FileID: fileID, Name: "index", Qualified: "ForumController\\index", Kind: model.KindFunction, LineStart: 32, LineEnd: 40})
+
+	mustEdge(t, a, &model.Edge{SourceID: &directID, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+	mustEdge(t, a, &model.Edge{SourceID: &methodCallerID, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
+
+	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
+	if err != nil {
+		t.Fatalf("ReadSymbolGraph: %v", err)
+	}
+	var direct, folded bool
+	for _, e := range gr.Root.Inbound {
+		if e.Target.ID == directID {
+			direct = true
+		}
+		if e.Target.ID == methodCallerID {
+			folded = true
+		}
+	}
+	if !direct {
+		t.Error("the class-level caller must be listed")
+	}
+	if !folded {
+		t.Error("one class-level caller must not suppress the member-caller fold")
 	}
 }
 
@@ -236,9 +281,10 @@ func TestReadSymbolGraphSyntheticCallerDoesNotSuppressFold(t *testing.T) {
 	}
 }
 
-// A real (non-synthetic) direct caller still suppresses the fold when it
-// arrives alongside a synthetic one — the synthetic edge neither suppresses
-// nor un-suppresses; only genuine usage does.
+// Real (non-synthetic) direct callers at the sufficient-evidence floor still
+// suppress the fold when they arrive alongside a synthetic one; the synthetic
+// edge neither suppresses nor un-suppresses; only genuine usage counts toward
+// the floor.
 func TestReadSymbolGraphRealCallerStillSuppressesFoldBesideSynthetic(t *testing.T) {
 	a, fileID := newFoldAdapter(t)
 	ctx := context.Background()
@@ -251,6 +297,10 @@ func TestReadSymbolGraphRealCallerStillSuppressesFoldBesideSynthetic(t *testing.
 
 	mustEdge(t, a, &model.Edge{SourceID: &accessorID, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.8})
 	mustEdge(t, a, &model.Edge{SourceID: &directID, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.9})
+	for i, name := range []string{"FilterB", "FilterC"} {
+		id := mustSym(t, a, &model.Symbol{FileID: fileID, Name: name, Qualified: name, Kind: model.KindFunction, LineStart: 42 + 10*i, LineEnd: 48 + 10*i})
+		mustEdge(t, a, &model.Edge{SourceID: &id, TargetID: classID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 0.9})
+	}
 	mustEdge(t, a, &model.Edge{SourceID: &methodCallerID, TargetID: methodID, Kind: model.EdgeCalls, FileID: fileID, Confidence: 1.0})
 
 	gr, err := a.ReadSymbolGraph(ctx, classID, 1, model.DirectionCallers, 0)
