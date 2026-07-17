@@ -70,11 +70,10 @@ func (w *walker) proxyModelClassArg(arg *sitter.Node) string {
 	if scope == nil || (scope.Kind() != "name" && scope.Kind() != "qualified_name") {
 		return ""
 	}
-	written := extract.Text(scope, w.source)
-	if !strings.HasSuffix(written, "Proxy") {
-		return ""
-	}
-	resolved := w.resolveName(written)
+	// The Proxy suffix is a property of the RESOLVED class, not the
+	// written spelling: an aliased import (`use ...ProductProxy as
+	// ProductModel`) must still fold onto the model.
+	resolved := w.resolveName(extract.Text(scope, w.source))
 	base := strings.TrimSuffix(resolved, "Proxy")
 	if base == "" || base == resolved || strings.HasSuffix(base, `\`) {
 		return ""

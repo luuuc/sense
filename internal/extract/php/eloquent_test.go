@@ -210,3 +210,21 @@ class AttributeFamily extends Model {
 		}
 	}
 }
+
+// An aliased proxy import (`use ...ProductProxy as ProductModel`) still
+// resolves the relation onto the model: the Proxy suffix is a property of
+// the RESOLVED class, not of the written alias. A fully-qualified spelling
+// (`\Webkul\...\GroupProxy::modelClass()`) rides the qualified_name scope
+// branch to the same answer.
+func TestEloquentRelationsThroughAliasedAndQualifiedProxy(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace Webkul\Attribute\Models;
+use Webkul\Product\Models\ProductProxy as ProductModel;
+class Family extends Model {
+    public function products() { return $this->hasMany(ProductModel::modelClass()); }
+    public function groups() { return $this->belongsTo(\Webkul\Product\Models\GroupProxy::modelClass()); }
+}
+`)
+	em.edge(t, model.EdgeComposes, `Webkul\Attribute\Models\Family`, `Webkul\Product\Models\Product`)
+	em.edge(t, model.EdgeComposes, `Webkul\Attribute\Models\Family`, `Webkul\Product\Models\Group`)
+}
