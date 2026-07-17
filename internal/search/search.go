@@ -408,8 +408,9 @@ func (e *Engine) enrichResults(ctx context.Context, opts Options, fused []Result
 }
 
 // finalizeResults applies the min_score filter and limit, dropping synthetic
-// plumbing symbols (ruby-core:Struct / ruby-core:Data, route helpers, and
-// django-related:* accessors, emitted only so edges resolve) here — the
+// plumbing symbols (ruby-core:Struct / ruby-core:Data, route helpers,
+// django-related:* accessors, and laravel-binding:* container bindings,
+// emitted only so edges resolve) here - the
 // single chokepoint every retrieval leg funnels through, so they are never
 // user-facing. Deliberately NOT the full IsSyntheticQualified set: i18n:*
 // (and partial/turbo) symbols exist precisely to be searchable.
@@ -421,7 +422,10 @@ func finalizeResults(opts Options, fused []Result) []Result {
 		}
 		if strings.HasPrefix(r.Qualified, extract.PrefixRubyCore) ||
 			strings.HasPrefix(r.Qualified, extract.PrefixRoute) ||
-			strings.HasPrefix(r.Qualified, extract.PrefixDjangoRelated) {
+			strings.HasPrefix(r.Qualified, extract.PrefixDjangoRelated) ||
+			strings.HasPrefix(r.Qualified, extract.PrefixLaravelBinding) ||
+			strings.HasPrefix(r.Qualified, extract.PrefixLaravelListen) ||
+			strings.HasPrefix(r.Qualified, extract.PrefixLaravelMiddleware) {
 			continue
 		}
 		results = append(results, r)
