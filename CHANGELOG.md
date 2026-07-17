@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.12.0] - 2026-07-17
+
+### Features
+
+- add the bare-name receiver/confidence law (decision 0003)
+- add the Laravel framework model tables
+- promote PHP to Full tier with a dedicated Laravel-aware extractor
+- give PHP targets a leaf lane and inherited-method dispatch
+- exclude Laravel synthetic plumbing from dead-code and search
+- rank Laravel bases and detect PHP test style
 ## [1.11.29] - 2026-07-16
 
 ### Bug Fixes
