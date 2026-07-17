@@ -40,6 +40,9 @@ func (w *walker) emitRelation(n *sitter.Node, name, class string) (bool, error) 
 	}
 	related := w.classConstant(argExpr(n, 0))
 	if related == "" {
+		related = w.proxyModelClassArg(argExpr(n, 0))
+	}
+	if related == "" {
 		return false, nil
 	}
 	line := extract.Line(n.StartPosition())
@@ -50,6 +53,33 @@ func (w *walker) emitRelation(n *sitter.Node, name, class string) (bool, error) 
 		Line:            &line,
 		Confidence:      extract.ConfidenceConvention,
 	})
+}
+
+// proxyModelClassArg resolves the concord spelling of a relation target:
+// `<X>Proxy::modelClass()` stands for `<X>::class` (concord repos express
+// every relation this way, so without it a concord model carries no
+// composes edges at all). Returns "" for any other expression.
+func (w *walker) proxyModelClassArg(arg *sitter.Node) string {
+	if arg == nil || arg.Kind() != "scoped_call_expression" {
+		return ""
+	}
+	if extract.Text(arg.ChildByFieldName("name"), w.source) != "modelClass" {
+		return ""
+	}
+	scope := arg.ChildByFieldName("scope")
+	if scope == nil || (scope.Kind() != "name" && scope.Kind() != "qualified_name") {
+		return ""
+	}
+	written := extract.Text(scope, w.source)
+	if !strings.HasSuffix(written, "Proxy") {
+		return ""
+	}
+	resolved := w.resolveName(written)
+	base := strings.TrimSuffix(resolved, "Proxy")
+	if base == "" || base == resolved || strings.HasSuffix(base, `\`) {
+		return ""
+	}
+	return base
 }
 
 // scopeAlias returns the call-site name a `scopeX` method declares

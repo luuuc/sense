@@ -201,6 +201,41 @@ func (w *walker) accessorReturn(method *sitter.Node) string {
 	return accessor
 }
 
+// concordProxyModel returns the sibling model class a Konekt-Concord model
+// proxy stands for: a class named `<X>Proxy` extending ModelProxy is a
+// static proxy for `<X>` in its own namespace (the concord registry binds
+// them by that naming pair). Anything else returns "".
+func (w *walker) concordProxyModel(qualified string) string {
+	parent := w.parents[qualified]
+	if parent != "ModelProxy" && !strings.HasSuffix(parent, `\ModelProxy`) {
+		return ""
+	}
+	base := strings.TrimSuffix(qualified, "Proxy")
+	if base == qualified || strings.HasSuffix(base, `\`) {
+		return ""
+	}
+	return base
+}
+
+// emitConcordProxy emits the proxy-IS-A inherits edge for a concord model
+// proxy declaration, or nothing for a non-proxy. Mirrors the facade lane:
+// the proxy is a static stand-in for its model, so calls through the proxy
+// ride the resolver's ancestry walk onto the model.
+func (w *walker) emitConcordProxy(n *sitter.Node, qualified string) error {
+	target := w.concordProxyModel(qualified)
+	if target == "" {
+		return nil
+	}
+	line := extract.Line(n.StartPosition())
+	return w.emit.Edge(extract.EmittedEdge{
+		SourceQualified: qualified,
+		TargetQualified: target,
+		Kind:            model.EdgeInherits,
+		Line:            &line,
+		Confidence:      extract.ConfidenceConvention,
+	})
+}
+
 // emitFacadeAccessor emits the proxy-IS-A inherits edge for a facade
 // declaration, or nothing for a non-facade.
 func (w *walker) emitFacadeAccessor(n *sitter.Node, qualified string) error {

@@ -277,3 +277,29 @@ func TestLaravelDegenerateNodes(t *testing.T) {
 		t.Errorf("facadeAccessor(bodyless) = %q", got)
 	}
 }
+
+// A concord model proxy (`class XProxy extends ModelProxy {}`) is a static
+// stand-in for its sibling model: an inherits edge proxy -> model rides the
+// ancestry walk, exactly like the facade lane. A Proxy-suffixed class with a
+// different parent, or a bare `Proxy` class, emits nothing.
+func TestConcordProxyInheritsModel(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace Webkul\Product\Models;
+use Konekt\Concord\Proxies\ModelProxy;
+class ProductProxy extends ModelProxy {}
+class Proxy extends ModelProxy {}
+class OrderProxy extends SomethingElse {}
+`)
+	e := em.edge(t, model.EdgeInherits, `Webkul\Product\Models\ProductProxy`, `Webkul\Product\Models\Product`)
+	if e.Confidence != extract.ConfidenceConvention {
+		t.Errorf("proxy inherits conf = %v", e.Confidence)
+	}
+	for _, edge := range em.edges {
+		if edge.Kind == model.EdgeInherits && edge.Confidence == extract.ConfidenceConvention {
+			if edge.SourceQualified == `Webkul\Product\Models\Proxy` ||
+				edge.SourceQualified == `Webkul\Product\Models\OrderProxy` {
+				t.Errorf("non-concord proxy folded: %+v", edge)
+			}
+		}
+	}
+}
