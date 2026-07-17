@@ -1,0 +1,40 @@
+name: Metrics snapshot
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: metrics
+
+      - name: Append daily snapshot
+        env:
+          GH_TOKEN: ${{ secrets.METRICS_TOKEN || github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          day="$(date -u +%F)"
+          gh api --paginate "repos/${REPO}/releases" \
+            --jq '[.[] | {tag: .tag_name, assets: [.assets[] | {name, download_count}]}]' \
+            | jq -c --arg day "$day" '{day: $day, kind: "downloads", releases: .}' >> snapshots.jsonl
+          # Traffic endpoints need push access; GITHUB_TOKEN may 403. Keep downloads even if they do.
+          gh api "repos/${REPO}/traffic/clones" \
+            | jq -c --arg day "$day" '{day: $day, kind: "clones"} + .' >> snapshots.jsonl || true
+          gh api "repos/${REPO}/traffic/views" \
+            | jq -c --arg day "$day" '{day: $day, kind: "views"} + .' >> snapshots.jsonl || true
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add snapshots.jsonl
+          git commit -m "metrics: snapshot $(date -u +%F)"
+          git push
