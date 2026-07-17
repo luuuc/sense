@@ -62,7 +62,12 @@ if [ -n "${VERTICALS:-}" ]; then
   done
 else
   for f in "$VERT_DIR"/*/repos.txt; do
-    [ -f "$f" ] && verticals+=("$(basename "$(dirname "$f")")")
+    [ -f "$f" ] || continue
+    v="$(basename "$(dirname "$f")")"
+    # Closed campaigns are archived as <key>-legacy (frozen history, never
+    # rescanned by default); name one explicitly via VERTICALS to override.
+    case "$v" in *-legacy) continue ;; esac
+    verticals+=("$v")
   done
 fi
 [ "${#verticals[@]}" -eq 0 ] && { echo "[rescan] no verticals found under $VERT_DIR" >&2; exit 2; }
