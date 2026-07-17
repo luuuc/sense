@@ -267,6 +267,9 @@ func (w *walker) handleType(n *sitter.Node) error {
 	if err := w.emitFacadeAccessor(n, qualified); err != nil {
 		return err
 	}
+	if err := w.emitConcordProxy(n, qualified); err != nil {
+		return err
+	}
 	if err := w.emitObservedBy(n, qualified); err != nil {
 		return err
 	}

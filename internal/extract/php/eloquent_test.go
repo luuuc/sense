@@ -178,3 +178,53 @@ class Order {
 	}
 	em.symbol(t, `Order\shipped`) // uncontested scope still aliases
 }
+
+// A concord repo expresses relations as `<X>Proxy::modelClass()`; the
+// composes edge lands on the model class the proxy stands for. A
+// non-proxy scope or a different static method resolves to nothing.
+func TestEloquentRelationsThroughConcordProxy(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace Webkul\Attribute\Models;
+use Webkul\Product\Models\ProductProxy;
+class AttributeFamily extends Model {
+    public function products() { return $this->hasMany(ProductProxy::modelClass()); }
+    public function local() { return $this->belongsTo(GroupProxy::modelClass()); }
+    public function other() { return $this->hasMany(Helper::tableName()); }
+    public function plain() { return $this->belongsTo(Proxy::modelClass()); }
+    public function bare() { return $this->hasMany('products'); }
+    public function relative() { return $this->belongsTo(static::modelClass()); }
+    public function notProxy() { return $this->hasMany(Helper::modelClass()); }
+}
+`)
+	e := em.edge(t, model.EdgeComposes, `Webkul\Attribute\Models\AttributeFamily`, `Webkul\Product\Models\Product`)
+	if e.Confidence != extract.ConfidenceConvention {
+		t.Errorf("proxy relation conf = %v", e.Confidence)
+	}
+	em.edge(t, model.EdgeComposes, `Webkul\Attribute\Models\AttributeFamily`, `Webkul\Attribute\Models\Group`)
+	for _, edge := range em.edges {
+		if edge.Kind == model.EdgeComposes &&
+			(edge.TargetQualified == `Webkul\Attribute\Models\Helper` ||
+				edge.TargetQualified == `Webkul\Attribute\Models\` ||
+				edge.TargetQualified == "") {
+			t.Errorf("non-proxy static arg composed: %+v", edge)
+		}
+	}
+}
+
+// An aliased proxy import (`use ...ProductProxy as ProductModel`) still
+// resolves the relation onto the model: the Proxy suffix is a property of
+// the RESOLVED class, not of the written alias. A fully-qualified spelling
+// (`\Webkul\...\GroupProxy::modelClass()`) rides the qualified_name scope
+// branch to the same answer.
+func TestEloquentRelationsThroughAliasedAndQualifiedProxy(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace Webkul\Attribute\Models;
+use Webkul\Product\Models\ProductProxy as ProductModel;
+class Family extends Model {
+    public function products() { return $this->hasMany(ProductModel::modelClass()); }
+    public function groups() { return $this->belongsTo(\Webkul\Product\Models\GroupProxy::modelClass()); }
+}
+`)
+	em.edge(t, model.EdgeComposes, `Webkul\Attribute\Models\Family`, `Webkul\Product\Models\Product`)
+	em.edge(t, model.EdgeComposes, `Webkul\Attribute\Models\Family`, `Webkul\Product\Models\Group`)
+}

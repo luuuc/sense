@@ -205,22 +205,44 @@ func isUsageEdge(k model.EdgeKind) bool {
 	return k == model.EdgeCalls || k == model.EdgeReferences
 }
 
-// hasUsageEdge reports whether edges contains at least one above-floor
-// usage edge — a real call/reference signal, as opposed to a structural
-// edge or a low-confidence resolution guess. Used by both fold paths:
-// against Inbound it means "has a real caller", against Outbound it means
-// "has a real callee". A synthetic counterpart (django-related:*, route:*,
-// i18n:*, …) is declaration-site plumbing, not real usage, so it neither
-// counts as a caller nor as a callee here — one such edge must not starve
-// the fold of every method-derived caller.
-func hasUsageEdge(edges []model.EdgeRef) bool {
+// memberFoldSufficientCallers is the floor at which a container's own
+// usage callers count as sufficient evidence to skip the member-caller
+// fold. Below it, the class-level caller set is treated as incidental
+// rather than complete: a class whose consumers reach it through resolved
+// methods (the PHP shape: laravelio Thread carried 1 class-level call
+// edge against 66 method-level ones) may still collect one or two direct
+// edges (a constructor call, a static create), and those must not hide
+// every method-derived caller. Same "sufficient evidence" notion as
+// mcpserver.InterfaceResolutionThreshold, which this mirrors in value.
+const memberFoldSufficientCallers = 3
+
+// memberFoldDwarfRatio guards the suppression itself: even at the floor,
+// a class-level caller set dwarfed by this many times more member-derived
+// callers is not the complete answer (pelican Server: exactly 3 direct
+// callers suppressed a fold hiding 28 method callers, a 9.3x gap that a
+// ratio of 10 missed by two edges).
+const memberFoldDwarfRatio = 5
+
+// countUsageEdges counts above-floor usage edges: real call/reference
+// signals, as opposed to structural edges or low-confidence resolution
+// guesses. A synthetic counterpart (django-related:*, route:*, i18n:*, …)
+// is declaration-site plumbing, not real usage, so it does not count.
+func countUsageEdges(edges []model.EdgeRef) int {
+	n := 0
 	for _, e := range edges {
 		if isUsageEdge(e.Edge.Kind) && e.Edge.Confidence >= extract.ConfidenceUnresolved &&
 			!extract.IsSyntheticQualified(e.Target.Qualified) {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
+}
+
+// hasUsageEdge reports whether edges contains at least one above-floor
+// usage edge. Used by the callee fold path: against Outbound it means
+// "has a real callee".
+func hasUsageEdge(edges []model.EdgeRef) bool {
+	return countUsageEdges(edges) > 0
 }
 
 // foldMemberCallers enriches a container symbol's inbound edges with the
@@ -231,14 +253,6 @@ func hasUsageEdge(edges []model.EdgeRef) bool {
 // external usage; results are deduped against the existing inbound set.
 func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext) error {
 	if !isContainerExpandKind(sc.Symbol.Kind) {
-		return nil
-	}
-	// Only enrich when the container has no real direct caller of its own —
-	// the "a referenced class looks unused" case (graph returned [] while
-	// blast found callers via the class's methods). A structural edge
-	// (inherits/composes) or a low-confidence name-collision guess is not a
-	// real caller, so those do not suppress enrichment.
-	if hasUsageEdge(sc.Inbound) {
 		return nil
 	}
 	childIDs, err := a.childSymbolIDs(ctx, sc.Symbol.ID)
@@ -257,18 +271,40 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 	for _, e := range sc.Inbound {
 		seen[e.Target.ID] = struct{}{}
 	}
+	folded, err := a.collectMemberCallerEdges(ctx, childIDs, exclude, seen)
+	if err != nil {
+		return err
+	}
+	// Keep the precise class-level answer only when it is sufficient
+	// evidence (at the floor) AND not dwarfed by the member-derived set;
+	// a class-level list one tenth the size of what its methods carry is
+	// incidental, not complete (pelican Server: 3 direct vs 28 folded).
+	direct := countUsageEdges(sc.Inbound)
+	if direct >= memberFoldSufficientCallers &&
+		len(folded) < memberFoldDwarfRatio*direct {
+		return nil
+	}
+	sc.Inbound = append(sc.Inbound, folded...)
+	return nil
+}
+
+// collectMemberCallerEdges gathers the deduped inbound caller edges of the
+// given member symbols, applying the same filters blast uses: temporal
+// edges and low-confidence guesses (name-collision fallbacks stamped below
+// the traversal floor) are dropped, excluded ids (the container and its
+// own members) never count, and seen is updated so each caller appears
+// once.
+func (a *Adapter) collectMemberCallerEdges(ctx context.Context, childIDs []int64, exclude, seen map[int64]struct{}) ([]model.EdgeRef, error) {
+	var folded []model.EdgeRef
 	for _, cid := range childIDs {
 		refs, err := a.loadEdges(ctx, cid, false)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, e := range refs {
 			if e.Target.ID == 0 || e.Edge.Kind == model.EdgeTemporal {
 				continue
 			}
-			// Don't fold low-confidence guesses (e.g. name-collision
-			// fallbacks stamped below the traversal floor) into the class's
-			// callers — that would re-admit exactly what blast filters out.
 			if e.Edge.Confidence < extract.ConfidenceUnresolved {
 				continue
 			}
@@ -279,10 +315,10 @@ func (a *Adapter) foldMemberCallers(ctx context.Context, sc *model.SymbolContext
 				continue
 			}
 			seen[e.Target.ID] = struct{}{}
-			sc.Inbound = append(sc.Inbound, e)
+			folded = append(folded, e)
 		}
 	}
-	return nil
+	return folded, nil
 }
 
 // foldMemberCallees enriches a container symbol's outbound edges with the

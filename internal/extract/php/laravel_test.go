@@ -1,6 +1,8 @@
 package php
 
 import (
+	"errors"
+
 	"testing"
 
 	"github.com/luuuc/sense/internal/extract"
@@ -275,5 +277,89 @@ func TestLaravelDegenerateNodes(t *testing.T) {
 	}
 	if got := w.facadeAccessor(root, "Q"); got != "" {
 		t.Errorf("facadeAccessor(bodyless) = %q", got)
+	}
+}
+
+// A concord model proxy (`class XProxy extends ModelProxy {}`) is a static
+// stand-in for its sibling model: an inherits edge proxy -> model rides the
+// ancestry walk, exactly like the facade lane. A Proxy-suffixed class with a
+// different parent, or a bare `Proxy` class, emits nothing.
+func TestConcordProxyInheritsModel(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace Webkul\Product\Models;
+use Konekt\Concord\Proxies\ModelProxy;
+class ProductProxy extends ModelProxy {}
+class Proxy extends ModelProxy {}
+class OrderProxy extends SomethingElse {}
+`)
+	e := em.edge(t, model.EdgeInherits, `Webkul\Product\Models\ProductProxy`, `Webkul\Product\Models\Product`)
+	if e.Confidence != extract.ConfidenceConvention {
+		t.Errorf("proxy inherits conf = %v", e.Confidence)
+	}
+	for _, edge := range em.edges {
+		if edge.Kind == model.EdgeInherits && edge.Confidence == extract.ConfidenceConvention {
+			if edge.SourceQualified == `Webkul\Product\Models\Proxy` ||
+				edge.SourceQualified == `Webkul\Product\Models\OrderProxy` {
+				t.Errorf("non-concord proxy folded: %+v", edge)
+			}
+		}
+	}
+}
+
+// The concord proxy inherits emit propagates emitter errors through
+// handleType. The edge index is discovered from a clean run so the test
+// stays stable if unrelated edges shift.
+func TestConcordProxyEmitterErrorPropagates(t *testing.T) {
+	src := `<?php
+namespace Webkul\Product\Models;
+class ProductProxy extends ModelProxy {}
+`
+	clean := mustRun(t, src)
+	at := 0
+	for i, e := range clean.edges {
+		if e.Kind == model.EdgeInherits && e.TargetQualified == `Webkul\Product\Models\Product` {
+			at = i + 1
+		}
+	}
+	if at == 0 {
+		t.Fatalf("no concord proxy edge in clean run: %v", clean.edges)
+	}
+	if err := run(t, src, &rec{failEdgeAt: at}); !errors.Is(err, errBoom) {
+		t.Errorf("expected errBoom from the concord edge emit, got %v", err)
+	}
+}
+
+// The concord naming-pair contract, pinned at its edges: a bare
+// `extends ModelProxy` with no import still fires (the pair is a naming
+// convention, not a Konekt import check); an aliased Concord import
+// (`use ... as Base`) fires because parents stores resolved names; and a
+// proxy literally named ModelProxy is the pair for a model named Model.
+func TestConcordProxyNamingPairEdges(t *testing.T) {
+	bare := mustRun(t, `<?php
+namespace App\Models;
+class OrderProxy extends ModelProxy {}
+`)
+	bare.edge(t, model.EdgeInherits, `App\Models\OrderProxy`, `App\Models\Order`)
+
+	aliased := mustRun(t, `<?php
+namespace App\Models;
+use Konekt\Concord\Proxies\ModelProxy as Base;
+class OrderProxy extends Base {}
+`)
+	aliased.edge(t, model.EdgeInherits, `App\Models\OrderProxy`, `App\Models\Order`)
+
+	self := mustRun(t, `<?php
+namespace App\Models;
+use Konekt\Concord\Proxies\ModelProxy;
+class ModelProxy extends ModelProxy {}
+`)
+	found := false
+	for _, e := range self.edges {
+		if e.Kind == model.EdgeInherits && e.SourceQualified == `App\Models\ModelProxy` && e.TargetQualified == `App\Models\Model` {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a proxy named ModelProxy pairs with a model named Model (concord naming-pair semantics)")
 	}
 }
