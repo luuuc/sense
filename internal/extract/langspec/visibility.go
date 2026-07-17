@@ -115,12 +115,6 @@ func scalaVisibility(n *sitter.Node, source []byte) string {
 	return accessModifierVisibility(n, source, "public")
 }
 
-// phpVisibility reads a PHP method's visibility modifier; a method (and any
-// top-level function) defaults to public when none is present.
-func phpVisibility(n *sitter.Node, source []byte) string {
-	return accessModifierVisibility(n, source, "public")
-}
-
 // cVisibility maps C's storage class to visibility: a `static` function is
 // file-local ("private"); everything else has external linkage ("public"). C has
 // no other access concept.

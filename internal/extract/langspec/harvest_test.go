@@ -96,21 +96,6 @@ func TestKotlinAnnotationHarvest(t *testing.T) {
 	}
 }
 
-func TestPHPAttributeHarvest(t *testing.T) {
-	src := `<?php class Ctrl {
-    #[Route("/x")] public function handle() {}
-    public function plain() {}
-}`
-	em := &harvestEmitter{}
-	runReal(t, "php", ".php", src, em)
-	if !slices.Contains(em.annotated, "handle") {
-		t.Errorf("expected attributed handle, got %v", em.annotated)
-	}
-	if slices.Contains(em.annotated, "plain") {
-		t.Errorf("plain method must not be harvested, got %v", em.annotated)
-	}
-}
-
 func TestJavaMentionHarvest(t *testing.T) {
 	src := `public class App {
     private void caller() {
@@ -141,7 +126,6 @@ func TestHarvestsMentionsPerGrammar(t *testing.T) {
 		".cs":    false, // no benchmark repo → no harvest → fails closed (core_no_harvest)
 		".kt":    false,
 		".scala": false,
-		".php":   false,
 		".c":     false,
 		".cpp":   false,
 	}

@@ -48,7 +48,7 @@ var languageTiers = map[string]Tier{
 	"cpp":        TierStandard,
 	"csharp":     TierStandard,
 	"kotlin":     TierStandard,
-	"php":        TierStandard,
+	"php":        TierFull,
 	"scala":      TierStandard,
 }
 
@@ -170,6 +170,33 @@ const (
 	// Like route:*, these symbols are plumbing — filtered out of dead-code
 	// and search output.
 	PrefixDjangoRelated = "django-related:"
+	// PrefixLaravelBinding qualifies a synthetic Laravel container-binding
+	// symbol (e.g. "laravel-binding:App\Contracts\Gateway", or
+	// "laravel-binding:cache.store" for a string-keyed binding). A service
+	// provider's bind/singleton registration emits the symbol plus a calls
+	// edge to the concrete implementation class; an app(X::class) /
+	// resolve(X::class) / ->make(X::class) consumption site emits a calls
+	// edge to the prefixed name. Consumer → laravel-binding:X → Concrete is
+	// then a connected chain even though the consumer never names the
+	// concrete class - the container's dispatch, closed. The reserved prefix
+	// guarantees binding edges can never collide with a same-named
+	// application symbol. Like route:*, these symbols are plumbing,
+	// filtered out of dead-code and search output.
+	PrefixLaravelBinding = "laravel-binding:"
+	// PrefixLaravelListen qualifies a synthetic Laravel event-wiring symbol
+	// (e.g. "laravel-listen:App\Events\OrderShipped"). The provider's
+	// $listen map emits the symbol plus a calls edge to each listener's
+	// handle method; an `Event::dispatch(...)` or `event(new Event)` site
+	// emits a calls edge to the prefixed name, so DispatchSite →
+	// laravel-listen:Event → Listener\handle is a connected chain. Plumbing,
+	// filtered like route:*.
+	PrefixLaravelListen = "laravel-listen:"
+	// PrefixLaravelMiddleware qualifies a synthetic Laravel middleware-alias
+	// symbol (e.g. "laravel-middleware:auth"). The kernel's alias map emits
+	// the symbol plus a calls edge to the handler's handle method; a
+	// `->middleware('auth')` site emits a calls edge to the prefixed name.
+	// Plumbing, filtered like route:*.
+	PrefixLaravelMiddleware = "laravel-middleware:"
 )
 
 // syntheticPrefixes is the canonical set of reserved qualified-name prefixes for
@@ -196,6 +223,9 @@ var syntheticPrefixes = []string{
 	PrefixRoute,
 	PrefixRubyCore,
 	PrefixDjangoRelated,
+	PrefixLaravelBinding,
+	PrefixLaravelListen,
+	PrefixLaravelMiddleware,
 }
 
 // IsSyntheticQualified reports whether a fully-qualified name belongs to a
