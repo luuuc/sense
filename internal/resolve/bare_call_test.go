@@ -3,6 +3,7 @@ package resolve_test
 import (
 	"testing"
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/model"
 	"github.com/luuuc/sense/internal/resolve"
 )
@@ -142,6 +143,81 @@ func TestResolveGoDottedLeafStillBindsMethod(t *testing.T) {
 	}
 	if r.SymbolID != 2 {
 		t.Errorf("SymbolID = %d, want 2", r.SymbolID)
+	}
+}
+
+// phpBareRefs models F-3: PHP has no implicit-self method dispatch, so a bare
+// `count(...)` call is a builtin/function call and must never bind the
+// same-named method - the exact shape that bound `Webkul\Core\Eloquent\
+// Repository::count` to 14 files whose only tie was a PHP builtin `count()`.
+// File 30 is a PHP production file.
+func phpBareRefs() []model.SymbolRef {
+	return []model.SymbolRef{
+		{ID: 1, Qualified: `App\Repository`, FileID: 30, Language: "php", Path: "Repository.php", Kind: model.KindType},
+		{ID: 2, Qualified: `App\Repository\count`, FileID: 30, Language: "php", Path: "Repository.php", Kind: model.KindMethod},
+	}
+}
+
+// The defect itself (F-3): a bare PHP call `count(...)` emitted at static
+// confidence must NOT bind the same-named method - PHP method dispatch requires
+// a receiver (`$x->count()`), so a receiverless `count(` is a builtin/function.
+func TestResolvePHPBareFunctionCallNeverBindsMethod(t *testing.T) {
+	ix := resolve.NewIndex(phpBareRefs())
+	_, ok := ix.Resolve(resolve.Request{
+		Target:         "count",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   30,
+		BaseConfidence: extract.ConfidenceStatic,
+	})
+	if ok {
+		t.Fatal("bare PHP call bound a method symbol - illegal by PHP grammar (no implicit-self dispatch; count() is a builtin/function)")
+	}
+}
+
+// Mutation guard: a bare PHP call to an indexed FUNCTION is the legitimate case
+// the fallback exists for (a Laravel global helper like `collect()`). Kills the
+// "drop all bare PHP calls" over-fix mutant.
+func TestResolvePHPBareCallKeepsFunctionBind(t *testing.T) {
+	rs := append(phpBareRefs(),
+		model.SymbolRef{ID: 5, Qualified: `App\Support\collect`, FileID: 30, Language: "php", Path: "helpers.php", Kind: model.KindFunction},
+	)
+	ix := resolve.NewIndex(rs)
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "collect",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   30,
+		BaseConfidence: extract.ConfidenceStatic,
+	})
+	if !ok {
+		t.Fatal("bare PHP call to an indexed function must resolve")
+	}
+	if r.SymbolID != 5 {
+		t.Errorf("SymbolID = %d, want 5 (the function)", r.SymbolID)
+	}
+}
+
+// Mutation guard: PHP's unknown-receiver member fallback (decision 0003 clause
+// 1) emits the bare method name at ConfidenceNameCollision - a genuine dispatch
+// that must KEEP binding the method, demoted below blast's floor for liveness.
+// The gate is confidence-aware for PHP: only ABOVE the collision band (a
+// function call) are methods dropped. Kills the "put PHP in the Go/Rust camp"
+// over-fix that would wipe this liveness edge.
+func TestResolvePHPMemberFallbackKeepsMethodDemoted(t *testing.T) {
+	ix := resolve.NewIndex(phpBareRefs())
+	r, ok := ix.Resolve(resolve.Request{
+		Target:         "count",
+		Kind:           model.EdgeCalls,
+		SourceFileID:   30,
+		BaseConfidence: extract.ConfidenceNameCollision,
+	})
+	if !ok {
+		t.Fatal("PHP member fallback at the collision band must keep binding the method (decision 0003 clause 1 liveness)")
+	}
+	if r.SymbolID != 2 {
+		t.Errorf("SymbolID = %d, want 2 (the method)", r.SymbolID)
+	}
+	if r.Confidence >= extract.ConfidenceUnresolved {
+		t.Errorf("Confidence = %v, want below blast's floor (a demoted guess)", r.Confidence)
 	}
 }
 

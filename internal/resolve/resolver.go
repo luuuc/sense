@@ -475,7 +475,7 @@ func (ix *Index) resolveByLeaf(target string, req Request) (Result, bool) {
 	matches := ix.byName[name]
 	matches = filterByLanguage(matches, ix.fileLang[req.SourceFileID])
 	matches = filterByTestDirection(matches, ix.fileIsTest[req.SourceFileID], ix.fileIsTest)
-	if sep == "" && !bareCallBindsMethods(ix.fileLang[req.SourceFileID]) {
+	if sep == "" && !bareCallBindsMethods(ix.fileLang[req.SourceFileID], req.BaseConfidence) {
 		matches = filterOutMethods(matches)
 	}
 	matches, receiverContradicted := filterByReceiver(matches, sep)
@@ -794,11 +794,29 @@ func isViewLanguage(lang string) bool {
 // `Type::m(recv)`), and the extractors for both emit dotted/pathed targets on
 // every selector path, so a bare target is a genuinely bare call — builtins
 // (`append`, `len`), conversions (`int(…)`), functions, and local closures
-// are its only legal callees, none of which is a method symbol. Ruby's bare
-// calls ARE implicit-self method dispatch, so it (and any unknown language)
-// answers true and the gate fails open.
-func bareCallBindsMethods(lang string) bool {
-	return lang != "go" && lang != "rust"
+// are its only legal callees, none of which is a method symbol.
+//
+// PHP has no implicit-self method dispatch either - a method call always names
+// its receiver (`$this->m()`, `self::m()`), so a bare target from a PHP
+// *function* call (`count(...)`, emitted at ConfidenceStatic) is a
+// builtin/function and must NOT bind a same-named method (F-3: PHP's builtin
+// `count()` bound `Repository::count` across 14 unrelated files). But PHP's
+// unknown-receiver member fallback (decision 0003 clause 1) also emits a bare
+// method name, at ConfidenceNameCollision - a genuine dispatch whose receiver
+// type was merely unknown. The two are separable by confidence alone: at or
+// below the collision band the bare target is that member fallback (keep the
+// method bind, it is demoted below blast's floor anyway); above it, the target
+// is a function call (drop methods). Ruby's bare calls ARE implicit-self
+// dispatch at full confidence, so it (and any unknown language) answers true
+// and the gate fails open.
+func bareCallBindsMethods(lang string, baseConfidence float64) bool {
+	switch lang {
+	case "go", "rust":
+		return false
+	case "php":
+		return baseConfidence <= extract.ConfidenceNameCollision
+	}
+	return true
 }
 
 // filterOutMethods drops method-kind candidates from a bare-target fallback
