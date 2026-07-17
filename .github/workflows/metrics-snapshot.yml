@@ -22,9 +22,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           day="$(date -u +%F)"
+          # --paginate emits one JSON array per page; slurp and merge so each day is ONE row
           gh api --paginate "repos/${REPO}/releases" \
-            --jq '[.[] | {tag: .tag_name, assets: [.assets[] | {name, download_count}]}]' \
-            | jq -c --arg day "$day" '{day: $day, kind: "downloads", releases: .}' >> snapshots.jsonl
+            | jq -c -s --arg day "$day" '{day: $day, kind: "downloads", releases: [add[] | {tag: .tag_name, assets: [.assets[] | {name, download_count}]}]}' >> snapshots.jsonl
           # Traffic endpoints need push access; GITHUB_TOKEN may 403. Keep downloads even if they do.
           gh api "repos/${REPO}/traffic/clones" \
             | jq -c --arg day "$day" '{day: $day, kind: "clones"} + .' >> snapshots.jsonl || true
