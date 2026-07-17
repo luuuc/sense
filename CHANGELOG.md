@@ -1,6 +1,14 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.12.1] - 2026-07-17
+
+### Bug Fixes
+
+- fold member callers unless the class has sufficient direct callers
+- resolve Konekt Concord model proxies to their models
+- fold member callers when the direct set is dwarfed
+- resolve aliased concord proxy imports and pin naming-pair edges
 ## [1.12.0] - 2026-07-17
 
 ### Features
