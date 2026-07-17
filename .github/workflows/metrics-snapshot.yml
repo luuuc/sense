@@ -25,11 +25,12 @@ jobs:
           # --paginate emits one JSON array per page; slurp and merge so each day is ONE row
           gh api --paginate "repos/${REPO}/releases" \
             | jq -c -s --arg day "$day" '{day: $day, kind: "downloads", releases: [add[] | {tag: .tag_name, assets: [.assets[] | {name, download_count}]}]}' >> snapshots.jsonl
-          # Traffic endpoints need push access; GITHUB_TOKEN may 403. Keep downloads even if they do.
+          # Traffic endpoints 403 under GITHUB_TOKEN (verified) — they need the METRICS_TOKEN PAT.
+          # select(has("count")) drops error bodies so a 403 skips the row instead of writing nulls.
           gh api "repos/${REPO}/traffic/clones" \
-            | jq -c --arg day "$day" '{day: $day, kind: "clones"} + .' >> snapshots.jsonl || true
+            | jq -c --arg day "$day" 'select(has("count")) | {day: $day, kind: "clones"} + .' >> snapshots.jsonl || true
           gh api "repos/${REPO}/traffic/views" \
-            | jq -c --arg day "$day" '{day: $day, kind: "views"} + .' >> snapshots.jsonl || true
+            | jq -c --arg day "$day" 'select(has("count")) | {day: $day, kind: "views"} + .' >> snapshots.jsonl || true
 
       - name: Commit
         run: |
