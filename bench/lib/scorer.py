@@ -467,6 +467,20 @@ DEFAULT_EFFICIENCY_CEILING = 30_000
 # sessions, vs. flask's previous 400s ceiling). New numbers tighten the
 # efficiency signal without truncating healthy sessions.
 TIME_CEILINGS = {
+    "dolt": 300,         # retention-core scenario: the wall is the lever. A code-capable
+                         # adversary's first gold find lands past 500s (0/18 inside a
+                         # 300s wall) and a type-checker route only materializes after
+                         # minute 6, so 300s keeps the axis grep-dark. 300 = the session
+                         # driver's floor (bench-sense-local.sh max(300,…)), so scoring
+                         # and enforcement agree with no launch-flag override. Applies
+                         # to BOTH arms + efficiency normalization.
+    "pebble": 300,       # retention-axis scenario, same shape as dolt: a code-capable
+                         # adversary can write a custom struct/interface scanner to
+                         # reconstruct the retention closure by hand, and the measured
+                         # exploratory probe took 552s unwalled to write, run, and
+                         # report one. 300 = the session driver's floor, matching dolt.
+                         # RE-VERIFY with a walled dry-run before any paid cell; the
+                         # 552s figure predates the final scenario wording.
     "flask": 320,        # was 400
     "gin": 320,          # was 400
     "axum": 480,         # was 600
