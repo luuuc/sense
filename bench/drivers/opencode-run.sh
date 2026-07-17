@@ -174,7 +174,18 @@ for tool in "${TOOLS[@]}"; do
   # Inter-arm spacing so the second arm starts in a less-drained window.
   [ "$arm_idx" -gt 0 ] && pace_sleep "$OPENCODE_PACE_SECONDS" "between arms (next $tool/$REPO)"
   arm_idx=$(( arm_idx + 1 ))
-  out="$RESULTS_DIR/$tool/$REPO"; mkdir -p "$out"
+  # Monotonic, never-overwrite run numbering (mirrors bench-sense-local.sh):
+  # each run lands in the next free run-N of its cell across invocations, so a
+  # re-run adds and never clobbers a prior transcript. Readers prefer run-*/
+  # and fall back to a bare cell dir only for legacy runs.
+  cell_dir="$RESULTS_DIR/$tool/$REPO"
+  next_n=1
+  for _d in "$cell_dir"/run-*; do
+    [[ -d "$_d" ]] || continue
+    _n="${_d##*/run-}"
+    [[ "$_n" =~ ^[0-9]+$ ]] && (( _n >= next_n )) && next_n=$((_n + 1))
+  done
+  out="$cell_dir/run-$next_n"; mkdir -p "$out"
   echo "[opencode] $tool/$REPO model=$MODEL timeout=${SECS}s" >&2
 
   # Clean slate, then for the sense arm write the full Sense surface via
