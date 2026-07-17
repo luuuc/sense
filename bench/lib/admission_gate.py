@@ -213,7 +213,7 @@ def battery(clone, symbol, contract_file, files, texts):
     add(f".*{base}*( call", "type-accessor",
         regex=r"[.\t (]\w*" + re.escape(base) + r"\w*\s*\(")
     add(f"import …{base}", "import",
-        regex=r"^\s*(from\s+\S+\s+import\b[^\n]*\b" + re.escape(base) +
+        regex=r"(?m)^\s*(from\s+\S+\s+import\b[^\n]*\b" + re.escape(base) +
               r"\b|import\s+[^\n]*\b" + re.escape(base) +
               r"\b|require[^\n]*" + re.escape(base.lower()) + r")")
     add(f"class X({base}) / < {base}", "subclass",
@@ -244,6 +244,42 @@ def battery(clone, symbol, contract_file, files, texts):
             row_hits = rg_files(clone, needle, fixed=True)
             if row_hits is not None:
                 hits_all = set(row_hits) | in_pkg
+                inter = sum(1 for h in hits_all if h in fileset)
+                row["repo_hits"] = len(hits_all)
+                row["precision"] = round(inter / len(hits_all), 3) if hits_all else None
+            row["usable"] = False
+            results.append(row)
+    # PHP-USE (the import law, PHP form): the generic import row above is
+    # python/go/ruby-shaped and scores 0.00 on PHP, which would blind bar 3 to
+    # PHP's strongest covering pattern. Two adversaries: (a) per-class
+    # `use <NS>\<Class>;` (incl. `as` aliases), a normal precision-eligible
+    # row; (b) the namespace-prefix dump `use <NS>\`, an importer SUPERSET
+    # like Go's pkg-import, so `usable` stays False and the kill is cover
+    # alone (K7). In-namespace deps declare no use line and are counted
+    # covered via same-dir membership, mirroring the Go in-pkg rule.
+    if os.path.exists(os.path.join(clone, "composer.json")):
+        add(f"use …\\{base};", "php-use",
+            regex=r"(?m)^\s*use\s+[\w\\]+\\" + re.escape(base) + r"\s*(;|\s+as\s)")
+        ns = None
+        if contract_file:
+            try:
+                with open(os.path.join(clone, contract_file), encoding="utf-8",
+                          errors="replace") as fh:
+                    m = re.search(r"^namespace\s+([\w\\]+)\s*;", fh.read(), re.M)
+                    ns = m.group(1) if m else None
+            except OSError:
+                ns = None
+        if ns:
+            needle = "use " + ns + "\\"
+            nsdir = os.path.dirname(contract_file)
+            in_ns = {f for f in files if os.path.dirname(f) == nsdir}
+            hit_deps = {f for f in files if needle in texts[f]} | in_ns
+            matched.setdefault("php-ns-use", set()).update(hit_deps)
+            row = {"pattern": needle, "kind": "php-ns-use",
+                   "cover": round(len(hit_deps) / len(files), 3) if files else 0.0}
+            row_hits = rg_files(clone, needle, fixed=True)
+            if row_hits is not None:
+                hits_all = set(row_hits) | in_ns
                 inter = sum(1 for h in hits_all if h in fileset)
                 row["repo_hits"] = len(hits_all)
                 row["precision"] = round(inter / len(hits_all), 3) if hits_all else None
@@ -327,7 +363,14 @@ def measure(clone, symbol, file_hint, sense):
     texts = read_texts(clone, files)
     base = symbol.split(".")[-1].split("::")[-1]
     invisible = [f for f in files if base not in texts[f]]
-    dirs = sorted({"/".join(f.split("/")[:2]) for f in files})
+    # Scatter counts distinct dirs at depth 2 AFTER stripping the deps' common
+    # directory prefix: raw depth-2 collapses package monorepos (bagisto
+    # `packages/Webkul/*`, laravel-framework `src/Illuminate/*`) to one "dir"
+    # and over-fires K2's colocated arm. Prefix-stripping only refines counts
+    # upward; the K2 volume arm is untouched.
+    parts = [f.split("/")[:-1] for f in files]
+    common = os.path.commonprefix(parts) if parts else []
+    dirs = sorted({"/".join(f.split("/")[len(common):][:2]) or "." for f in files})
     deps07 = dep_files(b07["data"]) if b07["ok"] else []
 
     hit_list = rg_files(clone, base, fixed=True)
@@ -414,6 +457,14 @@ def slot_verdict(out):
                      "cited credit accepts any line pin (probe: a 366-file dump "
                      "scored 1.00; retention exemption = the pebble Batch "
                      "banked-win backtest)")
+    nu = next((r for r in bat if r["kind"] == "php-ns-use"), {})
+    if nu.get("cover", 0) >= COVER_THRESHOLD \
+            and b2.get("retained_prod_files", 0) < SURVIVOR_FLOOR:
+        kills.append(f"K7 namespace use-prefix superset covers the deps (cover "
+                     f"{nu['cover']}, {nu.get('repo_hits', '?')} repo hits) and the "
+                     f"retained ring offers no escape "
+                     f"({b2.get('retained_prod_files', 0)} prod files < {SURVIVOR_FLOOR}) "
+                     "- the IMPORT LAW in PHP clothing (`use <NS>\\` dump)")
     if kills:
         return "BALLAST-ONLY", kills
     prec = tok.get("precision")

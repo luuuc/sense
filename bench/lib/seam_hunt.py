@@ -50,6 +50,18 @@ LANGS = {
         or f.startswith("test/") or "/test/" in f,
         "nonapp": lambda f: f.startswith("db/") or f.startswith("config/"),
     },
+    "php": {
+        "include": "*.php",
+        "grep_roots": ["."],
+        "exclude_dirs": [".git", "vendor", "node_modules", "storage", "public",
+                         "bootstrap"],
+        "is_test": lambda f: f.startswith("tests/") or "/tests/" in f
+        or os.path.basename(f).endswith("Test.php")
+        or os.path.basename(f).endswith("TestCase.php"),
+        "nonapp": lambda f: f.startswith("database/") or "/migrations/" in f
+        or f.startswith("config/") or "/config/" in f
+        or f.startswith("docs/") or "/docs/" in f,
+    },
     "python": {
         "include": "*.py",
         "grep_roots": ["."],
@@ -71,6 +83,9 @@ def detect_lang(clone):
     """Marker-file first (cheap, unambiguous), then a *.py-vs-*.rb file count."""
     if os.path.exists(os.path.join(clone, "Gemfile")):
         return "ruby"
+    if any(os.path.exists(os.path.join(clone, m)) for m in
+           ("composer.json", "artisan")):
+        return "php"
     if any(os.path.exists(os.path.join(clone, m)) for m in
            ("manage.py", "pyproject.toml", "setup.py", "setup.cfg")):
         return "python"
