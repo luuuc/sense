@@ -37,6 +37,56 @@ class IsFileLikeTest(unittest.TestCase):
         self.assertFalse(gold._is_file_like("parse_error"))
 
 
+class RootBasenameFalseCreditTest(unittest.TestCase):
+    r"""A repo-ROOT gold file (single-segment pattern) must not be credited by a
+    citation of a same-basename sibling in a subdirectory.
+
+    Found on pebble, the first repo whose gold lives at the repo
+    root, so the match pattern IS a bare basename and forms 1/4 had no left
+    boundary: form 1 (`<pattern>:\d+`) had none at all, and form 4's `(?<!\w)`
+    admits a '/' because a slash is not a word char. A collision answer citing
+    ONLY deeper same-basename siblings harvested six false credits, one of them
+    a discriminator row (dep:compaction via tool/logs/compaction.go).
+    """
+
+    def test_form1_root_gold_not_credited_by_subdir_sibling(self):
+        hay = "the batch lives at internal/private/batch.go:41".lower()
+        self.assertFalse(gold._cited("batch.go", hay))
+
+    def test_form4_root_gold_not_credited_by_subdir_sibling(self):
+        # basename form: gold "replay.go" (root) vs bench/replay.go, and the
+        # deeper cmd/pebble/replay.go: the exact form-4 basename pin that
+        # false-credited ctx:replay.
+        hay = "see bench/replay.go:12 and cmd/pebble/replay.go:88".lower()
+        self.assertFalse(gold._cited("replay.go", hay, basename="replay.go"))
+
+    def test_discriminator_row_not_credited_by_deep_sibling(self):
+        # dep:compaction: gold is the ROOT compaction.go; tool/logs/compaction.go
+        # is a different file and must earn nothing.
+        hay = '{"file": "tool/logs/compaction.go", "line": 205}'.lower()
+        self.assertFalse(gold._cited("compaction.go", hay, basename="compaction.go"))
+
+    def test_root_gold_still_credited_when_cited_bare(self):
+        # The true answer must keep scoring: a bare root citation still counts.
+        hay = "the merge happens in batch.go:41 during apply".lower()
+        self.assertTrue(gold._cited("batch.go", hay))
+
+    def test_root_gold_still_credited_via_paren_and_json_forms(self):
+        self.assertTrue(gold._cited("batch.go", "see batch.go (line 41)".lower()))
+        self.assertTrue(gold._cited("batch.go", '{"file": "batch.go", "line": 41}'.lower()))
+
+    def test_multisegment_gold_still_credited_under_a_longer_prefix(self):
+        # The regression guard: a multi-segment gold pattern is the TAIL of the
+        # agent's full repo-relative path, so a '/' prefix stays legitimate.
+        hay = '"file_line": "activejob/lib/active_job/queue_adapters/abstract_adapter.rb:9-23",'.lower()
+        self.assertTrue(gold._cited("queue_adapters/abstract_adapter.rb", hay))
+
+    def test_multisegment_gold_not_credited_by_cross_tree_sibling(self):
+        # A word/./- prefix still means a different name entirely.
+        hay = "mygoogle/request_adapter.rb:12".lower()
+        self.assertFalse(gold._cited("google/request_adapter.rb", hay))
+
+
 class CitedFormsTest(unittest.TestCase):
     """Each accepted location-pin form, lower-cased like the real caller."""
 

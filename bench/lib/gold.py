@@ -66,6 +66,27 @@ def _is_file_like(p):
     return pl.endswith(_CODE_EXT) or ("/" in p and "." in p)
 
 
+def _left_anchor(pattern):
+    """The look-behind that guards a gold pattern's first character.
+
+    Two cases, because a leading '/' means different things:
+      - MULTI-segment pattern (`queue_adapters/abstract_adapter.rb`): the gold
+        path is the TAIL of the agent's full repo-relative citation, so a '/'
+        before it is legitimate and expected. Block only word/./- , which would
+        make it a different name (`mygoogle/request_adapter.rb`).
+      - SINGLE-segment pattern (`batch.go`, a repo-ROOT gold file): a '/'
+        before it means the citation is a same-basename sibling in some
+        subdirectory, i.e. a DIFFERENT FILE (`internal/private/batch.go`).
+        Block '/' too, so only a bare root citation is credited.
+    The single-segment case is the 2026-07-15 pebble false-credit fix: pebble is
+    the first repo whose gold lives at the repo root, and an answer citing only
+    deeper same-basename siblings harvested six credits it had not earned, one a
+    discriminator row. Conservative by construction and arm-blind: it can only
+    withhold credit, never invent it.
+    """
+    return _SUFFIX_ANCHOR if "/" not in pattern else r"(?<![\w.\-])"
+
+
 def _cited(pattern, hay, basename=None):
     """Is this gold file path pinned to a line anywhere in the answer?
 
@@ -73,7 +94,7 @@ def _cited(pattern, hay, basename=None):
     given, is the path's unambiguous basename (unique among the gold file
     paths) and enables the short-basename form; pass None to disable it.
     """
-    esc = re.escape(pattern)
+    esc = _left_anchor(pattern) + re.escape(pattern)
     # 1. path immediately followed by a line, e.g. "anthropic.rb:24" or ":49-63".
     if re.search(esc + r":\d+", hay):
         return True
@@ -87,10 +108,11 @@ def _cited(pattern, hay, basename=None):
     if re.search(esc + r'[^\n{}]{0,%d}?"lines?"\s*:\s*\[?\s*"?\d+' % _LINE_FIELD_WINDOW, hay):
         return True
     # 4. unambiguous basename + line, e.g. "benefit.rb:260" when the full path
-    #    was named but the line pinned via the basename. The (?<!\w) guard stops
-    #    a basename from matching inside a longer sibling path (so "product.rb"
-    #    does NOT match inside "line_item_product.rb").
-    if basename and re.search(r'(?<!\w)' + re.escape(basename) + r":\d+", hay):
+    #    was named but the line pinned via the basename. A basename is always
+    #    single-segment, so it takes the strict anchor: `spec/benefit.rb:260` is
+    #    a different file from the gold `app/models/benefit.rb` and must not pin
+    #    it (and `product.rb` still does not match `line_item_product.rb`).
+    if basename and re.search(_SUFFIX_ANCHOR + re.escape(basename) + r":\d+", hay):
         return True
     return False
 
