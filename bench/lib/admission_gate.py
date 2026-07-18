@@ -102,10 +102,17 @@ def run_graph_callers(clone, sense, symbol, file_hint):
             "err": (p.stderr or p.stdout)[:300] if not ok else ""}
 
 
-def dep_files(blast_data):
+def dep_files(blast_data, exclude=None):
     """Production dependent files from a blast payload: direct + indirect +
     the structural buckets (subclasses/composition/includes — the litellm
-    lesson: inheritance dependents ARE dependents)."""
+    lesson: inheritance dependents ARE dependents).
+
+    `exclude` is an optional compiled regex; matching paths are dropped (the
+    gold-law scout use: a repo's in-tree example/docs app inflates the win
+    signature with non-shippable callers (filament `docs-assets/`, 51 of 120
+    Field callers). It filters the same dependent-file set the win metrics
+    derive from, so invisibility/precision/scatter/survive_at_0.7 all re-derive
+    on the gold-eligible side."""
     files = []
     buckets = ("direct_callers", "affected_subclasses",
                "affected_via_composition", "affected_via_includes")
@@ -121,7 +128,8 @@ def dep_files(blast_data):
             files.append(f)
     seen, out = set(), []
     for f in files:
-        if f not in seen and not TEST_PATH.search(f):
+        if f not in seen and not TEST_PATH.search(f) \
+                and not (exclude and exclude.search(f)):
             seen.add(f)
             out.append(f)
     return out
@@ -315,7 +323,7 @@ def battery(clone, symbol, contract_file, files, texts):
     return sorted(results, key=lambda r: -r["cover"]), union_cover
 
 
-def measure(clone, symbol, file_hint, sense):
+def measure(clone, symbol, file_hint, sense, exclude=None):
     b03 = run_blast(clone, sense, symbol, 0.3, file_hint)
     b07 = run_blast(clone, sense, symbol, 0.7, file_hint)
     out = {"clone": clone, "symbol": symbol, "file_hint": file_hint,
@@ -359,7 +367,7 @@ def measure(clone, symbol, file_hint, sense):
             contract_file = (json.loads(g.stdout).get("symbol") or {}).get("file", "")
         except ValueError:
             contract_file = ""
-    files = dep_files(d)
+    files = dep_files(d, exclude)
     texts = read_texts(clone, files)
     base = symbol.split(".")[-1].split("::")[-1]
     invisible = [f for f in files if base not in texts[f]]
@@ -371,7 +379,7 @@ def measure(clone, symbol, file_hint, sense):
     parts = [f.split("/")[:-1] for f in files]
     common = os.path.commonprefix(parts) if parts else []
     dirs = sorted({"/".join(f.split("/")[len(common):][:2]) or "." for f in files})
-    deps07 = dep_files(b07["data"]) if b07["ok"] else []
+    deps07 = dep_files(b07["data"], exclude) if b07["ok"] else []
 
     hit_list = rg_files(clone, base, fixed=True)
     hits = len(hit_list) if hit_list is not None else -1
@@ -393,7 +401,13 @@ def measure(clone, symbol, file_hint, sense):
                    "precision": round(grep_found / hits, 4) if hits > 0 else None,
                    "scatter_dirs": len(dirs),
                    "total_affected": d.get("total_affected", 0),
+                   "total_affected_raw": bool(exclude),
                    "survive_at_0.7": len(deps07)}
+    if exclude:
+        out["bar2"]["excluded_pattern"] = exclude.pattern
+        out["exclude_note"] = ("file-derived metrics (invisibility, precision, "
+                               "scatter, survive_at_0.7) are docs/example-excluded; "
+                               "total_affected is the raw transitive blast scalar")
     bat, union_cover = battery(clone, symbol, contract_file, files, texts)
     usable = [r for r in bat if r.get("usable")]
     best = (usable or bat or [{"cover": 0.0, "pattern": "-", "kind": "-"}])[0]
@@ -529,9 +543,14 @@ def main():
     ap.add_argument("--file", dest="file_hint", default=None)
     ap.add_argument("--sense", default=os.environ.get("SENSE_BIN", "sense"))
     ap.add_argument("--json", dest="json_out", default=None)
+    ap.add_argument("--exclude", default=None,
+                    help="regex; dependent files whose path matches are dropped "
+                         "from the win-signature metrics (gold-law scout: strip "
+                         "in-tree example/docs apps, e.g. '^docs-assets/')")
     args = ap.parse_args()
 
-    m = measure(args.clone, args.symbol, args.file_hint, args.sense)
+    exclude = re.compile(args.exclude) if args.exclude else None
+    m = measure(args.clone, args.symbol, args.file_hint, args.sense, exclude)
     print(render(m))
     if args.json_out:
         with open(args.json_out, "w") as f:
