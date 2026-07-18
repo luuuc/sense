@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # opencode-run.sh runs the Rails-vertical bench through the opencode agent,
-# driving Ollama-cloud models (deepseek-v4-pro, etc.). Replaces the old path
+# driving Ollama-cloud models (glm-5.2, mistral-large-3, etc.) and the metered
+# Kimi-for-Coding subscription. Replaces the old path
 # that pointed the Claude CLI at the Ollama daemon's Anthropic-compatible
 # endpoint, which drove the cloud models so poorly they ignored Sense (2 sense
 # vs 97 native calls). opencode has a native, authed `ollama-cloud` provider
@@ -14,9 +15,9 @@
 # score/judge/report/snapshot pipeline runs unchanged.
 #
 #   bash bench/drivers/opencode-run.sh --tool baseline,sense --repo ruby_llm
-#   bash bench/drivers/opencode-run.sh --repo discourse --model deepseek-v4-pro:cloud  # campaign id, auto-mapped
-#   bash bench/drivers/opencode-run.sh --repo discourse --model ollama-cloud/qwen3-coder-next  # Qwen coder arm
-#   bash bench/drivers/opencode-run.sh --repo discourse --model kimi-for-coding/k2p7           # Kimi for Coding arm
+#   bash bench/drivers/opencode-run.sh --repo discourse --model glm-5.2:cloud             # GLM arm (Ollama Cloud, campaign id auto-mapped)
+#   bash bench/drivers/opencode-run.sh --repo discourse --model mistral-large-3:cloud     # Mistral arm (Ollama Cloud)
+#   bash bench/drivers/opencode-run.sh --repo discourse --model kimi-for-coding/k3        # Kimi K3 arm
 #
 # Sense via MCP (primary) + CLI (fallback), both counted in channels.json. The
 # sense arm gets opencode's canonical surface from full `sense setup`
@@ -48,7 +49,7 @@ source "$BENCH_DIR/lib/throttle-pacing.sh"
 LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 
-TOOLS_CSV="baseline,sense"; REPO=""; MODEL="kimi-for-coding/k2p7"
+TOOLS_CSV="baseline,sense"; REPO=""; MODEL="kimi-for-coding/k3"
 SESSION_TIMEOUT=""; KEEP_RAW=0
 # Stability knobs (cloud/subscription providers over opencode can be flaky). See the watchdog below.
 # Record whether the caller pinned these BEFORE defaulting, so the metered-arm
@@ -85,8 +86,8 @@ while [[ $# -gt 0 ]]; do case "$1" in
 esac; done
 [[ -n "$REPO" ]] || { echo "need --repo" >&2; exit 1; }
 
-# Accept the campaign's colon id (deepseek-v4-pro:cloud) and map it to opencode's
-# native provider id (ollama-cloud/deepseek-v4-pro). Pass-through if already in
+# Accept the campaign's colon id (glm-5.2:cloud) and map it to opencode's
+# native provider id (ollama-cloud/glm-5.2). Pass-through if already in
 # provider/model form.
 case "$MODEL" in
   */*) : ;;                                   # already provider/model

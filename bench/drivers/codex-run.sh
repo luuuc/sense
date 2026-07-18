@@ -10,7 +10,7 @@
 # score/judge/report/snapshot pipeline runs unchanged.
 #
 #   bash bench/drivers/codex-run.sh --tool baseline,sense --repo ruby_llm
-#   bash bench/drivers/codex-run.sh --repo discourse --model gpt-5.5
+#   bash bench/drivers/codex-run.sh --repo discourse --model gpt-5.6
 #
 # Sense reaches Codex through TWO channels and we report which it used:
 #   - MCP: registered on the sense arm via `-c mcp_servers.sense=...`
@@ -42,7 +42,7 @@ source "$BENCH_DIR/lib/throttle-pacing.sh"
 LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 
-TOOLS_CSV="baseline,sense"; REPO=""; MODEL="gpt-5.5"; SANDBOX="read-only"
+TOOLS_CSV="baseline,sense"; REPO=""; MODEL="gpt-5.6"; SANDBOX="read-only"
 SESSION_TIMEOUT=""; KEEP_RAW=0
 while [[ $# -gt 0 ]]; do case "$1" in
   --tool) TOOLS_CSV="$2"; shift 2;;

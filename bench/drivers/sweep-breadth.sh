@@ -38,19 +38,19 @@
 # error, so on a flat subscription rely on the pacing cooldown + your budget read,
 # not only on this auto-stop.
 #
-#   MODELS="gpt-5.5" bash bench/drivers/sweep-breadth.sh                    # codex, both passes
-#   MODELS="kimi-for-coding/k2p7" bash bench/drivers/sweep-breadth.sh       # opencode/Kimi, both passes
-#   MODELS="gpt-5.5" PASS=1 bash bench/drivers/sweep-breadth.sh             # run-1 board only
-#   MODELS="gpt-5.5" PASS=2 bash bench/drivers/sweep-breadth.sh             # hardening only
-#   MODELS="kimi-for-coding/k2p7" CLOSE="mastodon discourse" PASS=2 ...   # force the close set
-#   MODELS="gpt-5.5" SKIP_BIG=1 bash bench/drivers/sweep-breadth.sh         # defer gitlabhq/rails (cap reality)
-#   SKIP_ENSURE_INDEX=1 MODELS="kimi-for-coding/k2p7" bash bench/...      # env passes through to runs-variance
+#   MODELS="gpt-5.6" bash bench/drivers/sweep-breadth.sh                    # codex, both passes
+#   MODELS="kimi-for-coding/k3" bash bench/drivers/sweep-breadth.sh         # opencode/Kimi, both passes
+#   MODELS="gpt-5.6" PASS=1 bash bench/drivers/sweep-breadth.sh             # run-1 board only
+#   MODELS="gpt-5.6" PASS=2 bash bench/drivers/sweep-breadth.sh             # hardening only
+#   MODELS="kimi-for-coding/k3" CLOSE="mastodon discourse" PASS=2 ...     # force the close set
+#   MODELS="gpt-5.6" SKIP_BIG=1 bash bench/drivers/sweep-breadth.sh         # defer gitlabhq/rails (cap reality)
+#   SKIP_ENSURE_INDEX=1 MODELS="kimi-for-coding/k3" bash bench/...        # env passes through to runs-variance
 #
 set -uo pipefail
 BENCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$BENCH_DIR/.."
 VERTICAL="${VERTICAL-ruby-rails}"; source "$BENCH_DIR/lib/bench-paths.sh"
 
-MODEL="${MODELS:?set MODELS to ONE model id, e.g. MODELS=gpt-5.5}"
+MODEL="${MODELS:?set MODELS to ONE model id, e.g. MODELS=gpt-5.6}"
 JUDGE="${BENCH_JUDGE_MODEL:-claude-sonnet-4-6}"; export BENCH_JUDGE_MODEL="$JUDGE"
 PASS="${PASS:-both}"                # 1 | 2 | both
 WINBAR="${WINBAR:-0.50}"            # close-call threshold (mirrors pergroup VERDICT)

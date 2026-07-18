@@ -27,8 +27,8 @@
 # embed-and-bench — note this overrides the test-huge-first intent, so only set it
 # when the cap forces it (the Opus headline runs WITHOUT SKIP_BIG).
 #
-#   MODELS="ollama-cloud/qwen3-coder-next" RUNS=2 bash bench/drivers/sweep-resume.sh
-#   MODELS="gpt-5.5" RUNS=2 SKIP_BIG=1 bash bench/drivers/sweep-resume.sh   # cap-tight metered arm
+#   MODELS="glm-5.2:cloud" RUNS=2 bash bench/drivers/sweep-resume.sh
+#   MODELS="gpt-5.6" RUNS=2 SKIP_BIG=1 bash bench/drivers/sweep-resume.sh   # cap-tight metered arm
 #
 set -uo pipefail
 BENCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$BENCH_DIR/.."

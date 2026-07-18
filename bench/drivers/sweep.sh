@@ -13,14 +13,14 @@
 #   MODELS="claude-opus-4-8" REPOS="ruby_llm" bash bench/drivers/sweep.sh   # subset
 #   MODELS="deepseek-v4-pro:cloud" REPOS="discourse" bash bench/drivers/sweep.sh
 #     # ollama-cloud ids route to opencode-run.sh (native ollama-cloud provider)
-#   MODELS="ollama-cloud/qwen3-coder-next" bash bench/drivers/sweep.sh
-#     # the Qwen coder arm (see prompts/08-bench-opencode-qwen.md). Other ollama-cloud
-#     # coding ids work too (qwen3-coder:480b, ollama-cloud/kimi-k2.7-code), verified
-#     # live via `opencode models`. Use the FULL provider/model id — the `:cloud`
-#     # shorthand only works for ids without their own tag colon (deepseek-v4-pro:cloud).
-#     # qwen3-coder-next is the campaign Qwen arm; :480b is the heavier MoE alternative.
+#   MODELS="glm-5.2:cloud" bash bench/drivers/sweep.sh
+#     # the GLM arm (Ollama Cloud). Other ollama-cloud coding ids work too
+#     # (mistral-large-3:cloud, ollama-cloud/glm-5.1), verified live via
+#     # `opencode models`. The `:cloud` shorthand works for ids without their own
+#     # tag colon; use the FULL provider/model id otherwise.
+#     # glm-5.2 is the campaign GLM arm; mistral-large-3 is the Mistral arm.
 #     # Cloud (not local) ids only.
-#   MODELS="gpt-5.5 gpt-5.4" REPOS="discourse" bash bench/drivers/sweep.sh
+#   MODELS="gpt-5.6 gpt-5.5" REPOS="discourse" bash bench/drivers/sweep.sh
 #     # gpt-*/codex: ids route to codex-run.sh (Codex CLI, ChatGPT subscription)
 # Dispatch is by model id (see the case below); claude-* stays on the Claude CLI.
 
