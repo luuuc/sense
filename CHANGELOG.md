@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.12.2] - 2026-07-18
+
+### Bug Fixes
+
+- PHP bare function calls must not bind same-named methods
 ## [1.12.1] - 2026-07-17
 
 ### Bug Fixes
