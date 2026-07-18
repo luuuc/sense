@@ -145,6 +145,19 @@ func TestRunScanFlagParseError(t *testing.T) {
 	}
 }
 
+func TestRunScanRejectsPositionalArg(t *testing.T) {
+	// A bare path is silently dropped by flag.Parse (it leaves -dir at ".");
+	// runScan must reject it instead of scanning the CWD. Regression guard for
+	// the repeated `sense scan some/path` slip.
+	var errb bytes.Buffer
+	if code := runScan([]string{"some/path"}, &errb); code != 1 {
+		t.Fatalf("scan positional-arg exit = %d, want 1", code)
+	}
+	if !strings.Contains(errb.String(), "unexpected argument") || !strings.Contains(errb.String(), "-dir") {
+		t.Errorf("stderr = %q, want it to name the unexpected argument and point to -dir", errb.String())
+	}
+}
+
 func TestRunScanCPUProfileCreateError(t *testing.T) {
 	// Parent directory does not exist, so os.Create fails.
 	bad := filepath.Join(t.TempDir(), "missing", "cpu.prof")
