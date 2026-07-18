@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.12.3] - 2026-07-18
+
+### Bug Fixes
+
+- reject positional arguments to sense scan
 ## [1.12.2] - 2026-07-18
 
 ### Bug Fixes
