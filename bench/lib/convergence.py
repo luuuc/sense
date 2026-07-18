@@ -37,12 +37,13 @@ from typing import Any
 # --- Thresholds (mirror locked.yaml; encoded here for stdlib independence) ---
 DISAGREEMENT_THRESHOLD = 0.05            # criterion 1
 DISCRIMINATION_GAP_THRESHOLD = 0.10      # criterion 3
-# Criterion 3 wants ≥4 of 6 scenarios above threshold on the full bench.
+# Criterion 3 wants ≥3 of 4 scenarios above threshold on the full bench
+# (the 1 honesty-ballast small may miss; §7.0 4-set).
 # When the loop runs on a subset (e.g. `--repo flask,gin,axum`), the
-# absolute 4 is mathematically impossible. evaluate_discrimination
+# absolute 3 is mathematically impossible. evaluate_discrimination
 # scales this proportionally: min(DISCRIMINATION_MIN_SCENARIOS, 2/3 of
 # scenarios present, rounded up).
-DISCRIMINATION_MIN_SCENARIOS = 4         # criterion 3 target on full bench
+DISCRIMINATION_MIN_SCENARIOS = 3         # criterion 3 target on full bench
 HELD_OUT_CORRELATION_THRESHOLD = 0.85    # criterion 4
 
 
@@ -223,8 +224,8 @@ def evaluate_discrimination(iter_dir: str) -> dict[str, Any]:
 
     total = len(repos_above) + len(repos_below)
     # Scale the required count when running on a subset surface:
-    # min(target, ceil(2/3 of present)). Full bench (6 repos) → 4.
-    # 3-repo subset → 2. Keeps the criterion meaningful at any surface.
+    # min(target, ceil(2/3 of present)). Full bench (4 repos) → 3.
+    # 2-repo subset → 2. Keeps the criterion meaningful at any surface.
     min_required = (
         DISCRIMINATION_MIN_SCENARIOS
         if total >= DISCRIMINATION_MIN_SCENARIOS

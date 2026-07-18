@@ -68,8 +68,8 @@ mk "$ROOT/bench/verticals/$KEY/scenarios"
 writef "$ROOT/bench/verticals/$KEY/repos.txt" <<EOF
 # $TITLE vertical — repo membership (one repo key per line).
 # Self-contained under verticals/$KEY/: scenarios/ + results/.
-# The SET is 6 repos, firm (manifesto §7.0): 1 framework + 1 big + 2 medium + 2 small
-# (or 2 big + 2 medium + 2 small when the framework is too small/memorized).
+# The SET is 4 repos, firm (manifesto §7.0): 1 framework + 1 big + 1 medium + 1 small
+# (or 2 big + 1 medium + 1 small when the framework is too small/memorized).
 # Fill in after the repo-selection gate (bootstrap-runbook §2); one key per line.
 EOF
 
@@ -156,8 +156,8 @@ The repo-selection deliverable (manifesto §1 + §7, bootstrap-runbook §2): the
 manual judgment gate the bootstrap does NOT automate. Mirror the format of
 [\`../02-rails-vertical/repos.md\`](../02-rails-vertical/repos.md).
 
-> **The SET is 6 repos, firm** (manifesto §7.0): \`1 framework + 1 big + 2 medium +
-> 2 small\` (or \`2 big + 2 medium + 2 small\` when the framework is too
+> **The SET is 4 repos, firm** (manifesto §7.0): \`1 framework + 1 big + 1 medium +
+> 1 small\` (or \`2 big + 1 medium + 1 small\` when the framework is too
 > small/memorized). Two independent win pillars; the discriminator picks its own
 > repo; each slot carries a same-type backup (swap is the LAST resort).
 
@@ -182,6 +182,6 @@ fi
 echo ""
 echo "== done: $made created, $skipped already present =="
 echo "Next (bootstrap-runbook):"
-echo "  2. choose the 6 repos + contracts -> ${DOCDIR:+${DOCDIR#$ROOT/}/}repos.md, fill bench/verticals/$KEY/repos.txt"
+echo "  2. choose the 4 repos + contracts -> ${DOCDIR:+${DOCDIR#$ROOT/}/}repos.md, fill bench/verticals/$KEY/repos.txt"
 echo "  3. pin commits in bench/PINNED_COMMITS.json, clone, strip banners, freeze-heldout.sh"
 echo "  4. per repo:  bash bench/drivers/vertical-loop.sh <repo>   (VERTICAL=$KEY)"
