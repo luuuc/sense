@@ -161,6 +161,15 @@ func runScan(args []string, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	// `sense scan` takes no positional arguments: the project root is the -dir
+	// flag. Go's flag parser silently drops a bare path (`sense scan some/path`
+	// leaves -dir at "." and scans the CWD instead), which has misled users into
+	// rescanning the wrong tree. Reject it loudly rather than pretend the path
+	// was honored.
+	if fs.NArg() > 0 {
+		_, _ = fmt.Fprintf(stderr, "sense scan: unexpected argument %q; use -dir %s to set the project root\n", fs.Arg(0), fs.Arg(0))
+		return 1
+	}
 
 	// stopProfile is non-nil only when CPU profiling is active. It is invoked
 	// explicitly on the success path (never via defer) so an error return leaves
