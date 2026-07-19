@@ -608,6 +608,92 @@ func TestBuildBlastResponseAreaExemplarIsHighestConfidence(t *testing.T) {
 	}
 }
 
+// TestBuildBlastResponseFanCarrierExemplar pins the in-degree tie-break:
+// within an area, equal-confidence callers rank by fan (CallerFan) DESC
+// before ID ASC, so a fan-carrier the agent can pivot to is the area's
+// exemplar even when a leaf caller has a lower ID. The hub area holds a
+// leaf (low ID, fan 0) and a carrier (higher ID, fan 14) at EQUAL
+// confidence; 60 single-caller filler areas push the total past
+// directEnumCap so the hub area seats exactly one exemplar. Under the
+// old conf-then-ID order the leaf would win; only the fan key selects
+// the carrier.
+func TestBuildBlastResponseFanCarrierExemplar(t *testing.T) {
+	hubArea := "app/support"
+
+	var directCallers []model.Symbol
+	tiers := make(map[int64]blast.Tier)
+	conf := map[int64]float64{}
+	paths := map[int64]string{}
+	var id int64
+
+	// 60 filler callers, one per area, so the cap binds and the hub area
+	// gets a single seat.
+	for i := 0; i < 60; i++ {
+		id++
+		directCallers = append(directCallers, model.Symbol{ID: id, Qualified: fmt.Sprintf("Filler%d", id), FileID: id})
+		tiers[id] = blast.TierBreaks
+		conf[id] = 0.5
+		paths[id] = fmt.Sprintf("lib/area%02d/file.rb", i)
+	}
+	// Hub area: leaf first (lower ID), carrier second (higher ID), equal
+	// confidence. Only the carrier has fan.
+	leafID := id + 1
+	carrierID := id + 2
+	for _, hc := range []struct {
+		id   int64
+		name string
+	}{{leafID, "LeafCaller"}, {carrierID, "FanCarrier"}} {
+		directCallers = append(directCallers, model.Symbol{ID: hc.id, Qualified: hc.name, FileID: hc.id})
+		tiers[hc.id] = blast.TierBreaks
+		conf[hc.id] = 0.9
+		paths[hc.id] = fmt.Sprintf("%s/file%d.rb", hubArea, hc.id)
+	}
+	files := func(fid int64) (string, bool) { p, ok := paths[fid]; return p, ok }
+
+	total := len(directCallers)
+	r := blast.Result{
+		Symbol:           model.Symbol{ID: 0, Qualified: "Subject"},
+		DirectCallers:    directCallers,
+		AffectedTests:    []string{},
+		TotalAffected:    total,
+		SymbolTiers:      tiers,
+		DirectConfidence: conf,
+		CallerFan:        map[int64]int{carrierID: 14},
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	if len(resp.DirectCallers) != directEnumCap {
+		t.Fatalf("enumerated = %d, want %d", len(resp.DirectCallers), directEnumCap)
+	}
+
+	// The hub area's single seat goes to the fan-carrier, not the
+	// lower-ID leaf.
+	sawCarrier, sawLeaf := false, false
+	for _, c := range resp.DirectCallers {
+		if c.Symbol == "FanCarrier" {
+			sawCarrier = true
+		}
+		if c.Symbol == "LeafCaller" {
+			sawLeaf = true
+		}
+	}
+	if !sawCarrier {
+		t.Errorf("hub area exemplar should be FanCarrier (fan 14), not enumerated")
+	}
+	if sawLeaf {
+		t.Errorf("LeafCaller enumerated: hub area seated the leaf over the fan-carrier")
+	}
+
+	// by_area sum + total stay truthful over the FULL set.
+	if got := sumAreas(resp.DirectCallersByArea); got != total {
+		t.Errorf("by_area sum = %d, want %d", got, total)
+	}
+	if resp.TotalAffected != total {
+		t.Errorf("TotalAffected = %d, want %d", resp.TotalAffected, total)
+	}
+}
+
 func TestBuildBlastResponseTierPartitioning(t *testing.T) {
 	// 3 Tier-1 callers and 2 Tier-2 callers. Tier-2 items should
 	// appear in References, not DirectCallers.

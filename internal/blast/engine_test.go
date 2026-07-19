@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1789,4 +1790,150 @@ func TestComputeExpandFrontierErrors(t *testing.T) {
 			t.Error("expected error when context is cancelled, got nil")
 		}
 	})
+}
+
+// TestBlastFrontierEvictionKeepsFanCarriers reproduces the laravel-framework
+// Container/app() gap (F-4): when hop-1 sources exceed MaxFrontierWidth with
+// equal path confidence, the frontier cap must not evict a fan-carrier (a
+// caller that itself has callers) in favor of leaf callers, because eviction
+// deletes the carrier's entire undiscovered subtree from the radius. On the
+// real index, `app` (in-degree 110) was dropped among 685 confidence-1.0 ties
+// and 38 files of helper-reached consumers exited total_affected.
+func TestBlastFrontierEvictionKeepsFanCarriers(t *testing.T) {
+	fix := newFixtureDB(t)
+	hub := fix.addSymbol(t, "Hub")
+
+	// Leaf callers first, so the fan-carrier lands last (highest symbol ID)
+	// and loses any insertion-order or ID-order tie-break.
+	callerCount := blast.MaxFrontierWidth + 100
+	for i := 0; i < callerCount; i++ {
+		caller := fix.addSymbol(t, fmt.Sprintf("Leaf%d", i))
+		fix.addEdge(t, caller, hub, model.EdgeCalls, 1.0)
+	}
+	carrier := fix.addSymbol(t, "Carrier")
+	fix.addEdge(t, carrier, hub, model.EdgeCalls, 1.0)
+	downstream := fix.addSymbol(t, "Downstream")
+	fix.addEdge(t, downstream, carrier, model.EdgeCalls, 1.0)
+	// A weaker caller exercises the confidence branch of the frontier
+	// sort (everything above ties at 1.0).
+	weak := fix.addSymbol(t, "WeakCaller")
+	fix.addEdge(t, weak, hub, model.EdgeCalls, 0.8)
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{hub}, blast.Options{
+		MaxHops:    2,
+		MaxResults: callerCount + 10,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	found := map[int64]bool{}
+	for _, c := range res.DirectCallers {
+		found[c.ID] = true
+	}
+	for _, hop := range res.IndirectCallers {
+		found[hop.Symbol.ID] = true
+	}
+	if !found[carrier] {
+		t.Error("fan-carrier evicted from the frontier despite having downstream callers")
+	}
+	if !found[downstream] {
+		t.Error("downstream caller missing: its carrier's eviction deleted the subtree from the radius")
+	}
+}
+
+// TestBlastCapResultsSurfacesFanCarriers pins the output half of the F-4 fix:
+// when shown callers are capped among equal-confidence production direct
+// callers, a fan-carrier must rank above leaf callers (in-degree before the ID
+// tie-break), so an agent can see it and pivot to its caller fan. Without it,
+// the shown set is an arbitrary ID-ordered subset and a carrier like `app`
+// (110 callers behind it) can never surface on a hub anchor.
+func TestBlastCapResultsSurfacesFanCarriers(t *testing.T) {
+	fix := newFixtureDB(t)
+	hub := fix.addSymbol(t, "Hub")
+
+	const maxResults = 50
+	callerCount := maxResults + 40 // over the cap, under MaxFrontierWidth
+	for i := 0; i < callerCount; i++ {
+		caller := fix.addSymbol(t, fmt.Sprintf("Leaf%d", i))
+		fix.addEdge(t, caller, hub, model.EdgeCalls, 1.0)
+	}
+	carrier := fix.addSymbol(t, "Carrier")
+	fix.addEdge(t, carrier, hub, model.EdgeCalls, 1.0)
+	for i := 0; i < 3; i++ {
+		sub := fix.addSymbol(t, fmt.Sprintf("Sub%d", i))
+		fix.addEdge(t, sub, carrier, model.EdgeCalls, 1.0)
+	}
+
+	res, err := blast.Compute(context.Background(), fix.db, []int64{hub}, blast.Options{
+		MaxHops:    2,
+		MaxResults: maxResults,
+	})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+
+	for _, c := range res.DirectCallers {
+		if c.ID == carrier {
+			return
+		}
+	}
+	t.Errorf("fan-carrier not in the %d shown direct callers: capped output hides the one caller worth pivoting on", len(res.DirectCallers))
+}
+
+// Compute with no seed IDs is a caller bug surfaced as an error, not a panic.
+func TestComputeEmptySymbolIDs(t *testing.T) {
+	fix := newFixtureDB(t)
+	if _, err := blast.Compute(context.Background(), fix.db, nil, blast.Options{}); err == nil {
+		t.Error("expected error for empty symbolIDs, got nil")
+	}
+}
+
+// errAfterCtx reports no Done channel (so database/sql never cancels a
+// query) but a non-nil Err, exercising Compute's per-hop cancellation
+// check in isolation from the query paths.
+type errAfterCtx struct{ context.Context }
+
+func (errAfterCtx) Err() error                  { return context.Canceled }
+func (errAfterCtx) Done() <-chan struct{}       { return nil }
+func (errAfterCtx) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func TestComputeCancellationAtHopBoundary(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "Subject")
+	fix.addEdge(t, fix.addSymbol(t, "Caller"), subject, model.EdgeCalls, 1.0)
+
+	_, err := blast.Compute(errAfterCtx{context.Background()}, fix.db, []int64{subject}, blast.Options{MaxHops: 1})
+	if err == nil || !strings.Contains(err.Error(), "cancelled at hop") {
+		t.Errorf("expected hop-boundary cancellation error, got %v", err)
+	}
+}
+
+// A query failure inside a hop expansion surfaces as an error, not a
+// silent empty radius.
+func TestComputeExpandHopErrorPropagates(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "Subject")
+	fix.addEdge(t, fix.addSymbol(t, "Caller"), subject, model.EdgeCalls, 1.0)
+	if _, err := fix.db.Exec("DROP TABLE sense_edges"); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	if _, err := blast.Compute(context.Background(), fix.db, []int64{subject}, blast.Options{MaxHops: 1}); err == nil {
+		t.Error("expected error when edge expansion fails, got nil")
+	}
+}
+
+// A failed affected-tests lookup surfaces as an error, not a silent empty
+// test list.
+func TestComputeAffectedTestsErrorPropagates(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "Subject")
+	fix.addEdge(t, fix.addSymbol(t, "Caller"), subject, model.EdgeCalls, 1.0)
+	if _, err := fix.db.Exec("DROP TABLE sense_files"); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	_, err := blast.Compute(context.Background(), fix.db, []int64{subject}, blast.Options{MaxHops: 1, IncludeTests: true})
+	if err == nil || !strings.Contains(err.Error(), "load tests") {
+		t.Errorf("expected load-tests error, got %v", err)
+	}
 }

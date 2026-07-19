@@ -304,7 +304,7 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 				seenFiles = append(seenFiles, file)
 				continue
 			}
-			tier1Direct = append(tier1Direct, rankedCaller{entry: entry, area: areaOf(file), id: c.ID, conf: r.DirectConfidence[c.ID]})
+			tier1Direct = append(tier1Direct, rankedCaller{entry: entry, area: areaOf(file), id: c.ID, conf: r.DirectConfidence[c.ID], fan: r.CallerFan[c.ID]})
 		} else {
 			tier2All = append(tier2All, entry)
 		}
@@ -659,12 +659,15 @@ func BuildDiffBlastResponseSeen(ctx context.Context, ref string, results []blast
 
 // rankedCaller pairs a tier-1 direct caller's wire entry with the keys
 // that drive area-stratified enumeration: area groups callers into
-// subsystems, conf/id pick the exemplar within an area.
+// subsystems, conf/fan/id pick the exemplar within an area (fan is the
+// caller's in-degree, see blast.Result.CallerFan, so a fan-carrier the
+// agent can pivot to outranks equal-confidence leaf callers).
 type rankedCaller struct {
 	entry BlastCaller
 	area  string
 	id    int64
 	conf  float64
+	fan   int
 }
 
 // areaOf returns the subsystem key for a file — its parent directory,
@@ -682,7 +685,7 @@ func areaOf(file string) string {
 // citable exemplar instead of being crowded out by a big low-ID area.
 // Areas are visited by descending member count, tiebreak area-name ASC;
 // within an area the exemplar order is the existing signal (confidence
-// DESC, then ID ASC). The returned slice puts production callers before
+// DESC, then in-degree DESC, then ID ASC). The returned slice puts production callers before
 // test-file callers; within each class it stays area-clustered in that
 // same visitation order (a mixed prod/test area appears in both classes).
 // Selection and order are deterministic across builds.
@@ -709,6 +712,9 @@ func enumerateByArea(callers []rankedCaller, limit int) []BlastCaller {
 		sort.SliceStable(b, func(i, j int) bool {
 			if b[i].conf != b[j].conf {
 				return b[i].conf > b[j].conf
+			}
+			if b[i].fan != b[j].fan {
+				return b[i].fan > b[j].fan
 			}
 			return b[i].id < b[j].id
 		})

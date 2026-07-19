@@ -178,6 +178,13 @@ type Result struct {
 	// relevant callers, not an arbitrary (ID-ordered) prefix.
 	DirectConfidence map[int64]float64
 
+	// CallerFan records each capped caller's in-degree, keyed by symbol ID.
+	// Populated only when the result cap engaged (nil otherwise): the same
+	// tie-break capResults uses among equal-confidence callers, exported so
+	// response shapers rank a fan-carrier (a caller worth pivoting to, e.g.
+	// laravel's app() helper) above leaf callers within an enumeration cap.
+	CallerFan map[int64]int
+
 	EdgesTraversed    int
 	SubjectHasCallees bool
 	// ViewReached is true when a view template (ERB) reaches the subject via a
@@ -272,7 +279,9 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	// over maps and the common under-cap blast never pays the lookup.
 	var testFlags map[int64]bool
 	if totalAffectedCount > opts.MaxResults {
-		testFlags = testFileFlags(ctx, db, append(append(make([]int64, 0, totalAffectedCount), directIDs...), indirectIDs...))
+		allIDs := append(append(make([]int64, 0, totalAffectedCount), directIDs...), indirectIDs...)
+		testFlags = testFileFlags(ctx, db, allIDs)
+		state.fanIn = incomingEdgeCounts(ctx, db, allIDs)
 	}
 	directIDs, indirectIDs = state.capResults(directIDs, indirectIDs, testFlags, opts.MaxResults)
 
@@ -320,6 +329,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		DirectTemporalIDs:      directTemporalIDs,
 		DirectEdgeSites:        directEdgeSites,
 		DirectConfidence:       directConfidence,
+		CallerFan:              state.fanIn,
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
@@ -369,14 +379,17 @@ func (s *bfsState) loadEdgeTableGroups(ctx context.Context, db *sql.DB, subject 
 // the frontier but are excluded from output, the current frontier, and the
 // running edge/truncation counters.
 type bfsState struct {
-	visited        map[int64]int
-	predecessor    map[int64]int64
-	viaTemporal    map[int64]bool
-	visitedKind    map[int64]string
-	pathConf       map[int64]float64
-	edgeSites      map[int64]EdgeSite
-	frontier       []int64
-	childSet       map[int64]struct{}
+	visited     map[int64]int
+	predecessor map[int64]int64
+	viaTemporal map[int64]bool
+	visitedKind map[int64]string
+	pathConf    map[int64]float64
+	edgeSites   map[int64]EdgeSite
+	frontier    []int64
+	childSet    map[int64]struct{}
+	// fanIn holds per-caller in-degree, populated only when the result cap
+	// bites (see Compute); capResults reads a nil map as all-zero.
+	fanIn          map[int64]int
 	truncated      bool
 	edgesTraversed int
 }
@@ -448,7 +461,7 @@ func (s *bfsState) expandOneHop(ctx context.Context, db *sql.DB, hop int, opts O
 
 	bySource, order := s.groupBySource(pairs, opts)
 	next := s.admitSources(order, bySource, hop)
-	s.frontier = s.capFrontier(next)
+	s.frontier = s.capFrontier(ctx, db, next)
 	return nil
 }
 
@@ -539,17 +552,27 @@ func (s *bfsState) admitSources(order []int64, bySource map[int64][]hopCand, hop
 	return next
 }
 
-// capFrontier caps the next frontier to MaxFrontierWidth, keeping the
-// highest-confidence nodes. Evicted nodes are removed from visited so they may
-// be re-discovered via a stronger path in a later hop — this preserves the
-// highest-confidence paths. It records truncation when eviction happens.
-func (s *bfsState) capFrontier(next []int64) []int64 {
+// capFrontier caps the next frontier to MaxFrontierWidth: keep the highest
+// path confidence; among the equal-confidence band straddling the cut, keep
+// the nodes most likely to carry undiscovered callers (highest in-degree);
+// among those, lowest symbol ID for determinism. Evicting a node deletes its
+// entire unexplored subtree from the radius (laravel Container/app(): the
+// app() helper carried a 110-caller fan, all silently dropped by a
+// confidence-only tie), so in-degree, an upper bound on what the eviction
+// discards next hop, is the tie-break. Evicted nodes are removed from
+// visited so they may be re-discovered via a stronger path in a later hop.
+// It records truncation when eviction happens.
+func (s *bfsState) capFrontier(ctx context.Context, db *sql.DB, next []int64) []int64 {
 	if len(next) <= MaxFrontierWidth {
 		return next
 	}
 	sort.Slice(next, func(i, j int) bool {
-		return s.pathConf[next[i]] > s.pathConf[next[j]]
+		if s.pathConf[next[i]] != s.pathConf[next[j]] {
+			return s.pathConf[next[i]] > s.pathConf[next[j]]
+		}
+		return next[i] < next[j]
 	})
+	s.rankTieBand(ctx, db, next)
 	evicted := next[MaxFrontierWidth:]
 	next = next[:MaxFrontierWidth]
 	for _, id := range evicted {
@@ -561,6 +584,32 @@ func (s *bfsState) capFrontier(next []int64) []int64 {
 	}
 	s.truncated = true
 	return next
+}
+
+// rankTieBand reorders the equal-confidence run straddling the frontier cap
+// cut by in-degree (then ID), so the cap keeps fan-carriers. Only that band is
+// re-ranked: nodes above it survive regardless, nodes below are evicted
+// regardless, so the in-degree lookup is paid only for the contested slice and
+// only when the cap bites. A nil count map (query failure) leaves the
+// confidence+ID order, the same degradation contract as testFileFlags.
+func (s *bfsState) rankTieBand(ctx context.Context, db *sql.DB, next []int64) {
+	cut := s.pathConf[next[MaxFrontierWidth-1]]
+	lo := sort.Search(len(next), func(i int) bool { return s.pathConf[next[i]] <= cut })
+	hi := sort.Search(len(next), func(i int) bool { return s.pathConf[next[i]] < cut })
+	if hi <= MaxFrontierWidth {
+		return
+	}
+	band := next[lo:hi]
+	fan := incomingEdgeCounts(ctx, db, band)
+	if fan == nil {
+		return
+	}
+	sort.Slice(band, func(i, j int) bool {
+		if fan[band[i]] != fan[band[j]] {
+			return fan[band[i]] > fan[band[j]]
+		}
+		return band[i] < band[j]
+	})
 }
 
 // partition splits the visited set into direct callers (hop ≤1) and indirect
@@ -615,6 +664,11 @@ func (s *bfsState) capResults(directIDs, indirectIDs []int64, testFlags map[int6
 	//     Device: 49 setUpTestData callers vs the scattered cross-app ones);
 	//   - direct-over-indirect keeps the "what breaks?" signal — a direct
 	//     caller must not be evicted to make room for a weaker indirect one;
+	//   - fan-carriers over leaves among remaining ties: a caller that itself
+	//     has callers is the one worth surfacing on a hub anchor, because the
+	//     agent can pivot to its fan (laravel Container: the app() helper and
+	//     its 110 callers could never appear among 449 equal-confidence
+	//     production direct callers under an ID-only tie-break);
 	//   - the ID tie-break makes the kept set deterministic, so repeated
 	//     blasts of the same symbol return the same callers (without it an
 	//     unstable sort keeps an arbitrary subset that varies run to run and
@@ -628,6 +682,9 @@ func (s *bfsState) capResults(directIDs, indirectIDs []int64, testFlags map[int6
 		}
 		if all[i].direct != all[j].direct {
 			return all[i].direct
+		}
+		if s.fanIn[all[i].id] != s.fanIn[all[j].id] {
+			return s.fanIn[all[i].id] > s.fanIn[all[j].id]
 		}
 		return all[i].id < all[j].id
 	})
@@ -963,6 +1020,24 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64) ([]edgePa
 		_ = rows.Close()
 	}
 	return out, nil
+}
+
+// incomingEdgeCounts returns each id's in-degree under the same edge
+// predicate the BFS traverses: it reuses expandFrontier (same filter, same
+// parameter chunking) and tallies pairs per target, so the count is exactly
+// "how many callers would the BFS discover behind this node". Returns nil on
+// query error; callers degrade to their in-degree-free ordering, mirroring
+// the testFileFlags contract.
+func incomingEdgeCounts(ctx context.Context, db *sql.DB, ids []int64) map[int64]int {
+	pairs, err := expandFrontier(ctx, db, ids)
+	if err != nil {
+		return nil
+	}
+	counts := make(map[int64]int, len(ids))
+	for _, p := range pairs {
+		counts[p.target]++
+	}
+	return counts
 }
 
 // Risk tier labels. Exported so CLI / MCP consumers can compare
