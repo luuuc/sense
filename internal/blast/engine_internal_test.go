@@ -3,6 +3,7 @@ package blast
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -408,5 +409,144 @@ func TestHasTemporal(t *testing.T) {
 	}
 	if hasTemporal(nil, []CallerHop{{ViaTemporal: false}}) {
 		t.Error("no temporal edges should report none")
+	}
+}
+
+// In-degree is a TIE-BREAK, not a rank: it sits after production-over-test,
+// confidence, and direct-over-indirect, and only displaces the ID order. A
+// test-file caller or an indirect caller with a huge fan must never evict a
+// production direct caller. If a future edit promotes the fan key, this test
+// is what notices.
+func TestCapResultsFanBreaksTiesButNeverOutranks(t *testing.T) {
+	// Direct leaf (no fan) vs indirect fan-carrier: direct wins.
+	s := &bfsState{
+		pathConf: map[int64]float64{1: 1.0, 2: 1.0},
+		fanIn:    map[int64]int{2: 100},
+	}
+	direct, indirect := s.capResults([]int64{1}, []int64{2}, nil, 1)
+	if len(direct) != 1 || direct[0] != 1 || len(indirect) != 0 {
+		t.Errorf("directness must outrank fan: got direct=%v indirect=%v, want direct=[1]", direct, indirect)
+	}
+
+	// Production leaf vs test-file fan-carrier: production wins.
+	s = &bfsState{
+		pathConf: map[int64]float64{1: 1.0, 2: 1.0},
+		fanIn:    map[int64]int{2: 100},
+	}
+	direct, _ = s.capResults([]int64{1, 2}, nil, map[int64]bool{2: true}, 1)
+	if len(direct) != 1 || direct[0] != 1 {
+		t.Errorf("production must outrank fan: got %v, want [1]", direct)
+	}
+
+	// Equal everything: fan displaces the lower-ID leaf.
+	s = &bfsState{
+		pathConf: map[int64]float64{1: 1.0, 2: 1.0},
+		fanIn:    map[int64]int{2: 3},
+	}
+	direct, _ = s.capResults([]int64{1, 2}, nil, nil, 1)
+	if len(direct) != 1 || direct[0] != 2 {
+		t.Errorf("among full ties the fan-carrier must survive the cap: got %v, want [2]", direct)
+	}
+}
+
+// rankTieBand's two degradation paths: a tie band fully inside the kept
+// prefix needs no in-degree lookup (the db is never touched), and a failed
+// count query leaves the confidence+ID order intact instead of erroring the
+// blast, the same degrade contract as testFileFlags.
+func TestRankTieBandDegradations(t *testing.T) {
+	t.Run("band-inside-kept-prefix", func(t *testing.T) {
+		s := &bfsState{pathConf: map[int64]float64{}}
+		next := make([]int64, MaxFrontierWidth+1)
+		for i := range next {
+			id := int64(i + 1)
+			next[i] = id
+			s.pathConf[id] = 1.0
+		}
+		// Unique confidence at the cut, everything after strictly weaker:
+		// the tie band around the cut ends inside the kept prefix.
+		s.pathConf[next[MaxFrontierWidth-1]] = 0.9
+		s.pathConf[next[MaxFrontierWidth]] = 0.5
+		before := append([]int64{}, next...)
+		s.rankTieBand(context.Background(), nil, next) // nil db: must not be touched
+		for i := range next {
+			if next[i] != before[i] {
+				t.Fatalf("order changed at %d: got %d, want %d", i, next[i], before[i])
+			}
+		}
+	})
+
+	t.Run("nil-counts-keeps-order", func(t *testing.T) {
+		db, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = db.Close() // closed db: incomingEdgeCounts returns nil
+		s := &bfsState{pathConf: map[int64]float64{}}
+		next := make([]int64, MaxFrontierWidth+10)
+		for i := range next {
+			id := int64(i + 1)
+			next[i] = id
+			s.pathConf[id] = 1.0 // every node ties: band straddles the cut
+		}
+		before := append([]int64{}, next...)
+		s.rankTieBand(context.Background(), db, next)
+		for i := range next {
+			if next[i] != before[i] {
+				t.Fatalf("order changed at %d: got %d, want %d", i, next[i], before[i])
+			}
+		}
+	})
+}
+
+// incomingEdgeCounts chunks its IN() list at 500 parameters; a request over
+// the chunk size must count across both batches.
+func TestIncomingEdgeCountsChunks(t *testing.T) {
+	ctx := context.Background()
+	adapter, err := sqlite.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = adapter.Close() }()
+	fid, err := adapter.WriteFile(ctx, &model.File{
+		Path: "f.rb", Language: "ruby", Hash: "h", Symbols: 1, IndexedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSym := func(name string) int64 {
+		id, err := adapter.WriteSymbol(ctx, &model.Symbol{
+			FileID: fid, Name: name, Qualified: name, Kind: model.KindClass, LineStart: 1, LineEnd: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	caller := newSym("Caller")
+	first := newSym("First") // lands in chunk 1
+	var last int64
+	ids := make([]int64, 0, 502)
+	ids = append(ids, first)
+	for i := 0; i < 501; i++ {
+		last = newSym(fmt.Sprintf("Filler%03d", i))
+		ids = append(ids, last) // last lands in chunk 2
+	}
+	caller2 := newSym("Caller2")
+	for _, e := range []struct{ src, dst int64 }{{caller, first}, {caller, last}, {caller2, last}} {
+		src := e.src
+		if _, err := adapter.WriteEdge(ctx, &model.Edge{
+			SourceID: &src, TargetID: e.dst, Kind: model.EdgeCalls, FileID: fid, Confidence: 1.0,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	db := adapter.DB()
+	counts := incomingEdgeCounts(ctx, db, ids)
+	if counts == nil {
+		t.Fatal("expected counts, got nil")
+	}
+	if counts[first] != 1 || counts[last] != 2 {
+		t.Errorf("counts = first:%d last:%d, want 1 and 2 (across chunks)", counts[first], counts[last])
 	}
 }
