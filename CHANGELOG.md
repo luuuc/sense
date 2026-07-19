@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.12.4] - 2026-07-19
+
+### Enhancements
+
+- rank equal-confidence cap ties by caller in-degree
+- surface fan-carriers in capped blast caller enumeration
 ## [1.12.3] - 2026-07-18
 
 ### Bug Fixes
