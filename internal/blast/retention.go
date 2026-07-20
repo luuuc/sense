@@ -42,6 +42,14 @@ type RetainedHolder struct {
 	// re-derive it with a per-interface graph join. When several carriers
 	// satisfy Via, the lowest-ID one is recorded (mirrors the Via rule).
 	Carrier model.Symbol
+	// ViaSatisfiers is how many concrete types satisfy Via index-wide: the
+	// bare promiscuity fact, no threshold and no verdict. A row on an
+	// interface hundreds of unrelated types satisfy is far likelier to be a
+	// coincidence of shape than one on a two-implementation contract, and the
+	// consumer is the one who can judge which. It is never a reason to DROP a
+	// row: real retention rides generic interfaces too (measured on pebble,
+	// whose paid-win ring runs through InternalIterator).
+	ViaSatisfiers int
 	// Chain is a declared containment path from Carrier down to the
 	// subject (inclusive on both ends): every hop is a composes/includes
 	// edge the index holds, so the whole path is a statable structural
@@ -57,6 +65,24 @@ type retainedRoute struct {
 	via     int64
 	carrier int64
 }
+
+// RetentionPurity records the satisfiers the ring refused to launder through:
+// carriers declared in test files. A test-only satisfier proves nothing about
+// production retention, and one such struct embedding both the subject and a
+// dozen interfaces fabricates every composer of all twelve as a may-retain
+// holder (measured on temporal: 52 of 100 rows). Excluded is how many distinct
+// satisfiers were refused; Names carries up to retentionExcludedNamesCap of
+// them so the exclusion is auditable rather than a silent filter.
+type RetentionPurity struct {
+	Excluded int
+	Names    []string
+}
+
+// retentionExcludedNamesCap bounds the excluded-satisfier names disclosed in
+// the note. Five names is enough to recognise the shape (one test harness
+// struct, a couple of fakes) without spending the ring's token budget on an
+// exclusion list the consumer never acts on; Excluded carries the true count.
+const retentionExcludedNamesCap = 5
 
 const (
 	// retentionMaxLevels bounds the carrier fixpoint depth. Measured worst
@@ -95,29 +121,81 @@ func retentionSubjectKind(kind model.SymbolKind) bool {
 	}
 }
 
+// retentionOutcome is one retention computation's full answer: the shown
+// holders plus everything the consumer needs to judge them: the full count
+// behind the shown slice, whether a cap truncated the computation, and the
+// purity exclusions the ring applied.
+type retentionOutcome struct {
+	holders     []RetainedHolder
+	count       int
+	offset      int
+	truncated   bool
+	purity      RetentionPurity
+	fingerprint string
+}
+
 // loadRetention computes the retention group for the subject: the carrier
 // fixpoint (internal), one laundering round over it, then exclusion,
-// hydration, ordering, and the result cap. Returns the holders, the full
-// post-exclusion count (never reduced by the cap), and whether any cap
-// truncated the computation.
-func loadRetention(ctx context.Context, db *sql.DB, subject model.Symbol, seedIDs, directComposerIDs []int64, childSet, excludeGrouped map[int64]struct{}, isSelf selfMethodFn, maxResults int) ([]RetainedHolder, int, bool, error) {
+// hydration, ordering, and the result cap. The returned count is the full
+// post-exclusion size, never reduced by the cap.
+func loadRetention(ctx context.Context, db *sql.DB, subject model.Symbol, seedIDs, directComposerIDs []int64, childSet, excludeGrouped map[int64]struct{}, isSelf selfMethodFn, page retentionPage) (retentionOutcome, error) {
 	if !retentionSubjectKind(subject.Kind) {
-		return nil, 0, false, nil
+		return retentionOutcome{}, nil
 	}
 	carriers, parents, truncated, err := carrierClosure(ctx, db, seedIDs, directComposerIDs)
 	if err != nil {
-		return nil, 0, false, err
+		return retentionOutcome{}, err
 	}
-	holderVia, err := launderOneRound(ctx, db, carriers)
+	holderVia, purity, err := launderOneRound(ctx, db, carriers)
 	if err != nil {
-		return nil, 0, false, err
+		return retentionOutcome{}, err
 	}
 	kept := excludeRetained(holderVia, carriers, childSet, excludeGrouped)
-	holders, fullCount, capped, err := hydrateRetained(ctx, db, kept, holderVia, newChainTree(parents, seedIDs), isSelf, maxResults)
+	holders, fullCount, capped, err := hydrateRetained(ctx, db, kept, holderVia, newChainTree(parents, seedIDs), isSelf, page)
 	if err != nil {
-		return nil, 0, false, err
+		return retentionOutcome{}, err
 	}
-	return holders, fullCount, truncated || capped, nil
+	out := retentionOutcome{
+		holders:   holders,
+		count:     fullCount,
+		offset:    page.offset,
+		truncated: truncated || capped,
+		purity:    purity,
+	}
+	if fullCount > 0 {
+		// Only a ring that exists can be paged, and only a paged ring needs
+		// the generation stamp: a subject with no holders never pays for it.
+		out.fingerprint = indexFingerprint(ctx, db)
+	}
+	return out, nil
+}
+
+// retentionPage is the window the caller wants of the ring: how many rows to
+// skip, and how many to return. The ring's order is total (see orderRetained),
+// so consecutive windows over one index generation cover the set exactly.
+type retentionPage struct {
+	offset int
+	limit  int
+}
+
+// indexFingerprint identifies the index generation a page was cut from: the
+// file count plus the newest indexed_at stamp, which the watch daemon moves on
+// every rescan that touches anything. Two pages carrying the same fingerprint
+// were cut from the same graph; a mismatch means the ring shifted underneath
+// the cursor and the pages cannot be unioned: the exact silent-incompleteness
+// class the ring must never produce, so it is disclosed, never papered over.
+//
+// Best-effort like the other advisory lookups here: an unreadable stamp yields
+// an empty fingerprint, which claims nothing rather than claiming sameness.
+func indexFingerprint(ctx context.Context, db *sql.DB) string {
+	var files int
+	var newest sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*), MAX(indexed_at) FROM sense_files`).Scan(&files, &newest)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("f%d@%s", files, newest.String)
 }
 
 // carrierClosure walks the reverse composes/includes fixpoint from the seeds:
@@ -267,28 +345,37 @@ func liveFrontierRemains(carriers map[int64]struct{}, level []int64) bool {
 // those interfaces' reverse composers/embedders. Returns holder → lowest-ID
 // via-interface so a holder reachable through several interfaces appears
 // once, deterministically.
-func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{}) (map[int64]retainedRoute, error) {
+// The satisfaction pairs are purified first: a satisfier declared in a test
+// file is never nominated as a carrier, and an interface left with no
+// production satisfier stops laundering entirely: its composers are
+// fabrications of the test harness, not of the production graph.
+func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{}) (map[int64]retainedRoute, RetentionPurity, error) {
 	base := sortedIDSet(carriers)
-	ifaces, ifaceCarrier, err := forwardInterfaceTargets(ctx, db, base)
+	satisfies, err := forwardInterfacePairs(ctx, db, base)
 	if err != nil {
-		return nil, err
+		return nil, RetentionPurity{}, err
 	}
+	satisfies, purity, err := dropTestSatisfiers(ctx, db, satisfies)
+	if err != nil {
+		return nil, RetentionPurity{}, err
+	}
+	ifaces, ifaceCarrier := nominateCarriers(satisfies)
 	if len(ifaces) == 0 {
-		return nil, nil
+		return nil, purity, nil
 	}
 	// Screen BEFORE expanding composers — load-bearing ordering: a junk
 	// interface like Closer can carry hundreds of composers that must never
 	// be fetched, so the screen is the perf guard as well as the truth guard.
 	ifaces, err = screenJunkInterfaces(ctx, db, ifaces)
 	if err != nil {
-		return nil, err
+		return nil, purity, err
 	}
 	if len(ifaces) == 0 {
-		return nil, nil
+		return nil, purity, nil
 	}
 	pairs, err := inboundHolderPairs(ctx, db, ifaces, false)
 	if err != nil {
-		return nil, err
+		return nil, purity, err
 	}
 	holderVia := make(map[int64]retainedRoute, len(pairs))
 	for _, p := range pairs {
@@ -296,7 +383,81 @@ func launderOneRound(ctx context.Context, db *sql.DB, carriers map[int64]struct{
 			holderVia[p.source] = retainedRoute{via: p.target, carrier: ifaceCarrier[p.target]}
 		}
 	}
-	return holderVia, nil
+	return holderVia, purity, nil
+}
+
+// dropTestSatisfiers removes satisfaction pairs whose satisfier is declared in
+// a test file, and reports which ones were refused. A test double satisfies
+// interfaces it will never satisfy in production, so laundering through it
+// fabricates holders; the refusal is disclosed rather than silent because the
+// consumer cannot otherwise tell a purified ring from a small one.
+//
+// The flag lookup is best-effort like everywhere else in this package: a
+// failed query yields a nil map, which refuses nothing and degrades to the
+// unpurified ring instead of failing the blast.
+func dropTestSatisfiers(ctx context.Context, db *sql.DB, pairs []holderPair) ([]holderPair, RetentionPurity, error) {
+	if len(pairs) == 0 {
+		return pairs, RetentionPurity{}, nil
+	}
+	sources := make(map[int64]struct{}, len(pairs))
+	for _, p := range pairs {
+		sources[p.source] = struct{}{}
+	}
+	testFlags := testFileFlags(ctx, db, sortedIDSet(sources))
+	kept := make([]holderPair, 0, len(pairs))
+	excluded := make(map[int64]struct{})
+	for _, p := range pairs {
+		if testFlags[p.source] {
+			excluded[p.source] = struct{}{}
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if len(excluded) == 0 {
+		return kept, RetentionPurity{}, nil
+	}
+	names, err := excludedSatisfierNames(ctx, db, sortedIDSet(excluded))
+	if err != nil {
+		return nil, RetentionPurity{}, err
+	}
+	return kept, RetentionPurity{Excluded: len(excluded), Names: names}, nil
+}
+
+// excludedSatisfierNames hydrates the first retentionExcludedNamesCap refused
+// satisfiers (ID-ascending, so the sample is stable run to run) into display
+// names. A satisfier that failed to hydrate is skipped rather than rendered as
+// a blank name: the count already carries the magnitude.
+func excludedSatisfierNames(ctx context.Context, db *sql.DB, ids []int64) ([]string, error) {
+	sample := ids
+	if len(sample) > retentionExcludedNamesCap {
+		sample = sample[:retentionExcludedNamesCap]
+	}
+	syms, err := loadSymbols(ctx, db, sample)
+	if err != nil {
+		return nil, fmt.Errorf("blast: excluded satisfiers: %w", err)
+	}
+	names := make([]string, 0, len(sample))
+	for _, id := range sample {
+		if s, ok := syms[id]; ok {
+			names = append(names, s.Name)
+		}
+	}
+	return names, nil
+}
+
+// nominateCarriers reduces purified satisfaction pairs to the candidate
+// via-interfaces plus each interface's nominated carrier: the lowest-ID
+// satisfier, the laundering proof that rides into RetainedHolder.Carrier.
+func nominateCarriers(pairs []holderPair) ([]int64, map[int64]int64) {
+	set := make(map[int64]struct{}, len(pairs))
+	carrier := make(map[int64]int64, len(pairs))
+	for _, p := range pairs {
+		set[p.target] = struct{}{}
+		if lowest, ok := carrier[p.target]; !ok || p.source < lowest {
+			carrier[p.target] = p.source
+		}
+	}
+	return sortedIDSet(set), carrier
 }
 
 // excludeRetained drops holders that already have a stronger home: carriers
@@ -322,10 +483,10 @@ func excludeRetained(holderVia map[int64]retainedRoute, carriers, childSet, excl
 }
 
 // hydrateRetained loads the holder and via-interface symbols, filters the
-// subject's self-members, orders production-first then by ID, and applies the
-// result cap. The returned count is the full post-exclusion size, never the
-// capped one, so a capped list is self-evident to the consumer.
-func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia map[int64]retainedRoute, chains chainTree, isSelf selfMethodFn, maxResults int) ([]RetainedHolder, int, bool, error) {
+// subject's self-members, orders production-first then by ID, and cuts the
+// requested page. The returned count is the full post-exclusion size, never
+// the page's, so a partial page is self-evident to the consumer.
+func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia map[int64]retainedRoute, chains chainTree, isSelf selfMethodFn, page retentionPage) ([]RetainedHolder, int, bool, error) {
 	if len(kept) == 0 {
 		return nil, 0, false, nil
 	}
@@ -352,12 +513,68 @@ func hydrateRetained(ctx context.Context, db *sql.DB, kept []int64, holderVia ma
 	}
 	fullCount := len(holders)
 	orderRetained(ctx, db, holders)
-	capped := false
-	if len(holders) > maxResults {
-		holders = holders[:maxResults]
-		capped = true
+	holders, capped := cutRetentionPage(holders, page)
+	// Stamped after the cap so the count query is scoped to the vias actually
+	// shown: on a hub subject the pre-cap ring can be several hundred rows.
+	if err := stampViaSatisfiers(ctx, db, holders); err != nil {
+		return nil, 0, false, err
 	}
 	return holders, fullCount, capped, nil
+}
+
+// cutRetentionPage takes the requested window out of the ordered ring and
+// reports whether rows exist past its end. An offset beyond the ring yields no
+// rows rather than an error: the count and the note still tell the consumer
+// where the ring actually ends, which is more useful than a rejected call.
+func cutRetentionPage(holders []RetainedHolder, page retentionPage) ([]RetainedHolder, bool) {
+	if page.offset >= len(holders) {
+		// Past the end. There is more ring behind this window whenever the
+		// window skipped a non-empty ring: the caller over-shot the cursor.
+		overshot := page.offset > 0 && len(holders) > 0
+		return nil, overshot
+	}
+	holders = holders[page.offset:]
+	if page.limit > 0 && len(holders) > page.limit {
+		return holders[:page.limit], true
+	}
+	return holders, false
+}
+
+// stampViaSatisfiers annotates each shown row with how many concrete types
+// satisfy its via-interface index-wide (see RetainedHolder.ViaSatisfiers).
+// Interface-kind sources are not counted: an interface embedding an interface
+// extends a contract, it does not satisfy one, so counting it would inflate
+// the stamp with symbols that can never be the runtime value of the field.
+func stampViaSatisfiers(ctx context.Context, db *sql.DB, holders []RetainedHolder) error {
+	vias := make(map[int64]struct{}, len(holders))
+	for _, h := range holders {
+		if h.Via.ID != 0 {
+			vias[h.Via.ID] = struct{}{}
+		}
+	}
+	if len(vias) == 0 {
+		return nil
+	}
+	query := func(placeholders string) string {
+		return `SELECT e.target_id, COUNT(DISTINCT e.source_id) FROM sense_edges e
+		        JOIN sense_symbols s ON s.id = e.source_id
+		        WHERE e.target_id IN (` + placeholders + `)
+		          AND e.kind = 'inherits'
+		          AND s.kind != 'interface'
+		        GROUP BY e.target_id`
+	}
+	pairs, err := queryHolderPairs(ctx, db, sortedIDSet(vias), query)
+	if err != nil {
+		return fmt.Errorf("blast: via satisfier counts: %w", err)
+	}
+	counts := make(map[int64]int64, len(pairs))
+	for _, p := range pairs {
+		counts[p.source] = p.target
+	}
+	for i := range holders {
+		holders[i].ViaSatisfiers = int(counts[holders[i].Via.ID])
+	}
+	return nil
 }
 
 // assembleChain hydrates a chain's IDs whole or not at all: splicing over a
@@ -382,6 +599,15 @@ func assembleChain(syms map[int64]model.Symbol, ids []int64) []model.Symbol {
 // holder but matters less to a lifecycle audit, so it must not crowd the cap.
 // testFileFlags is best-effort: a nil map degrades to pure ID order, still
 // deterministic.
+//
+// This is a TOTAL order and paging depends on it : symbol IDs are
+// unique, so no two rows can compare equal and no pair can swap between two
+// calls on one index: a cursor over the ring therefore covers the set exactly,
+// with no dup and no gap. Blast output order has a recorded nondeterminism
+// history (project ledger), so the property is pinned by an explicit
+// exact-sequence test, not assumed from the comparator's shape. Any new key
+// must be inserted ABOVE the ID tiebreak and re-pinned: adding one below it is
+// dead code, and adding one above reorders every shipped ring.
 func orderRetained(ctx context.Context, db *sql.DB, holders []RetainedHolder) {
 	ids := make([]int64, len(holders))
 	for i, h := range holders {
@@ -593,13 +819,13 @@ func inboundHolderPairs(ctx context.Context, db *sql.DB, ids []int64, includesOn
 	return queryHolderPairs(ctx, db, ids, query)
 }
 
-// forwardInterfaceTargets returns the distinct interface-kind symbols any of
-// ids satisfies or implements (forward inherits edges), plus each interface's
-// lowest-ID satisfying carrier, the laundering proof that rides into
-// RetainedHolder.Carrier. The filter is on the TARGET's symbol kind, never on
-// edge confidence: Go satisfaction edges ride convention confidence but
-// Rust/TS declared implements are full-confidence, and both launder.
-func forwardInterfaceTargets(ctx context.Context, db *sql.DB, ids []int64) ([]int64, map[int64]int64, error) {
+// forwardInterfacePairs returns the (satisfier, interface) rows for every
+// interface-kind symbol any of ids satisfies or implements (forward inherits
+// edges). The filter is on the TARGET's symbol kind, never on edge confidence:
+// Go satisfaction edges ride convention confidence but Rust/TS declared
+// implements are full-confidence, and both launder. The pairs stay unreduced
+// so purity can refuse individual satisfiers before any carrier is nominated.
+func forwardInterfacePairs(ctx context.Context, db *sql.DB, ids []int64) ([]holderPair, error) {
 	query := func(placeholders string) string {
 		return `SELECT DISTINCT e.source_id, e.target_id FROM sense_edges e
 		        JOIN sense_symbols s ON s.id = e.target_id
@@ -607,19 +833,7 @@ func forwardInterfaceTargets(ctx context.Context, db *sql.DB, ids []int64) ([]in
 		          AND e.kind = 'inherits'
 		          AND s.kind = 'interface'`
 	}
-	pairs, err := queryHolderPairs(ctx, db, ids, query)
-	if err != nil {
-		return nil, nil, err
-	}
-	set := make(map[int64]struct{}, len(pairs))
-	carrier := make(map[int64]int64, len(pairs))
-	for _, p := range pairs {
-		set[p.target] = struct{}{}
-		if lowest, ok := carrier[p.target]; !ok || p.source < lowest {
-			carrier[p.target] = p.source
-		}
-	}
-	return sortedIDSet(set), carrier, nil
+	return queryHolderPairs(ctx, db, ids, query)
 }
 
 // nonInterfaceIDs filters ids down to symbols whose kind is not interface.

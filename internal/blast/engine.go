@@ -56,6 +56,13 @@ type Options struct {
 	MinConfidence float64
 	MaxResults    int
 	IncludeTests  bool
+	// RetainedOffset skips that many rows of the retention ring, which is
+	// returned in a total order (see orderRetained). It pages ONLY the ring:
+	// a ring larger than the cap used to be silently trimmed, and a large
+	// truncated list is the shape that costs an agent its trust in the whole
+	// group (measured on teleport: 100 of 455 shown, 135 hidden). The caller
+	// lists are unaffected: they carry their own magnitude fields.
+	RetainedOffset int
 }
 
 // Tier classifies a blast result by its relevance to breakage.
@@ -218,6 +225,18 @@ type Result struct {
 	// so a capped RetainedViaInterfaces list is self-evident from
 	// RetainedCount > len(RetainedViaInterfaces).
 	RetainedCount int
+	// RetainedPurity records the test-file satisfiers the ring refused to
+	// launder through (see RetentionPurity), so the exclusion is auditable
+	// instead of looking like an empty or short ring.
+	RetainedPurity RetentionPurity
+	// RetainedOffset echoes how many ring rows this response skipped, so a
+	// page is self-locating: rows RetainedOffset+1 .. RetainedOffset+len of
+	// RetainedCount.
+	RetainedOffset int
+	// RetainedFingerprint identifies the index generation the ring was cut
+	// from (see indexFingerprint). Pages sharing it are unionable; a
+	// mismatch means the index moved and the pages must not be merged.
+	RetainedFingerprint string
 
 	Truncated bool
 }
@@ -307,7 +326,7 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	symbolTiers := state.buildTiers(directIDs, indirectIDs, symbolsByID, isSelf)
 	subclasses, viaIncludes := state.buildEdgeKindGroups(directIDs, indirectIDs, symbolsByID, isSelf)
 
-	viaComposition, retained, retainedCount, err := state.loadEdgeTableGroups(ctx, db, subject, symbolIDs, seedSet, subclasses, viaIncludes, isSelf, opts.MaxResults)
+	viaComposition, retention, err := state.loadEdgeTableGroups(ctx, db, subject, symbolIDs, seedSet, subclasses, viaIncludes, isSelf, opts)
 	if err != nil {
 		return Result{}, err
 	}
@@ -333,8 +352,11 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 		AffectedSubclasses:     subclasses,
 		AffectedViaComposition: viaComposition,
 		AffectedViaIncludes:    viaIncludes,
-		RetainedViaInterfaces:  retained,
-		RetainedCount:          retainedCount,
+		RetainedViaInterfaces:  retention.holders,
+		RetainedCount:          retention.count,
+		RetainedPurity:         retention.purity,
+		RetainedOffset:         retention.offset,
+		RetainedFingerprint:    retention.fingerprint,
 		SymbolTiers:            symbolTiers,
 		Truncated:              state.truncated,
 	}, nil
@@ -352,24 +374,25 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 // one-node-one-group invariant against the inherits/includes buckets. The
 // composer IDs are fetched once and shared: the composition group and the
 // retention closure's fixpoint level 1 read the same reverse-composes set.
-func (s *bfsState) loadEdgeTableGroups(ctx context.Context, db *sql.DB, subject model.Symbol, symbolIDs []int64, seedSet map[int64]struct{}, subclasses, viaIncludes []model.Symbol, isSelf selfMethodFn, maxResults int) ([]model.Symbol, []RetainedHolder, int, error) {
+func (s *bfsState) loadEdgeTableGroups(ctx context.Context, db *sql.DB, subject model.Symbol, symbolIDs []int64, seedSet map[int64]struct{}, subclasses, viaIncludes []model.Symbol, isSelf selfMethodFn, opts Options) ([]model.Symbol, retentionOutcome, error) {
 	excludeGrouped := symbolIDSet(subclasses, viaIncludes)
 	composerIDs, err := inboundComposers(ctx, db, symbolIDs)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("blast: reverse composition: %w", err)
+		return nil, retentionOutcome{}, fmt.Errorf("blast: reverse composition: %w", err)
 	}
-	viaComposition, err := s.loadReverseComposition(ctx, db, composerIDs, seedSet, excludeGrouped, isSelf, maxResults)
+	viaComposition, err := s.loadReverseComposition(ctx, db, composerIDs, seedSet, excludeGrouped, isSelf, opts.MaxResults)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("blast: reverse composition: %w", err)
+		return nil, retentionOutcome{}, fmt.Errorf("blast: reverse composition: %w", err)
 	}
-	retained, retainedCount, retainedTruncated, err := loadRetention(ctx, db, subject, symbolIDs, composerIDs, s.childSet, excludeGrouped, isSelf, maxResults)
+	retention, err := loadRetention(ctx, db, subject, symbolIDs, composerIDs, s.childSet, excludeGrouped, isSelf,
+		retentionPage{offset: opts.RetainedOffset, limit: opts.MaxResults})
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("blast: retention closure: %w", err)
+		return nil, retentionOutcome{}, fmt.Errorf("blast: retention closure: %w", err)
 	}
-	if retainedTruncated {
+	if retention.truncated {
 		s.truncated = true
 	}
-	return viaComposition, retained, retainedCount, nil
+	return viaComposition, retention, nil
 }
 
 // bfsState carries the mutable traversal state of one blast computation: the

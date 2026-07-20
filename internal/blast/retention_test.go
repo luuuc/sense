@@ -11,6 +11,7 @@ package blast_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -708,4 +709,364 @@ func assertChain(t *testing.T, res blast.Result, holder int64, want []int64) {
 		return
 	}
 	t.Fatalf("holder %d missing from retained rows", holder)
+}
+
+// --- Test-satisfier purity ---
+
+// addTestFileSymbol writes a symbol living in a _test file, so the purity
+// filter's IsTestPath check has something to refuse. The file is created
+// lazily on first use and shared by every later call.
+func (f *fixtureDB) addTestFileSymbol(t *testing.T, name string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	if f.testFileID == 0 {
+		fid, err := f.adapter.WriteFile(ctx, &model.File{
+			Path: "fixture_test.rb", Language: "ruby", Hash: "fixtest",
+			Symbols: 1, IndexedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatalf("WriteFile test: %v", err)
+		}
+		f.testFileID = fid
+	}
+	line := f.nextLine
+	f.nextLine += 10
+	id, err := f.adapter.WriteSymbol(ctx, &model.Symbol{
+		FileID: f.testFileID, Name: name, Qualified: name,
+		Kind: model.KindClass, LineStart: line, LineEnd: line + 5,
+	})
+	if err != nil {
+		t.Fatalf("WriteSymbol %s: %v", name, err)
+	}
+	return id
+}
+
+// testHarnessFixture is the minimized temporal shape: a test-only struct that
+// both carries the subject and satisfies a pile of interfaces, so every
+// composer of those interfaces fabricates a may-retain row (52 of 100 on
+// temporal). FakeHarness is written FIRST so it holds the lowest satisfier ID
+// : the carrier nomination is lowest-ID-wins, so a fixture where the
+// production carrier happens to win anyway would not kill the mutant.
+//
+//	subject <-composes- FakeHarness (test file) -inherits-> FakeOnlyIface <-composes- GhostHolder
+//	subject <-composes- RealCarrier             -inherits-> SharedIface   <-composes- RealHolder
+//	                    FakeHarness             -inherits-> SharedIface
+func testHarnessFixture(t *testing.T) (fix *fixtureDB, subject, realCarrier, ghost, realHolder int64) {
+	t.Helper()
+	fix = newFixtureDB(t)
+	subject = fix.addSymbol(t, "SubjectA")
+	fake := fix.addTestFileSymbol(t, "FakeHarness")
+	realCarrier = fix.addSymbol(t, "RealCarrier")
+
+	fakeOnly := fix.addSymbolWith(t, "FakeOnlyIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitFakeOnlyThing", model.KindMethod, &fakeOnly)
+	shared := fix.addSymbolWith(t, "SharedIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitSharedThing", model.KindMethod, &shared)
+
+	ghost = fix.addSymbol(t, "GhostHolder")
+	realHolder = fix.addSymbol(t, "RealHolder")
+
+	fix.addEdge(t, fake, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, realCarrier, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, fake, fakeOnly, model.EdgeInherits, confConvention)
+	fix.addEdge(t, fake, shared, model.EdgeInherits, confConvention)
+	fix.addEdge(t, realCarrier, shared, model.EdgeInherits, confConvention)
+	fix.addEdge(t, ghost, fakeOnly, model.EdgeComposes, 0.9)
+	fix.addEdge(t, realHolder, shared, model.EdgeComposes, 0.9)
+	return fix, subject, realCarrier, ghost, realHolder
+}
+
+// TestRetentionDropsTestOnlySatisfierRows: an interface satisfied only by a
+// test double contributes no rows, and the row that survives is proved by the
+// production carrier: never by the test double, even though the double owns
+// the lower ID the nomination would otherwise pick.
+func TestRetentionDropsTestOnlySatisfierRows(t *testing.T) {
+	fix, subject, realCarrier, ghost, realHolder := testHarnessFixture(t)
+
+	res := computeRetention(t, fix, subject)
+
+	if retainedIDs(res)[ghost] {
+		t.Errorf("holder %d rides a test-only satisfier and must not be in the ring: %+v", ghost, res.RetainedViaInterfaces)
+	}
+	if !retainedIDs(res)[realHolder] {
+		t.Fatalf("holder %d rides a production satisfier and must stay in the ring: %+v", realHolder, res.RetainedViaInterfaces)
+	}
+	if res.RetainedCount != 1 {
+		t.Errorf("RetainedCount = %d, want 1", res.RetainedCount)
+	}
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == realHolder && rh.Carrier.ID != realCarrier {
+			t.Errorf("carrier = %d (%s), want the production carrier %d", rh.Carrier.ID, rh.Carrier.Name, realCarrier)
+		}
+	}
+}
+
+// TestRetentionDisclosesExcludedSatisfiers: the refusal is auditable: the
+// count and the refused names ride out with the result, so a purified ring is
+// distinguishable from a subject nothing launders.
+func TestRetentionDisclosesExcludedSatisfiers(t *testing.T) {
+	fix, subject, _, _, _ := testHarnessFixture(t)
+
+	res := computeRetention(t, fix, subject)
+
+	if res.RetainedPurity.Excluded != 1 {
+		t.Errorf("RetainedPurity.Excluded = %d, want 1", res.RetainedPurity.Excluded)
+	}
+	if len(res.RetainedPurity.Names) != 1 || res.RetainedPurity.Names[0] != "FakeHarness" {
+		t.Errorf("RetainedPurity.Names = %v, want [FakeHarness]", res.RetainedPurity.Names)
+	}
+}
+
+// TestRetentionExcludedNamesCapped: the disclosed sample is bounded at five
+// names while the count keeps the true magnitude, so a harness package with
+// dozens of fakes cannot spend the ring's token budget on its own exclusion.
+func TestRetentionExcludedNamesCapped(t *testing.T) {
+	fix := newFixtureDB(t)
+	subject := fix.addSymbol(t, "SubjectA")
+	iface := fix.addSymbolWith(t, "RareCappedIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitRareCappedThing", model.KindMethod, &iface)
+	for i := range 7 {
+		fake := fix.addTestFileSymbol(t, fmt.Sprintf("Fake%d", i))
+		fix.addEdge(t, fake, subject, model.EdgeComposes, 0.9)
+		fix.addEdge(t, fake, iface, model.EdgeInherits, confConvention)
+	}
+
+	res := computeRetention(t, fix, subject)
+
+	if res.RetainedPurity.Excluded != 7 {
+		t.Errorf("Excluded = %d, want 7", res.RetainedPurity.Excluded)
+	}
+	if len(res.RetainedPurity.Names) != 5 {
+		t.Errorf("len(Names) = %d, want 5 (capped), got %v", len(res.RetainedPurity.Names), res.RetainedPurity.Names)
+	}
+}
+
+// --- Promiscuity stamp ---
+
+// TestRetentionStampsViaSatisfiers: a row riding an interface many unrelated
+// concretes satisfy is KEPT and stamped with the count. This is the pebble
+// trap in reverse: the paid-win ring there runs through a generic iterator
+// interface, so promiscuity annotates and must never drop.
+func TestRetentionStampsViaSatisfiers(t *testing.T) {
+	fix, subject, _, iface, holder := launderedFixture(t)
+	// Five more concretes satisfy the same interface without carrying the
+	// subject: they change the stamp, not the ring.
+	for i := range 5 {
+		other := fix.addSymbol(t, fmt.Sprintf("Unrelated%d", i))
+		fix.addEdge(t, other, iface, model.EdgeInherits, confConvention)
+	}
+	// An interface embedding the via extends the contract, it cannot be the
+	// runtime value of the field, so it must not inflate the stamp.
+	extender := fix.addSymbolWith(t, "ExtendingIface", model.KindInterface, nil)
+	fix.addEdge(t, extender, iface, model.EdgeInherits, confConvention)
+
+	res := computeRetention(t, fix, subject)
+
+	if !retainedIDs(res)[holder] {
+		t.Fatalf("promiscuous via must keep its row: %+v", res.RetainedViaInterfaces)
+	}
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID != holder {
+			continue
+		}
+		if rh.ViaSatisfiers != 6 {
+			t.Errorf("ViaSatisfiers = %d, want 6 (carrier + 5 unrelated concretes, no interfaces)", rh.ViaSatisfiers)
+		}
+	}
+}
+
+// TestRetentionStampsSoleSatisfier pins the low end: a two-party contract
+// stamps 1, so the consumer can tell a narrow via from a promiscuous one.
+func TestRetentionStampsSoleSatisfier(t *testing.T) {
+	fix, subject, _, _, holder := launderedFixture(t)
+
+	res := computeRetention(t, fix, subject)
+
+	for _, rh := range res.RetainedViaInterfaces {
+		if rh.Symbol.ID == holder && rh.ViaSatisfiers != 1 {
+			t.Errorf("ViaSatisfiers = %d, want 1", rh.ViaSatisfiers)
+		}
+	}
+}
+
+// --- Deterministic ring order ---
+
+// orderFixture builds a ring whose creation order, test/production split, and
+// ID order all disagree, so an exact-sequence assertion over it kills any
+// perturbation of the comparator: TestHolder is created FIRST (lowest ID) yet
+// must sort LAST, and the production holders must come out ID-ascending.
+func orderFixture(t *testing.T) (fix *fixtureDB, subject int64, want []int64) {
+	t.Helper()
+	fix = newFixtureDB(t)
+	subject = fix.addSymbol(t, "SubjectA")
+	carrier := fix.addSymbol(t, "CarrierC")
+	iface := fix.addSymbolWith(t, "RareOrderIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitRareOrderThing", model.KindMethod, &iface)
+	fix.addEdge(t, carrier, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, carrier, iface, model.EdgeInherits, confConvention)
+
+	testHolder := fix.addTestFileSymbol(t, "TestHolder")
+	first := fix.addSymbol(t, "HolderA")
+	second := fix.addSymbol(t, "HolderB")
+	for _, h := range []int64{testHolder, first, second} {
+		fix.addEdge(t, h, iface, model.EdgeComposes, 0.9)
+	}
+	return fix, subject, []int64{first, second, testHolder}
+}
+
+// ringOrder renders one computation's ring as its holder ID sequence.
+func ringOrder(res blast.Result) []int64 {
+	out := make([]int64, 0, len(res.RetainedViaInterfaces))
+	for _, rh := range res.RetainedViaInterfaces {
+		out = append(out, rh.Symbol.ID)
+	}
+	return out
+}
+
+// TestRetentionRingOrderIsPinned: the ring comes out in one exact sequence ,
+// production holders ID-ascending, then test-file holders. Paging is a cursor
+// over this order, so a perturbation here silently drops or duplicates rows
+// across pages; the exact sequence is the tripwire.
+func TestRetentionRingOrderIsPinned(t *testing.T) {
+	fix, subject, want := orderFixture(t)
+
+	got := ringOrder(computeRetention(t, fix, subject))
+
+	if len(got) != len(want) {
+		t.Fatalf("ring = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ring[%d] = %d, want %d (full: %v vs %v)", i, got[i], want[i], got, want)
+		}
+	}
+}
+
+// TestRetentionRingOrderIsRepeatable: two calls on the same index return the
+// ring byte-for-byte identically. The comparator is a total order (symbol IDs
+// are unique), so no pair may swap between runs: the precondition every page
+// boundary rests on.
+func TestRetentionRingOrderIsRepeatable(t *testing.T) {
+	fix, subject, _ := orderFixture(t)
+
+	first, err := json.Marshal(computeRetention(t, fix, subject).RetainedViaInterfaces)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for run := range 5 {
+		again, err := json.Marshal(computeRetention(t, fix, subject).RetainedViaInterfaces)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if string(again) != string(first) {
+			t.Fatalf("run %d differs:\n%s\n%s", run, first, again)
+		}
+	}
+}
+
+// --- Ring paging ---
+
+// pagedFixture builds a ring of five holders on one via-interface, the
+// smallest shape where two pages have a real boundary between them.
+func pagedFixture(t *testing.T) (fix *fixtureDB, subject int64) {
+	t.Helper()
+	fix = newFixtureDB(t)
+	subject = fix.addSymbol(t, "SubjectA")
+	carrier := fix.addSymbol(t, "CarrierC")
+	iface := fix.addSymbolWith(t, "RarePageIface", model.KindInterface, nil)
+	fix.addSymbolWith(t, "VisitRarePageThing", model.KindMethod, &iface)
+	fix.addEdge(t, carrier, subject, model.EdgeComposes, 0.9)
+	fix.addEdge(t, carrier, iface, model.EdgeInherits, confConvention)
+	for i := range 5 {
+		h := fix.addSymbol(t, fmt.Sprintf("PagedHolder%d", i))
+		fix.addEdge(t, h, iface, model.EdgeComposes, 0.9)
+	}
+	return fix, subject
+}
+
+// computePage runs one blast with an explicit ring window.
+func computePage(t *testing.T, fix *fixtureDB, subject int64, offset, limit int) blast.Result {
+	t.Helper()
+	res, err := blast.Compute(context.Background(), fix.db, []int64{subject},
+		blast.Options{MaxHops: 3, MinConfidence: 0.1, MaxResults: limit, RetainedOffset: offset})
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	return res
+}
+
+// TestRetentionPagesCoverRingExactly: two consecutive pages cover the whole
+// ring with no duplicate and no gap, and every page reports the FULL count ,
+// the property that makes a truncated ring safe to resume instead of
+// abandon.
+func TestRetentionPagesCoverRingExactly(t *testing.T) {
+	fix, subject := pagedFixture(t)
+
+	whole := ringOrder(computePage(t, fix, subject, 0, 100))
+	if len(whole) != 5 {
+		t.Fatalf("ring = %v, want 5 holders", whole)
+	}
+
+	first := computePage(t, fix, subject, 0, 3)
+	second := computePage(t, fix, subject, 3, 3)
+	union := append(ringOrder(first), ringOrder(second)...)
+
+	if len(union) != len(whole) {
+		t.Fatalf("paged union = %v, want the whole ring %v", union, whole)
+	}
+	for i := range whole {
+		if union[i] != whole[i] {
+			t.Fatalf("union[%d] = %d, want %d (union %v vs whole %v)", i, union[i], whole[i], union, whole)
+		}
+	}
+	for _, page := range []blast.Result{first, second} {
+		if page.RetainedCount != 5 {
+			t.Errorf("page reports count %d, want the full ring size 5", page.RetainedCount)
+		}
+	}
+	if first.RetainedOffset != 0 || second.RetainedOffset != 3 {
+		t.Errorf("offsets = %d/%d, want 0/3", first.RetainedOffset, second.RetainedOffset)
+	}
+}
+
+// TestRetentionPageBeyondRingIsEmpty: an offset past the end returns no rows
+// but still reports where the ring actually ends, so an over-shot cursor is
+// self-correcting rather than an error round trip.
+func TestRetentionPageBeyondRingIsEmpty(t *testing.T) {
+	fix, subject := pagedFixture(t)
+
+	res := computePage(t, fix, subject, 50, 3)
+
+	if len(res.RetainedViaInterfaces) != 0 {
+		t.Errorf("rows = %d, want 0 past the end", len(res.RetainedViaInterfaces))
+	}
+	if res.RetainedCount != 5 {
+		t.Errorf("RetainedCount = %d, want 5", res.RetainedCount)
+	}
+}
+
+// TestRetentionFingerprintIdentifiesGeneration: pages cut from one index
+// carry the same fingerprint, and re-indexing a file moves it: the signal
+// that two pages must not be unioned.
+func TestRetentionFingerprintIdentifiesGeneration(t *testing.T) {
+	fix, subject := pagedFixture(t)
+
+	first := computePage(t, fix, subject, 0, 3)
+	second := computePage(t, fix, subject, 3, 3)
+	if first.RetainedFingerprint == "" {
+		t.Fatal("a paged ring must carry an index fingerprint")
+	}
+	if first.RetainedFingerprint != second.RetainedFingerprint {
+		t.Errorf("same index gave different fingerprints: %q vs %q", first.RetainedFingerprint, second.RetainedFingerprint)
+	}
+
+	if _, err := fix.adapter.WriteFile(context.Background(), &model.File{
+		Path: "later.rb", Language: "ruby", Hash: "later",
+		Symbols: 1, IndexedAt: time.Now().UTC().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if after := computePage(t, fix, subject, 0, 3); after.RetainedFingerprint == first.RetainedFingerprint {
+		t.Errorf("fingerprint %q survived a re-index; a moved index must be visible", after.RetainedFingerprint)
+	}
 }

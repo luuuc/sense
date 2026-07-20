@@ -97,8 +97,8 @@ func openRetentionFaultDB(t *testing.T) (*sql.DB, model.Symbol, []int64) {
 func runRetention(t *testing.T, db *sql.DB, subject model.Symbol, composerIDs []int64) error {
 	t.Helper()
 	noSelf := func(model.Symbol) bool { return false }
-	_, _, _, err := loadRetention(context.Background(), db, subject, []int64{subject.ID},
-		composerIDs, map[int64]struct{}{}, map[int64]struct{}{}, noSelf, 100)
+	_, err := loadRetention(context.Background(), db, subject, []int64{subject.ID},
+		composerIDs, map[int64]struct{}{}, map[int64]struct{}{}, noSelf, retentionPage{limit: 100})
 	return err
 }
 
@@ -106,13 +106,14 @@ func runRetention(t *testing.T, db *sql.DB, subject model.Symbol, composerIDs []
 // distinct retention query and expects loadRetention to surface it.
 func TestRetentionPropagatesQueryFaults(t *testing.T) {
 	cases := map[string]string{
-		"level1_embedders":   `e.kind IN ('includes')`,
-		"level1_kind_filter": `AND kind != 'interface'`,
-		"deeper_levels":      `e.kind IN ('composes','includes')`,
-		"forward_interfaces": `e.kind = 'inherits'`,
-		"sole_members":       `AND kind = 'method'`,
-		"name_frequency":     `GROUP BY name`,
-		"hydration":          `docstring, complexity, snippet`,
+		"level1_embedders":    `e.kind IN ('includes')`,
+		"level1_kind_filter":  `AND kind != 'interface'`,
+		"deeper_levels":       `e.kind IN ('composes','includes')`,
+		"forward_interfaces":  `e.kind = 'inherits'`,
+		"sole_members":        `AND kind = 'method'`,
+		"name_frequency":      `GROUP BY name`,
+		"hydration":           `docstring, complexity, snippet`,
+		"via_satisfier_count": `COUNT(DISTINCT e.source_id)`,
 	}
 	for name, sub := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -159,8 +160,8 @@ func TestRetentionCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	noSelf := func(model.Symbol) bool { return false }
-	_, _, _, err := loadRetention(ctx, db, subject, []int64{subject.ID},
-		composerIDs, map[int64]struct{}{}, map[int64]struct{}{}, noSelf, 100)
+	_, err := loadRetention(ctx, db, subject, []int64{subject.ID},
+		composerIDs, map[int64]struct{}{}, map[int64]struct{}{}, noSelf, retentionPage{limit: 100})
 	if err == nil {
 		t.Fatal("expected cancellation error")
 	}
@@ -182,8 +183,8 @@ func TestEdgeTableGroupsPropagateFaults(t *testing.T) {
 			t.Cleanup(disarmBlastFaults)
 			s := &bfsState{childSet: map[int64]struct{}{}}
 			noSelf := func(model.Symbol) bool { return false }
-			_, _, _, err := s.loadEdgeTableGroups(context.Background(), db, subject,
-				[]int64{subject.ID}, map[int64]struct{}{subject.ID: {}}, nil, nil, noSelf, 100)
+			_, _, err := s.loadEdgeTableGroups(context.Background(), db, subject,
+				[]int64{subject.ID}, map[int64]struct{}{subject.ID: {}}, nil, nil, noSelf, Options{MaxResults: 100})
 			if err == nil {
 				t.Fatalf("expected propagated error for %s", name)
 			}
