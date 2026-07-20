@@ -1,0 +1,48 @@
+name: restic - audit what retains the repository object before a contract rework
+repo: restic
+# BATTERY STEP (d) MINI DRY-RUN PROBE, not the full 7-step scenario.
+# Anchor: repository.Repository retention ring (medium-2, win-eligible). Mini-gold:
+# the 9 import-proof out-of-package retained holders at 0.7, re-derived fresh this
+# session (scratchpad restic-ring.json), every field hand-verified at pin 987caba4.
+# internal/data/testing.go pre-cut per the V11 adjudication (test scaffolding).
+# GO/NO-GO + both-arms law as dolt.yaml.
+description: 'You are a maintainer of this backup tool about to rework the
+  repository object''s contract: how blobs are loaded and saved through it and
+  how long a handle to it stays valid. Much of the codebase does not use the
+  repository type directly — subsystems accept it through narrow interfaces that
+  expose only the slice of behavior they need, and they RETAIN those narrowed
+  handles in their own structs. Before touching the contract you need a complete
+  audit of the production code that retains such a handle today, so the rework
+  does not silently break a holder. Keep every answer concrete with file:line so
+  a teammate can act on the audit without re-exploring the codebase.'
+steps:
+- name: Audit every production holder that retains a repository handle
+  prompt: "Task: this is the whole ticket. Find EVERY place in production code (not
+    tests) that RETAINS a handle to the repository — a struct field that keeps the
+    repository, or a narrowed view of it, alive inside another subsystem. Be
+    exhaustive and group by area. The easy-to-miss kind: holders whose field is
+    typed as a small interface the repository satisfies, so the file never names
+    the repository type. For each holder give file:line of the retaining field and
+    one phrase on how it reaches the repository. A missed holder is a broken
+    subsystem shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the narrowed-interface holder ring across subsystems
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Mini-gold: 9 hand-verified retaining holders at pin 987caba4.
+gold:
+  - {id: diff-comparer,   group: ring, match: [cmd/restic/cmd_diff.go], relation: "Comparer.repo restic.BlobLoader at :83 - diff retains a load-only view"}
+  - {id: find-finder,     group: ring, match: [cmd/restic/cmd_find.go], relation: "Finder.repo restic.Repository at :276"}
+  - {id: archiver,        group: ring, match: [internal/archiver/archiver.go], relation: "Archiver.Repo archiverRepo at :92 - archiver-local interface, zero anchor tokens"}
+  - {id: file-saver,      group: ring, match: [internal/archiver/file_saver.go], relation: "fileSaver.uploader restic.BlobSaverAsync at :22"}
+  - {id: tree-saver,      group: ring, match: [internal/archiver/tree_saver.go], relation: "treeSaver.uploader restic.BlobSaverAsync at :14"}
+  - {id: tree-writer,     group: ring, match: [internal/data/tree.go], relation: "TreeWriter.saver restic.BlobSaver at :206"}
+  - {id: dumper,          group: ring, match: [internal/dump/common.go], relation: "Dumper.repo restic.Loader at :20"}
+  - {id: fuse-root,       group: ring, match: [internal/fuse/root.go], relation: "Root.repo restic.Repository at :25 - fuse mount retains the repository for its lifetime"}
+  - {id: restorer,        group: ring, match: [internal/restorer/restorer.go], relation: "Restorer.repo restic.Repository at :21"}

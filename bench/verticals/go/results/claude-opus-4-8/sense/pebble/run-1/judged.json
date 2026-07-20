@@ -1,0 +1,152 @@
+{
+  "scenario": "Pebble work session - interface-laundered retention audit of the write batch before pooling it",
+  "repo": "pebble",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "pebble.rubric.yaml"
+  },
+  "scenario_quality": 0.9342,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 7,
+    "related": 7,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "contract-handle",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:invalidating",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:iterv2interleave",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rangekeymask",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:internaliteropts",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:blockpropfilterer",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:walfailoverwriter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient on the handle",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Nails the essentials (Pebble as LSM KV, CockroachDB engine, Batch at batch.go:240) and names all the direct holders the rubric asks for \u2014 indexedBatch, batchIter, commitQueue, iteratorBatchState, plus metamorphic/replay. Goes well beyond Step 1's scope but the Step-1 core is fully present."
+        },
+        "specificity": {
+          "score": 0.98,
+          "rationale": "Every citation is file:line concrete: batch.go:240, batch.go:488, batch.go:1761, commit.go:25, iterator.go:392, metamorphic/test.go:47, replay/replay.go:621. No vague pointers."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains Batch as the write handle callers accumulate Set/Delete/RangeKeySet into before committing through the commit pipeline, and explicitly frames direct holders as 'already known' setting up the invisible class. Slightly light on 'every write goes through one' phrasing but the role is clear."
+        },
+        "uncertainty": {
+          "score": 0.8,
+          "rationale": "Step-1 content is asserted with confidence, appropriately \u2014 these are the easy direct holders. Extensive unconfirmed/negative flagging appears later but shows calibrated hedging throughout."
+        }
+      },
+      "step_quality": 0.915,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 482,
+        "cache_creation_input_tokens": 24682,
+        "cache_read_input_tokens": 30952
+      }
+    },
+    {
+      "step": "Find the retainers hidden behind abstractions",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Surfaces all the key hidden retainers \u2014 invalidating.iter, iterv2.InterleavingIter, the full rangeKeyMasking chain (SpanMask, boundLimitedFilter, filterer), and the WAL failover ring (recordQueueEntry/poppedEntry with *Batch as RefCount) \u2014 plus a high-value bonus: flushableEntry aliasing batch.data, explicitly flagged as invisible to the interface sweep."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every row carries struct file:line, interface stored, concrete carrier, and injection sites (e.g. 'db.go:908/950 pass b *Batch as RefCount', 'db.go:1312 Mask: &dbi.rangeKeyMasking'); rare vagueness is confined to the honestly-labeled unconfirmed rows."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Explains why field-type sweeps miss each (interface-typed field, or buffer-alias for flushableBatch) and actively checks satisfier candidates \u2014 dismissing compact.Iter, keyspan.SpanIterOptions, and record.Writer.flusher as likely-false rather than silently including them."
+        },
+        "uncertainty": {
+          "score": 1.0,
+          "rationale": "Cleanly separates confirmed vs unconfirmed rows (M\u2013P labeled 'likely false' / 'likely spurious'), records a negative result (standaloneWriter discards RefCount), and flags 'plumbing chain not executed' for row J \u2014 exemplary calibration."
+        }
+      },
+      "step_quality": 0.9475,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 585,
+        "cache_creation_input_tokens": 25097,
+        "cache_read_input_tokens": 30952
+      }
+    },
+    {
+      "step": "Produce the indirect-retention risk map",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Carries over every retainer from prior steps (A\u2013Q), classifies lifetime, flags goroutine crossings, and correctly ranks process-long/crossing rows (A\u2013E) first. Surfaces the flushableBatch buffer-aliasing case explicitly as highest risk."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every row has file:line, abstraction, carrier, lifetime, and crossing flag; top rows include construction/injection sites (`db.go:832`, `open.go:446`, `compaction_scheduler.go:303`) plus go-statements (`compaction.go:1389`, `record/log_writer.go:595`, `compaction_scheduler.go:306`) and concrete pooling-check guidance."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Ranking argued from evidence \u2014 periodicGranter is process-long, flush goroutine reads aliased buffer, failover queue is multi-consumer. Pooling requirements tie directly to the proven crossings rather than being asserted."
+        },
+        "uncertainty": {
+          "score": 0.95,
+          "rationale": "Explicitly labels M/N/O/P as unconfirmed with reasons (likely false positive, no injection site), records the standalone-WAL negative result, and flags row J for a second look \u2014 the audit's edge is stated."
+        }
+      },
+      "step_quality": 0.94,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 501,
+        "cache_creation_input_tokens": 25097,
+        "cache_read_input_tokens": 30952
+      }
+    }
+  ]
+}

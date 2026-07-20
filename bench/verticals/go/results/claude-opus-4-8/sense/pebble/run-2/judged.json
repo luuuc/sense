@@ -1,0 +1,152 @@
+{
+  "scenario": "Pebble work session - interface-laundered retention audit of the write batch before pooling it",
+  "repo": "pebble",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "pebble.rubric.yaml"
+  },
+  "scenario_quality": 0.9122,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 7,
+    "related": 7,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "contract-handle",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:invalidating",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:iterv2interleave",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rangekeymask",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:internaliteropts",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:blockpropfilterer",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:walfailoverwriter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient on the handle",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Nails Pebble as an LSM KV store, pins Batch at batch.go:240 with batchInternal at :310, and enumerates the direct holders the rubric asks for (indexedBatch, batchIter, commitQueue, iteratorBatchState) plus test carriers. Fully sets up the next task."
+        },
+        "specificity": {
+          "score": 0.98,
+          "rationale": "Every direct holder is cited with concrete file:line (batch.go:488, batch.go:1761, commit.go:25, iterator.go:392) rather than vague area references."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains Batch as the write-accumulator before Commit/DB.Apply and flags the RefCount implementation as 'the first hint of interface laundering,' motivating why direct holders alone aren't the whole story. Could be slightly more explicit that every write funnels through Batch."
+        },
+        "uncertainty": {
+          "score": 0.8,
+          "rationale": "The step-1 block itself makes no uncertainty flags, but the answer proactively marks the laundering hint as a lead rather than asserting completeness of the direct-holder list; adequate for an orientation step."
+        }
+      },
+      "step_quality": 0.915,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 440,
+        "cache_creation_input_tokens": 25136,
+        "cache_read_input_tokens": 30952
+      }
+    },
+    {
+      "step": "Find the retainers hidden behind abstractions",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Surfaces all the key interface-laundered retainers the rubric names \u2014 invalidating.iter, iterv2.InterleavingIter, the rangeKeyMasking chain (SpanMask, boundLimitedFilter, BlockPropertiesFilterer), and the WAL RefCount ring \u2014 plus valuable additions Sense missed (flushableEntry/compact.Iter carrying batch bytes on the flush goroutine, mergingIterLevel, ConcurrencyLimitScheduler, ycsb harness). Each row ties struct field to concrete carrier with an injection site."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every row gives struct file:line, the interface stored, the concrete carrier, AND the construction/injection site file:line (e.g. wal/failover_writer.go:25 + db.go:908/950 \u2192 :176-179; scan_internal.go:232 + db.go:1377; range_keys.go:572-573). Proof is delivered at the moment each retainer is stated, exactly as the step demands."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Explains why field-type sweeps miss each row (declared type is the interface; e.g. flushableEntry hides behind a []byte alias sharing Batch.data backing) and demonstrates real wiring checks \u2014 including a checked-and-negative case (metamorphic.Test.snapshots) proving the audit distinguished type-compatible from actually-wired."
+        },
+        "uncertainty": {
+          "score": 0.95,
+          "rationale": "Explicitly separates confirmed rows (\u2705) from Sense-reported-but-unverified rows (\u26a0\ufe0f #14-16 kept in the list per recall-first rule) and reports a negative check; labels are clear enough that a teammate can downgrade rather than miss a candidate."
+        }
+      },
+      "step_quality": 0.91,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 661,
+        "cache_creation_input_tokens": 19610,
+        "cache_read_input_tokens": 30952
+      }
+    },
+    {
+      "step": "Produce the indirect-retention risk map",
+      "scores": {
+        "map_quality": {
+          "score": 0.92,
+          "rationale": "The 16-row table carries over every retainer from prior steps (flushable, compact iter, WAL RefCount x2, scheduler, ycsb, rangeKeyMasking chain, merging/interleaving/invalidating iters), classifies lifetime, and flags goroutine crossings; top-risk process-long crossers are ranked first (rows 1-6). Minor rows (14-16) preserved rather than dropped."
+        },
+        "specificity": {
+          "score": 0.93,
+          "rationale": "Every row cites file:line for the field, and top-risk rows include explicit injection sites plus go-statements (e.g. `compaction_scheduler.go:306 go s.periodicGranter()`, `record/log_writer.go:595 go func()`, `wal/failover_manager.go:335-337 runAsync(monitorLoop)`, `bench/ycsb.go:323,:326 wg.Go`). Concrete carriers named, not hand-waved."
+        },
+        "justification": {
+          "score": 0.88,
+          "rationale": "Ranking is argued from evidence (flush worker drains queue, WAL sync goroutine reads b.data after commit returns, scheduler runs periodicGranter loop) and the pooling-requirements section ties each top risk to a specific hazard (aliasing in newFlushableBatch, refcount vs Close). Row 5's transitive reach is honestly hedged as 'unlikely to dereference batch bytes.'"
+        },
+        "uncertainty": {
+          "score": 0.9,
+          "rationale": "Rows 14-16 explicitly marked \u26a0\ufe0f unconfirmed with reasons (`Sense chain only`, `likely false positive`), and requirement #5 proposes a poison-on-reset specifically to catch the unpinned cases. Negative check on `metamorphic/test.go:68 readerCloser` recorded."
+        }
+      },
+      "step_quality": 0.9115,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 664,
+        "cache_creation_input_tokens": 21933,
+        "cache_read_input_tokens": 30952
+      }
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+name: teleport - audit what retains a narrowed view of cluster state storage before a contract rework
+repo: teleport
+# BATTERY STEP (d) MINI DRY-RUN PROBE, big-2 seat candidate.
+# Anchor: backend.Backend retention ring on the fresh index (rebuilt that session,
+# 8683 sym / 303k edges). Residue: 36 import-proof out-of-package prod files
+# across 27 DISTINCT vias after cutting the integrations/ Client saturation
+# family (navidrome-class, excluded from gold). Mini-gold: 12 rows hand-verified
+# at pin 94e9a8b0, every holder keeps a NARROWED, often locally-declared
+# interface ("the subset of the cache that the Service uses"), so rows meet the
+# self-evidence bar (dolt-class, not grpc-go-class). GO/NO-GO + both-arms law
+# per protocol.
+description: 'You are a maintainer of this infrastructure platform about to
+  rework the contract of the cluster-state storage layer: how stored resources
+  are read, watched and cached, and how long a handle to that layer stays valid.
+  Most services do not use the storage type directly — they accept it through
+  narrow, often locally-declared interfaces exposing only the slice of behavior
+  they need, and they RETAIN those narrowed handles in their own structs. Before
+  touching the contract you need a complete audit of the production code that
+  retains such a handle today, so the rework does not silently break a service.
+  Keep every answer concrete with file:line so a teammate can act on the audit
+  without re-exploring the codebase.'
+steps:
+- name: Audit every production holder that retains a narrowed storage handle
+  prompt: "Task: this is the whole ticket. Find EVERY place in production code
+    (not tests) that RETAINS a handle to the cluster-state storage layer — a
+    struct field that keeps the storage, a cache over it, or a narrowed view of
+    either alive inside a service or subsystem. Be exhaustive and group by area.
+    The easy-to-miss kind: holders whose field is typed as a small, locally
+    declared interface the storage or its cache satisfies, so the file never
+    imports the storage package and never names its types. TRANSCRIBE every
+    holder you find individually with the file:line of its retaining field and
+    one phrase on how it reaches the storage; do not collapse a set into
+    'various services'. A missed holder is a broken service shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the cross-service narrowed-interface holder ring
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Mini-gold: 12 hand-verified retaining holders at pin 94e9a8b0 (fields grep-
+# checked this session). integrations/ Client family deliberately EXCLUDED
+# (one-interface saturation = not discriminating). relation = the true field.
+gold:
+  - {id: accesslists-hierarchy, group: ring, match: [lib/accesslists/hierarchy.go], relation: "HierarchyConfig.AccessListsService AccessListAndMembersGetter at :482 - hierarchy walker retains a narrowed lists+members reader"}
+  - {id: accesspoint-config,    group: ring, match: [lib/auth/accesspoint/accesspoint.go], relation: "Config.WebSession types.WebSessionInterface at :108 - cache config retains the web-session slice of state"}
+  - {id: authclient-wrappers,   group: ring, match: [lib/auth/authclient/api.go], relation: "NodeWrapper/AppsWrapper/OktaWrapper... embed accessPoint at :1589+ - per-service wrappers retain the narrowed access point"}
+  - {id: tls-config-generator,  group: ring, match: [lib/auth/client_tls_config_generator.go], relation: "ClientTLSConfigGeneratorConfig.AccessPoint AccessCacheWithEvents at :53"}
+  - {id: crownjewel-service,    group: ring, match: [lib/auth/crownjewel/crownjewelv1/service.go], relation: "ServiceConfig.Reader Reader at :48 - locally-declared Reader interface (:74) over cached crown jewels"}
+  - {id: dbobject-service,      group: ring, match: [lib/auth/dbobject/dbobjectv1/service.go], relation: "DatabaseObjectServiceConfig.Backend Backend at :45 - local Backend interface (:37) naming only the slice it needs"}
+  - {id: discoveryconfig-svc,   group: ring, match: [lib/auth/discoveryconfig/discoveryconfigv1/service.go], relation: "Service.backend services.DiscoveryConfigs at :105"}
+  - {id: awsoidc-service,       group: ring, match: [lib/auth/integration/integrationv1/awsoidc.go], relation: "AWSOIDCService.cache CacheAWSOIDC at :234 - narrowed cache interface"}
+  - {id: inventory-service,     group: ring, match: [lib/auth/inventory/inventoryv1/service.go], relation: "Service retains InventoryCache ('the subset of the inventory cache that the Service uses', :33-34)"}
+  - {id: boundkeypair-fs,       group: ring, match: [lib/auth/join/boundkeypair/boundkeypair.go], relation: "FSClientState.fs FS at :88 - client state retained behind a local FS interface"}
+  - {id: autoupdate-reporter,   group: ring, match: [lib/auth/machineid/machineidv1/auto_update_version_reporter.go], relation: "AutoUpdateVersionReporter.semaphores types.Semaphores at :49 - leader election retains the semaphore slice of storage"}
+  - {id: botinstance-service,   group: ring, match: [lib/auth/machineid/machineidv1/bot_instance_service.go], relation: "BotInstanceService retains BotInstancesCache ('the subset of the cached resources that the Service queries', :59-60)"}

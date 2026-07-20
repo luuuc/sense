@@ -1,0 +1,118 @@
+# Per-scenario rubric for the LLM judge layer: V2 (retention axis).
+# v1 (dead dispatch-tracing axis, MEMBER-NAME LAW kill) preserved at
+# pebble.rubric.yaml.v1-batch-dispatch.bak.
+#
+# Audience block is shared across all steps. Per-step rubrics use the same four
+# criteria (map_quality, specificity, justification, uncertainty) with the
+# canonical 40/25/20/15 weights. The objective headline is cited_recall on the
+# `dependents` group (scored from gold, not the judge); this rubric scores the
+# orthogonal answer-quality axes for the AI-agent audience.
+#
+# Step names MUST match scenarios/pebble.yaml exactly (the judge pairs by name).
+
+audience: |
+  An AI coding agent that will use this answer to safely pool and reuse pebble.Batch
+  objects with only small, targeted follow-up lookups, not a fresh exploration of the
+  codebase. Score for that audience, not a human reader, not a docs page. A perfect
+  answer leaves the agent knowing every INDIRECT retention point of a batch — the
+  production structs that hold one only behind an interface-typed field, where the
+  concrete carrier is provable only from the construction site — each with its
+  abstraction, concrete carrier, lifetime class and goroutine exposure, the top-risk
+  rows proven at their injection sites; a weak answer forces the agent to re-derive
+  interface satisfactions by hand before it can act safely.
+
+steps:
+  - name: Orient on the handle
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer land the essentials fast: this is Pebble (an LSM key-value
+          store engine); the write batch is Batch in batch.go; and it names the DIRECT
+          holders a plain field-type sweep would already find (batchIter, indexedBatch,
+          the commit-queue slots, the iterator's batch state)?
+      specificity:
+        weight: 0.25
+        question: |
+          Are the cited paths concrete (batch.go and the direct-holder files at
+          file:line) rather than vague ("the core write path")?
+      justification:
+        weight: 0.20
+        question: |
+          Does the answer explain WHY Batch is central (every write to the database
+          goes through one) and set up why direct holders alone are not the whole
+          story?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Where unsure, does it flag that so the agent doesn't act blindly?
+
+  - name: Find the retainers hidden behind abstractions
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Does the answer surface the interface-laundered retainers — structs storing
+          only an interface value whose concrete injected value carries a live batch:
+          invalidating.iter (InternalIterator, invariants-build wrapper of the
+          top-level iterator), iterv2.InterleavingIter (InternalIterator, the V1
+          indexed-batch point/range-key interleave), the rangeKeyMasking chain
+          (keyspan.InterleavingIterOpts's SpanMask, pebble.internalIterOpts's and
+          sstable.BlockPropertiesFilterer's BoundLimitedBlockPropertyFilter, all
+          rooted in the same parent-Iterator-to-batch chain), and the write-ahead-log
+          failover ring (recordQueueEntry/poppedEntry's RefCount ← the batch itself)
+          — each with the construction/injection site that proves the concrete
+          carrier?
+      specificity:
+        weight: 0.25
+        question: |
+          For each: struct file:line, the interface stored, and the concrete
+          carrier plus its construction/injection site — not "various iterator
+          wrappers"? (Full proof is owed here per row, not deferred — this step
+          explicitly asks for the site the moment a retainer is established.)
+      justification:
+        weight: 0.20
+        question: |
+          Does each item explain why a field-type sweep misses it (the field's
+          declared type is the interface; satisfaction is the hidden fact), and does
+          the answer show signs of checking whether a candidate is actually WIRED to
+          a batch-derived value versus merely type-compatible (a real audit finds
+          candidates that turn out to be false positives — e.g. an interface field
+          that in this codebase is only ever populated from something else)?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Are may-hold cases flagged honestly (an interface field CAN receive a
+          non-batch satisfier at other sites) with the evidence bounded to the cited
+          injection, and are low-confidence candidates labeled as such rather than
+          silently dropped or silently asserted as fact?
+
+  - name: Produce the indirect-retention risk map
+    criteria:
+      map_quality:
+        weight: 0.40
+        question: |
+          Is the final map complete (carries over EVERY indirect retainer from the
+          previous step — dropping one is the failure mode), with lifetime classified
+          per-call / per-connection / process-long from construction sites, goroutine
+          crossings identified (background compaction, flush, the WAL-failover
+          monitor thread, concurrent workload runners), and risk-ranked with
+          process-long goroutine-crossing retainers first?
+      specificity:
+        weight: 0.25
+        question: |
+          Per row: file:line, abstraction, carrier, lifetime class, crossing flag;
+          and for the TOP-RISK rows the proof the ticket owes — the injection site
+          pinning the concrete carrier and the go-statement/background-loop
+          registration proving the crossing — plus what the pooling change must
+          check or avoid there?
+      justification:
+        weight: 0.20
+        question: |
+          Is the ranking argued from the evidence (who fires on background threads,
+          who lives process-long) rather than asserted?
+      uncertainty:
+        weight: 0.15
+        question: |
+          Does it state what was NOT verified (other injection sites, closures,
+          third-party structs) so the teammate knows the audit's edge?

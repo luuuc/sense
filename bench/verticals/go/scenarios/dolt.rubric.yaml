@@ -1,0 +1,160 @@
+audience: "An AI coding agent that will use this answer to safely rework the DoltDB\nstorage-root\
+  \ and access lifecycle with only small, targeted follow-up\nlookups, not a fresh exploration\
+  \ of the codebase. Score for that audience.\nA perfect answer leaves the agent knowing every\
+  \ production holder that\nretains access into the core object or its storage layers \u2014\
+  \ including the\nholders whose field is typed as a narrow interface and whose file never\n\
+  names the core type \u2014 and how each retaining field chains to the core\nobject; a weak\
+  \ answer forces the agent to re-derive the ring by grepping a\ntype name that most holders\
+  \ never write.\n"
+steps:
+- name: Orient in the codebase
+  criteria:
+    map_quality:
+      weight: 0.35
+      question: 'Does the answer hand the agent a usable map: that this is Dolt (a
+
+        version-controlled SQL database in Go), where the core database object
+
+        lives (doltdb package under go/libraries/doltcore) and which storage
+
+        layers it is built on (datas/chunks/nbs under go/store)? Could the
+
+        agent start working with only small, targeted lookups?
+
+        '
+    specificity:
+      weight: 0.25
+      question: Are the named locations given as concrete file paths (file:line where it matters)
+        rather than vague package prose?
+    justification:
+      weight: 0.15
+      question: Does the answer say how it knows (what was inspected), so the agent can trust
+        the map without re-deriving it?
+    uncertainty:
+      weight: 0.15
+      question: Does the answer flag what it did not verify instead of asserting everything
+        with equal confidence?
+    relationship:
+      weight: 0.1
+      question: If the answer relates areas (core object vs storage layers), are those relations
+        correct?
+- name: Map the storage lifecycle contract
+  criteria:
+    map_quality:
+      weight: 0.3
+      question: "Does the answer map the actual lifecycle: root tracking/swapping,\nhow chunk\
+        \ storage is reached from the core object, and the layer\nstack between a query and\
+        \ disk \u2014 the contract a rework would change?\n"
+    specificity:
+      weight: 0.25
+      question: Is each layer pinned to file:line with a one-phrase role, so the agent can jump
+        straight to it?
+    justification:
+      weight: 0.2
+      question: Are the layer claims grounded in inspected code rather than inferred from names?
+    uncertainty:
+      weight: 0.15
+      question: Are unverified or ambiguous layers flagged as such?
+    relationship:
+      weight: 0.1
+      question: Are the stated layer-to-layer relations (what wraps/reaches what) correct?
+- name: Trace how query access is handed out
+  criteria:
+    map_quality:
+      weight: 0.25
+      question: Does the trace follow a real construction-and-handoff path for query access,
+        end to end, in order?
+    specificity:
+      weight: 0.3
+      question: Is every hop pinned to file:line, in sequence?
+    justification:
+      weight: 0.2
+      question: Is the ordering evidenced (calls shown or reasoned from code), not asserted?
+    uncertainty:
+      weight: 0.15
+      question: Are gaps in the trace admitted rather than papered over?
+    relationship:
+      weight: 0.1
+      question: Are the hop-to-hop relations in the trace (who constructs, who receives, who
+        retains) correct?
+- name: Audit every production holder that retains access into the core database lifecycle
+  criteria:
+    map_quality:
+      weight: 0.35
+      question: "Does the audit enumerate the cross-package holder ring \u2014 CLI-side\nquery-access\
+        \ holders, server/cluster holders, and the storage-layer\nholders (chunk-store wrappers,\
+        \ pull/tracking configs, caches, specs)\n\u2014 not just the direct in-package users\
+        \ of the core type?\n"
+    specificity:
+      weight: 0.2
+      question: Does EVERY holder carry the file:line of its retaining field, individually transcribed
+        (no collapsed groups)?
+    justification:
+      weight: 0.15
+      question: Is each inclusion justified by what the retaining field is, not by proximity
+        or naming?
+    uncertainty:
+      weight: 0.1
+      question: Is possible incompleteness acknowledged where the method could miss holders?
+    relationship:
+      weight: 0.2
+      question: "For each holder, does the answer state HOW it reaches the core object\n\u2014\
+        \ the narrow interface its field is typed as and what satisfies it \u2014\nespecially\
+        \ for holders whose file never names the core type?\n"
+- name: Trace the narrowed-interface routes
+  criteria:
+    map_quality:
+      weight: 0.3
+      question: Are the interface-typed retention routes traced mechanically (field, interface,
+        runtime satisfier) rather than re-listed?
+    specificity:
+      weight: 0.2
+      question: Is each hop of each route pinned to file:line?
+    justification:
+      weight: 0.15
+      question: Is each satisfier claim evidenced from code (definition or construction site)?
+    uncertainty:
+      weight: 0.1
+      question: Are unconfirmed satisfier chains flagged?
+    relationship:
+      weight: 0.25
+      question: "Does each route make the retention semantics explicit \u2014 what stays alive\
+        \ because the field holds it?"
+- name: Assess the blast radius of the lifecycle rework
+  criteria:
+    map_quality:
+      weight: 0.35
+      question: Does the assessment cover every area found in the audit and rank holders by
+        realistic breakage/leak risk?
+    specificity:
+      weight: 0.2
+      question: Are the at-risk holders pinned to file:line rather than named loosely?
+    justification:
+      weight: 0.15
+      question: Is each risk ranking justified by the holder's role and lifetime, not asserted?
+    uncertainty:
+      weight: 0.1
+      question: Are unknown-risk holders flagged as needing verification?
+    relationship:
+      weight: 0.2
+      question: Does the risk reasoning use the retention route (how the holder reaches the
+        core object), especially for the no-compile-time-tie holders?
+- name: Produce the change + verification map
+  criteria:
+    map_quality:
+      weight: 0.3
+      question: "Could a teammate land the rework from this map alone \u2014 edit list, per-area\
+        \ review list, and test plan?"
+    specificity:
+      weight: 0.25
+      question: Is the map file:line-concrete throughout, including the tests to update?
+    justification:
+      weight: 0.2
+      question: Does the map follow from the audit (each review item traceable to a found holder)?
+    uncertainty:
+      weight: 0.15
+      question: Does the map name what must be re-verified rather than claiming completeness?
+    relationship:
+      weight: 0.1
+      question: Do the review items preserve the audited retention relations (each item tied
+        to how its holder reaches the core object)?

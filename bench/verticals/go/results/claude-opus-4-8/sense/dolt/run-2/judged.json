@@ -1,0 +1,322 @@
+{
+  "scenario": "dolt work session - audit what retains access into the core database object before a lifecycle rework",
+  "repo": "dolt",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v2-rel",
+    "rubric_path": "dolt.rubric.yaml"
+  },
+  "scenario_quality": 0.8354,
+  "relationship_audit": {
+    "total": 12,
+    "covered": 12,
+    "related": 12,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "dbfactory-file",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "backups-table",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "datas-roottracker",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "prolly-nodestore",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "types-valuestore",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "remotesrv-cache",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "spec-db",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "cli-queryist",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "metrics-cluster",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "cluster-dial",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "cs-metrics",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "pull-hasmanyer",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient in the codebase",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Names project as Dolt (version-controlled SQL DB in Go), pins the core object to `doltdb` under `go/libraries/doltcore/`, and lays out the storage stack under `go/store/` (chunks/types/prolly/datas/nbs). An agent could start work with only tiny lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Concrete file:line anchors throughout \u2014 `doltdb.go:126`, `hooksdatabase.go:26`, `database_common.go:37`, `value_store.go:75`, `node_store.go:65`, `chunk_store.go:74`, `generational_chunk_store.go:40`, `store.go:96` \u2014 not just package prose."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "Shows the DoltDB struct excerpt as evidence and traces constructors (`DoltDBFromCS`, `LoadDoltDBWithParams` \u2192 `dbfactory.CreateDB`), but doesn't explicitly state 'how I know' for the package-layout claims."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "Everything is asserted with equal confidence; no flag on what wasn't verified (e.g. whether cluster/statspro are actually retention holders, or that the layer chain isn't skipped)."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Layer chain is explicit: `hooksDatabase \u2192 datas.database \u2192 ValueStore/nodeStore \u2192 ChunkStore \u2192 GenerationalNBS/NomsBlockStore`, each with file:line. Relations between core and storage are correctly stated."
+        }
+      },
+      "step_quality": 0.81,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 595,
+        "cache_creation_input_tokens": 17365,
+        "cache_read_input_tokens": 31877
+      }
+    },
+    {
+      "step": "Map the storage lifecycle contract",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Maps root tracking (`NomsRoot`/`CommitRoot`), the swap contract (`rootTracker` + CAS), chunk-store reach-through (`ChunkStoreFromDatabase`), and the full layer stack down to `nbs.NomsBlockStore` manifest \u2014 exactly the contract a rework would touch."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every layer carries file:line, often multiple (e.g. `Rebase:107, Root:111, Commit:116`, `upstream manifestContents:121`, `Root:1548`), and each has a one-phrase role."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Claims are grounded in specific method signatures/field names (`gcState`, `rt rootTracker`, `cs chunks.ChunkStore`) and the wiring site (`newDatabase database_common.go:56-61`), evidencing inspection rather than name-inference."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No explicit flagging of unverified areas; `dbfactory.CreateDB` is listed as `via doltdb.go:217` which hints at indirection but does not admit uncertainty about the concrete store selection."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Layer-to-layer relations are stated correctly and explicitly: `hooksDatabase` embeds `datas.Database` with back-pointer to `DoltDB`; `rootTracker` satisfied by `*types.ValueStore`; `ValueStore` holds `cs chunks.ChunkStore`; closing one-line contract chains the swap end to end."
+        }
+      },
+      "step_quality": 0.8175,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 613,
+        "cache_creation_input_tokens": 17457,
+        "cache_read_input_tokens": 31877
+      }
+    },
+    {
+      "step": "Trace how query access is handed out",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Traces a real end-to-end construction-and-handoff path from CLI late-binding through engine construction, provider retention, into LateBindCliContext caching, and out to downstream command retention \u2014 plus the session-side chain to DoltDB."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every hop carries file:line (e.g. `go/cmd/dolt/dolt.go:636`, `sqlengine.go:109`, `cli_context.go:124`,:134,:139), in sequence."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Ordering is evidenced by concrete call sites (`ReloadDBs` then `NewSqlEngine`; `bind` then cache into `activeContext.qryist`) rather than asserted \u2014 could occasionally quote the calling line more explicitly."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "No explicit flags for unverified hops or gaps; the trace reads as fully confident throughout, though it appears solid."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Hop-to-hop relations (who constructs, who receives, who retains) are stated correctly \u2014 closure\u2192NewSqlEngine\u2192provider, SqlEngine satisfies Queryist, LateBindCliContext caches into activeContext.qryist, downstream `patchState.queryist` retains it."
+        }
+      },
+      "step_quality": 0.8425,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 510,
+        "cache_creation_input_tokens": 17490,
+        "cache_read_input_tokens": 31877
+      }
+    },
+    {
+      "step": "Audit every production holder that retains access into the core database lifecycle",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Exhaustive enumeration across all critical areas: core/storage layers, env, factory caches, SQL engine/session, auto-GC, replication/cluster, CLI, stats, and system tables. The cross-package holder ring is comprehensively mapped including chunk-store wrappers, pull configs, and specs."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every holder carries a file:line for its retaining field, individually transcribed with no collapsed groups (e.g., each dtables entry listed separately with its own line)."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Each inclusion has a 'Route' phrase explaining what the field is/does (e.g., 'wraps `RemoteSrvStore`, holds `*DoltDB` to fire hooks'), justifying the retention semantics rather than proximity."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "No explicit acknowledgment of potential incompleteness \u2014 no flag that interface-typed satisfiers may still hide holders, or that some entries were unverified."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "For most holders the Route column names the concrete relation (direct `*DoltDB`, `RepoStateReader` embed, `RootSetter` iface, `ClusterStatusProvider`, `HasManyer` chunk store, `CommitItr`). Interface-typed holders like `TableResolver`, `VersionableTable`, `HasManyer` are explicitly named as the narrow interface satisfied by the core object."
+        }
+      },
+      "step_quality": 0.85,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 583,
+        "cache_creation_input_tokens": 23179,
+        "cache_read_input_tokens": 31877
+      }
+    },
+    {
+      "step": "Trace the narrowed-interface routes",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Traces each interface-typed route mechanically as field \u2192 interface \u2192 runtime satisfier \u2192 chain to DoltDB/storage, covering 14 distinct routes including the critical rootTracker, ChunkStore, and RemoteSrvStore paths."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Nearly every hop carries file:line (e.g. `cli_context.go:89`, `database_common.go:39`, `cscache.go:65`); a few interface definitions cite file without line (`store/datas/database.go`) but the density is high."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Satisfiers are evidenced with construction sites (`newDatabase` `database_common.go:59`, `nbs.NewLocalStore` at `cscache.go:65`, closure at `commands/utils.go:253`) rather than asserted; type-switch citations at `controller.go:254,:547` ground the StatsKv claim."
+        },
+        "uncertainty": {
+          "score": 0.2,
+          "rationale": "No hedging or flags on unconfirmed satisfier chains; route 14 is asserted at a high level without pinning the concrete satisfier, but not marked as such."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Retention semantics are explicit throughout \u2014 e.g. route 4 spells out that `singletonDB` and a live `DoltDB` share one ChunkStore and `CloseAllLocalDatabases` closes it out from under every DoltDB, and route 5 flags a second root-swap path bypassing `DoltDB.CommitRoot`."
+        }
+      },
+      "step_quality": 0.8225,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 590,
+        "cache_creation_input_tokens": 19268,
+        "cache_read_input_tokens": 31877
+      }
+    },
+    {
+      "step": "Assess the blast radius of the lifecycle rework",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Ranked four tiers span singletons, root-swap paths, GC/safepoint, cluster commit hooks, sqle system tables, and env/actions \u2014 the full ring found in the audit. Risk ranking (silent leaks first, mechanical last) is realistic."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Nearly every holder carries a file:line (e.g. `singletonDB file.go:89`, `commithook.go:50,52`, `stats_kv.go:212`), with only Tier 4's ~40 dtables collapsed into one line."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Rankings are justified by role/lifetime (\"process-global cache\", \"cached root hashes go stale\", \"documented as persisting across transactions\"), not asserted. Some Tier-3 entries are lighter on why."
+        },
+        "uncertainty": {
+          "score": 0.55,
+          "rationale": "\"Must be re-verified\" list flags what to check post-change, but the answer does not explicitly call out holders whose risk it is unsure about or blind spots in the method."
+        },
+        "relationship": {
+          "score": 0.85,
+          "rationale": "Tier 1 makes retention routes explicit for the no-compile-time-tie holders (`RemoteSrvStore`, `datas.database.rt` two-method interface, singleton path-keyed cache), and Tier 2/3 explain what stale state each holder retains."
+        }
+      },
+      "step_quality": 0.8475,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 537,
+        "cache_creation_input_tokens": 18693,
+        "cache_read_input_tokens": 31877
+      }
+    },
+    {
+      "step": "Produce the change + verification map",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Delivers a landable map: contract edits, per-area review checklist referencing Steps 4\u20135, tests to update, and three targeted new tests. A teammate could execute from this with only small lookups."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "File:line pins throughout \u2014 edit points (e.g. `doltdb.go:126`, `database_common.go:37`), holder routes, and every test path is concrete."
+        },
+        "justification": {
+          "score": 0.85,
+          "rationale": "Review items explicitly point back to Steps 4/5 tables and the 14 narrowed routes, and new tests are tied to concrete cache fields; a few test-file inclusions rely on name rather than shown grounding."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "The map reads confidently and doesn't flag which test files exist vs. need creating, nor what still needs re-verification; only implicit via `extend` on a couple of rows."
+        },
+        "relationship": {
+          "score": 0.9,
+          "rationale": "Review items are grouped by route and name the retention mechanism (singleton cache, rootTracker, RemoteSrvStore caches, QueryistContext.qryist), preserving how each holder reaches the core object."
+        }
+      },
+      "step_quality": 0.8575,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 460,
+        "cache_creation_input_tokens": 20145,
+        "cache_read_input_tokens": 31877
+      }
+    }
+  ]
+}

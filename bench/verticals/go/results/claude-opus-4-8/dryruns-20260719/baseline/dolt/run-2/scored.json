@@ -1,0 +1,4608 @@
+{
+  "scenario": "dolt work session - audit what retains access into the core database object before a lifecycle rework",
+  "repo": "dolt",
+  "adoption_score": 0.4,
+  "keyword_coverage": 1.0,
+  "step_avg_score": 1.0,
+  "efficiency": 0.0,
+  "completeness": 0.7024,
+  "tool_fluency": 0.0,
+  "discoverability": 1.0,
+  "citation_grounding": {
+    "total": 700,
+    "grounded": 700,
+    "unresolved": 0,
+    "hallucinated": 0,
+    "rate": 1.0,
+    "examples": {
+      "grounded": [
+        "environment.go:82 (line 82 in environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go])",
+        "repo_state.go:60 (line 60 in repo_state.go (file has 243 lines) [via go/libraries/doltcore/env/repo_state.go])",
+        "remotes.go:194 (line 194 in remotes.go (file has 936 lines) [via go/libraries/doltcore/env/actions/remotes.go])",
+        "database.go:80 (line 80 in database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go])",
+        "database_provider.go:99 (line 99 in database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go])"
+      ],
+      "unresolved": [],
+      "hallucinated": []
+    },
+    "details": [
+      {
+        "file": "environment.go",
+        "locator": "82",
+        "status": "grounded",
+        "reason": "line 82 in environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "repo_state.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in repo_state.go (file has 243 lines) [via go/libraries/doltcore/env/repo_state.go]"
+      },
+      {
+        "file": "remotes.go",
+        "locator": "194",
+        "status": "grounded",
+        "reason": "line 194 in remotes.go (file has 936 lines) [via go/libraries/doltcore/env/actions/remotes.go]"
+      },
+      {
+        "file": "database.go",
+        "locator": "80",
+        "status": "grounded",
+        "reason": "line 80 in database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "database_provider.go",
+        "locator": "99",
+        "status": "grounded",
+        "reason": "line 99 in database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "chunk_store.go",
+        "locator": "74",
+        "status": "grounded",
+        "reason": "line 74 in chunk_store.go (file has 1300 lines) [via go/libraries/doltcore/remotestorage/chunk_store.go]"
+      },
+      {
+        "file": "go/libraries/doltcore/doltdb/doltdb.go",
+        "locator": "126",
+        "status": "grounded",
+        "reason": "line 126 in go/libraries/doltcore/doltdb/doltdb.go (file has 2584 lines)"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "148",
+        "status": "grounded",
+        "reason": "line 148 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "182",
+        "status": "grounded",
+        "reason": "line 182 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "207",
+        "status": "grounded",
+        "reason": "line 207 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "go/store/nbs/store.go",
+        "locator": "1548",
+        "status": "grounded",
+        "reason": "line 1548 in go/store/nbs/store.go (file has 2835 lines)"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "92",
+        "status": "grounded",
+        "reason": "line 92 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "env/repo_state.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in env/repo_state.go (file has 243 lines) [via go/libraries/doltcore/env/repo_state.go]"
+      },
+      {
+        "file": "env/remotes.go",
+        "locator": "194",
+        "status": "grounded",
+        "reason": "line 194 in env/remotes.go (file has 810 lines) [via go/libraries/doltcore/env/remotes.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "80",
+        "status": "grounded",
+        "reason": "line 80 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "sqle/database_provider.go",
+        "locator": "99",
+        "status": "grounded",
+        "reason": "line 99 in sqle/database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "sqle/read_replica_database.go",
+        "locator": "40",
+        "status": "grounded",
+        "reason": "line 40 in sqle/read_replica_database.go (file has 665 lines) [via go/libraries/doltcore/sqle/read_replica_database.go]"
+      },
+      {
+        "file": "sqle/auto_gc.go",
+        "locator": "136",
+        "status": "grounded",
+        "reason": "line 136 in sqle/auto_gc.go (file has 456 lines) [via go/libraries/doltcore/sqle/auto_gc.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "88",
+        "status": "grounded",
+        "reason": "line 88 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/cluster/commithook.go",
+        "locator": "50",
+        "status": "grounded",
+        "reason": "line 50 in sqle/cluster/commithook.go (file has 532 lines) [via go/libraries/doltcore/sqle/cluster/commithook.go]"
+      },
+      {
+        "file": "sqle/dsess/transactions.go",
+        "locator": "93",
+        "status": "grounded",
+        "reason": "line 93 in sqle/dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "sqle/dprocedures/dolt_gc.go",
+        "locator": "78",
+        "status": "grounded",
+        "reason": "line 78 in sqle/dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dsess/session_db_provider.go",
+        "locator": "132",
+        "status": "grounded",
+        "reason": "line 132 in dsess/session_db_provider.go (file has 162 lines) [via go/libraries/doltcore/sqle/dsess/session_db_provider.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "199",
+        "status": "grounded",
+        "reason": "line 199 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "read_replica_database.go",
+        "locator": "113",
+        "status": "grounded",
+        "reason": "line 113 in read_replica_database.go (file has 665 lines) [via go/libraries/doltcore/sqle/read_replica_database.go]"
+      },
+      {
+        "file": "doltdb/root_val.go",
+        "locator": "531",
+        "status": "grounded",
+        "reason": "line 531 in doltdb/root_val.go (file has 1420 lines) [via go/libraries/doltcore/doltdb/root_val.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "1608",
+        "status": "grounded",
+        "reason": "line 1608 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "1548",
+        "status": "grounded",
+        "reason": "line 1548 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "1558",
+        "status": "grounded",
+        "reason": "line 1558 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "store/chunks/chunk_store.go",
+        "locator": "74",
+        "status": "grounded",
+        "reason": "line 74 in store/chunks/chunk_store.go (file has 345 lines) [via go/store/chunks/chunk_store.go]"
+      },
+      {
+        "file": "store/types/value_store.go",
+        "locator": "375",
+        "status": "grounded",
+        "reason": "line 375 in store/types/value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "store/datas/database_common.go",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in store/datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "database_common.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "store/datas/database_common.go",
+        "locator": "815",
+        "status": "grounded",
+        "reason": "line 815 in store/datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "doltdb/hooksdatabase.go",
+        "locator": "26",
+        "status": "grounded",
+        "reason": "line 26 in doltdb/hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "163",
+        "status": "grounded",
+        "reason": "line 163 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "store/datas/database.go",
+        "locator": "221",
+        "status": "grounded",
+        "reason": "line 221 in store/datas/database.go (file has 223 lines) [via go/store/datas/database.go]"
+      },
+      {
+        "file": "database_common.go",
+        "locator": "70",
+        "status": "grounded",
+        "reason": "line 70 in database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "value_store.go",
+        "locator": "188",
+        "status": "grounded",
+        "reason": "line 188 in value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "172",
+        "status": "grounded",
+        "reason": "line 172 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "sqle/dsess/session.go",
+        "locator": "348",
+        "status": "grounded",
+        "reason": "line 348 in sqle/dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "sqle/dsess/transactions.go",
+        "locator": "86",
+        "status": "grounded",
+        "reason": "line 86 in sqle/dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "sqle/dsess/database_session_state.go",
+        "locator": "102",
+        "status": "grounded",
+        "reason": "line 102 in sqle/dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "session.go",
+        "locator": "992",
+        "status": "grounded",
+        "reason": "line 992 in session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "doltdb/table.go",
+        "locator": "315",
+        "status": "grounded",
+        "reason": "line 315 in doltdb/table.go (file has 447 lines) [via go/libraries/doltcore/doltdb/table.go]"
+      },
+      {
+        "file": "store/prolly/tree/node_store.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in store/prolly/tree/node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "1102",
+        "status": "grounded",
+        "reason": "line 1102 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "dsess/transactions.go",
+        "locator": "384",
+        "status": "grounded",
+        "reason": "line 384 in dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "database_common.go",
+        "locator": "825",
+        "status": "grounded",
+        "reason": "line 825 in database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "transactions.go",
+        "locator": "92",
+        "status": "grounded",
+        "reason": "line 92 in transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "1953",
+        "status": "grounded",
+        "reason": "line 1953 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "nbs/store.go",
+        "locator": "1573",
+        "status": "grounded",
+        "reason": "line 1573 in nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "value_store.go",
+        "locator": "543",
+        "status": "grounded",
+        "reason": "line 543 in value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "node_store.go",
+        "locator": "62",
+        "status": "grounded",
+        "reason": "line 62 in node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "go/cmd/dolt/cli/command.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in go/cmd/dolt/cli/command.go (file has 342 lines)"
+      },
+      {
+        "file": "cli/cli_context.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/dolt.go",
+        "locator": "531",
+        "status": "grounded",
+        "reason": "line 531 in cmd/dolt/dolt.go (file has 1086 lines) [via go/cmd/dolt/dolt.go]"
+      },
+      {
+        "file": "cmd/dolt/dolt.go",
+        "locator": "541",
+        "status": "grounded",
+        "reason": "line 541 in cmd/dolt/dolt.go (file has 1086 lines) [via go/cmd/dolt/dolt.go]"
+      },
+      {
+        "file": "dolt.go",
+        "locator": "636",
+        "status": "grounded",
+        "reason": "line 636 in dolt.go (file has 1086 lines) [via go/cmd/dolt/dolt.go]"
+      },
+      {
+        "file": "dolt.go",
+        "locator": "672",
+        "status": "grounded",
+        "reason": "line 672 in dolt.go (file has 1086 lines) [via go/cmd/dolt/dolt.go]"
+      },
+      {
+        "file": "dolt.go",
+        "locator": "718",
+        "status": "grounded",
+        "reason": "line 718 in dolt.go (file has 1086 lines) [via go/cmd/dolt/dolt.go]"
+      },
+      {
+        "file": "dolt.go",
+        "locator": "730",
+        "status": "grounded",
+        "reason": "line 730 in dolt.go (file has 1086 lines) [via go/cmd/dolt/dolt.go]"
+      },
+      {
+        "file": "cmd/dolt/dolt.go",
+        "locator": "548",
+        "status": "grounded",
+        "reason": "line 548 in cmd/dolt/dolt.go (file has 1086 lines) [via go/cmd/dolt/dolt.go]"
+      },
+      {
+        "file": "cli/cli_context.go",
+        "locator": "70",
+        "status": "grounded",
+        "reason": "line 70 in cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cli/cli_context.go",
+        "locator": "57",
+        "status": "grounded",
+        "reason": "line 57 in cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/utils.go",
+        "locator": "131",
+        "status": "grounded",
+        "reason": "line 131 in cmd/dolt/commands/utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "228",
+        "status": "grounded",
+        "reason": "line 228 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "235",
+        "status": "grounded",
+        "reason": "line 235 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "257",
+        "status": "grounded",
+        "reason": "line 257 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "266",
+        "status": "grounded",
+        "reason": "line 266 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "cli_context.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "273",
+        "status": "grounded",
+        "reason": "line 273 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "109",
+        "status": "grounded",
+        "reason": "line 109 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "127",
+        "status": "grounded",
+        "reason": "line 127 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "engine/utils.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in engine/utils.go (file has 61 lines) [via go/cmd/dolt/commands/engine/utils.go]"
+      },
+      {
+        "file": "engine/utils.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in engine/utils.go (file has 61 lines) [via go/cmd/dolt/commands/engine/utils.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "929",
+        "status": "grounded",
+        "reason": "line 929 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "119",
+        "status": "grounded",
+        "reason": "line 119 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "engine/utils.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in engine/utils.go (file has 61 lines) [via go/cmd/dolt/commands/engine/utils.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "203",
+        "status": "grounded",
+        "reason": "line 203 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "160",
+        "status": "grounded",
+        "reason": "line 160 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "600",
+        "status": "grounded",
+        "reason": "line 600 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "59",
+        "status": "grounded",
+        "reason": "line 59 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "318",
+        "status": "grounded",
+        "reason": "line 318 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "453",
+        "status": "grounded",
+        "reason": "line 453 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "473",
+        "status": "grounded",
+        "reason": "line 473 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "608",
+        "status": "grounded",
+        "reason": "line 608 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "102",
+        "status": "grounded",
+        "reason": "line 102 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "48",
+        "status": "grounded",
+        "reason": "line 48 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "458",
+        "status": "grounded",
+        "reason": "line 458 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "104",
+        "status": "grounded",
+        "reason": "line 104 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "341",
+        "status": "grounded",
+        "reason": "line 341 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "cli/cli_context.go",
+        "locator": "118",
+        "status": "grounded",
+        "reason": "line 118 in cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cli/cli_context.go",
+        "locator": "87",
+        "status": "grounded",
+        "reason": "line 87 in cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "499",
+        "status": "grounded",
+        "reason": "line 499 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "cli/command.go",
+        "locator": "85",
+        "status": "grounded",
+        "reason": "line 85 in cli/command.go (file has 342 lines) [via go/cmd/dolt/cli/command.go]"
+      },
+      {
+        "file": "gc.go",
+        "locator": "101",
+        "status": "grounded",
+        "reason": "line 101 in gc.go (file has 186 lines) [via go/cmd/dolt/commands/gc.go]"
+      },
+      {
+        "file": "log.go",
+        "locator": "104",
+        "status": "grounded",
+        "reason": "line 104 in log.go (file has 516 lines) [via go/cmd/dolt/commands/log.go]"
+      },
+      {
+        "file": "merge.go",
+        "locator": "99",
+        "status": "grounded",
+        "reason": "line 99 in merge.go (file has 773 lines) [via go/cmd/dolt/commands/merge.go]"
+      },
+      {
+        "file": "add.go",
+        "locator": "118",
+        "status": "grounded",
+        "reason": "line 118 in add.go (file has 705 lines) [via go/cmd/dolt/commands/add.go]"
+      },
+      {
+        "file": "pull.go",
+        "locator": "128",
+        "status": "grounded",
+        "reason": "line 128 in pull.go (file has 413 lines) [via go/cmd/dolt/commands/pull.go]"
+      },
+      {
+        "file": "fetch.go",
+        "locator": "79",
+        "status": "grounded",
+        "reason": "line 79 in fetch.go (file has 159 lines) [via go/cmd/dolt/commands/fetch.go]"
+      },
+      {
+        "file": "show.go",
+        "locator": "117",
+        "status": "grounded",
+        "reason": "line 117 in show.go (file has 359 lines) [via go/cmd/dolt/commands/show.go]"
+      },
+      {
+        "file": "rebase.go",
+        "locator": "92",
+        "status": "grounded",
+        "reason": "line 92 in rebase.go (file has 463 lines) [via go/cmd/dolt/commands/rebase.go]"
+      },
+      {
+        "file": "clean.go",
+        "locator": "76",
+        "status": "grounded",
+        "reason": "line 76 in clean.go (file has 127 lines) [via go/cmd/dolt/commands/clean.go]"
+      },
+      {
+        "file": "rm.go",
+        "locator": "73",
+        "status": "grounded",
+        "reason": "line 73 in rm.go (file has 124 lines) [via go/cmd/dolt/commands/rm.go]"
+      },
+      {
+        "file": "reflog.go",
+        "locator": "81",
+        "status": "grounded",
+        "reason": "line 81 in reflog.go (file has 190 lines) [via go/cmd/dolt/commands/reflog.go]"
+      },
+      {
+        "file": "backup.go",
+        "locator": "117",
+        "status": "grounded",
+        "reason": "line 117 in backup.go (file has 208 lines) [via go/cmd/dolt/commands/backup.go]"
+      },
+      {
+        "file": "sql.go",
+        "locator": "237",
+        "status": "grounded",
+        "reason": "line 237 in sql.go (file has 1263 lines) [via go/cmd/dolt/commands/sql.go]"
+      },
+      {
+        "file": "sql.go",
+        "locator": "399",
+        "status": "grounded",
+        "reason": "line 399 in sql.go (file has 1263 lines) [via go/cmd/dolt/commands/sql.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "358",
+        "status": "grounded",
+        "reason": "line 358 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/add.go",
+        "locator": "406",
+        "status": "grounded",
+        "reason": "line 406 in cmd/dolt/commands/add.go (file has 705 lines) [via go/cmd/dolt/commands/add.go]"
+      },
+      {
+        "file": "add.go",
+        "locator": "419",
+        "status": "grounded",
+        "reason": "line 419 in add.go (file has 705 lines) [via go/cmd/dolt/commands/add.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/sqlserver/server.go",
+        "locator": "344",
+        "status": "grounded",
+        "reason": "line 344 in cmd/dolt/commands/sqlserver/server.go (file has 1292 lines) [via go/cmd/dolt/commands/sqlserver/server.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/sqlserver/queryist_utils.go",
+        "locator": "71",
+        "status": "grounded",
+        "reason": "line 71 in cmd/dolt/commands/sqlserver/queryist_utils.go (file has 262 lines) [via go/cmd/dolt/commands/sqlserver/queryist_utils.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "346",
+        "status": "grounded",
+        "reason": "line 346 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "add.go",
+        "locator": "406",
+        "status": "grounded",
+        "reason": "line 406 in add.go (file has 705 lines) [via go/cmd/dolt/commands/add.go]"
+      },
+      {
+        "file": "cli_context.go",
+        "locator": "89",
+        "status": "grounded",
+        "reason": "line 89 in cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cli_context.go",
+        "locator": "148",
+        "status": "grounded",
+        "reason": "line 148 in cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "engine/utils.go",
+        "locator": "58",
+        "status": "grounded",
+        "reason": "line 58 in engine/utils.go (file has 61 lines) [via go/cmd/dolt/commands/engine/utils.go]"
+      },
+      {
+        "file": "session.go",
+        "locator": "130",
+        "status": "grounded",
+        "reason": "line 130 in session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "libraries/doltcore/doltdb/doltdb.go",
+        "locator": "126",
+        "status": "grounded",
+        "reason": "line 126 in libraries/doltcore/doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "127",
+        "status": "grounded",
+        "reason": "line 127 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "128",
+        "status": "grounded",
+        "reason": "line 128 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "139",
+        "status": "grounded",
+        "reason": "line 139 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb/hooksdatabase.go",
+        "locator": "27",
+        "status": "grounded",
+        "reason": "line 27 in doltdb/hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "doltdb/hooksdatabase.go",
+        "locator": "28",
+        "status": "grounded",
+        "reason": "line 28 in doltdb/hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "doltdb/hooksdatabase.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in doltdb/hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "doltdb/hooksdatabase.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in doltdb/hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "710",
+        "status": "grounded",
+        "reason": "line 710 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "doltdb/commit_itr.go",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in doltdb/commit_itr.go (file has 319 lines) [via go/libraries/doltcore/doltdb/commit_itr.go]"
+      },
+      {
+        "file": "doltdb/commit.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in doltdb/commit.go (file has 324 lines) [via go/libraries/doltcore/doltdb/commit.go]"
+      },
+      {
+        "file": "doltdb/root_val.go",
+        "locator": "136",
+        "status": "grounded",
+        "reason": "line 136 in doltdb/root_val.go (file has 1420 lines) [via go/libraries/doltcore/doltdb/root_val.go]"
+      },
+      {
+        "file": "doltdb/tag.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in doltdb/tag.go (file has 74 lines) [via go/libraries/doltcore/doltdb/tag.go]"
+      },
+      {
+        "file": "doltdb/durable/index.go",
+        "locator": "356",
+        "status": "grounded",
+        "reason": "line 356 in doltdb/durable/index.go (file has 483 lines) [via go/libraries/doltcore/doltdb/durable/index.go]"
+      },
+      {
+        "file": "doltdb/durable/table.go",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in doltdb/durable/table.go (file has 494 lines) [via go/libraries/doltcore/doltdb/durable/table.go]"
+      },
+      {
+        "file": "doltdb/branch_activity.go",
+        "locator": "69",
+        "status": "grounded",
+        "reason": "line 69 in doltdb/branch_activity.go (file has 254 lines) [via go/libraries/doltcore/doltdb/branch_activity.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "856",
+        "status": "grounded",
+        "reason": "line 856 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "878",
+        "status": "grounded",
+        "reason": "line 878 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "env/remotes.go",
+        "locator": "195",
+        "status": "grounded",
+        "reason": "line 195 in env/remotes.go (file has 810 lines) [via go/libraries/doltcore/env/remotes.go]"
+      },
+      {
+        "file": "env/multi_repo_env.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in env/multi_repo_env.go (file has 440 lines) [via go/libraries/doltcore/env/multi_repo_env.go]"
+      },
+      {
+        "file": "env/multi_repo_env.go",
+        "locator": "50",
+        "status": "grounded",
+        "reason": "line 50 in env/multi_repo_env.go (file has 440 lines) [via go/libraries/doltcore/env/multi_repo_env.go]"
+      },
+      {
+        "file": "env/grpc_dial_provider.go",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in env/grpc_dial_provider.go (file has 290 lines) [via go/libraries/doltcore/env/grpc_dial_provider.go]"
+      },
+      {
+        "file": "env/actions/commitwalk/commitwalk.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in env/actions/commitwalk/commitwalk.go (file has 235 lines) [via go/libraries/doltcore/env/actions/commitwalk/commitwalk.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "90",
+        "status": "grounded",
+        "reason": "line 90 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "91",
+        "status": "grounded",
+        "reason": "line 91 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "92",
+        "status": "grounded",
+        "reason": "line 92 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "96",
+        "status": "grounded",
+        "reason": "line 96 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "dbfactory/git_remote.go",
+        "locator": "100",
+        "status": "grounded",
+        "reason": "line 100 in dbfactory/git_remote.go (file has 430 lines) [via go/libraries/doltcore/dbfactory/git_remote.go]"
+      },
+      {
+        "file": "dbfactory/git_remote.go",
+        "locator": "107",
+        "status": "grounded",
+        "reason": "line 107 in dbfactory/git_remote.go (file has 430 lines) [via go/libraries/doltcore/dbfactory/git_remote.go]"
+      },
+      {
+        "file": "dbfactory/git_remote.go",
+        "locator": "126",
+        "status": "grounded",
+        "reason": "line 126 in dbfactory/git_remote.go (file has 430 lines) [via go/libraries/doltcore/dbfactory/git_remote.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "116",
+        "status": "grounded",
+        "reason": "line 116 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "130",
+        "status": "grounded",
+        "reason": "line 130 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "sqle/read_replica_database.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in sqle/read_replica_database.go (file has 665 lines) [via go/libraries/doltcore/sqle/read_replica_database.go]"
+      },
+      {
+        "file": "sqle/database_provider.go",
+        "locator": "68",
+        "status": "grounded",
+        "reason": "line 68 in sqle/database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "sqle/database_provider.go",
+        "locator": "71",
+        "status": "grounded",
+        "reason": "line 71 in sqle/database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "sqle/database_provider.go",
+        "locator": "64",
+        "status": "grounded",
+        "reason": "line 64 in sqle/database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "sqle/tables.go",
+        "locator": "89",
+        "status": "grounded",
+        "reason": "line 89 in sqle/tables.go (file has 3412 lines) [via go/libraries/doltcore/sqle/tables.go]"
+      },
+      {
+        "file": "sqle/tables.go",
+        "locator": "90",
+        "status": "grounded",
+        "reason": "line 90 in sqle/tables.go (file has 3412 lines) [via go/libraries/doltcore/sqle/tables.go]"
+      },
+      {
+        "file": "sqle/tables.go",
+        "locator": "664",
+        "status": "grounded",
+        "reason": "line 664 in sqle/tables.go (file has 3412 lines) [via go/libraries/doltcore/sqle/tables.go]"
+      },
+      {
+        "file": "sqle/tables.go",
+        "locator": "663",
+        "status": "grounded",
+        "reason": "line 663 in sqle/tables.go (file has 3412 lines) [via go/libraries/doltcore/sqle/tables.go]"
+      },
+      {
+        "file": "sqle/temp_table.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in sqle/temp_table.go (file has 500 lines) [via go/libraries/doltcore/sqle/temp_table.go]"
+      },
+      {
+        "file": "sqle/temp_table.go",
+        "locator": "48",
+        "status": "grounded",
+        "reason": "line 48 in sqle/temp_table.go (file has 500 lines) [via go/libraries/doltcore/sqle/temp_table.go]"
+      },
+      {
+        "file": "sqle/dropped_databases.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in sqle/dropped_databases.go (file has 277 lines) [via go/libraries/doltcore/sqle/dropped_databases.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_diff_table.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in sqle/dolt_schemas_diff_table.go (file has 619 lines) [via go/libraries/doltcore/sqle/dolt_schemas_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_diff_table.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in sqle/dolt_schemas_diff_table.go (file has 619 lines) [via go/libraries/doltcore/sqle/dolt_schemas_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_diff_table.go",
+        "locator": "139",
+        "status": "grounded",
+        "reason": "line 139 in sqle/dolt_schemas_diff_table.go (file has 619 lines) [via go/libraries/doltcore/sqle/dolt_schemas_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_diff_table.go",
+        "locator": "340",
+        "status": "grounded",
+        "reason": "line 340 in sqle/dolt_schemas_diff_table.go (file has 619 lines) [via go/libraries/doltcore/sqle/dolt_schemas_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_diff_table.go",
+        "locator": "380",
+        "status": "grounded",
+        "reason": "line 380 in sqle/dolt_schemas_diff_table.go (file has 619 lines) [via go/libraries/doltcore/sqle/dolt_schemas_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_history_table.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in sqle/dolt_schemas_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_schemas_history_table.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_history_table.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in sqle/dolt_schemas_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_schemas_history_table.go]"
+      },
+      {
+        "file": "sqle/dolt_schemas_history_table.go",
+        "locator": "117",
+        "status": "grounded",
+        "reason": "line 117 in sqle/dolt_schemas_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_schemas_history_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_diff_table.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in sqle/dolt_procedures_diff_table.go (file has 618 lines) [via go/libraries/doltcore/sqle/dolt_procedures_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_diff_table.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in sqle/dolt_procedures_diff_table.go (file has 618 lines) [via go/libraries/doltcore/sqle/dolt_procedures_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_diff_table.go",
+        "locator": "139",
+        "status": "grounded",
+        "reason": "line 139 in sqle/dolt_procedures_diff_table.go (file has 618 lines) [via go/libraries/doltcore/sqle/dolt_procedures_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_diff_table.go",
+        "locator": "340",
+        "status": "grounded",
+        "reason": "line 340 in sqle/dolt_procedures_diff_table.go (file has 618 lines) [via go/libraries/doltcore/sqle/dolt_procedures_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_diff_table.go",
+        "locator": "380",
+        "status": "grounded",
+        "reason": "line 380 in sqle/dolt_procedures_diff_table.go (file has 618 lines) [via go/libraries/doltcore/sqle/dolt_procedures_diff_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_history_table.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in sqle/dolt_procedures_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_procedures_history_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_history_table.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in sqle/dolt_procedures_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_procedures_history_table.go]"
+      },
+      {
+        "file": "sqle/dolt_procedures_history_table.go",
+        "locator": "117",
+        "status": "grounded",
+        "reason": "line 117 in sqle/dolt_procedures_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_procedures_history_table.go]"
+      },
+      {
+        "file": "dtables/log_table.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in dtables/log_table.go (file has 523 lines) [via go/libraries/doltcore/sqle/dtables/log_table.go]"
+      },
+      {
+        "file": "dtables/commits_table.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in dtables/commits_table.go (file has 182 lines) [via go/libraries/doltcore/sqle/dtables/commits_table.go]"
+      },
+      {
+        "file": "dtables/commit_ancestors_table.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in dtables/commit_ancestors_table.go (file has 207 lines) [via go/libraries/doltcore/sqle/dtables/commit_ancestors_table.go]"
+      },
+      {
+        "file": "dtables/commit_ancestors_table.go",
+        "locator": "141",
+        "status": "grounded",
+        "reason": "line 141 in dtables/commit_ancestors_table.go (file has 207 lines) [via go/libraries/doltcore/sqle/dtables/commit_ancestors_table.go]"
+      },
+      {
+        "file": "dtables/commit_diff_table.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in dtables/commit_diff_table.go (file has 322 lines) [via go/libraries/doltcore/sqle/dtables/commit_diff_table.go]"
+      },
+      {
+        "file": "dtables/diff_table.go",
+        "locator": "65",
+        "status": "grounded",
+        "reason": "line 65 in dtables/diff_table.go (file has 929 lines) [via go/libraries/doltcore/sqle/dtables/diff_table.go]"
+      },
+      {
+        "file": "dtables/diff_iter.go",
+        "locator": "395",
+        "status": "grounded",
+        "reason": "line 395 in dtables/diff_iter.go (file has 435 lines) [via go/libraries/doltcore/sqle/dtables/diff_iter.go]"
+      },
+      {
+        "file": "dtables/unscoped_diff_table.go",
+        "locator": "48",
+        "status": "grounded",
+        "reason": "line 48 in dtables/unscoped_diff_table.go (file has 558 lines) [via go/libraries/doltcore/sqle/dtables/unscoped_diff_table.go]"
+      },
+      {
+        "file": "dtables/unscoped_diff_table.go",
+        "locator": "317",
+        "status": "grounded",
+        "reason": "line 317 in dtables/unscoped_diff_table.go (file has 558 lines) [via go/libraries/doltcore/sqle/dtables/unscoped_diff_table.go]"
+      },
+      {
+        "file": "dtables/column_diff_table.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in dtables/column_diff_table.go (file has 665 lines) [via go/libraries/doltcore/sqle/dtables/column_diff_table.go]"
+      },
+      {
+        "file": "dtables/column_diff_table.go",
+        "locator": "171",
+        "status": "grounded",
+        "reason": "line 171 in dtables/column_diff_table.go (file has 665 lines) [via go/libraries/doltcore/sqle/dtables/column_diff_table.go]"
+      },
+      {
+        "file": "dtables/column_diff_table.go",
+        "locator": "287",
+        "status": "grounded",
+        "reason": "line 287 in dtables/column_diff_table.go (file has 665 lines) [via go/libraries/doltcore/sqle/dtables/column_diff_table.go]"
+      },
+      {
+        "file": "dtables/schema_conflicts_table.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in dtables/schema_conflicts_table.go (file has 270 lines) [via go/libraries/doltcore/sqle/dtables/schema_conflicts_table.go]"
+      },
+      {
+        "file": "dtables/schema_conflicts_table.go",
+        "locator": "140",
+        "status": "grounded",
+        "reason": "line 140 in dtables/schema_conflicts_table.go (file has 270 lines) [via go/libraries/doltcore/sqle/dtables/schema_conflicts_table.go]"
+      },
+      {
+        "file": "dtables/status_table.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in dtables/status_table.go (file has 350 lines) [via go/libraries/doltcore/sqle/dtables/status_table.go]"
+      },
+      {
+        "file": "dtables/status_ignored_table.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in dtables/status_ignored_table.go (file has 205 lines) [via go/libraries/doltcore/sqle/dtables/status_ignored_table.go]"
+      },
+      {
+        "file": "dtables/stashes_table.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in dtables/stashes_table.go (file has 158 lines) [via go/libraries/doltcore/sqle/dtables/stashes_table.go]"
+      },
+      {
+        "file": "dtables/tags_table.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in dtables/tags_table.go (file has 128 lines) [via go/libraries/doltcore/sqle/dtables/tags_table.go]"
+      },
+      {
+        "file": "dtables/remotes_table.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in dtables/remotes_table.go (file has 230 lines) [via go/libraries/doltcore/sqle/dtables/remotes_table.go]"
+      },
+      {
+        "file": "dtables/table_of_tables_in_conflict.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in dtables/table_of_tables_in_conflict.go (file has 167 lines) [via go/libraries/doltcore/sqle/dtables/table_of_tables_in_conflict.go]"
+      },
+      {
+        "file": "dtables/branches_table.go",
+        "locator": "54",
+        "status": "grounded",
+        "reason": "line 54 in dtables/branches_table.go (file has 588 lines) [via go/libraries/doltcore/sqle/dtables/branches_table.go]"
+      },
+      {
+        "file": "dtables/backups_table.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in dtables/backups_table.go (file has 126 lines) [via go/libraries/doltcore/sqle/dtables/backups_table.go]"
+      },
+      {
+        "file": "dtables/branch_activity_table.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in dtables/branch_activity_table.go (file has 191 lines) [via go/libraries/doltcore/sqle/dtables/branch_activity_table.go]"
+      },
+      {
+        "file": "dtables/conflicts_tables_prolly.go",
+        "locator": "93",
+        "status": "grounded",
+        "reason": "line 93 in dtables/conflicts_tables_prolly.go (file has 876 lines) [via go/libraries/doltcore/sqle/dtables/conflicts_tables_prolly.go]"
+      },
+      {
+        "file": "dtables/conflicts_tables_prolly.go",
+        "locator": "144",
+        "status": "grounded",
+        "reason": "line 144 in dtables/conflicts_tables_prolly.go (file has 876 lines) [via go/libraries/doltcore/sqle/dtables/conflicts_tables_prolly.go]"
+      },
+      {
+        "file": "dtables/constraint_violations_prolly.go",
+        "locator": "215",
+        "status": "grounded",
+        "reason": "line 215 in dtables/constraint_violations_prolly.go (file has 417 lines) [via go/libraries/doltcore/sqle/dtables/constraint_violations_prolly.go]"
+      },
+      {
+        "file": "dtables/prolly_row_conv.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in dtables/prolly_row_conv.go (file has 153 lines) [via go/libraries/doltcore/sqle/dtables/prolly_row_conv.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_diff.go",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in dtablefunctions/dolt_diff.go (file has 989 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_diff.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_diff_stat.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in dtablefunctions/dolt_diff_stat.go (file has 600 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_diff_stat.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_diff_summary.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in dtablefunctions/dolt_diff_summary.go (file has 483 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_diff_summary.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_schema_diff.go",
+        "locator": "65",
+        "status": "grounded",
+        "reason": "line 65 in dtablefunctions/dolt_schema_diff.go (file has 426 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_schema_diff.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_json_diff.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in dtablefunctions/dolt_json_diff.go (file has 190 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_json_diff.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_query_diff.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in dtablefunctions/dolt_query_diff.go (file has 362 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_query_diff.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_log.go",
+        "locator": "176",
+        "status": "grounded",
+        "reason": "line 176 in dtablefunctions/dolt_log.go (file has 795 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_log.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_reflog.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in dtablefunctions/dolt_reflog.go (file has 251 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_reflog.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_patch.go",
+        "locator": "76",
+        "status": "grounded",
+        "reason": "line 76 in dtablefunctions/dolt_patch.go (file has 810 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_patch.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_branch_status_table_function.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in dtablefunctions/dolt_branch_status_table_function.go (file has 215 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_branch_status_table_function.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_preview_merge_conflicts.go",
+        "locator": "50",
+        "status": "grounded",
+        "reason": "line 50 in dtablefunctions/dolt_preview_merge_conflicts.go (file has 750 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_preview_merge_conflicts.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_preview_merge_conflicts.go",
+        "locator": "581",
+        "status": "grounded",
+        "reason": "line 581 in dtablefunctions/dolt_preview_merge_conflicts.go (file has 750 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_preview_merge_conflicts.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_preview_merge_conflicts_summary.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in dtablefunctions/dolt_preview_merge_conflicts_summary.go (file has 469 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_preview_merge_conflicts_summary.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "64",
+        "status": "grounded",
+        "reason": "line 64 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "65",
+        "status": "grounded",
+        "reason": "line 65 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "66",
+        "status": "grounded",
+        "reason": "line 66 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "74",
+        "status": "grounded",
+        "reason": "line 74 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "106",
+        "status": "grounded",
+        "reason": "line 106 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "112",
+        "status": "grounded",
+        "reason": "line 112 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "107",
+        "status": "grounded",
+        "reason": "line 107 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dsess/database_session_state.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in dsess/database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "69",
+        "status": "grounded",
+        "reason": "line 69 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "47",
+        "status": "grounded",
+        "reason": "line 47 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "54",
+        "status": "grounded",
+        "reason": "line 54 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "dsess/transactions.go",
+        "locator": "93",
+        "status": "grounded",
+        "reason": "line 93 in dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "dsess/transactions.go",
+        "locator": "88",
+        "status": "grounded",
+        "reason": "line 88 in dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "dsess/transactions.go",
+        "locator": "99",
+        "status": "grounded",
+        "reason": "line 99 in dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "dsess/globalstate.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in dsess/globalstate.go (file has 115 lines) [via go/libraries/doltcore/sqle/dsess/globalstate.go]"
+      },
+      {
+        "file": "dsess/autoincrement_tracker.go",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in dsess/autoincrement_tracker.go (file has 703 lines) [via go/libraries/doltcore/sqle/dsess/autoincrement_tracker.go]"
+      },
+      {
+        "file": "sqle/writer/prolly_write_session.go",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in sqle/writer/prolly_write_session.go (file has 258 lines) [via go/libraries/doltcore/sqle/writer/prolly_write_session.go]"
+      },
+      {
+        "file": "sqle/writer/prolly_index_writer.go",
+        "locator": "102",
+        "status": "grounded",
+        "reason": "line 102 in sqle/writer/prolly_index_writer.go (file has 559 lines) [via go/libraries/doltcore/sqle/writer/prolly_index_writer.go]"
+      },
+      {
+        "file": "sqle/writer/prolly_index_writer_keyless.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in sqle/writer/prolly_index_writer_keyless.go (file has 404 lines) [via go/libraries/doltcore/sqle/writer/prolly_index_writer_keyless.go]"
+      },
+      {
+        "file": "doltdb/gcctx/gc_safepoint_controller.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in doltdb/gcctx/gc_safepoint_controller.go (file has 344 lines) [via go/libraries/doltcore/doltdb/gcctx/gc_safepoint_controller.go]"
+      },
+      {
+        "file": "doltdb/gcctx/gc_safepoint_controller.go",
+        "locator": "118",
+        "status": "grounded",
+        "reason": "line 118 in doltdb/gcctx/gc_safepoint_controller.go (file has 344 lines) [via go/libraries/doltcore/doltdb/gcctx/gc_safepoint_controller.go]"
+      },
+      {
+        "file": "doltdb/gcctx/context.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in doltdb/gcctx/context.go (file has 89 lines) [via go/libraries/doltcore/doltdb/gcctx/context.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "78",
+        "status": "grounded",
+        "reason": "line 78 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "77",
+        "status": "grounded",
+        "reason": "line 77 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "172",
+        "status": "grounded",
+        "reason": "line 172 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "171",
+        "status": "grounded",
+        "reason": "line 171 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "173",
+        "status": "grounded",
+        "reason": "line 173 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "174",
+        "status": "grounded",
+        "reason": "line 174 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "175",
+        "status": "grounded",
+        "reason": "line 175 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "sqle/auto_gc.go",
+        "locator": "302",
+        "status": "grounded",
+        "reason": "line 302 in sqle/auto_gc.go (file has 456 lines) [via go/libraries/doltcore/sqle/auto_gc.go]"
+      },
+      {
+        "file": "sqle/auto_gc.go",
+        "locator": "296",
+        "status": "grounded",
+        "reason": "line 296 in sqle/auto_gc.go (file has 456 lines) [via go/libraries/doltcore/sqle/auto_gc.go]"
+      },
+      {
+        "file": "store/types/value_store.go",
+        "locator": "76",
+        "status": "grounded",
+        "reason": "line 76 in store/types/value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "store/types/value_store.go",
+        "locator": "77",
+        "status": "grounded",
+        "reason": "line 77 in store/types/value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "store/types/value_store.go",
+        "locator": "80",
+        "status": "grounded",
+        "reason": "line 80 in store/types/value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "store/prolly/tree/node_store.go",
+        "locator": "66",
+        "status": "grounded",
+        "reason": "line 66 in store/prolly/tree/node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "store/prolly/tree/node_store.go",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in store/prolly/tree/node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "store/nbs/gc_copier.go",
+        "locator": "192",
+        "status": "grounded",
+        "reason": "line 192 in store/nbs/gc_copier.go (file has 313 lines) [via go/store/nbs/gc_copier.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "2395",
+        "status": "grounded",
+        "reason": "line 2395 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "2394",
+        "status": "grounded",
+        "reason": "line 2394 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "2565",
+        "status": "grounded",
+        "reason": "line 2565 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "102",
+        "status": "grounded",
+        "reason": "line 102 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "111",
+        "status": "grounded",
+        "reason": "line 111 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "110",
+        "status": "grounded",
+        "reason": "line 110 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "325",
+        "status": "grounded",
+        "reason": "line 325 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "331",
+        "status": "grounded",
+        "reason": "line 331 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "332",
+        "status": "grounded",
+        "reason": "line 332 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/cluster/commithook.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in sqle/cluster/commithook.go (file has 532 lines) [via go/libraries/doltcore/sqle/cluster/commithook.go]"
+      },
+      {
+        "file": "sqle/cluster/commithook.go",
+        "locator": "47",
+        "status": "grounded",
+        "reason": "line 47 in sqle/cluster/commithook.go (file has 532 lines) [via go/libraries/doltcore/sqle/cluster/commithook.go]"
+      },
+      {
+        "file": "sqle/cluster/controller.go",
+        "locator": "115",
+        "status": "grounded",
+        "reason": "line 115 in sqle/cluster/controller.go (file has 1252 lines) [via go/libraries/doltcore/sqle/cluster/controller.go]"
+      },
+      {
+        "file": "sqle/cluster/controller.go",
+        "locator": "88",
+        "status": "grounded",
+        "reason": "line 88 in sqle/cluster/controller.go (file has 1252 lines) [via go/libraries/doltcore/sqle/cluster/controller.go]"
+      },
+      {
+        "file": "sqle/cluster/remotesrv.go",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in sqle/cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "sqle/cluster/remotesrv.go",
+        "locator": "26",
+        "status": "grounded",
+        "reason": "line 26 in sqle/cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "sqle/cluster/remotesrv.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in sqle/cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "sqle/cluster/remotesrv.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in sqle/cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "87",
+        "status": "grounded",
+        "reason": "line 87 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "remotesrv/dbcache.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in remotesrv/dbcache.go (file has 38 lines) [via go/libraries/doltcore/remotesrv/dbcache.go]"
+      },
+      {
+        "file": "remotesrv/server.go",
+        "locator": "78",
+        "status": "grounded",
+        "reason": "line 78 in remotesrv/server.go (file has 275 lines) [via go/libraries/doltcore/remotesrv/server.go]"
+      },
+      {
+        "file": "remotesrv/grpc.go",
+        "locator": "54",
+        "status": "grounded",
+        "reason": "line 54 in remotesrv/grpc.go (file has 930 lines) [via go/libraries/doltcore/remotesrv/grpc.go]"
+      },
+      {
+        "file": "remotesrv/http.go",
+        "locator": "48",
+        "status": "grounded",
+        "reason": "line 48 in remotesrv/http.go (file has 488 lines) [via go/libraries/doltcore/remotesrv/http.go]"
+      },
+      {
+        "file": "remotestorage/chunk_store.go",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in remotestorage/chunk_store.go (file has 1300 lines) [via go/libraries/doltcore/remotestorage/chunk_store.go]"
+      },
+      {
+        "file": "chunk_cache.go",
+        "locator": "26",
+        "status": "grounded",
+        "reason": "line 26 in chunk_cache.go (file has 39 lines) [via go/libraries/doltcore/remotestorage/chunk_cache.go]"
+      },
+      {
+        "file": "remotestorage/chunk_store.go",
+        "locator": "127",
+        "status": "grounded",
+        "reason": "line 127 in remotestorage/chunk_store.go (file has 1300 lines) [via go/libraries/doltcore/remotestorage/chunk_store.go]"
+      },
+      {
+        "file": "remotestorage/chunk_store.go",
+        "locator": "124",
+        "status": "grounded",
+        "reason": "line 124 in remotestorage/chunk_store.go (file has 1300 lines) [via go/libraries/doltcore/remotestorage/chunk_store.go]"
+      },
+      {
+        "file": "remotestorage/chunk_store.go",
+        "locator": "1198",
+        "status": "grounded",
+        "reason": "line 1198 in remotestorage/chunk_store.go (file has 1300 lines) [via go/libraries/doltcore/remotestorage/chunk_store.go]"
+      },
+      {
+        "file": "store/datas/pull/puller.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in store/datas/pull/puller.go (file has 468 lines) [via go/store/datas/pull/puller.go]"
+      },
+      {
+        "file": "statspro/stats_kv.go",
+        "locator": "212",
+        "status": "grounded",
+        "reason": "line 212 in statspro/stats_kv.go (file has 571 lines) [via go/libraries/doltcore/sqle/statspro/stats_kv.go]"
+      },
+      {
+        "file": "statspro/stats_kv.go",
+        "locator": "215",
+        "status": "grounded",
+        "reason": "line 215 in statspro/stats_kv.go (file has 571 lines) [via go/libraries/doltcore/sqle/statspro/stats_kv.go]"
+      },
+      {
+        "file": "statspro/controller.go",
+        "locator": "70",
+        "status": "grounded",
+        "reason": "line 70 in statspro/controller.go (file has 708 lines) [via go/libraries/doltcore/sqle/statspro/controller.go]"
+      },
+      {
+        "file": "statspro/controller.go",
+        "locator": "73",
+        "status": "grounded",
+        "reason": "line 73 in statspro/controller.go (file has 708 lines) [via go/libraries/doltcore/sqle/statspro/controller.go]"
+      },
+      {
+        "file": "statspro/controller.go",
+        "locator": "78",
+        "status": "grounded",
+        "reason": "line 78 in statspro/controller.go (file has 708 lines) [via go/libraries/doltcore/sqle/statspro/controller.go]"
+      },
+      {
+        "file": "statspro/controller.go",
+        "locator": "80",
+        "status": "grounded",
+        "reason": "line 80 in statspro/controller.go (file has 708 lines) [via go/libraries/doltcore/sqle/statspro/controller.go]"
+      },
+      {
+        "file": "statspro/controller.go",
+        "locator": "83",
+        "status": "grounded",
+        "reason": "line 83 in statspro/controller.go (file has 708 lines) [via go/libraries/doltcore/sqle/statspro/controller.go]"
+      },
+      {
+        "file": "statspro/controller.go",
+        "locator": "101",
+        "status": "grounded",
+        "reason": "line 101 in statspro/controller.go (file has 708 lines) [via go/libraries/doltcore/sqle/statspro/controller.go]"
+      },
+      {
+        "file": "statspro/controller.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in statspro/controller.go (file has 708 lines) [via go/libraries/doltcore/sqle/statspro/controller.go]"
+      },
+      {
+        "file": "store/datas/database_common.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in store/datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "store/datas/database_common.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in store/datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "store/datas/database_common.go",
+        "locator": "40",
+        "status": "grounded",
+        "reason": "line 40 in store/datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "store/datas/database.go",
+        "locator": "195",
+        "status": "grounded",
+        "reason": "line 195 in store/datas/database.go (file has 223 lines) [via go/store/datas/database.go]"
+      },
+      {
+        "file": "store/nbs/generational_chunk_store.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in store/nbs/generational_chunk_store.go (file has 612 lines) [via go/store/nbs/generational_chunk_store.go]"
+      },
+      {
+        "file": "store/nbs/generational_chunk_store.go",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in store/nbs/generational_chunk_store.go (file has 612 lines) [via go/store/nbs/generational_chunk_store.go]"
+      },
+      {
+        "file": "store/nbs/nbs_metrics_wrapper.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in store/nbs/nbs_metrics_wrapper.go (file has 112 lines) [via go/store/nbs/nbs_metrics_wrapper.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "2126",
+        "status": "grounded",
+        "reason": "line 2126 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "store/chunks/cs_metrics_wrapper.go",
+        "locator": "57",
+        "status": "grounded",
+        "reason": "line 57 in store/chunks/cs_metrics_wrapper.go (file has 166 lines) [via go/store/chunks/cs_metrics_wrapper.go]"
+      },
+      {
+        "file": "store/chunks/chunk_store.go",
+        "locator": "150",
+        "status": "grounded",
+        "reason": "line 150 in store/chunks/chunk_store.go (file has 345 lines) [via go/store/chunks/chunk_store.go]"
+      },
+      {
+        "file": "store/chunks/chunk_store.go",
+        "locator": "250",
+        "status": "grounded",
+        "reason": "line 250 in store/chunks/chunk_store.go (file has 345 lines) [via go/store/chunks/chunk_store.go]"
+      },
+      {
+        "file": "store/chunks/chunk_store.go",
+        "locator": "298",
+        "status": "grounded",
+        "reason": "line 298 in store/chunks/chunk_store.go (file has 345 lines) [via go/store/chunks/chunk_store.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "81",
+        "status": "grounded",
+        "reason": "line 81 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "store/spec/spec.go",
+        "locator": "155",
+        "status": "grounded",
+        "reason": "line 155 in store/spec/spec.go (file has 633 lines) [via go/store/spec/spec.go]"
+      },
+      {
+        "file": "store/types/validating_decoder.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in store/types/validating_decoder.go (file has 65 lines) [via go/store/types/validating_decoder.go]"
+      },
+      {
+        "file": "store/types/value.go",
+        "locator": "175",
+        "status": "grounded",
+        "reason": "line 175 in store/types/value.go (file has 309 lines) [via go/store/types/value.go]"
+      },
+      {
+        "file": "store/types/value_decoder.go",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in store/types/value_decoder.go (file has 517 lines) [via go/store/types/value_decoder.go]"
+      },
+      {
+        "file": "store/datas/ref_closure.go",
+        "locator": "85",
+        "status": "grounded",
+        "reason": "line 85 in store/datas/ref_closure.go (file has 114 lines) [via go/store/datas/ref_closure.go]"
+      },
+      {
+        "file": "store/val/value_store.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in store/val/value_store.go (file has 419 lines) [via go/store/val/value_store.go]"
+      },
+      {
+        "file": "val/value_store.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in val/value_store.go (file has 419 lines) [via go/store/val/value_store.go]"
+      },
+      {
+        "file": "val/tuple_descriptor.go",
+        "locator": "77",
+        "status": "grounded",
+        "reason": "line 77 in val/tuple_descriptor.go (file has 905 lines) [via go/store/val/tuple_descriptor.go]"
+      },
+      {
+        "file": "val/tuple_builder.go",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in val/tuple_builder.go (file has 684 lines) [via go/store/val/tuple_builder.go]"
+      },
+      {
+        "file": "val/tuple_compare.go",
+        "locator": "46",
+        "status": "grounded",
+        "reason": "line 46 in val/tuple_compare.go (file has 177 lines) [via go/store/val/tuple_compare.go]"
+      },
+      {
+        "file": "val/adaptive_value.go",
+        "locator": "286",
+        "status": "grounded",
+        "reason": "line 286 in val/adaptive_value.go (file has 435 lines) [via go/store/val/adaptive_value.go]"
+      },
+      {
+        "file": "val/keyless_tuple.go",
+        "locator": "79",
+        "status": "grounded",
+        "reason": "line 79 in val/keyless_tuple.go (file has 111 lines) [via go/store/val/keyless_tuple.go]"
+      },
+      {
+        "file": "val/extended_comparator.go",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in val/extended_comparator.go (file has 123 lines) [via go/store/val/extended_comparator.go]"
+      },
+      {
+        "file": "sqle/index/dolt_index.go",
+        "locator": "599",
+        "status": "grounded",
+        "reason": "line 599 in sqle/index/dolt_index.go (file has 1463 lines) [via go/libraries/doltcore/sqle/index/dolt_index.go]"
+      },
+      {
+        "file": "sqle/index/index_reader.go",
+        "locator": "354",
+        "status": "grounded",
+        "reason": "line 354 in sqle/index/index_reader.go (file has 774 lines) [via go/libraries/doltcore/sqle/index/index_reader.go]"
+      },
+      {
+        "file": "sqle/index/key_builder.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in sqle/index/key_builder.go (file has 235 lines) [via go/libraries/doltcore/sqle/index/key_builder.go]"
+      },
+      {
+        "file": "sqle/index/prolly_index_iter.go",
+        "locator": "216",
+        "status": "grounded",
+        "reason": "line 216 in sqle/index/prolly_index_iter.go (file has 521 lines) [via go/libraries/doltcore/sqle/index/prolly_index_iter.go]"
+      },
+      {
+        "file": "sqle/index/prolly_row_iter.go",
+        "locator": "28",
+        "status": "grounded",
+        "reason": "line 28 in sqle/index/prolly_row_iter.go (file has 319 lines) [via go/libraries/doltcore/sqle/index/prolly_row_iter.go]"
+      },
+      {
+        "file": "sqle/index/prolly_row_iter.go",
+        "locator": "241",
+        "status": "grounded",
+        "reason": "line 241 in sqle/index/prolly_row_iter.go (file has 319 lines) [via go/libraries/doltcore/sqle/index/prolly_row_iter.go]"
+      },
+      {
+        "file": "sqle/kvexec/builder.go",
+        "locator": "173",
+        "status": "grounded",
+        "reason": "line 173 in sqle/kvexec/builder.go (file has 657 lines) [via go/libraries/doltcore/sqle/kvexec/builder.go]"
+      },
+      {
+        "file": "sqle/kvexec/lookup_join.go",
+        "locator": "186",
+        "status": "grounded",
+        "reason": "line 186 in sqle/kvexec/lookup_join.go (file has 377 lines) [via go/libraries/doltcore/sqle/kvexec/lookup_join.go]"
+      },
+      {
+        "file": "merge/merge_rows.go",
+        "locator": "78",
+        "status": "grounded",
+        "reason": "line 78 in merge/merge_rows.go (file has 553 lines) [via go/libraries/doltcore/merge/merge_rows.go]"
+      },
+      {
+        "file": "merge/merge_rows.go",
+        "locator": "163",
+        "status": "grounded",
+        "reason": "line 163 in merge/merge_rows.go (file has 553 lines) [via go/libraries/doltcore/merge/merge_rows.go]"
+      },
+      {
+        "file": "merge/merge_rows.go",
+        "locator": "489",
+        "status": "grounded",
+        "reason": "line 489 in merge/merge_rows.go (file has 553 lines) [via go/libraries/doltcore/merge/merge_rows.go]"
+      },
+      {
+        "file": "merge/merge_prolly_rows.go",
+        "locator": "1910",
+        "status": "grounded",
+        "reason": "line 1910 in merge/merge_prolly_rows.go (file has 2503 lines) [via go/libraries/doltcore/merge/merge_prolly_rows.go]"
+      },
+      {
+        "file": "merge/three_way_json_differ.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in merge/three_way_json_differ.go (file has 206 lines) [via go/libraries/doltcore/merge/three_way_json_differ.go]"
+      },
+      {
+        "file": "diff/table_deltas.go",
+        "locator": "71",
+        "status": "grounded",
+        "reason": "line 71 in diff/table_deltas.go (file has 842 lines) [via go/libraries/doltcore/diff/table_deltas.go]"
+      },
+      {
+        "file": "diff/table_deltas.go",
+        "locator": "73",
+        "status": "grounded",
+        "reason": "line 73 in diff/table_deltas.go (file has 842 lines) [via go/libraries/doltcore/diff/table_deltas.go]"
+      },
+      {
+        "file": "store/prolly/proximity_map.go",
+        "locator": "270",
+        "status": "grounded",
+        "reason": "line 270 in store/prolly/proximity_map.go (file has 623 lines) [via go/store/prolly/proximity_map.go]"
+      },
+      {
+        "file": "store/prolly/tree/map.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in store/prolly/tree/map.go (file has 666 lines) [via go/store/prolly/tree/map.go]"
+      },
+      {
+        "file": "store/prolly/tree/proximity_map.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in store/prolly/tree/proximity_map.go (file has 284 lines) [via go/store/prolly/tree/proximity_map.go]"
+      },
+      {
+        "file": "store/prolly/tree/node_cursor.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in store/prolly/tree/node_cursor.go (file has 662 lines) [via go/store/prolly/tree/node_cursor.go]"
+      },
+      {
+        "file": "store/prolly/tree/chunker.go",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in store/prolly/tree/chunker.go (file has 549 lines) [via go/store/prolly/tree/chunker.go]"
+      },
+      {
+        "file": "store/prolly/tree/json_chunker.go",
+        "locator": "40",
+        "status": "grounded",
+        "reason": "line 40 in store/prolly/tree/json_chunker.go (file has 234 lines) [via go/store/prolly/tree/json_chunker.go]"
+      },
+      {
+        "file": "store/prolly/tree/blob_builder.go",
+        "locator": "63",
+        "status": "grounded",
+        "reason": "line 63 in store/prolly/tree/blob_builder.go (file has 355 lines) [via go/store/prolly/tree/blob_builder.go]"
+      },
+      {
+        "file": "store/prolly/tree/blob_builder.go",
+        "locator": "246",
+        "status": "grounded",
+        "reason": "line 246 in store/prolly/tree/blob_builder.go (file has 355 lines) [via go/store/prolly/tree/blob_builder.go]"
+      },
+      {
+        "file": "store/prolly/tree/blob_chunk_differ.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in store/prolly/tree/blob_chunk_differ.go (file has 233 lines) [via go/store/prolly/tree/blob_chunk_differ.go]"
+      },
+      {
+        "file": "store/prolly/tree/addr_diff.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in store/prolly/tree/addr_diff.go (file has 135 lines) [via go/store/prolly/tree/addr_diff.go]"
+      },
+      {
+        "file": "table/typed/json/reader.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in table/typed/json/reader.go (file has 149 lines) [via go/libraries/doltcore/table/typed/json/reader.go]"
+      },
+      {
+        "file": "table/typed/json/jsonl_reader.go",
+        "locator": "40",
+        "status": "grounded",
+        "reason": "line 40 in table/typed/json/jsonl_reader.go (file has 174 lines) [via go/libraries/doltcore/table/typed/json/jsonl_reader.go]"
+      },
+      {
+        "file": "table/typed/parquet/reader.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in table/typed/parquet/reader.go (file has 315 lines) [via go/libraries/doltcore/table/typed/parquet/reader.go]"
+      },
+      {
+        "file": "table/untyped/xlsx/reader.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in table/untyped/xlsx/reader.go (file has 150 lines) [via go/libraries/doltcore/table/untyped/xlsx/reader.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/cli_context.go",
+        "locator": "89",
+        "status": "grounded",
+        "reason": "line 89 in cmd/dolt/cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/cli_context.go",
+        "locator": "88",
+        "status": "grounded",
+        "reason": "line 88 in cmd/dolt/cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/cli_context.go",
+        "locator": "91",
+        "status": "grounded",
+        "reason": "line 91 in cmd/dolt/cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/cli_context.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in cmd/dolt/cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/cli_context.go",
+        "locator": "107",
+        "status": "grounded",
+        "reason": "line 107 in cmd/dolt/cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/cli_context.go",
+        "locator": "101",
+        "status": "grounded",
+        "reason": "line 101 in cmd/dolt/cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/cli_context.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in cmd/dolt/cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "commands/utils.go",
+        "locator": "253",
+        "status": "grounded",
+        "reason": "line 253 in commands/utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "62",
+        "status": "grounded",
+        "reason": "line 62 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "63",
+        "status": "grounded",
+        "reason": "line 63 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "64",
+        "status": "grounded",
+        "reason": "line 64 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/add.go",
+        "locator": "405",
+        "status": "grounded",
+        "reason": "line 405 in cmd/dolt/commands/add.go (file has 705 lines) [via go/cmd/dolt/commands/add.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/sqlserver/server.go",
+        "locator": "83",
+        "status": "grounded",
+        "reason": "line 83 in cmd/dolt/commands/sqlserver/server.go (file has 1292 lines) [via go/cmd/dolt/commands/sqlserver/server.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/sqlserver/queryist_utils.go",
+        "locator": "131",
+        "status": "grounded",
+        "reason": "line 131 in cmd/dolt/commands/sqlserver/queryist_utils.go (file has 262 lines) [via go/cmd/dolt/commands/sqlserver/queryist_utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/sqlserver/queryist_utils.go",
+        "locator": "132",
+        "status": "grounded",
+        "reason": "line 132 in cmd/dolt/commands/sqlserver/queryist_utils.go (file has 262 lines) [via go/cmd/dolt/commands/sqlserver/queryist_utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/filter-branch.go",
+        "locator": "159",
+        "status": "grounded",
+        "reason": "line 159 in cmd/dolt/commands/filter-branch.go (file has 379 lines) [via go/cmd/dolt/commands/filter-branch.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/filter-branch.go",
+        "locator": "204",
+        "status": "grounded",
+        "reason": "line 204 in cmd/dolt/commands/filter-branch.go (file has 379 lines) [via go/cmd/dolt/commands/filter-branch.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/fsck.go",
+        "locator": "487",
+        "status": "grounded",
+        "reason": "line 487 in cmd/dolt/commands/fsck.go (file has 1078 lines) [via go/cmd/dolt/commands/fsck.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/fsck.go",
+        "locator": "488",
+        "status": "grounded",
+        "reason": "line 488 in cmd/dolt/commands/fsck.go (file has 1078 lines) [via go/cmd/dolt/commands/fsck.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/fsck.go",
+        "locator": "675",
+        "status": "grounded",
+        "reason": "line 675 in cmd/dolt/commands/fsck.go (file has 1078 lines) [via go/cmd/dolt/commands/fsck.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/fsck.go",
+        "locator": "676",
+        "status": "grounded",
+        "reason": "line 676 in cmd/dolt/commands/fsck.go (file has 1078 lines) [via go/cmd/dolt/commands/fsck.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/transfer.go",
+        "locator": "264",
+        "status": "grounded",
+        "reason": "line 264 in cmd/dolt/commands/transfer.go (file has 311 lines) [via go/cmd/dolt/commands/transfer.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/clone.go",
+        "locator": "145",
+        "status": "grounded",
+        "reason": "line 145 in cmd/dolt/commands/clone.go (file has 297 lines) [via go/cmd/dolt/commands/clone.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "62",
+        "status": "grounded",
+        "reason": "line 62 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "cmd/dolt/cli/command.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in cmd/dolt/cli/command.go (file has 342 lines) [via go/cmd/dolt/cli/command.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/utils.go",
+        "locator": "346",
+        "status": "grounded",
+        "reason": "line 346 in cmd/dolt/commands/utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "478",
+        "status": "grounded",
+        "reason": "line 478 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "309",
+        "status": "grounded",
+        "reason": "line 309 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/sqlserver/queryist_utils.go",
+        "locator": "130",
+        "status": "grounded",
+        "reason": "line 130 in cmd/dolt/commands/sqlserver/queryist_utils.go (file has 262 lines) [via go/cmd/dolt/commands/sqlserver/queryist_utils.go]"
+      },
+      {
+        "file": "cli_context.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "349",
+        "status": "grounded",
+        "reason": "line 349 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "queryist_utils.go",
+        "locator": "123",
+        "status": "grounded",
+        "reason": "line 123 in queryist_utils.go (file has 262 lines) [via go/cmd/dolt/commands/sqlserver/queryist_utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/utils.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in cmd/dolt/commands/engine/utils.go (file has 61 lines) [via go/cmd/dolt/commands/engine/utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/utils.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in cmd/dolt/commands/engine/utils.go (file has 61 lines) [via go/cmd/dolt/commands/engine/utils.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "221",
+        "status": "grounded",
+        "reason": "line 221 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "engine/utils.go",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in engine/utils.go (file has 61 lines) [via go/cmd/dolt/commands/engine/utils.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "179",
+        "status": "grounded",
+        "reason": "line 179 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "194",
+        "status": "grounded",
+        "reason": "line 194 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "database_provider.go",
+        "locator": "68",
+        "status": "grounded",
+        "reason": "line 68 in database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "198",
+        "status": "grounded",
+        "reason": "line 198 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "database.go",
+        "locator": "199",
+        "status": "grounded",
+        "reason": "line 199 in database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "database.go",
+        "locator": "130",
+        "status": "grounded",
+        "reason": "line 130 in database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "read_replica_database.go",
+        "locator": "40",
+        "status": "grounded",
+        "reason": "line 40 in read_replica_database.go (file has 665 lines) [via go/libraries/doltcore/sqle/read_replica_database.go]"
+      },
+      {
+        "file": "user_space_database.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in user_space_database.go (file has 178 lines) [via go/libraries/doltcore/sqle/user_space_database.go]"
+      },
+      {
+        "file": "user_space_database.go",
+        "locator": "108",
+        "status": "grounded",
+        "reason": "line 108 in user_space_database.go (file has 178 lines) [via go/libraries/doltcore/sqle/user_space_database.go]"
+      },
+      {
+        "file": "clusterdb/database.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in clusterdb/database.go (file has 277 lines) [via go/libraries/doltcore/sqle/clusterdb/database.go]"
+      },
+      {
+        "file": "clusterdb/database.go",
+        "locator": "176",
+        "status": "grounded",
+        "reason": "line 176 in clusterdb/database.go (file has 277 lines) [via go/libraries/doltcore/sqle/clusterdb/database.go]"
+      },
+      {
+        "file": "user_space_database.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in user_space_database.go (file has 178 lines) [via go/libraries/doltcore/sqle/user_space_database.go]"
+      },
+      {
+        "file": "clusterdb/database.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in clusterdb/database.go (file has 277 lines) [via go/libraries/doltcore/sqle/clusterdb/database.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "363",
+        "status": "grounded",
+        "reason": "line 363 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "session.go",
+        "locator": "900",
+        "status": "grounded",
+        "reason": "line 900 in session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dolt_diff.go",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in dolt_diff.go (file has 989 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_diff.go]"
+      },
+      {
+        "file": "dolt_diff_stat.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in dolt_diff_stat.go (file has 600 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_diff_stat.go]"
+      },
+      {
+        "file": "dolt_diff_summary.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in dolt_diff_summary.go (file has 483 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_diff_summary.go]"
+      },
+      {
+        "file": "dolt_schema_diff.go",
+        "locator": "65",
+        "status": "grounded",
+        "reason": "line 65 in dolt_schema_diff.go (file has 426 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_schema_diff.go]"
+      },
+      {
+        "file": "dolt_json_diff.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in dolt_json_diff.go (file has 190 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_json_diff.go]"
+      },
+      {
+        "file": "dolt_query_diff.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in dolt_query_diff.go (file has 362 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_query_diff.go]"
+      },
+      {
+        "file": "dolt_reflog.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in dolt_reflog.go (file has 251 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_reflog.go]"
+      },
+      {
+        "file": "dolt_patch.go",
+        "locator": "76",
+        "status": "grounded",
+        "reason": "line 76 in dolt_patch.go (file has 810 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_patch.go]"
+      },
+      {
+        "file": "dolt_branch_status_table_function.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in dolt_branch_status_table_function.go (file has 215 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_branch_status_table_function.go]"
+      },
+      {
+        "file": "dolt_preview_merge_conflicts.go",
+        "locator": "50",
+        "status": "grounded",
+        "reason": "line 50 in dolt_preview_merge_conflicts.go (file has 750 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_preview_merge_conflicts.go]"
+      },
+      {
+        "file": "dolt_preview_merge_conflicts_summary.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in dolt_preview_merge_conflicts_summary.go (file has 469 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_preview_merge_conflicts_summary.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_log.go",
+        "locator": "220",
+        "status": "grounded",
+        "reason": "line 220 in dtablefunctions/dolt_log.go (file has 795 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_log.go]"
+      },
+      {
+        "file": "dolt_log.go",
+        "locator": "457",
+        "status": "grounded",
+        "reason": "line 457 in dolt_log.go (file has 795 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_log.go]"
+      },
+      {
+        "file": "dolt_diff.go",
+        "locator": "805",
+        "status": "grounded",
+        "reason": "line 805 in dolt_diff.go (file has 989 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_diff.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/engine/sqlengine.go",
+        "locator": "202",
+        "status": "grounded",
+        "reason": "line 202 in cmd/dolt/commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "308",
+        "status": "grounded",
+        "reason": "line 308 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "609",
+        "status": "grounded",
+        "reason": "line 609 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "122",
+        "status": "grounded",
+        "reason": "line 122 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "359",
+        "status": "grounded",
+        "reason": "line 359 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "database_provider.go",
+        "locator": "554",
+        "status": "grounded",
+        "reason": "line 554 in database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "138",
+        "status": "grounded",
+        "reason": "line 138 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "store/datas/database.go",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in store/datas/database.go (file has 223 lines) [via go/store/datas/database.go]"
+      },
+      {
+        "file": "store/datas/database_common.go",
+        "locator": "69",
+        "status": "grounded",
+        "reason": "line 69 in store/datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "229",
+        "status": "grounded",
+        "reason": "line 229 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "file.go",
+        "locator": "251",
+        "status": "grounded",
+        "reason": "line 251 in file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "file.go",
+        "locator": "256",
+        "status": "grounded",
+        "reason": "line 256 in file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "file.go",
+        "locator": "261",
+        "status": "grounded",
+        "reason": "line 261 in file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "generational_chunk_store.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in generational_chunk_store.go (file has 612 lines) [via go/store/nbs/generational_chunk_store.go]"
+      },
+      {
+        "file": "store/datas/database.go",
+        "locator": "183",
+        "status": "grounded",
+        "reason": "line 183 in store/datas/database.go (file has 223 lines) [via go/store/datas/database.go]"
+      },
+      {
+        "file": "database_common.go",
+        "locator": "56",
+        "status": "grounded",
+        "reason": "line 56 in database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "database_common.go",
+        "locator": "58",
+        "status": "grounded",
+        "reason": "line 58 in database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "store/types/value_store.go",
+        "locator": "160",
+        "status": "grounded",
+        "reason": "line 160 in store/types/value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "217",
+        "status": "grounded",
+        "reason": "line 217 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "162",
+        "status": "grounded",
+        "reason": "line 162 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "file.go",
+        "locator": "66",
+        "status": "grounded",
+        "reason": "line 66 in file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "dbfactory/git_remote.go",
+        "locator": "101",
+        "status": "grounded",
+        "reason": "line 101 in dbfactory/git_remote.go (file has 430 lines) [via go/libraries/doltcore/dbfactory/git_remote.go]"
+      },
+      {
+        "file": "sqle/index/dolt_index.go",
+        "locator": "600",
+        "status": "grounded",
+        "reason": "line 600 in sqle/index/dolt_index.go (file has 1463 lines) [via go/libraries/doltcore/sqle/index/dolt_index.go]"
+      },
+      {
+        "file": "doltdb/commit.go",
+        "locator": "50",
+        "status": "grounded",
+        "reason": "line 50 in doltdb/commit.go (file has 324 lines) [via go/libraries/doltcore/doltdb/commit.go]"
+      },
+      {
+        "file": "doltdb/root_val.go",
+        "locator": "137",
+        "status": "grounded",
+        "reason": "line 137 in doltdb/root_val.go (file has 1420 lines) [via go/libraries/doltcore/doltdb/root_val.go]"
+      },
+      {
+        "file": "doltdb/durable/index.go",
+        "locator": "357",
+        "status": "grounded",
+        "reason": "line 357 in doltdb/durable/index.go (file has 483 lines) [via go/libraries/doltcore/doltdb/durable/index.go]"
+      },
+      {
+        "file": "doltdb/durable/table.go",
+        "locator": "130",
+        "status": "grounded",
+        "reason": "line 130 in doltdb/durable/table.go (file has 494 lines) [via go/libraries/doltcore/doltdb/durable/table.go]"
+      },
+      {
+        "file": "dbfactory/git_remote.go",
+        "locator": "102",
+        "status": "grounded",
+        "reason": "line 102 in dbfactory/git_remote.go (file has 430 lines) [via go/libraries/doltcore/dbfactory/git_remote.go]"
+      },
+      {
+        "file": "dtables/conflicts_tables_prolly.go",
+        "locator": "145",
+        "status": "grounded",
+        "reason": "line 145 in dtables/conflicts_tables_prolly.go (file has 876 lines) [via go/libraries/doltcore/sqle/dtables/conflicts_tables_prolly.go]"
+      },
+      {
+        "file": "merge/merge_rows.go",
+        "locator": "79",
+        "status": "grounded",
+        "reason": "line 79 in merge/merge_rows.go (file has 553 lines) [via go/libraries/doltcore/merge/merge_rows.go]"
+      },
+      {
+        "file": "map.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in map.go (file has 666 lines) [via go/store/prolly/tree/map.go]"
+      },
+      {
+        "file": "proximity_map.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in proximity_map.go (file has 623 lines) [via go/store/prolly/proximity_map.go]"
+      },
+      {
+        "file": "node_cursor.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in node_cursor.go (file has 662 lines) [via go/store/prolly/tree/node_cursor.go]"
+      },
+      {
+        "file": "chunker.go",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in chunker.go (file has 549 lines) [via go/store/prolly/tree/chunker.go]"
+      },
+      {
+        "file": "json_chunker.go",
+        "locator": "40",
+        "status": "grounded",
+        "reason": "line 40 in json_chunker.go (file has 234 lines) [via go/store/prolly/tree/json_chunker.go]"
+      },
+      {
+        "file": "blob_builder.go",
+        "locator": "63",
+        "status": "grounded",
+        "reason": "line 63 in blob_builder.go (file has 355 lines) [via go/store/prolly/tree/blob_builder.go]"
+      },
+      {
+        "file": "blob_chunk_differ.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in blob_chunk_differ.go (file has 233 lines) [via go/store/prolly/tree/blob_chunk_differ.go]"
+      },
+      {
+        "file": "addr_diff.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in addr_diff.go (file has 135 lines) [via go/store/prolly/tree/addr_diff.go]"
+      },
+      {
+        "file": "value_store.go",
+        "locator": "160",
+        "status": "grounded",
+        "reason": "line 160 in value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "store/prolly/tree/node_store.go",
+        "locator": "95",
+        "status": "grounded",
+        "reason": "line 95 in store/prolly/tree/node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "149",
+        "status": "grounded",
+        "reason": "line 149 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "node_store.go",
+        "locator": "98",
+        "status": "grounded",
+        "reason": "line 98 in node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "184",
+        "status": "grounded",
+        "reason": "line 184 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "libraries/doltcore/remotesrv/dbcache.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in libraries/doltcore/remotesrv/dbcache.go (file has 38 lines) [via go/libraries/doltcore/remotesrv/dbcache.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "261",
+        "status": "grounded",
+        "reason": "line 261 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "file.go",
+        "locator": "229",
+        "status": "grounded",
+        "reason": "line 229 in file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "nbs/nbs_metrics_wrapper.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in nbs/nbs_metrics_wrapper.go (file has 112 lines) [via go/store/nbs/nbs_metrics_wrapper.go]"
+      },
+      {
+        "file": "chunks/cs_metrics_wrapper.go",
+        "locator": "57",
+        "status": "grounded",
+        "reason": "line 57 in chunks/cs_metrics_wrapper.go (file has 166 lines) [via go/store/chunks/cs_metrics_wrapper.go]"
+      },
+      {
+        "file": "remotestorage/chunk_store.go",
+        "locator": "120",
+        "status": "grounded",
+        "reason": "line 120 in remotestorage/chunk_store.go (file has 1300 lines) [via go/libraries/doltcore/remotestorage/chunk_store.go]"
+      },
+      {
+        "file": "remotesrv/dbcache.go",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in remotesrv/dbcache.go (file has 38 lines) [via go/libraries/doltcore/remotesrv/dbcache.go]"
+      },
+      {
+        "file": "dbcache.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in dbcache.go (file has 38 lines) [via go/libraries/doltcore/remotesrv/dbcache.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "172",
+        "status": "grounded",
+        "reason": "line 172 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "nbs/nbs_metrics_wrapper.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in nbs/nbs_metrics_wrapper.go (file has 112 lines) [via go/store/nbs/nbs_metrics_wrapper.go]"
+      },
+      {
+        "file": "nbs/store.go",
+        "locator": "159",
+        "status": "grounded",
+        "reason": "line 159 in nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "nbs/generational_chunk_store.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in nbs/generational_chunk_store.go (file has 612 lines) [via go/store/nbs/generational_chunk_store.go]"
+      },
+      {
+        "file": "remotestorage/chunk_store.go",
+        "locator": "75",
+        "status": "grounded",
+        "reason": "line 75 in remotestorage/chunk_store.go (file has 1300 lines) [via go/libraries/doltcore/remotestorage/chunk_store.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "86",
+        "status": "grounded",
+        "reason": "line 86 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "sqle/cluster/remotesrv.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in sqle/cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "175",
+        "status": "grounded",
+        "reason": "line 175 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/sqlserver/server.go",
+        "locator": "755",
+        "status": "grounded",
+        "reason": "line 755 in cmd/dolt/commands/sqlserver/server.go (file has 1292 lines) [via go/cmd/dolt/commands/sqlserver/server.go]"
+      },
+      {
+        "file": "doltdb/hooksdatabase.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in doltdb/hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "121",
+        "status": "grounded",
+        "reason": "line 121 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "165",
+        "status": "grounded",
+        "reason": "line 165 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/commit_hooks.go",
+        "locator": "337",
+        "status": "grounded",
+        "reason": "line 337 in sqle/commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "sqle/cluster/commithook.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in sqle/cluster/commithook.go (file has 532 lines) [via go/libraries/doltcore/sqle/cluster/commithook.go]"
+      },
+      {
+        "file": "sqle/auto_gc.go",
+        "locator": "329",
+        "status": "grounded",
+        "reason": "line 329 in sqle/auto_gc.go (file has 456 lines) [via go/libraries/doltcore/sqle/auto_gc.go]"
+      },
+      {
+        "file": "hooksdatabase.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "gcctx/gc_safepoint_controller.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in gcctx/gc_safepoint_controller.go (file has 344 lines) [via go/libraries/doltcore/doltdb/gcctx/gc_safepoint_controller.go]"
+      },
+      {
+        "file": "gcctx/context.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in gcctx/context.go (file has 89 lines) [via go/libraries/doltcore/doltdb/gcctx/context.go]"
+      },
+      {
+        "file": "gcctx/gc_safepoint_controller.go",
+        "locator": "54",
+        "status": "grounded",
+        "reason": "line 54 in gcctx/gc_safepoint_controller.go (file has 344 lines) [via go/libraries/doltcore/doltdb/gcctx/gc_safepoint_controller.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "803",
+        "status": "grounded",
+        "reason": "line 803 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "1967",
+        "status": "grounded",
+        "reason": "line 1967 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "76",
+        "status": "grounded",
+        "reason": "line 76 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "dprocedures/dolt_gc.go",
+        "locator": "170",
+        "status": "grounded",
+        "reason": "line 170 in dprocedures/dolt_gc.go (file has 338 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_gc.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "285",
+        "status": "grounded",
+        "reason": "line 285 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "1572",
+        "status": "grounded",
+        "reason": "line 1572 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "store/types/value_store.go",
+        "locator": "543",
+        "status": "grounded",
+        "reason": "line 543 in store/types/value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "sqle/writer/prolly_write_session.go",
+        "locator": "56",
+        "status": "grounded",
+        "reason": "line 56 in sqle/writer/prolly_write_session.go (file has 258 lines) [via go/libraries/doltcore/sqle/writer/prolly_write_session.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "69",
+        "status": "grounded",
+        "reason": "line 69 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "session.go",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "tables.go",
+        "locator": "3288",
+        "status": "grounded",
+        "reason": "line 3288 in tables.go (file has 3412 lines) [via go/libraries/doltcore/sqle/tables.go]"
+      },
+      {
+        "file": "tables.go",
+        "locator": "89",
+        "status": "grounded",
+        "reason": "line 89 in tables.go (file has 3412 lines) [via go/libraries/doltcore/sqle/tables.go]"
+      },
+      {
+        "file": "session_cache.go",
+        "locator": "28",
+        "status": "grounded",
+        "reason": "line 28 in session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "sqle/globalstate/global_state.go",
+        "locator": "21",
+        "status": "grounded",
+        "reason": "line 21 in sqle/globalstate/global_state.go (file has 29 lines) [via go/libraries/doltcore/sqle/globalstate/global_state.go]"
+      },
+      {
+        "file": "dsess/globalstate.go",
+        "locator": "107",
+        "status": "grounded",
+        "reason": "line 107 in dsess/globalstate.go (file has 115 lines) [via go/libraries/doltcore/sqle/dsess/globalstate.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "212",
+        "status": "grounded",
+        "reason": "line 212 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "dsess/autoincrement_tracker.go",
+        "locator": "374",
+        "status": "grounded",
+        "reason": "line 374 in dsess/autoincrement_tracker.go (file has 703 lines) [via go/libraries/doltcore/sqle/dsess/autoincrement_tracker.go]"
+      },
+      {
+        "file": "autoincrement_tracker.go",
+        "locator": "53",
+        "status": "grounded",
+        "reason": "line 53 in autoincrement_tracker.go (file has 703 lines) [via go/libraries/doltcore/sqle/dsess/autoincrement_tracker.go]"
+      },
+      {
+        "file": "sqle/database.go",
+        "locator": "92",
+        "status": "grounded",
+        "reason": "line 92 in sqle/database.go (file has 3225 lines) [via go/libraries/doltcore/sqle/database.go]"
+      },
+      {
+        "file": "stats_kv.go",
+        "locator": "212",
+        "status": "grounded",
+        "reason": "line 212 in stats_kv.go (file has 571 lines) [via go/libraries/doltcore/sqle/statspro/stats_kv.go]"
+      },
+      {
+        "file": "stats_kv.go",
+        "locator": "221",
+        "status": "grounded",
+        "reason": "line 221 in stats_kv.go (file has 571 lines) [via go/libraries/doltcore/sqle/statspro/stats_kv.go]"
+      },
+      {
+        "file": "database_provider.go",
+        "locator": "330",
+        "status": "grounded",
+        "reason": "line 330 in database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "dsess/transactions.go",
+        "locator": "110",
+        "status": "grounded",
+        "reason": "line 110 in dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "dsess/session_db_provider.go",
+        "locator": "146",
+        "status": "grounded",
+        "reason": "line 146 in dsess/session_db_provider.go (file has 162 lines) [via go/libraries/doltcore/sqle/dsess/session_db_provider.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "70",
+        "status": "grounded",
+        "reason": "line 70 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "2126",
+        "status": "grounded",
+        "reason": "line 2126 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "dtablefunctions/dolt_log.go",
+        "locator": "457",
+        "status": "grounded",
+        "reason": "line 457 in dtablefunctions/dolt_log.go (file has 795 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_log.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "63",
+        "status": "grounded",
+        "reason": "line 63 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "203",
+        "status": "grounded",
+        "reason": "line 203 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "364",
+        "status": "grounded",
+        "reason": "line 364 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "127",
+        "status": "grounded",
+        "reason": "line 127 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "tree/node_store.go",
+        "locator": "76",
+        "status": "grounded",
+        "reason": "line 76 in tree/node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "dbfactory/git_remote.go",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in dbfactory/git_remote.go (file has 430 lines) [via go/libraries/doltcore/dbfactory/git_remote.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "95",
+        "status": "grounded",
+        "reason": "line 95 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "sqle/cluster/remotesrv.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in sqle/cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "248",
+        "status": "grounded",
+        "reason": "line 248 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "statspro/stats_kv.go",
+        "locator": "222",
+        "status": "grounded",
+        "reason": "line 222 in statspro/stats_kv.go (file has 571 lines) [via go/libraries/doltcore/sqle/statspro/stats_kv.go]"
+      },
+      {
+        "file": "database_provider.go",
+        "locator": "344",
+        "status": "grounded",
+        "reason": "line 344 in database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "dsess/session_cache.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in dsess/session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "database_common.go",
+        "locator": "815",
+        "status": "grounded",
+        "reason": "line 815 in database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "239",
+        "status": "grounded",
+        "reason": "line 239 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "dsess/transactions.go",
+        "locator": "86",
+        "status": "grounded",
+        "reason": "line 86 in dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "sqle/cluster/remotesrv.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in sqle/cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/transfer.go",
+        "locator": "131",
+        "status": "grounded",
+        "reason": "line 131 in cmd/dolt/commands/transfer.go (file has 311 lines) [via go/cmd/dolt/commands/transfer.go]"
+      },
+      {
+        "file": "file.go",
+        "locator": "168",
+        "status": "grounded",
+        "reason": "line 168 in file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "sqle/database_provider.go",
+        "locator": "311",
+        "status": "grounded",
+        "reason": "line 311 in sqle/database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "sqle/user_space_database.go",
+        "locator": "108",
+        "status": "grounded",
+        "reason": "line 108 in sqle/user_space_database.go (file has 178 lines) [via go/libraries/doltcore/sqle/user_space_database.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "361",
+        "status": "grounded",
+        "reason": "line 361 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "session.go",
+        "locator": "899",
+        "status": "grounded",
+        "reason": "line 899 in session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "database_session_state.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "dolt_log.go",
+        "locator": "176",
+        "status": "grounded",
+        "reason": "line 176 in dolt_log.go (file has 795 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_log.go]"
+      },
+      {
+        "file": "dolt_log.go",
+        "locator": "220",
+        "status": "grounded",
+        "reason": "line 220 in dolt_log.go (file has 795 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_log.go]"
+      },
+      {
+        "file": "dsess/session_db_provider.go",
+        "locator": "142",
+        "status": "grounded",
+        "reason": "line 142 in dsess/session_db_provider.go (file has 162 lines) [via go/libraries/doltcore/sqle/dsess/session_db_provider.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "282",
+        "status": "grounded",
+        "reason": "line 282 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "cmd/dolt/commands/utils.go",
+        "locator": "329",
+        "status": "grounded",
+        "reason": "line 329 in cmd/dolt/commands/utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "database_provider.go",
+        "locator": "309",
+        "status": "grounded",
+        "reason": "line 309 in database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "statspro/stats_kv.go",
+        "locator": "221",
+        "status": "grounded",
+        "reason": "line 221 in statspro/stats_kv.go (file has 571 lines) [via go/libraries/doltcore/sqle/statspro/stats_kv.go]"
+      },
+      {
+        "file": "sqle/database_provider.go",
+        "locator": "353",
+        "status": "grounded",
+        "reason": "line 353 in sqle/database_provider.go (file has 2093 lines) [via go/libraries/doltcore/sqle/database_provider.go]"
+      },
+      {
+        "file": "dolt_schemas_history_table.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in dolt_schemas_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_schemas_history_table.go]"
+      },
+      {
+        "file": "dolt_procedures_diff_table.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in dolt_procedures_diff_table.go (file has 618 lines) [via go/libraries/doltcore/sqle/dolt_procedures_diff_table.go]"
+      },
+      {
+        "file": "dolt_procedures_history_table.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in dolt_procedures_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_procedures_history_table.go]"
+      },
+      {
+        "file": "log_table.go",
+        "locator": "39",
+        "status": "grounded",
+        "reason": "line 39 in log_table.go (file has 523 lines) [via go/libraries/doltcore/sqle/dtables/log_table.go]"
+      },
+      {
+        "file": "commits_table.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in commits_table.go (file has 182 lines) [via go/libraries/doltcore/sqle/dtables/commits_table.go]"
+      },
+      {
+        "file": "commit_ancestors_table.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in commit_ancestors_table.go (file has 207 lines) [via go/libraries/doltcore/sqle/dtables/commit_ancestors_table.go]"
+      },
+      {
+        "file": "commit_diff_table.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in commit_diff_table.go (file has 322 lines) [via go/libraries/doltcore/sqle/dtables/commit_diff_table.go]"
+      },
+      {
+        "file": "diff_table.go",
+        "locator": "65",
+        "status": "grounded",
+        "reason": "line 65 in diff_table.go (file has 929 lines) [via go/libraries/doltcore/sqle/dtables/diff_table.go]"
+      },
+      {
+        "file": "diff_iter.go",
+        "locator": "395",
+        "status": "grounded",
+        "reason": "line 395 in diff_iter.go (file has 435 lines) [via go/libraries/doltcore/sqle/dtables/diff_iter.go]"
+      },
+      {
+        "file": "unscoped_diff_table.go",
+        "locator": "48",
+        "status": "grounded",
+        "reason": "line 48 in unscoped_diff_table.go (file has 558 lines) [via go/libraries/doltcore/sqle/dtables/unscoped_diff_table.go]"
+      },
+      {
+        "file": "column_diff_table.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in column_diff_table.go (file has 665 lines) [via go/libraries/doltcore/sqle/dtables/column_diff_table.go]"
+      },
+      {
+        "file": "schema_conflicts_table.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in schema_conflicts_table.go (file has 270 lines) [via go/libraries/doltcore/sqle/dtables/schema_conflicts_table.go]"
+      },
+      {
+        "file": "status_table.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in status_table.go (file has 350 lines) [via go/libraries/doltcore/sqle/dtables/status_table.go]"
+      },
+      {
+        "file": "status_ignored_table.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in status_ignored_table.go (file has 205 lines) [via go/libraries/doltcore/sqle/dtables/status_ignored_table.go]"
+      },
+      {
+        "file": "stashes_table.go",
+        "locator": "36",
+        "status": "grounded",
+        "reason": "line 36 in stashes_table.go (file has 158 lines) [via go/libraries/doltcore/sqle/dtables/stashes_table.go]"
+      },
+      {
+        "file": "tags_table.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in tags_table.go (file has 128 lines) [via go/libraries/doltcore/sqle/dtables/tags_table.go]"
+      },
+      {
+        "file": "remotes_table.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in remotes_table.go (file has 230 lines) [via go/libraries/doltcore/sqle/dtables/remotes_table.go]"
+      },
+      {
+        "file": "table_of_tables_in_conflict.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in table_of_tables_in_conflict.go (file has 167 lines) [via go/libraries/doltcore/sqle/dtables/table_of_tables_in_conflict.go]"
+      },
+      {
+        "file": "backups_table.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in backups_table.go (file has 126 lines) [via go/libraries/doltcore/sqle/dtables/backups_table.go]"
+      },
+      {
+        "file": "branch_activity_table.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in branch_activity_table.go (file has 191 lines) [via go/libraries/doltcore/sqle/dtables/branch_activity_table.go]"
+      },
+      {
+        "file": "conflicts_tables_prolly.go",
+        "locator": "93",
+        "status": "grounded",
+        "reason": "line 93 in conflicts_tables_prolly.go (file has 876 lines) [via go/libraries/doltcore/sqle/dtables/conflicts_tables_prolly.go]"
+      },
+      {
+        "file": "dolt_procedures_diff_table.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in dolt_procedures_diff_table.go (file has 618 lines) [via go/libraries/doltcore/sqle/dolt_procedures_diff_table.go]"
+      },
+      {
+        "file": "dolt_schemas_diff_table.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in dolt_schemas_diff_table.go (file has 619 lines) [via go/libraries/doltcore/sqle/dolt_schemas_diff_table.go]"
+      },
+      {
+        "file": "dolt_procedures_history_table.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in dolt_procedures_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_procedures_history_table.go]"
+      },
+      {
+        "file": "dolt_schemas_history_table.go",
+        "locator": "33",
+        "status": "grounded",
+        "reason": "line 33 in dolt_schemas_history_table.go (file has 257 lines) [via go/libraries/doltcore/sqle/dolt_schemas_history_table.go]"
+      },
+      {
+        "file": "index_reader.go",
+        "locator": "354",
+        "status": "grounded",
+        "reason": "line 354 in index_reader.go (file has 774 lines) [via go/libraries/doltcore/sqle/index/index_reader.go]"
+      },
+      {
+        "file": "key_builder.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in key_builder.go (file has 235 lines) [via go/libraries/doltcore/sqle/index/key_builder.go]"
+      },
+      {
+        "file": "prolly_index_iter.go",
+        "locator": "216",
+        "status": "grounded",
+        "reason": "line 216 in prolly_index_iter.go (file has 521 lines) [via go/libraries/doltcore/sqle/index/prolly_index_iter.go]"
+      },
+      {
+        "file": "prolly_row_iter.go",
+        "locator": "28",
+        "status": "grounded",
+        "reason": "line 28 in prolly_row_iter.go (file has 319 lines) [via go/libraries/doltcore/sqle/index/prolly_row_iter.go]"
+      },
+      {
+        "file": "kvexec/builder.go",
+        "locator": "173",
+        "status": "grounded",
+        "reason": "line 173 in kvexec/builder.go (file has 657 lines) [via go/libraries/doltcore/sqle/kvexec/builder.go]"
+      },
+      {
+        "file": "lookup_join.go",
+        "locator": "186",
+        "status": "grounded",
+        "reason": "line 186 in lookup_join.go (file has 377 lines) [via go/libraries/doltcore/sqle/kvexec/lookup_join.go]"
+      },
+      {
+        "file": "constraint_violations_prolly.go",
+        "locator": "215",
+        "status": "grounded",
+        "reason": "line 215 in constraint_violations_prolly.go (file has 417 lines) [via go/libraries/doltcore/sqle/dtables/constraint_violations_prolly.go]"
+      },
+      {
+        "file": "prolly_row_conv.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in prolly_row_conv.go (file has 153 lines) [via go/libraries/doltcore/sqle/dtables/prolly_row_conv.go]"
+      },
+      {
+        "file": "merge_prolly_rows.go",
+        "locator": "1910",
+        "status": "grounded",
+        "reason": "line 1910 in merge_prolly_rows.go (file has 2503 lines) [via go/libraries/doltcore/merge/merge_prolly_rows.go]"
+      },
+      {
+        "file": "three_way_json_differ.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in three_way_json_differ.go (file has 206 lines) [via go/libraries/doltcore/merge/three_way_json_differ.go]"
+      },
+      {
+        "file": "jsonl_reader.go",
+        "locator": "40",
+        "status": "grounded",
+        "reason": "line 40 in jsonl_reader.go (file has 174 lines) [via go/libraries/doltcore/table/typed/json/jsonl_reader.go]"
+      },
+      {
+        "file": "parquet/reader.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in parquet/reader.go (file has 315 lines) [via go/libraries/doltcore/table/typed/parquet/reader.go]"
+      },
+      {
+        "file": "untyped/xlsx/reader.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in untyped/xlsx/reader.go (file has 150 lines) [via go/libraries/doltcore/table/untyped/xlsx/reader.go]"
+      },
+      {
+        "file": "doltdb/doltdb.go",
+        "locator": "248",
+        "status": "grounded",
+        "reason": "line 248 in doltdb/doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "env/actions/remotes.go",
+        "locator": "887",
+        "status": "grounded",
+        "reason": "line 887 in env/actions/remotes.go (file has 936 lines) [via go/libraries/doltcore/env/actions/remotes.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "1954",
+        "status": "grounded",
+        "reason": "line 1954 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "dbfactory/file.go",
+        "locator": "168",
+        "status": "grounded",
+        "reason": "line 168 in dbfactory/file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "read_replica_database.go",
+        "locator": "134",
+        "status": "grounded",
+        "reason": "line 134 in read_replica_database.go (file has 665 lines) [via go/libraries/doltcore/sqle/read_replica_database.go]"
+      },
+      {
+        "file": "dprocedures/dolt_push.go",
+        "locator": "100",
+        "status": "grounded",
+        "reason": "line 100 in dprocedures/dolt_push.go (file has 142 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_push.go]"
+      },
+      {
+        "file": "dolt_pull.go",
+        "locator": "157",
+        "status": "grounded",
+        "reason": "line 157 in dolt_pull.go (file has 341 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_pull.go]"
+      },
+      {
+        "file": "dolt_fetch.go",
+        "locator": "90",
+        "status": "grounded",
+        "reason": "line 90 in dolt_fetch.go (file has 114 lines) [via go/libraries/doltcore/sqle/dprocedures/dolt_fetch.go]"
+      },
+      {
+        "file": "dsess/session.go",
+        "locator": "379",
+        "status": "grounded",
+        "reason": "line 379 in dsess/session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "store/nbs/store.go",
+        "locator": "1583",
+        "status": "grounded",
+        "reason": "line 1583 in store/nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "sqle/remotesrv.go",
+        "locator": "98",
+        "status": "grounded",
+        "reason": "line 98 in sqle/remotesrv.go (file has 272 lines) [via go/libraries/doltcore/sqle/remotesrv.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "99",
+        "status": "grounded",
+        "reason": "line 99 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "136",
+        "status": "grounded",
+        "reason": "line 136 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "225",
+        "status": "grounded",
+        "reason": "line 225 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "commands/utils.go",
+        "locator": "346",
+        "status": "grounded",
+        "reason": "line 346 in commands/utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "queryist_utils.go",
+        "locator": "130",
+        "status": "grounded",
+        "reason": "line 130 in queryist_utils.go (file has 262 lines) [via go/cmd/dolt/commands/sqlserver/queryist_utils.go]"
+      },
+      {
+        "file": "cli_context.go",
+        "locator": "101",
+        "status": "grounded",
+        "reason": "line 101 in cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "cli_context.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "utils.go",
+        "locator": "253",
+        "status": "grounded",
+        "reason": "line 253 in utils.go (file has 1062 lines) [via go/cmd/dolt/commands/utils.go]"
+      },
+      {
+        "file": "engine/sqlengine.go",
+        "locator": "62",
+        "status": "grounded",
+        "reason": "line 62 in engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "sqlserver/server.go",
+        "locator": "344",
+        "status": "grounded",
+        "reason": "line 344 in sqlserver/server.go (file has 1292 lines) [via go/cmd/dolt/commands/sqlserver/server.go]"
+      },
+      {
+        "file": "transactions.go",
+        "locator": "433",
+        "status": "grounded",
+        "reason": "line 433 in transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "generational_chunk_store.go",
+        "locator": "35",
+        "status": "grounded",
+        "reason": "line 35 in generational_chunk_store.go (file has 612 lines) [via go/store/nbs/generational_chunk_store.go]"
+      },
+      {
+        "file": "nbs_metrics_wrapper.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in nbs_metrics_wrapper.go (file has 112 lines) [via go/store/nbs/nbs_metrics_wrapper.go]"
+      },
+      {
+        "file": "remotesrv/dbcache.go",
+        "locator": "37",
+        "status": "grounded",
+        "reason": "line 37 in remotesrv/dbcache.go (file has 38 lines) [via go/libraries/doltcore/remotesrv/dbcache.go]"
+      },
+      {
+        "file": "sqlengine.go",
+        "locator": "122",
+        "status": "grounded",
+        "reason": "line 122 in sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "database_common.go",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "hooksdatabase.go",
+        "locator": "27",
+        "status": "grounded",
+        "reason": "line 27 in hooksdatabase.go (file has 205 lines) [via go/libraries/doltcore/doltdb/hooksdatabase.go]"
+      },
+      {
+        "file": "commit_itr.go",
+        "locator": "42",
+        "status": "grounded",
+        "reason": "line 42 in commit_itr.go (file has 319 lines) [via go/libraries/doltcore/doltdb/commit_itr.go]"
+      },
+      {
+        "file": "commit.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in commit.go (file has 768 lines) [via go/cmd/dolt/commands/commit.go]"
+      },
+      {
+        "file": "root_val.go",
+        "locator": "136",
+        "status": "grounded",
+        "reason": "line 136 in root_val.go (file has 1420 lines) [via go/libraries/doltcore/doltdb/root_val.go]"
+      },
+      {
+        "file": "tag.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in tag.go (file has 244 lines) [via go/libraries/doltcore/env/actions/tag.go]"
+      },
+      {
+        "file": "durable/index.go",
+        "locator": "356",
+        "status": "grounded",
+        "reason": "line 356 in durable/index.go (file has 483 lines) [via go/libraries/doltcore/doltdb/durable/index.go]"
+      },
+      {
+        "file": "durable/table.go",
+        "locator": "129",
+        "status": "grounded",
+        "reason": "line 129 in durable/table.go (file has 494 lines) [via go/libraries/doltcore/doltdb/durable/table.go]"
+      },
+      {
+        "file": "branch_activity.go",
+        "locator": "69",
+        "status": "grounded",
+        "reason": "line 69 in branch_activity.go (file has 254 lines) [via go/libraries/doltcore/doltdb/branch_activity.go]"
+      },
+      {
+        "file": "environment.go",
+        "locator": "92",
+        "status": "grounded",
+        "reason": "line 92 in environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "multi_repo_env.go",
+        "locator": "45",
+        "status": "grounded",
+        "reason": "line 45 in multi_repo_env.go (file has 440 lines) [via go/libraries/doltcore/env/multi_repo_env.go]"
+      },
+      {
+        "file": "grpc_dial_provider.go",
+        "locator": "67",
+        "status": "grounded",
+        "reason": "line 67 in grpc_dial_provider.go (file has 290 lines) [via go/libraries/doltcore/env/grpc_dial_provider.go]"
+      },
+      {
+        "file": "actions/commitwalk/commitwalk.go",
+        "locator": "32",
+        "status": "grounded",
+        "reason": "line 32 in actions/commitwalk/commitwalk.go (file has 235 lines) [via go/libraries/doltcore/env/actions/commitwalk/commitwalk.go]"
+      },
+      {
+        "file": "file.go",
+        "locator": "90",
+        "status": "grounded",
+        "reason": "line 90 in file.go (file has 289 lines) [via go/libraries/doltcore/dbfactory/file.go]"
+      },
+      {
+        "file": "git_remote.go",
+        "locator": "100",
+        "status": "grounded",
+        "reason": "line 100 in git_remote.go (file has 430 lines) [via go/libraries/doltcore/dbfactory/git_remote.go]"
+      },
+      {
+        "file": "temp_table.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in temp_table.go (file has 500 lines) [via go/libraries/doltcore/sqle/temp_table.go]"
+      },
+      {
+        "file": "dropped_databases.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in dropped_databases.go (file has 277 lines) [via go/libraries/doltcore/sqle/dropped_databases.go]"
+      },
+      {
+        "file": "session.go",
+        "locator": "49",
+        "status": "grounded",
+        "reason": "line 49 in session.go (file has 2083 lines) [via go/libraries/doltcore/sqle/dsess/session.go]"
+      },
+      {
+        "file": "database_session_state.go",
+        "locator": "29",
+        "status": "grounded",
+        "reason": "line 29 in database_session_state.go (file has 188 lines) [via go/libraries/doltcore/sqle/dsess/database_session_state.go]"
+      },
+      {
+        "file": "session_cache.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "transactions.go",
+        "locator": "88",
+        "status": "grounded",
+        "reason": "line 88 in transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "globalstate.go",
+        "locator": "103",
+        "status": "grounded",
+        "reason": "line 103 in globalstate.go (file has 115 lines) [via go/libraries/doltcore/sqle/dsess/globalstate.go]"
+      },
+      {
+        "file": "autoincrement_tracker.go",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in autoincrement_tracker.go (file has 703 lines) [via go/libraries/doltcore/sqle/dsess/autoincrement_tracker.go]"
+      },
+      {
+        "file": "writer/prolly_write_session.go",
+        "locator": "51",
+        "status": "grounded",
+        "reason": "line 51 in writer/prolly_write_session.go (file has 258 lines) [via go/libraries/doltcore/sqle/writer/prolly_write_session.go]"
+      },
+      {
+        "file": "writer/prolly_index_writer.go",
+        "locator": "102",
+        "status": "grounded",
+        "reason": "line 102 in writer/prolly_index_writer.go (file has 559 lines) [via go/libraries/doltcore/sqle/writer/prolly_index_writer.go]"
+      },
+      {
+        "file": "writer/prolly_index_writer_keyless.go",
+        "locator": "31",
+        "status": "grounded",
+        "reason": "line 31 in writer/prolly_index_writer_keyless.go (file has 404 lines) [via go/libraries/doltcore/sqle/writer/prolly_index_writer_keyless.go]"
+      },
+      {
+        "file": "session_cache.go",
+        "locator": "62",
+        "status": "grounded",
+        "reason": "line 62 in session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      },
+      {
+        "file": "types/value_store.go",
+        "locator": "76",
+        "status": "grounded",
+        "reason": "line 76 in types/value_store.go (file has 819 lines) [via go/store/types/value_store.go]"
+      },
+      {
+        "file": "tree/node_store.go",
+        "locator": "66",
+        "status": "grounded",
+        "reason": "line 66 in tree/node_store.go (file has 384 lines) [via go/store/prolly/tree/node_store.go]"
+      },
+      {
+        "file": "nbs/gc_copier.go",
+        "locator": "192",
+        "status": "grounded",
+        "reason": "line 192 in nbs/gc_copier.go (file has 313 lines) [via go/store/nbs/gc_copier.go]"
+      },
+      {
+        "file": "nbs/store.go",
+        "locator": "2394",
+        "status": "grounded",
+        "reason": "line 2394 in nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "commit_hooks.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "cluster/commithook.go",
+        "locator": "47",
+        "status": "grounded",
+        "reason": "line 47 in cluster/commithook.go (file has 532 lines) [via go/libraries/doltcore/sqle/cluster/commithook.go]"
+      },
+      {
+        "file": "cluster/controller.go",
+        "locator": "88",
+        "status": "grounded",
+        "reason": "line 88 in cluster/controller.go (file has 1252 lines) [via go/libraries/doltcore/sqle/cluster/controller.go]"
+      },
+      {
+        "file": "cluster/remotesrv.go",
+        "locator": "25",
+        "status": "grounded",
+        "reason": "line 25 in cluster/remotesrv.go (file has 49 lines) [via go/libraries/doltcore/sqle/cluster/remotesrv.go]"
+      },
+      {
+        "file": "datas/pull/puller.go",
+        "locator": "52",
+        "status": "grounded",
+        "reason": "line 52 in datas/pull/puller.go (file has 468 lines) [via go/store/datas/pull/puller.go]"
+      },
+      {
+        "file": "datas/database_common.go",
+        "locator": "38",
+        "status": "grounded",
+        "reason": "line 38 in datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "datas/database.go",
+        "locator": "195",
+        "status": "grounded",
+        "reason": "line 195 in datas/database.go (file has 223 lines) [via go/store/datas/database.go]"
+      },
+      {
+        "file": "nbs/generational_chunk_store.go",
+        "locator": "41",
+        "status": "grounded",
+        "reason": "line 41 in nbs/generational_chunk_store.go (file has 612 lines) [via go/store/nbs/generational_chunk_store.go]"
+      },
+      {
+        "file": "chunks/chunk_store.go",
+        "locator": "150",
+        "status": "grounded",
+        "reason": "line 150 in chunks/chunk_store.go (file has 345 lines) [via go/store/chunks/chunk_store.go]"
+      },
+      {
+        "file": "nbs/store.go",
+        "locator": "81",
+        "status": "grounded",
+        "reason": "line 81 in nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "spec/spec.go",
+        "locator": "155",
+        "status": "grounded",
+        "reason": "line 155 in spec/spec.go (file has 633 lines) [via go/store/spec/spec.go]"
+      },
+      {
+        "file": "types/validating_decoder.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in types/validating_decoder.go (file has 65 lines) [via go/store/types/validating_decoder.go]"
+      },
+      {
+        "file": "types/value.go",
+        "locator": "175",
+        "status": "grounded",
+        "reason": "line 175 in types/value.go (file has 309 lines) [via go/store/types/value.go]"
+      },
+      {
+        "file": "types/value_decoder.go",
+        "locator": "61",
+        "status": "grounded",
+        "reason": "line 61 in types/value_decoder.go (file has 517 lines) [via go/store/types/value_decoder.go]"
+      },
+      {
+        "file": "datas/ref_closure.go",
+        "locator": "85",
+        "status": "grounded",
+        "reason": "line 85 in datas/ref_closure.go (file has 114 lines) [via go/store/datas/ref_closure.go]"
+      },
+      {
+        "file": "prolly/proximity_map.go",
+        "locator": "270",
+        "status": "grounded",
+        "reason": "line 270 in prolly/proximity_map.go (file has 623 lines) [via go/store/prolly/proximity_map.go]"
+      },
+      {
+        "file": "cli/cli_context.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in cli/cli_context.go (file has 166 lines) [via go/cmd/dolt/cli/cli_context.go]"
+      },
+      {
+        "file": "commands/engine/sqlengine.go",
+        "locator": "60",
+        "status": "grounded",
+        "reason": "line 60 in commands/engine/sqlengine.go (file has 747 lines) [via go/cmd/dolt/commands/engine/sqlengine.go]"
+      },
+      {
+        "file": "commands/add.go",
+        "locator": "405",
+        "status": "grounded",
+        "reason": "line 405 in commands/add.go (file has 705 lines) [via go/cmd/dolt/commands/add.go]"
+      },
+      {
+        "file": "commands/sqlserver/server.go",
+        "locator": "83",
+        "status": "grounded",
+        "reason": "line 83 in commands/sqlserver/server.go (file has 1292 lines) [via go/cmd/dolt/commands/sqlserver/server.go]"
+      },
+      {
+        "file": "commands/sqlserver/queryist_utils.go",
+        "locator": "131",
+        "status": "grounded",
+        "reason": "line 131 in commands/sqlserver/queryist_utils.go (file has 262 lines) [via go/cmd/dolt/commands/sqlserver/queryist_utils.go]"
+      },
+      {
+        "file": "commands/filter-branch.go",
+        "locator": "159",
+        "status": "grounded",
+        "reason": "line 159 in commands/filter-branch.go (file has 379 lines) [via go/cmd/dolt/commands/filter-branch.go]"
+      },
+      {
+        "file": "commands/fsck.go",
+        "locator": "487",
+        "status": "grounded",
+        "reason": "line 487 in commands/fsck.go (file has 1078 lines) [via go/cmd/dolt/commands/fsck.go]"
+      },
+      {
+        "file": "commands/transfer.go",
+        "locator": "264",
+        "status": "grounded",
+        "reason": "line 264 in commands/transfer.go (file has 311 lines) [via go/cmd/dolt/commands/transfer.go]"
+      },
+      {
+        "file": "commands/clone.go",
+        "locator": "145",
+        "status": "grounded",
+        "reason": "line 145 in commands/clone.go (file has 297 lines) [via go/cmd/dolt/commands/clone.go]"
+      },
+      {
+        "file": "datas/database_common.go",
+        "locator": "815",
+        "status": "grounded",
+        "reason": "line 815 in datas/database_common.go (file has 973 lines) [via go/store/datas/database_common.go]"
+      },
+      {
+        "file": "dsess/transactions.go",
+        "locator": "94",
+        "status": "grounded",
+        "reason": "line 94 in dsess/transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "nbs/store.go",
+        "locator": "1548",
+        "status": "grounded",
+        "reason": "line 1548 in nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "nbs/store.go",
+        "locator": "1583",
+        "status": "grounded",
+        "reason": "line 1583 in nbs/store.go (file has 2835 lines) [via go/store/nbs/store.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "375",
+        "status": "grounded",
+        "reason": "line 375 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "transactions.go",
+        "locator": "432",
+        "status": "grounded",
+        "reason": "line 432 in transactions.go (file has 861 lines) [via go/libraries/doltcore/sqle/dsess/transactions.go]"
+      },
+      {
+        "file": "commit_hooks.go",
+        "locator": "117",
+        "status": "grounded",
+        "reason": "line 117 in commit_hooks.go (file has 481 lines) [via go/libraries/doltcore/sqle/commit_hooks.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "139",
+        "status": "grounded",
+        "reason": "line 139 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "dolt_log.go",
+        "locator": "459",
+        "status": "grounded",
+        "reason": "line 459 in dolt_log.go (file has 795 lines) [via go/libraries/doltcore/sqle/dtablefunctions/dolt_log.go]"
+      },
+      {
+        "file": "doltdb/gc_test.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in doltdb/gc_test.go (file has 308 lines) [via go/libraries/doltcore/doltdb/gc_test.go]"
+      },
+      {
+        "file": "dbfactory/file_cache_test.go",
+        "locator": "30",
+        "status": "grounded",
+        "reason": "line 30 in dbfactory/file_cache_test.go (file has 98 lines) [via go/libraries/doltcore/dbfactory/file_cache_test.go]"
+      },
+      {
+        "file": "sqle/auto_gc_test.go",
+        "locator": "34",
+        "status": "grounded",
+        "reason": "line 34 in sqle/auto_gc_test.go (file has 171 lines) [via go/libraries/doltcore/sqle/auto_gc_test.go]"
+      },
+      {
+        "file": "sqle/remotesrv_hook_test.go",
+        "locator": "106",
+        "status": "grounded",
+        "reason": "line 106 in sqle/remotesrv_hook_test.go (file has 299 lines) [via go/libraries/doltcore/sqle/remotesrv_hook_test.go]"
+      },
+      {
+        "file": "dolt_harness.go",
+        "locator": "50",
+        "status": "grounded",
+        "reason": "line 50 in dolt_harness.go (file has 660 lines) [via go/libraries/doltcore/sqle/enginetest/dolt_harness.go]"
+      },
+      {
+        "file": "doltdb.go",
+        "locator": "240",
+        "status": "grounded",
+        "reason": "line 240 in doltdb.go (file has 2584 lines) [via go/libraries/doltcore/doltdb/doltdb.go]"
+      },
+      {
+        "file": "env/environment.go",
+        "locator": "126",
+        "status": "grounded",
+        "reason": "line 126 in env/environment.go (file has 1363 lines) [via go/libraries/doltcore/env/environment.go]"
+      },
+      {
+        "file": "session_cache.go",
+        "locator": "43",
+        "status": "grounded",
+        "reason": "line 43 in session_cache.go (file has 511 lines) [via go/libraries/doltcore/sqle/dsess/session_cache.go]"
+      }
+    ]
+  },
+  "gold_recall": {
+    "total": 12,
+    "mentioned": 8,
+    "cited": 8,
+    "mention_recall": 0.6667,
+    "cited_recall": 0.6667,
+    "groups": {
+      "found": {
+        "total": 7,
+        "mentioned": 6,
+        "cited": 6,
+        "mention_recall": 0.8571,
+        "cited_recall": 0.8571
+      },
+      "dropped": {
+        "total": 5,
+        "mentioned": 2,
+        "cited": 2,
+        "mention_recall": 0.4,
+        "cited_recall": 0.4
+      }
+    },
+    "missed_mention": [
+      "remotesrv-cache",
+      "metrics-cluster",
+      "cluster-dial",
+      "pull-hasmanyer"
+    ],
+    "missed_cite": [
+      "remotesrv-cache",
+      "metrics-cluster",
+      "cluster-dial",
+      "pull-hasmanyer"
+    ],
+    "details": [
+      {
+        "id": "dbfactory-file",
+        "group": "found",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "backups-table",
+        "group": "found",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "datas-roottracker",
+        "group": "found",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "prolly-nodestore",
+        "group": "found",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "types-valuestore",
+        "group": "found",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "remotesrv-cache",
+        "group": "found",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "spec-db",
+        "group": "found",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "cli-queryist",
+        "group": "dropped",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "metrics-cluster",
+        "group": "dropped",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "cluster-dial",
+        "group": "dropped",
+        "mentioned": false,
+        "cited": false
+      },
+      {
+        "id": "cs-metrics",
+        "group": "dropped",
+        "mentioned": true,
+        "cited": true
+      },
+      {
+        "id": "pull-hasmanyer",
+        "group": "dropped",
+        "mentioned": false,
+        "cited": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "Orient in the codebase",
+      "checks": [
+        {
+          "hit": true,
+          "type": "word",
+          "value": "doltdb",
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "3",
+          "unique_files": 321,
+          "unique_refs": 700,
+          "threshold": 3,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_search",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 0.5,
+      "combined_score": 0.75,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Map the storage lifecycle contract",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 321,
+          "unique_refs": 700,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace how query access is handed out",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 321,
+          "unique_refs": 700,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Audit every production holder that retains access into the core database lifecycle",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 321,
+          "unique_refs": 700,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "no_grep",
+          "value": "no_grep",
+          "layer": "adoption"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 2,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.5,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Trace the narrowed-interface routes",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "4",
+          "unique_files": 321,
+          "unique_refs": 700,
+          "threshold": 4,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_graph",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Assess the blast radius of the lifecycle rework",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 321,
+          "unique_refs": 700,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": false,
+          "type": "mcp_tool_used",
+          "value": "sense_blast",
+          "layer": "adoption"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 0,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 0,
+      "fairness_total_bonus": 0,
+      "score_required": 1.0,
+      "score_bonus": 0.0,
+      "combined_score": 0.6667,
+      "fairness_score": 1.0
+    },
+    {
+      "name": "Produce the change + verification map",
+      "checks": [
+        {
+          "hit": true,
+          "type": "response_richness",
+          "value": "6",
+          "unique_files": 321,
+          "unique_refs": 700,
+          "threshold": 6,
+          "layer": "fairness"
+        },
+        {
+          "hit": true,
+          "type": "contains",
+          "value": "test",
+          "layer": "fairness"
+        }
+      ],
+      "hits_required": 1,
+      "total_required": 1,
+      "hits_bonus": 1,
+      "total_bonus": 1,
+      "fairness_hits_required": 1,
+      "fairness_total_required": 1,
+      "fairness_hits_bonus": 1,
+      "fairness_total_bonus": 1,
+      "score_required": 1.0,
+      "score_bonus": 1.0,
+      "combined_score": 1.0,
+      "fairness_score": 1.0
+    }
+  ],
+  "misses": {
+    "pre_mcp_misses": [],
+    "post_mcp_verification_reads": [],
+    "post_mcp_misses": [],
+    "has_mcp_tools": false,
+    "detail": "pre-MCP bypasses: 0, post-MCP verification reads: 0, post-MCP misses: 0 (diagnostic only \u2014 grep_count drives fluency)"
+  },
+  "metrics": {
+    "tool_calls": 100,
+    "grep_count": 74,
+    "read_count": 0,
+    "mcp_count": 0,
+    "token_input_uncached": 241,
+    "token_output": 93610,
+    "token_cache_read": 7201357,
+    "token_cache_write": 212440,
+    "token_total_billed": 93851,
+    "token_total_all": 7507648,
+    "wall_time_seconds": 1156.6,
+    "cost_usd": 8.0674,
+    "effective_token_total_billed": 93851,
+    "effective_wall_time_seconds": 1156.6,
+    "efficiency_ceiling": 30000,
+    "time_ceiling_seconds": 300,
+    "token_efficiency": 0.0,
+    "time_efficiency": 0.0,
+    "answer_chars": 134843,
+    "audit_chars": 418420,
+    "overhead": null
+  }
+}

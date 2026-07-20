@@ -1,0 +1,183 @@
+name: consul - audit what retains the cluster server before a lifecycle rework
+repo: consul
+# BATTERY STEP (d) MINI DRY-RUN PROBE. First WIN-VIABLE anchor of the
+# fresh campaign: consul.Server (agent/consul/server.go).
+#   gate: 37 prod dependents, scatter 35 dirs, token precision 0.078 (474 repo hits
+#   for 37 deps), total_affected 725, survive@0.7 37/37, no usable covering pattern.
+#   ring: 29 rows / 27 prod files / 20 DISTINCT vias, top via 0.10 (no saturation).
+#   19 of those files are IMPORT-PROOF: they never import agent/consul and never
+#   name the type. That set is the discriminator.
+#
+# CONSTRUCTION-SITE VERIFIED (the satisfier bar set after the temporal
+# fabrication and the teleport boundkeypair mirage): ALL TEN carriers were read in
+# source and every one holds or embeds a *Server:
+#   PeeringBackend.srv, OperatorBackend.srv, subscribeBackend.srv, raftHandle.s,
+#   caDelegateWithState embeds *Server, V1TenancyBridge.server, v1ServiceExportsShim.s,
+#   FederationStateReplicator.srv, autoConfigBackend.Server,
+#   serverACLResolverBackend embeds *Server.
+# This ring is GENUINE, unlike temporal's (52/100 rows fabricated by one test struct).
+#
+# FULL 7-STEP SCENARIO, authored after the probe passed BOTH arms:
+# baseline 8/13 cited, sense 13/13, discriminator 5/5 vs 0/5 = +1.00, hand-audited
+# full-path+line both directions. Probe preserved: consul.server-probe.20260720.bak.
+# Step 4 carries the transcription-forcing language (php-laravel facts-not-suggestions
+# lesson + the dolt step-4 wording that converted).
+#
+# PAYLOAD WATCH: bar 4 reports 36-38 kB, over the gate's budget, but the PROBE
+# transcript shows the agent received 31 ring rows with NO trimming, so the route is
+# whole at this ask width. If a step is ever widened, re-check `retained_trimmed` in
+# the transcript before trusting the run (the teleport truncation lesson).
+description: 'You are a maintainer of this service-mesh control plane about to rework
+  the lifecycle of the cluster server object: how it is constructed, how long the
+  subsystems that use it may hold on to it, and what must be re-wired if it is
+  replaced or restarted. Most subsystems do not use the server type directly — they
+  accept it through small, locally declared interfaces exposing only the handful of
+  methods they need, and they RETAIN that narrowed handle in their own struct. Before
+  touching the lifecycle you need a complete audit of the production code that retains
+  such a handle today, so the rework does not leave a subsystem holding a dead server.
+  Keep every answer concrete with file:line so a teammate can act on the audit without
+  re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths: what is this
+    project, how is the code organized, and where does the object you are about to
+    rework live — the cluster server that the agent runs and that subsystems operate
+    through? Hand the next agent a map so they can act with small targeted lookups,
+    not a fresh exploration. No Explore agents.
+    "
+  checks:
+  - type: word
+    value: consul
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+- name: Map the server lifecycle contract
+  prompt: "Task: map the contract you are about to change. How is the server
+    constructed and shut down today, what does it own that outlives a single request,
+    and which layers sit between an incoming RPC and that state? Give file:line for
+    each layer and one phrase on its role, so a teammate knows the current contract
+    before touching it.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how server access is handed to a subsystem
+  prompt: "Task: trace how access to the server reaches a subsystem. Start where a
+    subsystem is constructed and asks for what it needs, follow how that access is
+    narrowed and handed over, and end where it is retained for later use. Give
+    file:line for each hop, in order.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every production holder that retains a narrowed server handle
+  prompt: "Task: this is the core of the ticket. Find EVERY place in production code
+    (not tests) that RETAINS a handle to the cluster server object — a struct field
+    that keeps the server, or a narrowed view of it, alive inside a subsystem. Be
+    exhaustive and group by area. The easy-to-miss kind: holders whose field is typed
+    as a small, locally declared interface that the server (or a thin wrapper around
+    it) satisfies, so the file never imports the server's package and never names its
+    type. TRANSCRIBE every holder you find into the answer individually — do not
+    collapse a set into 'the gRPC services' or keep a tool's list in your head; a
+    holder you saw but did not write down with its file:line is a holder missed. For
+    each holder give file:line of the retaining field and one phrase on how it reaches
+    the server. A missed holder is a dead handle shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the cross-subsystem holder ring, not just direct users
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace the narrowed-interface routes
+  prompt: "Task: for the holders you found that keep access behind a field typed as
+    something other than the server type, trace each route mechanically: the field,
+    the interface it is typed as, and how the server ends up behind that interface at
+    runtime. Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the lifecycle rework
+  prompt: "Task: assess the full blast radius of changing the server lifecycle: which
+    holders are at risk, which are most likely to break or leak a dead handle, and what
+    must be re-verified after the change, across every area you found. Pay special
+    attention to holders with no compile-time tie to the server type — a lifecycle
+    change reaches them with no signal. Be complete, use file:line, rank by risk.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered holders by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the server-side code
+    you will edit, every holder that must be reviewed or re-verified grouped by area and
+    route, and the tests that must be updated or added. Use file:line throughout, so a
+    teammate could land the change from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: test
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold: 13 import-proof holders, one per FILE, each field line read in the clone at
+# pin 2f37d529 and each carrier verified to hold *Server (above). In-package
+# agent/consul/*.go holders are EXCLUDED (they name the type / need no import) per the
+# out-of-package rail.
+#
+# REGROUPED after the probe (dolt/pebble precedent): `dropped` = the 5 the baseline
+# probe missed and sense retrieved 5/5, that group IS the discriminator and the
+# headline; `found` = the 8 both arms already reach. Probe: baseline 8/13, sense 13/13,
+# discriminator 5/5 vs 0/5 = +1.00, hand-audited full-path+line in both directions.
+gold:
+  - {id: ca-provider,      group: dropped, match: [agent/connect/ca/provider_consul.go], relation: "ConsulProvider.Delegate ConsulProviderStateDelegate at :34 - CA provider retains state access via caDelegateWithState, which embeds *Server"}
+  - {id: rate-handler,     group: found, match: [agent/consul/rate/handler.go], relation: "rate.Handler retains a ServersStatusProvider at :164 - RPC rate limiter reads server status through a one-method interface"}
+  - {id: reporting-mgr,    group: found, match: [agent/consul/reporting/reporting.go], relation: "ReportingManager retains a ServerDelegate at :17"}
+  - {id: usagemetrics,     group: found, match: [agent/consul/usagemetrics/usagemetrics.go], relation: "usagemetrics.Config retains a StateProvider at :74 - metrics reporter reaches state via caDelegateWithState"}
+  - {id: configentry-svc,  group: found, match: [agent/grpc-external/services/configentry/server.go], relation: "configentry.Config.Backend FSMServer at :34 - gRPC service retains the FSM behind a local Backend interface"}
+  - {id: peerstream-svc,   group: found, match: [agent/grpc-external/services/peerstream/server.go], relation: "peerstream.Config.Backend Backend at :36 - satisfied by PeeringBackend, whose srv field is *Server"}
+  - {id: peerstream-submgr, group: dropped, match: [agent/grpc-external/services/peerstream/subscription_manager.go], relation: "subscriptionManager retains a SubscriptionBackend at :46"}
+  - {id: resource-svc,     group: found, match: [agent/grpc-external/services/resource/server_ce.go], relation: "resource.Config retains a TenancyBridge at :30 - satisfied by V1TenancyBridge.server *Server"}
+  - {id: subscribe-svc,    group: found, match: [agent/grpc-internal/services/subscribe/subscribe.go], relation: "subscribe.Server.Backend Backend at :23 - satisfied by subscribeBackend.srv *Server"}
+  - {id: local-state,      group: dropped, match: [agent/local/state.go], relation: "local.State retains an rpc interface at :172 (declared :164) - the agent delegate, which is a *consul.Server in server mode"}
+  - {id: operator-svc,     group: found, match: [agent/rpc/operator/service.go], relation: "operator.Config.Backend Backend at :70 - satisfied by OperatorBackend.srv *Server"}
+  - {id: raft-forwarding,  group: dropped, match: [internal/storage/raft/forwarding.go], relation: "forwardingClient.handle Handle at :115 - satisfied by raftHandle{s *Server}"}
+  - {id: v1compat-recon,   group: dropped, match: [internal/multicluster/internal/controllers/v1compat/controller.go], relation: "v1compat.reconciler.config AggregatedConfig at :81 - satisfied by v1ServiceExportsShim.s *Server"}

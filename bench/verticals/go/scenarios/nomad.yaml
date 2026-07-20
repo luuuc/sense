@@ -1,0 +1,171 @@
+name: nomad - audit what retains the cluster server before a lifecycle rework
+repo: nomad
+# FULL 7-STEP SCENARIO, authored after the probe passed BOTH arms
+# (baseline 7/15, sense 15/15, discriminator 8/8 vs 0/8, every row full-path audited).
+# Probe preserved: nomad.server-probe.20260720.bak.
+# Originally the battery step (d) probe. Fourth-seat candidate, admitted
+# after the source check killed the two rivals (vitess topo.Server and nomad
+# structs.Allocation were both FABRICATED, credited holders that never mention the
+# anchor; see LEDGER loop3/fourth-seat-screen).
+#   gate: 57 prod dependents, scatter 55 dirs (the widest in the pool), token
+#   precision 0.207 (270 repo hits for 57 deps), total_affected 1025, survive@0.7 54.
+#   ring: 17 files, 8 vias, 7 distinct carriers; 15 of the 17 files are IMPORT-PROOF
+#   (never import nomad/ and never name nomad.Server). That set is the gold.
+#
+# CONSTRUCTION-SITE VERIFIED (mandatory bar: the source check is 3-for-3 at killing
+# rings that both the gate and the ring sweep passed):
+#   agent.Agent      `server *nomad.Server`  command/agent/agent.go:113
+#   nomad.Worker     `srv *Server`           nomad/worker.go:93
+#   nomad.Encrypter  `srv *Server`           nomad/encrypter.go:51
+#   nomad.drainerShim`s *Server`             nomad/drainer_shims.go:15
+# Every gold row's RETAINING FIELD was then located by hand (line numbers below are the
+# field, not the struct header).
+#
+# SEAT NOTE: same architectural idiom as consul.Server (HashiCorp cluster server, BUSL,
+# IBM). This trade was accepted knowingly ("go for nomad"): record it in the write-up
+# rather than presenting the two seats as independent pillars.
+description: 'You are a maintainer of this cluster scheduler about to rework the
+  lifecycle of the server object: how it is constructed, how long the subsystems that
+  use it may hold on to it, and what must be re-wired if it is replaced or restarted.
+  Most subsystems do not use the server type directly — they accept it through small,
+  locally declared interfaces exposing only the handful of methods they need, and they
+  RETAIN that narrowed handle in their own struct. Before touching the lifecycle you
+  need a complete audit of the production code that retains such a handle today, so the
+  rework does not leave a subsystem holding a dead server. Keep every answer concrete
+  with file:line so a teammate can act on the audit without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths: what is this project,
+    how is the code organized, and where does the object you are about to rework live — the
+    server that the cluster runs and that subsystems operate through? Hand the next agent a
+    map so they can act with small targeted lookups, not a fresh exploration. No Explore
+    agents.
+    "
+  checks:
+  - type: word
+    value: nomad
+    required: true
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+- name: Map the server lifecycle contract
+  prompt: "Task: map the contract you are about to change. How is the server constructed and
+    shut down today, what does it own that outlives a single request, and which layers sit
+    between an incoming RPC and that state? Give file:line for each layer and one phrase on
+    its role.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how server access is handed to a subsystem
+  prompt: "Task: trace how access to the server reaches a subsystem. Start where a subsystem
+    is constructed and asks for what it needs, follow how that access is narrowed and handed
+    over, and end where it is retained for later use. Give file:line for each hop, in order.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every production holder that retains a narrowed server handle
+  prompt: "Task: this is the core of the ticket. Find EVERY place in production code (not
+    tests) that RETAINS a handle to the cluster server object — a struct field that keeps the
+    server, or a narrowed view of it, alive inside a subsystem. Be exhaustive and group by
+    area. The easy-to-miss kind: holders whose field is typed as a small, locally declared
+    interface that the server (or a thin wrapper around it) satisfies, so the file never
+    imports the server's package and never names its type. TRANSCRIBE every holder you find
+    into the answer individually — do not collapse a set into 'the schedulers' or keep a
+    tool's list in your head; a holder you saw but did not write down with its file:line is a
+    holder missed. For each holder give file:line of the retaining field and one phrase on how
+    it reaches the server. A missed holder is a dead handle shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the cross-subsystem holder ring, not just direct users
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace the narrowed-interface routes
+  prompt: "Task: for the holders you found that keep access behind a field typed as something
+    other than the server type, trace each route mechanically: the field, the interface it is
+    typed as, and how the server ends up behind that interface at runtime. Give file:line
+    throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the lifecycle rework
+  prompt: "Task: assess the full blast radius of changing the server lifecycle: which holders
+    are at risk, which are most likely to break or leak a dead handle, and what must be
+    re-verified after the change, across every area you found. Pay special attention to
+    holders with no compile-time tie to the server type — a lifecycle change reaches them with
+    no signal. Be complete, use file:line, rank by risk.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the server-side code you
+    will edit, every holder that must be reviewed or re-verified grouped by area and route,
+    and the tests that must be updated or added. Use file:line throughout, so a teammate could
+    land the change from your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: test
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# REGROUPED after the probe (dolt/pebble/consul precedent): `dropped` = the 8 the baseline
+# probe missed and sense retrieved 8/8, all at FULL path+line, that group is the headline;
+# `found` = the 7 both arms already reach. Probe: baseline 7/15, sense 15/15, +1.00.
+#
+# Gold: the 15 import-proof holders, one per FILE. Each retaining field located by hand
+# at pin (see PINNED_COMMITS); each carrier verified to hold *Server above.
+gold:
+  - {id: allocrunner,      group: dropped, match: [client/allocrunner/alloc_runner.go], relation: "allocRunner.rpcClient config.RPCer at :206 - alloc runner retains RPC access; carrier agent.Agent holds *nomad.Server"}
+  - {id: csi-hook,         group: dropped, match: [client/allocrunner/csi_hook.go], relation: "csiHook.rpcClient config.RPCer at :37"}
+  - {id: alloc-watcher,    group: dropped, match: [client/allocwatcher/alloc_watcher.go], relation: "allocwatcher.Config.RPC RPCer at :66"}
+  - {id: arconfig,         group: dropped, match: [client/config/arconfig.go], relation: "AllocRunnerConfig.RPCClient RPCer at :103"}
+  - {id: client-config,    group: dropped, match: [client/config/config.go], relation: "client config.Config.RPCHandler RPCHandler at :161 - the widest client-side retention"}
+  - {id: widmgr-signer,    group: dropped, match: [client/widmgr/signer.go], relation: "widmgr.Signer.RPC RPCer at :33 - workload identity signer retains RPC access"}
+  - {id: auth-encrypter,   group: found, match: [nomad/auth/auth.go], relation: "Authenticator.encrypter Encrypter at :64 - carrier nomad.Encrypter holds srv *Server"}
+  - {id: drainer,          group: found, match: [nomad/drainer/drainer.go], relation: "NodeDrainer.Raft RaftApplier at :116 - carrier nomad.drainerShim holds s *Server"}
+  - {id: periodic,         group: dropped, match: [nomad/periodic.go], relation: "PeriodicDispatch.dispatcher JobEvalDispatcher at :27 - satisfied by *Server itself"}
+  - {id: volume-watcher,   group: found, match: [nomad/volumewatcher/volume_watcher.go], relation: "volumeWatcher.rpc CSIVolumeRPC at :30"}
+  - {id: volumes-watcher,  group: found, match: [nomad/volumewatcher/volumes_watcher.go], relation: "volumewatcher.Watcher.rpc CSIVolumeRPC at :26"}
+  - {id: generic-sched,    group: found, match: [scheduler/generic_sched.go], relation: "GenericScheduler.planner sstructs.Planner at :57 - carrier nomad.Worker holds srv *Server"}
+  - {id: sysbatch-sched,   group: found, match: [scheduler/scheduler_sysbatch.go], relation: "SysBatchScheduler.planner sstructs.Planner at :33"}
+  - {id: system-sched,     group: found, match: [scheduler/scheduler_system.go], relation: "SystemScheduler.planner sstructs.Planner at :37"}
+  - {id: plan-builder,     group: dropped, match: [scheduler/structs/structs.go], relation: "PlanBuilder.Planner Planner at :76 - the scheduler-side planning seam"}
