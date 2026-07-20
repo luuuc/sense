@@ -206,6 +206,8 @@ do_bench() {
 }
 
 do_report() {
+  echo "## [report] axis panel refresh (observational, all banked cells)"
+  python3 "$LIB/panel.py" 2>&1 | sed 's/^/  /' || true
   echo "## [report] per-group cited-recall verdict (headline arm: $HEADLINE_MODEL)"
   # RESULTS_DIR mirrors bench-paths.sh: verticals/<name>/results/<sanitized-model>.
   local msan rdir out
