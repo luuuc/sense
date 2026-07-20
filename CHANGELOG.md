@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.13.0] - 2026-07-20
+
+### Features
+
+- purify and page the retention ring
+- page retained_via_interfaces instead of truncating it
 ## [1.12.4] - 2026-07-19
 
 ### Enhancements
