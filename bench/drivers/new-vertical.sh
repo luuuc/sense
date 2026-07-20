@@ -68,8 +68,8 @@ mk "$ROOT/bench/verticals/$KEY/scenarios"
 writef "$ROOT/bench/verticals/$KEY/repos.txt" <<EOF
 # $TITLE vertical — repo membership (one repo key per line).
 # Self-contained under verticals/$KEY/: scenarios/ + results/.
-# The SET is 4 repos, firm (manifesto §7.0): 1 framework + 1 big + 1 medium + 1 small
-# (or 2 big + 1 medium + 1 small when the framework is too small/memorized).
+# The SET is 4 repos, firm (manifesto §7.0): 1 framework + 1 big + 2 medium
+# (or 2 big + 2 medium when the framework is too small/memorized).
 # Fill in after the repo-selection gate (bootstrap-runbook §2); one key per line.
 EOF
 
@@ -157,7 +157,7 @@ manual judgment gate the bootstrap does NOT automate. Mirror the format of
 [\`../02-rails-vertical/repos.md\`](../02-rails-vertical/repos.md).
 
 > **The SET is 4 repos, firm** (manifesto §7.0): \`1 framework + 1 big + 1 medium +
-> 1 small\` (or \`2 big + 1 medium + 1 small\` when the framework is too
+> 2 medium\` (or \`2 big + 2 medium\` when the framework is too
 > small/memorized). Two independent win pillars; the discriminator picks its own
 > repo; each slot carries a same-type backup (swap is the LAST resort).
 
@@ -167,10 +167,8 @@ manual judgment gate the bootstrap does NOT automate. Mirror the format of
 |---|---|---|---|
 | framework | | | win pillar 1 |
 | big | | | win pillar 2 |
-| medium | | | |
-| medium | | | |
-| small | | | control / honest tie |
-| small | | | control / honest tie |
+| medium 1 | | | win-eligible |
+| medium 2 | | | win-eligible |
 
 ## Freeze plan (bootstrap-runbook §3 — at clone time)
 

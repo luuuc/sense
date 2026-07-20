@@ -37,13 +37,15 @@ from typing import Any
 # --- Thresholds (mirror locked.yaml; encoded here for stdlib independence) ---
 DISAGREEMENT_THRESHOLD = 0.05            # criterion 1
 DISCRIMINATION_GAP_THRESHOLD = 0.10      # criterion 3
-# Criterion 3 wants ≥3 of 4 scenarios above threshold on the full bench
-# (the 1 honesty-ballast small may miss; §7.0 4-set).
+# Criterion 3 wants ALL 4 of 4 scenarios above threshold on the full bench.
+# The set carries no honesty-ballast seat (§7.0 is 1 framework + 1 big +
+# 2 medium), so no seat is allowed to miss: a set with a tie in it is not
+# shippable.
 # When the loop runs on a subset (e.g. `--repo flask,gin,axum`), the
-# absolute 3 is mathematically impossible. evaluate_discrimination
+# absolute 4 is mathematically impossible. evaluate_discrimination
 # scales this proportionally: min(DISCRIMINATION_MIN_SCENARIOS, 2/3 of
 # scenarios present, rounded up).
-DISCRIMINATION_MIN_SCENARIOS = 3         # criterion 3 target on full bench
+DISCRIMINATION_MIN_SCENARIOS = 4         # criterion 3 target on full bench (all seats must win)
 HELD_OUT_CORRELATION_THRESHOLD = 0.85    # criterion 4
 
 
