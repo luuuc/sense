@@ -919,10 +919,13 @@ func writeFile(t *testing.T, path, content string) {
 // --- Pitch 13-05 fixture tests ---
 
 type fixtureDB struct {
-	db       *sql.DB
-	adapter  *sqlite.Adapter
-	fileID   int64
-	nextLine int
+	db      *sql.DB
+	adapter *sqlite.Adapter
+	fileID  int64
+	// testFileID is the lazily-created test-file row used by symbols that
+	// must read as test-declared (see addTestFileSymbol).
+	testFileID int64
+	nextLine   int
 }
 
 func newFixtureDB(t *testing.T) *fixtureDB {

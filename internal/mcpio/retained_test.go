@@ -250,7 +250,11 @@ func TestRetainedCarrierShedsBeforeRows(t *testing.T) {
 	r := retainedResult(true)
 	for i := range r.RetainedViaInterfaces {
 		r.RetainedViaInterfaces[i].Carrier = model.Symbol{
-			ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.SomeVeryLongCarrierTypeName", FileID: 1,
+			// Long enough that one strip clearly outweighs the truncated +
+			// retained_trimmed flag bytes the strip itself adds; a
+			// near-boundary name makes this a rounding test, not a shed-order
+			// test.
+			ID: 100 + int64(i), Name: "Carrier", Qualified: "pkg.SomeVeryLongCarrierTypeNameThatIsUnmistakablyWorthShedding", FileID: 1,
 		}
 	}
 	full := BuildBlastResponse(ctx, r, retainedFiles, nil)
@@ -409,4 +413,224 @@ func strippedFloor(ctx context.Context, r blast.Result) int {
 	}
 	resp.Truncated = true
 	return estimateBlastWireTokens(&resp)
+}
+
+// --- Purity disclosure on the wire ---
+
+// TestRetainedNoteDisclosesExclusions: the refused test-file satisfiers ride
+// out in the note with their count and a bounded name sample, so a purified
+// ring reads as purified rather than as a short one.
+func TestRetainedNoteDisclosesExclusions(t *testing.T) {
+	r := retainedResult(true)
+	r.RetainedPurity = blast.RetentionPurity{Excluded: 7, Names: []string{"FakeA", "FakeB", "FakeC", "FakeD", "FakeE"}}
+
+	resp := BuildBlastResponse(context.Background(), r, func(int64) (string, bool) { return "widget.go", true }, nil)
+
+	for _, want := range []string{"7 test-file satisfier(s) refused as carriers", "FakeA", "FakeE", "…", "contribute no rows"} {
+		if !strings.Contains(resp.RetainedNote, want) {
+			t.Errorf("retained_note missing %q: %s", want, resp.RetainedNote)
+		}
+	}
+	if !strings.Contains(resp.RetainedNote, "may retain Widget") {
+		t.Errorf("retained_note dropped the may-claim sentence: %s", resp.RetainedNote)
+	}
+}
+
+// TestRetainedNoteFullyExcludedRing: when purity empties the ring, the note is
+// still emitted: an empty ring and a ring emptied by the filter are different
+// facts, and only the note tells them apart.
+func TestRetainedNoteFullyExcludedRing(t *testing.T) {
+	r := retainedResult(false)
+	r.RetainedPurity = blast.RetentionPurity{Excluded: 2, Names: []string{"FakeA", "FakeB"}}
+
+	resp := BuildBlastResponse(context.Background(), r, func(int64) (string, bool) { return "widget.go", true }, nil)
+
+	if len(resp.RetainedViaInterfaces) != 0 {
+		t.Fatalf("expected an empty ring, got %+v", resp.RetainedViaInterfaces)
+	}
+	if !strings.Contains(resp.RetainedNote, "2 test-file satisfier(s) refused as carriers: FakeA, FakeB") {
+		t.Errorf("retained_note = %q, want the exclusion disclosure", resp.RetainedNote)
+	}
+	if strings.Contains(resp.RetainedNote, "may retain") {
+		t.Errorf("no rows, so no may-claim sentence belongs in the note: %q", resp.RetainedNote)
+	}
+}
+
+// --- Promiscuity stamp on the wire ---
+
+// TestRetainedRowCarriesViaSatisfiers: the stamp reaches the wire as a bare
+// count, the note explains what it measures, and a row with no count omits
+// the key rather than claiming zero satisfiers.
+func TestRetainedRowCarriesViaSatisfiers(t *testing.T) {
+	r := retainedResult(true)
+	r.RetainedViaInterfaces[0].ViaSatisfiers = 23
+
+	resp := BuildBlastResponse(context.Background(), r, func(int64) (string, bool) { return "widget.go", true }, nil)
+
+	if resp.RetainedViaInterfaces[0].ViaSatisfiers != 23 {
+		t.Errorf("via_satisfiers = %d, want 23", resp.RetainedViaInterfaces[0].ViaSatisfiers)
+	}
+	if !strings.Contains(resp.RetainedNote, "`via_satisfiers` counts concretes satisfying `via`") {
+		t.Errorf("retained_note does not explain the stamp: %s", resp.RetainedNote)
+	}
+	raw, err := json.Marshal(resp.RetainedViaInterfaces[1])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "via_satisfiers") {
+		t.Errorf("an unstamped row must omit via_satisfiers, got %s", raw)
+	}
+}
+
+// --- Paging on the wire ---
+
+// pagedResult is a ring page: 2 rows shown starting at offset 3 of 9.
+func pagedResult() blast.Result {
+	r := retainedResult(true)
+	r.RetainedCount = 9
+	r.RetainedOffset = 3
+	r.RetainedFingerprint = "f12@2026-07-20T10:00:00Z"
+	return r
+}
+
+// TestRetainedPageLocatesItself: a page states which rows it is, how many
+// exist, the offset that resumes it, and the generation it was cut from ,
+// entirely in structured fields. A short ring must never be indistinguishable
+// from a complete one, and it must not spend a holder's worth of bytes saying
+// so (the fields cost a fraction of the sentence they replace).
+func TestRetainedPageLocatesItself(t *testing.T) {
+	resp := BuildBlastResponse(context.Background(), pagedResult(), retainedFiles, nil)
+
+	if resp.RetainedOffset != 3 {
+		t.Errorf("retained_offset = %d, want 3", resp.RetainedOffset)
+	}
+	if resp.RetainedNextOffset != 5 {
+		t.Errorf("retained_next_offset = %d, want 5 (3 skipped + 2 shown)", resp.RetainedNextOffset)
+	}
+	if resp.RetainedCount != 9 {
+		t.Errorf("retained_via_interfaces_count = %d, want the full ring size 9", resp.RetainedCount)
+	}
+	if resp.RetainedFingerprint != "f12@2026-07-20T10:00:00Z" {
+		t.Errorf("retained_index_fingerprint = %q, want the generation stamp", resp.RetainedFingerprint)
+	}
+	// The page facts live in fields ONLY: prose restating them would cost a
+	// holder on a ring that saturates the budget.
+	for _, banned := range []string{"rows 4-5", "call again", "offset:5"} {
+		if strings.Contains(resp.RetainedNote, banned) {
+			t.Errorf("paging prose %q must not ride the note: %s", banned, resp.RetainedNote)
+		}
+	}
+}
+
+// TestRetainedLastPageOffersNoNextOffset: a page that ends the ring must not
+// advertise a resume point that would return nothing.
+func TestRetainedLastPageOffersNoNextOffset(t *testing.T) {
+	r := pagedResult()
+	r.RetainedCount = 5 // 3 skipped + 2 shown = the end
+
+	resp := BuildBlastResponse(context.Background(), r, retainedFiles, nil)
+
+	if resp.RetainedNextOffset != 0 {
+		t.Errorf("retained_next_offset = %d, want 0 at the end of the ring", resp.RetainedNextOffset)
+	}
+	// It is still a page (offset 3), so the fingerprint stays: the consumer
+	// needs it to know this page unions with the one before it.
+	if resp.RetainedFingerprint == "" {
+		t.Error("a page must carry its index fingerprint even when it ends the ring")
+	}
+}
+
+// TestBudgetShedReRendersPaging: when the budget sheds ring rows, the page
+// boundary moves with them: the note and retained_next_offset describe the
+// rows that actually shipped, so a squeezed ring is resumable instead of
+// silently short.
+func TestBudgetShedReRendersPaging(t *testing.T) {
+	resp := BuildBlastResponse(context.Background(), pagedResult(), retainedFiles, nil)
+	resp.IndirectCallers = nil
+
+	ApplyBlastBudget(&resp, 1) // force every trim step
+
+	if len(resp.RetainedViaInterfaces) != 0 {
+		t.Fatalf("expected the ring to shed entirely, got %d rows", len(resp.RetainedViaInterfaces))
+	}
+	if resp.RetainedNextOffset != 3 {
+		t.Errorf("retained_next_offset = %d, want 3: the shed page resumes where it started", resp.RetainedNextOffset)
+	}
+	if resp.RetainedFingerprint == "" {
+		t.Error("a shed page still needs its fingerprint to be resumable")
+	}
+	if resp.RetainedCount != 9 {
+		t.Errorf("retained_via_interfaces_count = %d, want 9 (never reduced)", resp.RetainedCount)
+	}
+}
+
+// TestBudgetShedOfOneRowMovesTheBoundary pins the partial case: one row shed
+// moves the resume offset back by exactly one row, never to zero.
+func TestBudgetShedOfOneRowMovesTheBoundary(t *testing.T) {
+	resp := BuildBlastResponse(context.Background(), pagedResult(), retainedFiles, nil)
+	resp.RetainedViaInterfaces = resp.RetainedViaInterfaces[:1]
+	resolveRetainedPage(&resp)
+
+	if resp.RetainedNextOffset != 4 {
+		t.Errorf("retained_next_offset = %d, want 4", resp.RetainedNextOffset)
+	}
+	if resp.RetainedCount != 9 {
+		t.Errorf("retained_via_interfaces_count = %d, want 9 (never reduced)", resp.RetainedCount)
+	}
+}
+
+// --- Facts and the may-claim stay separated ---
+
+// TestRetainedNoteSeparatesFactsFromClaim: the note leads with what the index
+// holds and names exactly one unverified thing. An agent that reads only the
+// first clause must come away with facts, never with a guess dressed as one.
+func TestRetainedNoteSeparatesFactsFromClaim(t *testing.T) {
+	r := retainedResult(true)
+	r.RetainedPurity = blast.RetentionPurity{Excluded: 1, Names: []string{"FakeA"}}
+
+	resp := BuildBlastResponse(context.Background(), r, retainedFiles, nil)
+	note := resp.RetainedNote
+
+	facts := strings.Index(note, "as indexed")
+	claim := strings.Index(note, "Unverified, and the only unverified part")
+	excl := strings.Index(note, "refused as carriers")
+	if facts != 0 {
+		t.Errorf("note must LEAD with the structural facts, got: %s", note)
+	}
+	if claim < facts || excl < claim {
+		t.Errorf("note order must be facts → may-claim → exclusions, got: %s", note)
+	}
+	// The two load-bearing phrases of the shipped group contract.
+	for _, want := range []string{"may retain Widget", "one interface indirection"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note dropped the pinned phrase %q: %s", want, note)
+		}
+	}
+}
+
+// TestStampShedsBeforeAnyHolder is the shed-hierarchy threshold pin: at a
+// budget ONE token under what the stamped response needs, the
+// via_satisfiers annotation must go and every holder must stay. A row is the
+// answer; the stamp is a caution about the answer. Without this pin the
+// ordering silently regressed and cost dolt 2 of its 12 gold rows.
+func TestStampShedsBeforeAnyHolder(t *testing.T) {
+	r := retainedResult(true)
+	for i := range r.RetainedViaInterfaces {
+		r.RetainedViaInterfaces[i].ViaSatisfiers = 23
+	}
+	resp := BuildBlastResponse(context.Background(), r, retainedFiles, nil)
+	resp.IndirectCallers = nil
+	rows := len(resp.RetainedViaInterfaces)
+
+	ApplyBlastBudget(&resp, estimateBlastWireTokens(&resp)-1)
+
+	if len(resp.RetainedViaInterfaces) != rows {
+		t.Fatalf("holders = %d, want all %d: a stamp must shed before any row", len(resp.RetainedViaInterfaces), rows)
+	}
+	if anyRetainedStamped(resp.RetainedViaInterfaces) {
+		t.Error("the tail stamp must shed at one token over budget")
+	}
+	if strings.Contains(resp.RetainedNote, "via_satisfiers") {
+		t.Errorf("the sentence explaining a shed stamp must retire with it: %s", resp.RetainedNote)
+	}
 }

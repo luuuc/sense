@@ -363,6 +363,30 @@ type BlastResponse struct {
 	// sentence-sized disclosure could never fit the lazy shed's boundary
 	// slack; measured: the shed lands within one shed-unit of budget).
 	RetainedTrimmed bool `json:"retained_trimmed,omitempty"`
+	// RetainedOffset is how many ring rows this response skipped, and
+	// RetainedNextOffset is the offset that returns the next page (0 when
+	// the ring ends here). Together with retained_via_interfaces_count they
+	// locate the page exactly: rows offset+1 .. offset+len of count.
+	// RetainedFingerprint identifies the index generation the page was cut
+	// from: pages that share it are unionable, a mismatch means the index
+	// moved and merging them would dup or gap rows. The ring is the one
+	// group that pages instead of silently truncating: a large truncated
+	// list is what costs an agent its trust in the whole group.
+	RetainedOffset      int    `json:"retained_offset,omitempty"`
+	RetainedNextOffset  int    `json:"retained_next_offset,omitempty"`
+	RetainedFingerprint string `json:"retained_index_fingerprint,omitempty"`
+	// retainedBaseNote is RetainedNote without its paging sentence. The
+	// budget pass can shed ring rows, which moves the page's end and its
+	// next offset, so the sentence must be re-rendered from the surviving
+	// rows rather than patched in place: keeping the un-paged prose here is
+	// what makes that re-render exact instead of string surgery. Unexported:
+	// it never reaches the wire and no consumer can set it.
+	retainedBaseNote string
+	// retainedFingerprint is the index generation the ring was cut from,
+	// held back until the response is known to BE a page: the wire field is
+	// page-union metadata, and on a complete ring it would spend budget that
+	// belongs to holders.
+	retainedFingerprint string
 
 	// Tier 2 — references (composes/inherits/includes). Count + top examples.
 	References BlastTierSummary `json:"references"`
@@ -448,6 +472,13 @@ type BlastRetained struct {
 	// tripping its own shed (measured: consumers re-derived this with
 	// ~30 lookups per session when it was absent).
 	Carrier string `json:"carrier,omitempty"`
+	// ViaSatisfiers is how many concrete types satisfy Via index-wide: the
+	// bare fact, no threshold and no verdict, because a row on a
+	// hundred-implementation interface is weaker evidence than one on a
+	// two-implementation contract and only the consumer can judge which it
+	// is looking at. It never removes a row: real retention rides generic
+	// interfaces too (pebble's paid-win ring runs through InternalIterator).
+	ViaSatisfiers int `json:"via_satisfiers,omitempty"`
 	// Chain is a declared containment path from Carrier down to the
 	// subject (">"-joined type names; one deterministic path among possibly
 	// several). Every hop is a composes/includes edge the index holds,

@@ -80,15 +80,39 @@ func spanIndirectByFile(hops []blast.CallerHop, directCallers []model.Symbol) []
 	return append(ordered, deferred...)
 }
 
+// clearRetainedString builds a shed step for one string enrichment field.
+func clearRetainedString(field func(*BlastRetained) *string) func(*BlastRetained) bool {
+	return func(r *BlastRetained) bool {
+		f := field(r)
+		if *f == "" {
+			return false
+		}
+		*f = ""
+		return true
+	}
+}
+
+// clearRetainedStamp is the shed step for the via_satisfiers annotation. It
+// sheds like any other enrichment because it IS one: the row's claim stands
+// without it, and a row is strictly worth more than a caution number about
+// the row (measured the hard way: stamping every row unshed pushed 17 of
+// dolt's 53 holders, 7 of them gold, off a paid-win response).
+func clearRetainedStamp(r *BlastRetained) bool {
+	if r.ViaSatisfiers == 0 {
+		return false
+	}
+	r.ViaSatisfiers = 0
+	return true
+}
+
 // shedRetainedField strips one enrichment field from retained rows,
 // tail-first in trimStep batches, until the response fits the budget or
-// every row's field is empty.
-func shedRetainedField(resp *BlastResponse, budget int, field func(*BlastRetained) *string) {
+// every row's field is already empty.
+func shedRetainedField(resp *BlastResponse, budget int, strip func(*BlastRetained) bool) {
 	i := len(resp.RetainedViaInterfaces) - 1
 	for i >= 0 && estimateBlastWireTokens(resp) > budget {
 		for range trimStep(i + 1) {
-			if f := field(&resp.RetainedViaInterfaces[i]); *f != "" {
-				*f = ""
+			if strip(&resp.RetainedViaInterfaces[i]) {
 				// Set at the first strip so the flag's own bytes are
 				// priced by every estimate from here on; a post-loop set
 				// would break the fit this pass just found and push the
@@ -173,15 +197,30 @@ func ApplyBlastBudget(resp *BlastResponse, budget int) {
 	// Stripping sets retained_trimmed, which is priced through every
 	// subsequent estimate like any other content, so no later stage can be
 	// surprised by it and no revert dance is needed.
-	shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Chain })
-	shedRetainedField(resp, budget, func(r *BlastRetained) *string { return &r.Carrier })
+	shedRetainedField(resp, budget, clearRetainedString(func(r *BlastRetained) *string { return &r.Chain }))
+	shedRetainedField(resp, budget, clearRetainedString(func(r *BlastRetained) *string { return &r.Carrier }))
+	shedRetainedField(resp, budget, clearRetainedStamp)
+	// The stamp shed may have removed the last stamp, which retires the
+	// sentence explaining it: give that budget back to the rows BEFORE the
+	// row shed decides whether any must go.
+	resolveRetainedPage(resp)
 	// 7. Retained holders carry a weaker claim than any direct caller, so
 	// they shed next. RetainedCount is never reduced — a trimmed group is
-	// self-evident from count > len(entries).
+	// self-evident from count > len(entries): and the paging sentence is
+	// re-rendered over the survivors, so a shed page still names the offset
+	// that resumes it. Budget pressure moves the page boundary; it never
+	// makes the ring end silently.
+	// The sentence is re-rendered INSIDE the loop so every estimate prices
+	// the disclosure it will actually ship with; deferring it to after the
+	// loop would grow the response past the fit the loop just found.
 	for estimateBlastWireTokens(resp) > budget && len(resp.RetainedViaInterfaces) > 0 {
-		n := len(resp.RetainedViaInterfaces)
-		resp.RetainedViaInterfaces = resp.RetainedViaInterfaces[:n-trimStep(n)]
+		// ONE row per pass, not the trimStep batch the other lists use: a
+		// batch overshoots by up to 10% of the ring, and on a ring that
+		// saturates the budget exactly (dolt: 53 rows) that overshoot is
+		// measured in gold holders. The extra marshals buy back real answer.
+		resp.RetainedViaInterfaces = resp.RetainedViaInterfaces[:len(resp.RetainedViaInterfaces)-1]
 		resp.Truncated = true
+		resolveRetainedPage(resp)
 	}
 	// 8. Direct callers last; keep at least one. total_affected still
 	// reports how many exist beyond what is shown.
@@ -417,9 +456,10 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 			file = path
 		}
 		entry := BlastRetained{
-			Symbol: qualifiedOrName(rh.Symbol),
-			Ref:    FormatRef(file, rh.Symbol.LineStart),
-			Via:    rh.Via.Name,
+			Symbol:        qualifiedOrName(rh.Symbol),
+			Ref:           FormatRef(file, rh.Symbol.LineStart),
+			Via:           rh.Via.Name,
+			ViaSatisfiers: rh.ViaSatisfiers,
 		}
 		if rh.Carrier.ID != 0 {
 			entry.Carrier = qualifiedOrName(rh.Carrier)
@@ -433,12 +473,15 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 		}
 		resp.RetainedViaInterfaces = append(resp.RetainedViaInterfaces, entry)
 	}
-	if len(resp.RetainedViaInterfaces) > 0 {
+	// The note is emitted for an excluded-but-empty ring too: a ring emptied
+	// by the purity filter is indistinguishable from a subject nothing
+	// launders, and the difference is exactly what the consumer must see.
+	if len(resp.RetainedViaInterfaces) > 0 || r.RetainedPurity.Excluded > 0 {
 		resp.RetainedCount = r.RetainedCount
-		resp.RetainedNote = "each row may retain " + r.Symbol.Name + ", one interface indirection deep. As indexed: the " +
-			"holder declares a field typed as `via`; `carrier` is a concrete satisfier of `via`; `chain` is a declared " +
-			"containment path from carrier to " + r.Symbol.Name + ". Which satisfier lands at runtime is unverified. " +
-			"Not counted in total_affected; blast a listed holder to go deeper."
+		resp.RetainedOffset = r.RetainedOffset
+		resp.retainedFingerprint = r.RetainedFingerprint
+		resp.retainedBaseNote = retainedNote(r)
+		resolveRetainedPage(&resp)
 	}
 
 	examples := tier2All
@@ -480,6 +523,100 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 	}
 	resp.Completeness = blastCompleteness(&resp, r.TotalAffected)
 	return resp
+}
+
+// retainedNote assembles the retention group's shared semantics in the order
+// that lets a reader stop early: the STRUCTURAL FACTS the index actually
+// holds, then the one thing that stays unverified about them, then what the
+// ring refused to launder through. The separation is the point:
+// a group whose facts and guesses read as one paragraph
+// is a group an agent either over-trusts or throws away whole. Kept in one
+// builder so the fact list, the may-claim, and the purity disclosure cannot
+// drift apart.
+func retainedNote(r blast.Result) string {
+	var b strings.Builder
+	if r.RetainedCount > 0 {
+		b.WriteString("as indexed: the holder declares a `via`-typed field; `carrier` concretely satisfies `via`; " +
+			"`chain` is a declared containment path carrier→" + r.Symbol.Name + ". Unverified, and the only " +
+			"unverified part: which satisfier the field holds at runtime, so each row may retain " + r.Symbol.Name +
+			", one interface indirection deep. Not in total_affected; blast a listed holder to go deeper.")
+	}
+	if excl := retainedExclusionClause(r.RetainedPurity); excl != "" {
+		if b.Len() > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(excl)
+	}
+	return b.String()
+}
+
+// resolveRetainedPage recomputes everything that depends on WHICH ring rows
+// actually survived: the resume offset, the page fingerprint, and the note.
+// Re-run after every pass that drops rows or annotations, so none of the three
+// can describe rows that are no longer there.
+//
+// Where the page facts live is a deliberate split. The numbers ride structured
+// fields (retained_via_interfaces_count, retained_offset, retained_next_offset,
+// retained_index_fingerprint) and NOT prose: a ring can saturate the token
+// budget exactly (dolt: 53 rows at 8000/8000), and there a sentence restating
+// those fields costs a holder. Prose is reserved for what no field can carry ,
+// the group's semantics and the purity refusal.
+func resolveRetainedPage(resp *BlastResponse) {
+	shown := len(resp.RetainedViaInterfaces)
+	end := resp.RetainedOffset + shown
+	resp.RetainedNextOffset = 0
+	if end < resp.RetainedCount {
+		resp.RetainedNextOffset = end
+	}
+
+	// The fingerprint validates a UNION of pages. A complete ring has no
+	// second page to union with, so publishing it there is pure cost.
+	resp.RetainedFingerprint = ""
+	if resp.RetainedOffset > 0 || resp.RetainedNextOffset > 0 {
+		resp.RetainedFingerprint = resp.retainedFingerprint
+	}
+
+	clauses := []string{resp.retainedBaseNote}
+	if anyRetainedStamped(resp.RetainedViaInterfaces) {
+		clauses = append(clauses, "`via_satisfiers` counts concretes satisfying `via` index-wide (higher = "+
+			"likelier to hold something else).")
+	}
+
+	out := make([]string, 0, len(clauses))
+	for _, c := range clauses {
+		if c != "" {
+			out = append(out, c)
+		}
+	}
+	resp.RetainedNote = strings.Join(out, " ")
+}
+
+// anyRetainedStamped reports whether at least one shown row still carries its
+// via_satisfiers annotation.
+func anyRetainedStamped(rows []BlastRetained) bool {
+	for _, r := range rows {
+		if r.ViaSatisfiers != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// retainedExclusionClause states the purity refusal as a fact plus its
+// reason: satisfiers declared in test files were not nominated as carriers,
+// so interfaces only a test double satisfies contributed no rows at all.
+func retainedExclusionClause(p blast.RetentionPurity) string {
+	if p.Excluded == 0 {
+		return ""
+	}
+	clause := fmt.Sprintf("%d test-file satisfier(s) refused as carriers", p.Excluded)
+	if len(p.Names) > 0 {
+		clause += ": " + strings.Join(p.Names, ", ")
+		if p.Excluded > len(p.Names) {
+			clause += ", …"
+		}
+	}
+	return clause + ". Interfaces they alone satisfy contribute no rows."
 }
 
 // blastCompleteness builds the consolidated stop/verify verdict.
