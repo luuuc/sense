@@ -183,6 +183,45 @@ def rg_files(clone, pattern, fixed=False):
     return None
 
 
+def go_interface_methods(clone, contract_file, base):
+    """Method names declared by a Go interface `type <base> interface { ... }`.
+
+    THE GO-SATISFACTION LAW (traefik Traceable, 2026-07-20): Go has no
+    `implements` keyword, so a baseline never greps the INTERFACE name to find
+    implementors, it greps a METHOD name. Traceable measured 31 prod
+    dependents, 30 of them grep-invisible on the interface token (4 repo hits)
+    and no usable covering pattern; one `grep -rl GetTracingInformation`
+    returned 32 files = cover 1.0, precision 0.97. Without this row the battery
+    scores single-interface anchors as seams when one grep enumerates them.
+    Multi-interface retention rings are unaffected (dolt's paid-win gold spans
+    5+ interfaces; the best single method grep covers 3 of its 12 files), which
+    is exactly the discrimination we want the gate to make.
+    """
+    if not contract_file or not contract_file.endswith(".go"):
+        return []
+    try:
+        with open(os.path.join(clone, contract_file), encoding="utf-8",
+                  errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return []
+    m = re.search(r"type\s+" + re.escape(base) + r"\s+interface\s*\{", text)
+    if not m:
+        return []
+    depth, i = 1, m.end()
+    while i < len(text) and depth:
+        depth += (text[i] == "{") - (text[i] == "}")
+        i += 1
+    body = text[m.end():i - 1]
+    methods = []
+    for line in body.splitlines():
+        line = line.split("//")[0].strip()
+        sig = re.match(r"([A-Z]\w*)\s*\(", line)   # exported methods only
+        if sig:
+            methods.append(sig.group(1))
+    return methods
+
+
 def battery(clone, symbol, contract_file, files, texts):
     """Covering-pattern battery. Per pattern: COVER (share of deps it matches)
     and PRECISION (deps ÷ all repo files it matches). A pattern is USABLE as a
@@ -220,6 +259,14 @@ def battery(clone, symbol, contract_file, files, texts):
     # BATCHING LAW), so slot_verdict kills on cover alone (K6).
     add(f".*{base}*( call", "type-accessor",
         regex=r"[.\t (]\w*" + re.escape(base) + r"\w*\s*\(")
+    # GO-SATISFACTION: implementors are found by the interface's METHOD name,
+    # never by the interface name (Go has no `implements`). Precision-eligible:
+    # a rare method name both covers and enumerates, so K1 kills on it.
+    iface_methods = go_interface_methods(clone, contract_file, base)
+    if iface_methods:
+        add("go-iface-method " + "/".join(iface_methods[:3]), "go-iface-method",
+            regex=r"[.\t (]\b(" + "|".join(re.escape(x) for x in iface_methods) +
+                  r")\s*\(")
     add(f"import …{base}", "import",
         regex=r"(?m)^\s*(from\s+\S+\s+import\b[^\n]*\b" + re.escape(base) +
               r"\b|import\s+[^\n]*\b" + re.escape(base) +
