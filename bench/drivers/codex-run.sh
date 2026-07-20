@@ -273,6 +273,36 @@ PY
   # counts here, so otok/achars are '-'; class is derived from the exit code.
   [ "$rc" -eq 0 ] && hclass=ok || hclass=session_failed
   pace_health_log "$REPO" "$tool" "$wall" "-" "-" "1" "$hclass"
+
+  # Post-run agent survey (sense arm, clean runs only; process: loops doc
+  # 00-agent-survey.md). Resumes the SAME codex session with
+  # lib/survey_prompt.md, normalizes through parse-codex-result.py so
+  # survey_verify.py reads the canonical stream-json shape. Plain (non-tee)
+  # MCP registration so a stray survey-turn sense call never pollutes
+  # sense-io.jsonl. Fires AFTER run_meta.json; writes survey.json, NEVER
+  # transcript.json; a survey failure never fails the run.
+  if [[ "$tool" == sense && $rc -eq 0 ]]; then
+    survey_sid=$(grep -oE '"session_id": *"[^"]+"' "$out/transcript.json" | head -1 | cut -d'"' -f4 || true)
+    if [[ -n "$survey_sid" ]]; then
+      echo "[codex]   survey turn (post-scoring artifact)" >&2
+      survey_raw="$out/survey-raw.jsonl"
+      survey_args=(exec resume "$survey_sid" --json -C "$repo_dir" -s "$SANDBOX" -m "$MODEL"
+                   --skip-git-repo-check --ignore-user-config
+                   -c 'approval_policy="never"'
+                   -c 'shell_environment_policy.inherit=all'
+                   -c 'mcp_servers.sense.command="sense"' -c 'mcp_servers.sense.args=["mcp"]')
+      ( cd "$repo_dir" && PATH="$run_path" "${TO[@]}" codex "${survey_args[@]}" "$(cat "$LIB_DIR/survey_prompt.md")" ) \
+          > "$survey_raw" 2>> "$out/codex.log" || echo "[codex]   WARN: survey turn failed (run unaffected)" >&2
+      python3 "$LIB_DIR/parse-codex-result.py" "$survey_raw" > "$out/survey.json" 2>> "$out/codex.log" \
+          || echo "[codex]   WARN: survey parse failed" >&2
+      [[ "$KEEP_RAW" == 1 ]] || rm -f "$survey_raw"
+      VERTICAL="${VERTICAL:-}" python3 "$LIB_DIR/survey_verify.py" --run "$out" \
+          --append "$RESULTS_DIR/surveys.jsonl" \
+          || echo "[codex]   WARN: survey verify failed (run unaffected)" >&2
+    else
+      echo "[codex]   WARN: no session_id in transcript.json -- survey skipped" >&2
+    fi
+  fi
 done
 
 SJ=(--tool "$TOOLS_CSV" --repo "$REPO")

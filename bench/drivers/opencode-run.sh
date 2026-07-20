@@ -463,6 +463,34 @@ PY
   echo "[opencode]   $tool rc=$rc wall=${wall}s attempts=$attempts out_tok=$otok answer_chars=$achars$flag" >&2
   # Throttle-health line per session so onset is observable live.
   pace_health_log "$REPO" "$tool" "$wall" "$otok" "$achars" "$attempts" "$hclass"
+
+  # Post-run agent survey (sense arm, VALID runs only: hclass=ok, so cap/
+  # truncation/offload runs are never surveyed; process: loops doc
+  # 00-agent-survey.md). Resumes the SAME opencode session (-s) with
+  # lib/survey_prompt.md, normalized through parse-opencode-result.py so
+  # survey_verify.py reads the canonical stream-json shape. Runs AFTER the
+  # teardown removed opencode.json, so the survey turn has no Sense MCP and
+  # can never pollute sense-io.jsonl. Writes survey.json, NEVER
+  # transcript.json; a survey failure never fails the run.
+  if [[ "$tool" == sense && "$hclass" == ok ]]; then
+    survey_sid=$(grep -oE '"session_id": *"[^"]+"' "$out/transcript.json" | head -1 | cut -d'"' -f4 || true)
+    if [[ -n "$survey_sid" ]]; then
+      echo "[opencode]   survey turn (post-scoring artifact)" >&2
+      survey_raw="$out/survey-raw.jsonl"
+      ( cd "$repo_dir" && export PATH="$run_path" && run_guarded "$survey_raw" \
+          opencode run --format json -m "$MODEL" --dir "$repo_dir" -s "$survey_sid" \
+          --dangerously-skip-permissions "$(cat "$LIB_DIR/survey_prompt.md")" ) \
+        || echo "[opencode]   WARN: survey turn failed (run unaffected)" >&2
+      python3 "$LIB_DIR/parse-opencode-result.py" "$survey_raw" > "$out/survey.json" 2>> "$LOGFILE" \
+          || echo "[opencode]   WARN: survey parse failed" >&2
+      [[ "$KEEP_RAW" == 1 ]] || rm -f "$survey_raw"
+      VERTICAL="${VERTICAL:-}" python3 "$LIB_DIR/survey_verify.py" --run "$out" \
+          --append "$RESULTS_DIR/surveys.jsonl" \
+          || echo "[opencode]   WARN: survey verify failed (run unaffected)" >&2
+    else
+      echo "[opencode]   WARN: no session_id in transcript.json -- survey skipped" >&2
+    fi
+  fi
 done
 
 SJ=(--tool "$TOOLS_CSV" --repo "$REPO")

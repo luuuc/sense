@@ -121,6 +121,25 @@ print(json.dumps({
     "auth_mode": "subscription_cli", "mode": "session_multiturn",
 }, indent=2))
 PY
+
+  # Post-run agent survey (sense arm only): one extra --resume turn asking the
+  # agent to rate Sense with transcript-citable evidence (lib/survey_prompt.md).
+  # Runs AFTER run_meta.json (wall time already final) and writes to survey.json,
+  # NEVER transcript.json: the scored artifact stays byte-identical. A survey
+  # failure never fails the run. survey_verify.py stamps each cited instance
+  # verified/confabulated against transcript.json and appends to surveys.jsonl.
+  if [[ "$tool" == sense && -n "$sid" ]]; then
+    echo "[session]   survey turn (post-scoring artifact, sense arm)" >&2
+    sargs=(-p "$(cat "$LIB_DIR/survey_prompt.md")" --resume "$sid"
+           --verbose --output-format stream-json --permission-mode bypassPermissions
+           --disallowed-tools Agent --model "$MODEL"
+           --strict-mcp-config --mcp-config "$repo_dir/.mcp.json")
+    ( cd "$repo_dir" && IS_SANDBOX=1 "${TO[@]}" claude "${sargs[@]}" ) \
+      > "$out/survey.json" 2>> "$out/claude.log" || echo "[session]   WARN: survey turn failed (run unaffected)" >&2
+    VERTICAL="${VERTICAL:-}" python3 "$LIB_DIR/survey_verify.py" --run "$out" \
+      --append "$RESULTS_DIR/surveys.jsonl" \
+      || echo "[session]   WARN: survey parse/verify failed (run unaffected)" >&2
+  fi
 done
 
 SJ=(--tool "$TOOLS_CSV" --repo "$REPO")
