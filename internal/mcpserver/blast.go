@@ -36,11 +36,17 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 	minConfidence := req.GetFloat("min_confidence", h.defaults.BlastMinConfidence)
 	includeTests := req.GetBool("include_tests", true)
 
+	// A negative offset is a caller mistake, not a request to page backwards:
+	// clamp to the first page rather than error, so the agent gets the ring
+	// instead of a round trip spent on argument validation.
+	offset := max(req.GetInt("offset", 0), 0)
+
 	opts := blast.Options{
-		MaxHops:       maxHops,
-		MinConfidence: minConfidence,
-		MaxResults:    h.defaults.BlastResultCap,
-		IncludeTests:  includeTests,
+		MaxHops:        maxHops,
+		MinConfidence:  minConfidence,
+		MaxResults:     h.defaults.BlastResultCap,
+		IncludeTests:   includeTests,
+		RetainedOffset: offset,
 	}
 
 	contextLines := req.GetInt("context_lines", mcpio.DefaultContextLines)

@@ -133,6 +133,9 @@ func blastTool() mcp.Tool {
 		mcp.WithNumber("context_lines",
 			mcp.Description("Lines of source context around each call site (default 2, 0 to suppress snippets)"),
 		),
+		mcp.WithNumber("offset",
+			mcp.Description("Skip this many retained_via_interfaces rows (default 0). The ring pages instead of truncating: when retained_next_offset is present, call again with that value to get the rest. Pages are unionable only while retained_index_fingerprint is unchanged. Affects that group only."),
+		),
 	)
 }
 
