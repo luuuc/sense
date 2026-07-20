@@ -20,6 +20,15 @@ import (
 // query executes.
 func openRetentionFaultDB(t *testing.T) (*sql.DB, model.Symbol, []int64) {
 	t.Helper()
+	return openRetentionFaultDBSeeded(t, false)
+}
+
+// openRetentionFaultDBSeeded is openRetentionFaultDB with a switch for the
+// purity path: withTestSatisfier adds a second satisfier declared in a test
+// file, so the refusal (and the name hydration it triggers) actually runs and
+// its failure modes can be armed.
+func openRetentionFaultDBSeeded(t *testing.T, withTestSatisfier bool) (*sql.DB, model.Symbol, []int64) {
+	t.Helper()
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/retention.db"
 	adapter, err := sqlite.Open(ctx, dbPath)
@@ -30,6 +39,7 @@ func openRetentionFaultDB(t *testing.T) (*sql.DB, model.Symbol, []int64) {
 
 	var subject model.Symbol
 	var composerIDs []int64
+	var testSatisfierID int64
 	err = adapter.InTx(ctx, func() error {
 		f, err := adapter.WriteFile(ctx, &model.File{
 			Path: "widget.go", Language: "go", Hash: "h1", Symbols: 5, IndexedAt: time.Now().UTC(),
@@ -65,6 +75,27 @@ func openRetentionFaultDB(t *testing.T) (*sql.DB, model.Symbol, []int64) {
 		edge(carrier, subjectID, model.EdgeComposes)
 		edge(carrier, iface, model.EdgeInherits)
 		edge(holder, iface, model.EdgeComposes)
+		if withTestSatisfier {
+			tf, ferr := adapter.WriteFile(ctx, &model.File{
+				Path: "widget_test.go", Language: "go", Hash: "h2", Symbols: 1, IndexedAt: time.Now().UTC(),
+			})
+			if ferr != nil {
+				return ferr
+			}
+			fake, werr := adapter.WriteSymbol(ctx, &model.Symbol{
+				FileID: tf, Name: "FakeCarrier", Qualified: "FakeCarrier",
+				Kind: model.KindClass, LineStart: 1, LineEnd: 2,
+			})
+			if werr != nil {
+				return werr
+			}
+			edge(fake, subjectID, model.EdgeComposes)
+			edge(fake, iface, model.EdgeInherits)
+			// The closure's level 1 is the caller-supplied composer list (in
+			// production, inboundComposers finds it), so the fake must be in
+			// it or purity has nothing to refuse.
+			testSatisfierID = fake
+		}
 		if err != nil {
 			return err
 		}
@@ -74,6 +105,9 @@ func openRetentionFaultDB(t *testing.T) (*sql.DB, model.Symbol, []int64) {
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
+	}
+	if testSatisfierID != 0 {
+		composerIDs = append(composerIDs, testSatisfierID)
 	}
 
 	blastFaultOnce.Do(func() {
@@ -200,5 +234,44 @@ func TestComputePropagatesEdgeTableGroupFault(t *testing.T) {
 	t.Cleanup(disarmBlastFaults)
 	if _, err := Compute(context.Background(), db, []int64{subject.ID}, Options{MaxHops: 1}); err == nil {
 		t.Fatal("Compute: expected propagated edge-table-group error, got nil")
+	}
+}
+
+// TestRetentionExcludedNamesPropagateFault: the purity refusal hydrates the
+// refused satisfiers' names, and a failure there must surface rather than
+// yield a ring whose disclosure silently lost its names.
+func TestRetentionExcludedNamesPropagateFault(t *testing.T) {
+	db, subject, composerIDs := openRetentionFaultDBSeeded(t, true)
+	armBlastQueryFault(`docstring, complexity, snippet`)
+	t.Cleanup(disarmBlastFaults)
+
+	noSelf := func(model.Symbol) bool { return false }
+	_, err := loadRetention(context.Background(), db, subject, []int64{subject.ID},
+		composerIDs, map[int64]struct{}{}, map[int64]struct{}{}, noSelf, retentionPage{limit: 100})
+	if err == nil {
+		t.Fatal("expected the excluded-satisfier hydration fault to propagate")
+	}
+}
+
+// TestRetentionFingerprintDegradesOnFault: the page fingerprint is
+// best-effort. An unreadable index generation yields an EMPTY fingerprint,
+// never a failed blast and never a fabricated stamp that would let two
+// incomparable pages look unionable.
+func TestRetentionFingerprintDegradesOnFault(t *testing.T) {
+	db, subject, composerIDs := openRetentionFaultDB(t)
+	armBlastQueryFault(`MAX(indexed_at)`)
+	t.Cleanup(disarmBlastFaults)
+
+	noSelf := func(model.Symbol) bool { return false }
+	out, err := loadRetention(context.Background(), db, subject, []int64{subject.ID},
+		composerIDs, map[int64]struct{}{}, map[int64]struct{}{}, noSelf, retentionPage{limit: 100})
+	if err != nil {
+		t.Fatalf("a fingerprint fault must not fail the blast: %v", err)
+	}
+	if out.fingerprint != "" {
+		t.Errorf("fingerprint = %q, want empty when the generation is unreadable", out.fingerprint)
+	}
+	if len(out.holders) == 0 {
+		t.Error("the ring itself must survive a fingerprint fault")
 	}
 }
