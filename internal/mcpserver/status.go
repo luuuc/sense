@@ -57,7 +57,7 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 		TextFallbackFired:         lt.TextFallbackFired,
 	}
 
-	resp.NextSteps = statusHints(resp, sess.Queries)
+	resp.NextSteps = statusHints(resp)
 
 	out, err := mcpio.MarshalStatusCompact(resp)
 	if err != nil {
@@ -66,21 +66,20 @@ func (h *handlers) handleStatus(ctx context.Context, _ mcp.CallToolRequest) (*mc
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func statusHints(resp mcpio.StatusResponse, sessionQueries int) []mcpio.NextStep {
+func statusHints(resp mcpio.StatusResponse) []mcpio.NextStep {
 	var hints []mcpio.NextStep
 
+	// Stale files stay: index freshness is invisible in every other tool's
+	// payload, so a stale count the model cannot otherwise see is load-bearing.
 	if resp.Freshness.StaleFilesSeen != nil && *resp.Freshness.StaleFilesSeen > 0 {
 		hints = append(hints, mcpio.NextStep{
 			Reason: fmt.Sprintf("index has %d stale files — consider running `sense scan`", *resp.Freshness.StaleFilesSeen),
 		})
 	}
 
-	if sessionQueries == 0 && len(hints) < mcpio.MaxNextSteps {
-		hints = append(hints, mcpio.NextStep{
-			Tool:   "sense_conventions",
-			Reason: "start of session — check project conventions",
-		})
-	}
+	// The old "start of session - check project conventions" hint (41 of 605)
+	// is dropped: it fired on every fresh session regardless of the task and
+	// pushed conventions, the least-followed tool. sessionQueries is now unused.
 
 	if len(hints) > mcpio.MaxNextSteps {
 		hints = hints[:mcpio.MaxNextSteps]

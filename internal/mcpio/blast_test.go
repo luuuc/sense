@@ -1894,3 +1894,82 @@ func TestApplyBlastBudgetPricesTheWireNotThePrettyPrint(t *testing.T) {
 			before, after, r.Truncated, wire, pretty, budget)
 	}
 }
+
+// TestBlastCompletenessCountsCompositionAndRing pins the go-vertical defect
+// (`loop7/blast-completeness-disowns-the-answer`): the composition and
+// retention groups are set-DISJOINT from the caller union - measured 49/49 and
+// 50/50 on dolt, 33/33 and 31/31 on consul - so a verdict that counts only
+// direct+indirect tells the agent it is holding a fraction of what it has and
+// advises re-deriving rows already in the payload. On both seats 100% of the
+// gold lived in the ring.
+//
+// Built through BuildBlastResponse, not from a hand-made *Completeness: the
+// sibling graph bug hid behind exactly that shortcut.
+func TestBlastCompletenessCountsCompositionAndRing(t *testing.T) {
+	paths := map[int64]string{}
+	files := func(fid int64) (string, bool) { p, ok := paths[fid]; return p, ok }
+	tiers := make(map[int64]blast.Tier)
+
+	var id int64
+	mk := func(prefix, dir string, n int) []model.Symbol {
+		out := make([]model.Symbol, 0, n)
+		for i := 0; i < n; i++ {
+			id++
+			out = append(out, model.Symbol{ID: id, Qualified: fmt.Sprintf("%s%d", prefix, id), FileID: id})
+			paths[id] = fmt.Sprintf("%s/f%d.go", dir, i)
+			tiers[id] = blast.TierBreaks
+		}
+		return out
+	}
+	// 10 direct callers, then 5 composers and 4 ring holders that share NO
+	// symbol with them (mk keeps incrementing ids).
+	direct := mk("Caller", "internal/a", 10)
+	composers := mk("Composer", "internal/b", 5)
+	holders := mk("Holder", "internal/c", 4)
+	via := model.Symbol{ID: 9001, Qualified: "Narrow"}
+	ring := make([]blast.RetainedHolder, 0, len(holders))
+	for _, h := range holders {
+		ring = append(ring, blast.RetainedHolder{Symbol: h, Via: via, Carrier: h})
+	}
+
+	r := blast.Result{
+		Symbol:                 model.Symbol{ID: 0, Qualified: "Subject"},
+		DirectCallers:          direct,
+		AffectedViaComposition: composers,
+		RetainedViaInterfaces:  ring,
+		RetainedCount:          len(ring),
+		AffectedTests:          []string{},
+		// The engine folds unvisited composition INTO TotalAffected
+		// (engine.go:335) but deliberately never folds the ring
+		// (engine.go:222). 10 callers + 5 composers = 15.
+		TotalAffected: 15,
+		SymbolTiers:   tiers,
+	}
+
+	resp := BuildBlastResponse(context.Background(), r, files, nil)
+
+	if len(resp.AffectedViaComposition) != 5 || len(resp.RetainedViaInterfaces) != 4 {
+		t.Fatalf("precondition: comp=%d ring=%d, want 5 and 4",
+			len(resp.AffectedViaComposition), len(resp.RetainedViaInterfaces))
+	}
+	c := resp.Completeness
+	if c == nil {
+		t.Fatal("completeness = nil")
+	}
+	// D1: every composition row shown is IN total_affected, so counting only
+	// the callers reports 5 of the 15 as hidden while they sit in the payload.
+	if c.Resolved != 15 {
+		t.Errorf("resolved = %d, want 15 (10 callers + 5 disjoint composers, all shown)", c.Resolved)
+	}
+	if c.Hidden != 0 {
+		t.Errorf("hidden = %d, want 0 (nothing is absent from this payload)", c.Hidden)
+	}
+	if c.Verdict != "complete" {
+		t.Errorf("verdict = %q, want complete", c.Verdict)
+	}
+	// D2: the ring is outside total_affected, so it can never be counted into
+	// resolved - but a COMPLETE ring must say so, or the agent re-derives it.
+	if !strings.Contains(c.Advice, "4") || !strings.Contains(c.Advice, "retained_via_interfaces") {
+		t.Errorf("advice = %q, want it to name the complete 4-row retained_via_interfaces ring", c.Advice)
+	}
+}

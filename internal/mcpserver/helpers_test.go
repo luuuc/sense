@@ -300,13 +300,12 @@ func TestBuildFingerprintNoLangs(t *testing.T) {
 	}
 }
 
-func TestStatusHintsExistingSession(t *testing.T) {
+func TestStatusHintsNoSessionStartNudge(t *testing.T) {
+	// The session-start conventions nudge is gone entirely: a fresh index with
+	// no stale files produces no hint.
 	resp := mcpio.StatusResponse{}
-	hints := statusHints(resp, 5)
-	for _, h := range hints {
-		if h.Tool == "sense_conventions" && strings.Contains(h.Reason, "start of session") {
-			t.Error("should not suggest conventions for active session")
-		}
+	if hints := statusHints(resp); hints != nil {
+		t.Errorf("want nil hints for a clean status, got %d", len(hints))
 	}
 }
 
@@ -1464,24 +1463,29 @@ func TestGraphHintsTestFile(t *testing.T) {
 	}
 }
 
-func TestGraphHintsDirectionCallers(t *testing.T) {
+func TestGraphHintsDirectionCallersNoFiller(t *testing.T) {
+	// A zero-caller symbol in the callers direction no longer gets a "see what
+	// it depends on" callees filler - that hint restated the payload. With no
+	// callers, no hidden tail, and a non-test file, the only hint is the
+	// dynamic-references search.
 	resp := mcpio.GraphResponse{
 		Symbol: mcpio.GraphSymbol{Name: "X", Qualified: "pkg.X", File: "x.go", Kind: "function"},
 		Edges:  mcpio.GraphEdges{},
 	}
 	hints := graphHints(resp, model.DirectionCallers)
-	if len(hints) == 0 {
-		t.Fatal("expected callees hint when direction=callers")
+	if len(hints) != 1 || hints[0].Tool != "sense_search" {
+		t.Fatalf("want a single sense_search hint, got %+v", hints)
 	}
 }
 
-func TestConventionsHintsDomainFilter(t *testing.T) {
+func TestConventionsHintsDomainFilterNoLongerHinted(t *testing.T) {
+	// The domain-scoped "run without domain filter" hint is dropped: it restated
+	// the request's own domain arg.
 	resp := mcpio.ConventionsResponse{
 		Conventions: []mcpio.ConventionEntry{},
 	}
-	hints := conventionsHints(resp, "internal/auth")
-	if len(hints) == 0 {
-		t.Fatal("expected conventions hint when domain filter is set")
+	if hints := conventionsHints(resp, "internal/auth"); hints != nil {
+		t.Fatalf("want nil hints, got %d", len(hints))
 	}
 }
 

@@ -102,14 +102,16 @@ func (h *handlers) handleBlast(ctx context.Context, req mcp.CallToolRequest) (*m
 func blastHints(resp mcpio.BlastResponse) []mcpio.NextStep {
 	var hints []mcpio.NextStep
 
-	if resp.Risk == "high" {
-		hints = append(hints, mcpio.NextStep{
-			Tool:   "sense_conventions",
-			Reason: "high blast radius — check conventions before changing",
-		})
-	}
+	// The old risk="high" hint ("check conventions before changing", 69 of 605
+	// issuances) only restated the `risk` field already in the payload and
+	// routed the model to sense_conventions, the least-followed tool. Dropped:
+	// a hint that names something already in the response is noise.
 
-	if resp.TestsAffectedCount == 0 && len(resp.AffectedTests) == 0 && resp.TotalAffected > 0 && len(hints) < mcpio.MaxNextSteps {
+	// This one stays: an EMPTY affected-tests list on a symbol with real reach
+	// is a gap the model can easily read as "nothing to update" rather than
+	// "tests may reach it dynamically - go look". It names an absence and an
+	// action, not a restatement.
+	if resp.TestsAffectedCount == 0 && len(resp.AffectedTests) == 0 && resp.TotalAffected > 0 {
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense_search",
 			Args:   map[string]any{"query": resp.Symbol + " test"},

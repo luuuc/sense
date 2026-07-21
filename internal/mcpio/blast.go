@@ -637,13 +637,17 @@ func blastCompleteness(resp *BlastResponse, totalAffected int) *Completeness {
 	if resp.SeenElsewhere != nil {
 		seenCollapsed = resp.SeenElsewhere.Count
 	}
-	// total_affected is the engine's count of the direct+indirect caller union.
-	// The inherit/include/compose groups are a re-classification of those SAME
-	// caller IDs by edge kind, not additional symbols, so they must NOT be summed
-	// in — doing so would understate `hidden` and let "complete" mask callers the
-	// tier cap or a trim dropped. Count only the caller union, matching the
-	// denomination of total_affected.
-	enumerated := len(resp.DirectCallers) + len(resp.IndirectCallers) + seenCollapsed
+	// total_affected is the engine's count of the caller union PLUS the
+	// composition rows it had not already visited (engine.go:335), so the
+	// composers shown here are inside the denomination and must be counted as
+	// resolved. The comment that stood here claimed the compose group was "the
+	// SAME caller IDs re-classified by edge kind"; that was measured false on
+	// two seats (dolt 49 of 49 composers disjoint from the callers, consul 33 of
+	// 33), and believing it reported rows sitting in the payload as `hidden` -
+	// dolt 162 where 113 were truly absent. Dedup by symbol name so the count
+	// stays honest if the groups ever DO overlap, which is what keeps "complete"
+	// from masking a caller the tier cap or a trim dropped.
+	enumerated := countDistinctEnumerated(resp) + seenCollapsed
 	hidden := totalAffected - enumerated
 	if hidden < 0 {
 		hidden = 0
@@ -658,14 +662,69 @@ func blastCompleteness(resp *BlastResponse, totalAffected int) *Completeness {
 			Verdict:  "partial",
 			Resolved: enumerated,
 			Hidden:   hidden,
-			Advice:   "Partial: total_affected is the true count. Narrow with a direction or query a specific name for the rest.",
+			Advice: "Partial: total_affected is the true count. Narrow with a direction or query a specific name for the rest." +
+				retainedAdvice(resp),
 		}
 	}
 	return &Completeness{
 		Verdict:  "complete",
 		Resolved: enumerated,
-		Advice:   "Complete resolvable dependent set — act on it, do not re-grep. Dynamic-dispatch residual, if any, is in index_caveat.",
+		Advice: "Complete resolvable dependent set - act on it, do not re-grep. Dynamic-dispatch residual, if any, is in index_caveat." +
+			retainedAdvice(resp),
 	}
+}
+
+// countDistinctEnumerated counts the unique symbols this response actually
+// hands over across the groups that live inside total_affected's denomination:
+// the caller union and the composition rows. The retention ring is excluded on
+// purpose - the engine never folds it into total_affected (engine.go:222), so
+// counting it here would push `resolved` past its own denominator. What the
+// ring needs instead is to be SAID, which is retainedAdvice's job.
+// Only named rows can be deduped: an unnamed row cannot be shown to be the
+// same symbol as another, so each counts once rather than collapsing the group.
+func countDistinctEnumerated(resp *BlastResponse) int {
+	seen := make(map[string]struct{}, len(resp.DirectCallers)+len(resp.IndirectCallers)+len(resp.AffectedViaComposition))
+	unnamed := 0
+	add := func(name string) {
+		if name == "" {
+			unnamed++
+			return
+		}
+		seen[name] = struct{}{}
+	}
+	for _, c := range resp.DirectCallers {
+		add(c.Symbol)
+	}
+	for _, c := range resp.IndirectCallers {
+		add(c.Symbol)
+	}
+	for _, c := range resp.AffectedViaComposition {
+		add(c.Symbol)
+	}
+	return len(seen) + unnamed
+}
+
+// retainedAdvice states what the caller-union verdict structurally cannot: the
+// retention ring is not in total_affected, so "partial" says nothing about it
+// and an agent reading only the verdict discounts the ring along with the rest.
+// On the two go seats this defect was found on, 100% of the gold was in that
+// ring - consul's was COMPLETE at 31 of 31 while the verdict read "partial,
+// hidden 131", and the model went exploring for rows it was already holding.
+// Says nothing when there is no ring, and nothing when the ring is PAGED: a
+// trimmed ring is one whose rows are competing for the budget row by row (dolt
+// saturates it exactly, 53 rows at 8000/8000), the page facts already ride
+// retained_count/retained_next_offset, and retained_note already says "Not in
+// total_affected" - so a sentence there buys nothing and costs holders. The
+// first draft of this function did exactly that and pushed 2 rows off dolt's
+// ring, one of them gold. Only the completeness claim is new information, and
+// it is only sayable when the ring is whole.
+func retainedAdvice(resp *BlastResponse) string {
+	shown := len(resp.RetainedViaInterfaces)
+	if shown == 0 || resp.RetainedNextOffset > 0 || resp.RetainedOffset > 0 {
+		return ""
+	}
+	return fmt.Sprintf(" retained_via_interfaces holds %d more, complete and not counted above -"+
+		" act on those rows, do not re-derive them.", shown)
 }
 
 // BuildDiffBlastResponse assembles one BlastResponse from many

@@ -10,19 +10,20 @@ import (
 )
 
 func TestBlastCompletenessComplete(t *testing.T) {
-	// total_affected counts the direct+indirect caller union. The inherit/
-	// include/compose groups are subset views of those same callers, so they
-	// must NOT inflate the enumerated count — only direct+indirect do.
+	// The inherit/include groups sit outside total_affected's denomination, so
+	// they must NOT inflate the enumerated count (composition, which the engine
+	// does fold in, is covered by
+	// TestBlastCompletenessCountsOnlyGroupsInsideTotalAffected).
 	resp := &BlastResponse{
 		DirectCallers:      []BlastCaller{{}, {}, {}, {}, {}},
-		AffectedSubclasses: []BlastCaller{{}, {}}, // a view into DirectCallers, not extra
+		AffectedSubclasses: []BlastCaller{{}, {}}, // outside total_affected, not extra
 	}
 	c := blastCompleteness(resp, 5) // 5 direct enumerated == total
 	if c.Verdict != "complete" {
 		t.Fatalf("verdict = %q, want complete", c.Verdict)
 	}
 	if c.Resolved != 5 {
-		t.Errorf("resolved = %d, want 5 (direct+indirect only)", c.Resolved)
+		t.Errorf("resolved = %d, want 5 (callers only; no composers here)", c.Resolved)
 	}
 	if c.Hidden != 0 {
 		t.Errorf("hidden = %d, want 0", c.Hidden)
@@ -32,21 +33,47 @@ func TestBlastCompletenessComplete(t *testing.T) {
 	}
 }
 
-// The kind groups must not be summed into the enumerated count — if they were,
-// hidden would be understated and "complete" could mask dropped callers.
-func TestBlastCompletenessIgnoresKindGroupsInCount(t *testing.T) {
+// Which kind groups count is decided by ONE thing: whether the engine folded
+// them into total_affected. It folds unvisited composition in (engine.go:335)
+// and nothing else, so composition counts as resolved and the inherit/include
+// groups still must not - counting a group outside the denominator would push
+// `resolved` past its own total and let "complete" mask a dropped caller.
+// The earlier form of this test asserted composition must not count either, on
+// the belief that the kind groups were the same caller IDs re-classified. That
+// was measured false on two seats and cost the go vertical two cells: see
+// `loop7/blast-completeness-disowns-the-answer`.
+func TestBlastCompletenessCountsOnlyGroupsInsideTotalAffected(t *testing.T) {
 	resp := &BlastResponse{
-		DirectCallers:          []BlastCaller{{}, {}}, // only 2 callers enumerated
-		AffectedSubclasses:     []BlastCaller{{}, {}}, // subset views — must not add
-		AffectedViaIncludes:    []BlastCaller{{}},     // to the count
-		AffectedViaComposition: []BlastCaller{{}},
+		DirectCallers:          []BlastCaller{{Symbol: "A"}, {Symbol: "B"}},
+		AffectedSubclasses:     []BlastCaller{{Symbol: "S1"}, {Symbol: "S2"}}, // outside total_affected
+		AffectedViaIncludes:    []BlastCaller{{Symbol: "I1"}},                 // outside total_affected
+		AffectedViaComposition: []BlastCaller{{Symbol: "C1"}},                 // INSIDE it
 	}
-	c := blastCompleteness(resp, 6) // 2 callers vs 6 affected -> 4 hidden
+	c := blastCompleteness(resp, 6) // 2 callers + 1 composer shown of 6 -> 3 hidden
 	if c.Verdict != "partial" {
-		t.Fatalf("verdict = %q, want partial (kind groups must not mask the 4 hidden)", c.Verdict)
+		t.Fatalf("verdict = %q, want partial (3 rows genuinely absent)", c.Verdict)
 	}
-	if c.Hidden != 4 {
-		t.Errorf("hidden = %d, want 4", c.Hidden)
+	if c.Resolved != 3 {
+		t.Errorf("resolved = %d, want 3 (callers + the composer, not the inherit/include views)", c.Resolved)
+	}
+	if c.Hidden != 3 {
+		t.Errorf("hidden = %d, want 3", c.Hidden)
+	}
+}
+
+// A composer that is ALSO a direct caller is one symbol, counted once, so the
+// dedup can never inflate `resolved` past total_affected.
+func TestBlastCompletenessDedupesOverlappingComposer(t *testing.T) {
+	resp := &BlastResponse{
+		DirectCallers:          []BlastCaller{{Symbol: "A"}, {Symbol: "B"}},
+		AffectedViaComposition: []BlastCaller{{Symbol: "B"}},
+	}
+	c := blastCompleteness(resp, 2)
+	if c.Resolved != 2 {
+		t.Errorf("resolved = %d, want 2 (B counted once)", c.Resolved)
+	}
+	if c.Verdict != "complete" || c.Hidden != 0 {
+		t.Errorf("verdict = %q hidden = %d, want complete/0", c.Verdict, c.Hidden)
 	}
 }
 
@@ -240,5 +267,38 @@ func TestApplyBlastBudgetDowngradesCompleteness(t *testing.T) {
 	}
 	if resp.Completeness.Verdict != "partial" {
 		t.Errorf("verdict = %q, want partial after trim", resp.Completeness.Verdict)
+	}
+}
+
+// The completeness advice must never buy prose with ring rows. A paged ring is
+// competing for the token budget row by row (dolt saturates it exactly, 53 rows
+// at 8000/8000), so the clause is suppressed there: the first draft of
+// retainedAdvice spent 2 of dolt's holders on a sentence, one of them gold.
+func TestRetainedAdviceSilentOnPagedRing(t *testing.T) {
+	paged := &BlastResponse{
+		RetainedViaInterfaces: []BlastRetained{{Symbol: "H1"}, {Symbol: "H2"}},
+		RetainedCount:         9,
+		RetainedNextOffset:    2,
+	}
+	if got := retainedAdvice(paged); got != "" {
+		t.Errorf("advice on a paged ring = %q, want empty (page facts ride the fields)", got)
+	}
+	resumed := &BlastResponse{
+		RetainedViaInterfaces: []BlastRetained{{Symbol: "H3"}},
+		RetainedCount:         9,
+		RetainedOffset:        8,
+	}
+	if got := retainedAdvice(resumed); got != "" {
+		t.Errorf("advice on a resumed page = %q, want empty (this page is not the whole ring)", got)
+	}
+	whole := &BlastResponse{
+		RetainedViaInterfaces: []BlastRetained{{Symbol: "H1"}, {Symbol: "H2"}},
+		RetainedCount:         2,
+	}
+	if !strings.Contains(retainedAdvice(whole), "do not re-derive") {
+		t.Errorf("a complete ring must carry its stop signal: %q", retainedAdvice(whole))
+	}
+	if retainedAdvice(&BlastResponse{}) != "" {
+		t.Error("no ring must produce no clause")
 	}
 }
