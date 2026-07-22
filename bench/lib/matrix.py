@@ -16,12 +16,19 @@ import json
 import os
 import sys
 
+import run_validity
+
 
 def _runs(repo_dir):
-    paths = sorted(glob.glob(os.path.join(repo_dir, "run-*", "scored.json")))
-    if not paths and os.path.exists(os.path.join(repo_dir, "scored.json")):
-        paths = [os.path.join(repo_dir, "scored.json")]
-    return paths
+    """This arm's scored runs, MEASUREMENTS only (lib/run_validity.measured_runs).
+
+    A run whose harness fell over measured nothing, so averaging it in reports
+    the instrument's failure as the arm's score: one 203-char crash stub pulled
+    dolt's sense arm from 1.00 to 0.88 and its delta from +0.50 to +0.38. Runs
+    the wall clock merely cut short are kept -- a failed exam is still an exam,
+    and that truncation asymmetry is the finding.
+    """
+    return run_validity.measured_runs(repo_dir)
 
 
 def _mean(xs):
@@ -44,7 +51,7 @@ def _arm_scores(repo_dir):
 
 
 # Price-free consumption metrics (the user explicitly ignores cost_usd, which is
-# provider-dependent): wall-clock session time and the token split — billed
+# provider-dependent): wall-clock session time and the token split - billed
 # (uncached input + output, what you actually pay regardless of price), cached
 # read, and output.
 _METRIC_KEYS = ("wall_time_seconds", "token_total_billed", "token_cache_read", "token_output")
@@ -60,9 +67,26 @@ def _arm_metrics(repo_dir):
             continue
         for k in _METRIC_KEYS:
             v = m.get(k)
+            # A zero wall time is the scorer failing to read one, not a session
+            # that took no time: scorer.py takes it from the Claude transcript's
+            # `duration_ms`, which the codex and opencode harnesses never emit,
+            # so every non-Claude arm published `0 → 0` seconds while run_meta
+            # held the real number. Never average that zero in.
+            if k == "wall_time_seconds" and not v:
+                v = _wall_from_meta(p)
             if v is not None:
                 acc[k].append(v)
     return {k: _mean(v) for k, v in acc.items()}
+
+
+def _wall_from_meta(scored_path):
+    """This run's wall time as its runner recorded it, or None."""
+    meta_path = os.path.join(os.path.dirname(scored_path), "run_meta.json")
+    try:
+        with open(meta_path) as f:
+            return json.load(f).get("wall_time_seconds") or None
+    except (OSError, ValueError):
+        return None
 
 
 def collect(root):
@@ -85,6 +109,10 @@ def collect(root):
             if b_overall is None or s_overall is None:
                 continue
             per_repo[repo] = {
+                # Per-arm measured-run counts, so the published repeatability
+                # claim is derived rather than asserted.
+                "runs": [len(_runs(os.path.join(bdir, repo))),
+                         len(_runs(os.path.join(sdir, repo)))],
                 "baseline_overall": b_overall,
                 "sense_overall": s_overall,
                 "overall_delta": s_overall - b_overall,
@@ -97,13 +125,75 @@ def collect(root):
     return out
 
 
+def _judge_models(root):
+    """Every judge model that actually graded a run under this root."""
+    seen = set()
+    for p in glob.glob(os.path.join(root, "**", "judged.json"), recursive=True):
+        # Off-board runs (dryrun probes, parked cells) must not make the board
+        # look judge-split: two sonnet-graded pebble PROBES kept the published
+        # report warning about a split that the campaign no longer had.
+        if run_validity.is_parked(os.path.relpath(p, root)):
+            continue
+        try:
+            with open(p) as f:
+                judge = json.load(f).get("judge") or {}
+        except (OSError, ValueError):
+            continue
+        if judge.get("model"):
+            seen.add(judge["model"])
+    return sorted(seen)
+
+
+def _grading_paragraph(root):
+    """The Grading paragraph, with the judge named FROM THE DATA.
+
+    Naming it in prose let it drift unnoticed: the go board published
+    "Claude Sonnet 4.6" while four of five arms had in fact been graded by
+    Opus 4.7, and one cell by both.
+    """
+    models = _judge_models(root)
+    if len(models) == 1:
+        who = f"A separate judge model ({models[0]})"
+        caveat = ""
+    elif models:
+        who = "A separate judge model"
+        caveat = (" Those runs were NOT all graded by the same judge - **{}** - which is a "
+                  "known inconsistency on this board, not a design: swapping judge models "
+                  "invalidates comparison between the runs they graded.".format(
+                      ", ".join(models)))
+    else:
+        who, caveat = "A separate judge model", ""
+    return (f"**Grading.** {who} grades each answer's coverage against the authored "
+            "must-find set, so a confident-sounding but incomplete answer is penalised "
+            "for what it leaves out. Every `path:line` an answer prints is then checked "
+            "against the repo at the benchmarked commit; any citation that does not "
+            "resolve is listed per model in the [citation check](#per-model-reports)."
+            f"{caveat}\n")
+
+
+def _repeatability_sentence(data):
+    """State the real run counts. "Run more than once" was false for every x1
+    confirmation arm, and the RUNS=2 law binds the headline arm only."""
+    counts = {n for repos in data.values() for repo_data in repos.values()
+              for n in repo_data.get("runs", [])}
+    counts.discard(0)
+    if not counts:
+        return "Run counts vary by arm."
+    lo, hi = min(counts), max(counts)
+    if lo == hi:
+        return f"Each (model, repo) pair was run {lo}x."
+    return (f"Run counts vary by arm ({lo}x to {hi}x): the headline arm carries the "
+            f"RUNS=2 law, while cross-model confirmation arms run 1x by design and "
+            f"their numbers are directional, carrying an OPEN flag.")
+
+
 def _fmt_delta(d):
-    return "—" if d is None else f"{d:+.2f}"
+    return "-" if d is None else f"{d:+.2f}"
 
 
 def _fmt_num(v, integer=True):
     if v is None:
-        return "—"
+        return "-"
     return f"{round(v):,}" if integer else f"{v:.0f}"
 
 
@@ -113,7 +203,7 @@ def render_markdown(data, root):
     # basename for any other layout.
     base = os.path.basename(os.path.normpath(root))
     vertical = os.path.basename(os.path.dirname(os.path.normpath(root))) if base == "results" else base
-    lines = [f"# {vertical} — Sense vertical benchmark\n",
+    lines = [f"# {vertical} - Sense vertical benchmark\n",
              "This is the benchmark, the methodology, and the raw data behind the "
              f"{vertical} write-ups: how much a structural code index (**Sense**) helps an AI "
              "coding agent answer questions about real-world codebases in this stack, measured "
@@ -121,7 +211,7 @@ def render_markdown(data, root):
              "Every scenario is run twice with the same model: a **baseline** arm (the agent's "
              "normal tools) and a **sense** arm (the same tools plus the Sense index). Each "
              "scenario declares a must-find set of code locations, and the score is **cited "
-             "recall** — the share of that set the answer pinned to an exact `path:line`. The "
+             "recall** - the share of that set the answer pinned to an exact `path:line`. The "
              "deltas below are sense minus baseline, so **positive means Sense helped**.\n",
              "Jump to: [Methodology](#methodology) · [Results](#results) · "
              "[Per-model reports](#per-model-reports) · [Per-repo variance](#per-repo-variance)\n"]
@@ -152,7 +242,7 @@ def render_markdown(data, root):
     lines.append(
         "**The scenarios.** Each scenario is a realistic, multi-step comprehension task (for "
         "example: trace a request from its controller through to persistence and locate the "
-        "tests that cover it). Each one declares a **must-find set** — the exact code locations "
+        "tests that cover it). Each one declares a **must-find set** - the exact code locations "
         "a complete, correct answer should surface. Scenarios are written so that a naive text "
         "search does not trivially answer them: the relevant code is scattered across "
         "non-obvious places.\n")
@@ -163,16 +253,11 @@ def render_markdown(data, root):
         "correctness** (states the right connection, not just the name), **truthfulness** (no "
         "confidently false claims), and **billed tokens** (the context the answer cost to "
         "produce). Recall is the goal; tokens are reported but never traded against it.\n")
+    lines.append(_grading_paragraph(root))
     lines.append(
-        "**Grading.** A separate judge model (Claude Sonnet 4.6) grades each answer's coverage "
-        "against the authored must-find set, so a confident-sounding but incomplete answer is "
-        "penalised for what it leaves out. Every `path:line` an answer prints is then checked "
-        "against the repo at the benchmarked commit; any citation that does not resolve is "
-        "listed per model in the [citation check](#per-model-reports).\n")
-    lines.append(
-        "**Repeatability.** Each (model, repo) pair is run more than once and the run-to-run "
-        "spread is published under [Per-repo variance](#per-repo-variance), so a headline number "
-        "is trusted only when it is stable rather than a lucky draw.\n")
+        f"**Repeatability.** {_repeatability_sentence(data)} The run-to-run spread is published "
+        "under [Per-repo variance](#per-repo-variance), so a headline number is trusted only "
+        "when it is stable rather than a lucky draw.\n")
 
     # ── Results (raw data) ───────────────────────────────────────────
     lines.append("## Results\n")
@@ -184,7 +269,7 @@ def render_markdown(data, root):
     lines.append("### Per-model summary\n")
     lines.append(
         "One row per model. **repos** is how many of the vertical's scenarios it was benched on; "
-        "the two Δ columns are the mean cited-recall lift (sense − baseline) across them — "
+        "the two Δ columns are the mean cited-recall lift (sense − baseline) across them - "
         "**overall** for the whole scenario, **deps** for the harder `dependents` group (what "
         "depends on a given symbol). Positive means Sense helped that model on average.\n")
     lines.append("| model | repos | mean overall Δ | mean deps Δ |")
@@ -201,7 +286,7 @@ def render_markdown(data, root):
     lines.append(
         "Every cell is the cited-recall lift for one model on one repo. For example, `+0.40` "
         "means the sense arm pinned 40 percentage points more of that repo's must-find set to an "
-        "exact location than the baseline did. A near-zero value is a tie; a `—` means that repo "
+        "exact location than the baseline did. A near-zero value is a tie; a `-` means that repo "
         "was not benched for that model.\n")
     lines.append("| model | " + " | ".join(all_repos) + " |")
     lines.append("|---|" + "---|" * len(all_repos))
@@ -217,7 +302,7 @@ def render_markdown(data, root):
         "as baseline → sense. These are consumption figures, independent of any provider's price "
         "(no dollar cost). **billed** is the tokens you actually pay for (uncached input + "
         "output); **cached** is cache-read context; **wall s** is session wall-clock seconds. "
-        "Lower is cheaper — but recall is never traded for a smaller token bill, so read this "
+        "Lower is cheaper - but recall is never traded for a smaller token bill, so read this "
         "alongside the lift above, not instead of it.\n")
     lines.append("| model | wall s | billed tok | cached tok | output tok | billed Δ% |")
     lines.append("|---|---|---|---|---|---|")
@@ -232,7 +317,7 @@ def render_markdown(data, root):
             return f"{_fmt_num(b, intfmt)} → {_fmt_num(s, intfmt)}"
 
         bb, sb = armmean("baseline_metrics", "token_total_billed"), armmean("sense_metrics", "token_total_billed")
-        billed_pct = f"{(sb - bb) / bb * 100:+.0f}%" if bb else "—"
+        billed_pct = f"{(sb - bb) / bb * 100:+.0f}%" if bb else "-"
         lines.append(f"| {model} | {pair('wall_time_seconds', False)} | {pair('token_total_billed')} | "
                      f"{pair('token_cache_read')} | {pair('token_output')} | {billed_pct} |")
 
@@ -245,9 +330,9 @@ def render_markdown(data, root):
     lines.append("|---|---|---|")
     for model in sorted(data):
         report_link = (f"[report.md]({model}/report.md)"
-                       if os.path.exists(os.path.join(root, model, "report.md")) else "—")
+                       if os.path.exists(os.path.join(root, model, "report.md")) else "-")
         cite_link = (f"[citation-hallucinations.md]({model}/citation-hallucinations.md)"
-                     if os.path.exists(os.path.join(root, model, "citation-hallucinations.md")) else "—")
+                     if os.path.exists(os.path.join(root, model, "citation-hallucinations.md")) else "-")
         lines.append(f"| {model} | {report_link} | {cite_link} |")
 
     # Per-repo variance (run-to-run spread per repo, across models) when present.

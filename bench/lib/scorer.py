@@ -74,7 +74,7 @@ def parse_transcript(path):
             # Accumulate across result events so a multi-turn session run (one
             # result per resumed turn) reports CUMULATIVE cost/time/usage. A
             # single-turn run has exactly one result event, so this is identical
-            # to the old overwrite behavior — no regression for the single-task
+            # to the old overwrite behavior - no regression for the single-task
             # scenarios.
             if obj.get("type") == "result":
                 rc = obj.get("total_cost_usd")
@@ -106,7 +106,7 @@ def parse_transcript(path):
 def read_transcript_texts(path):
     """Read two views of a transcript.
 
-    answer_text: assistant text blocks only — the model's actual answer.
+    answer_text: assistant text blocks only - the model's actual answer.
                  This is what fairness checks (word/contains/phrase/
                  response_richness) match against, so a query like
                  Grep(pattern="TopicCreator") cannot satisfy a `contains`
@@ -179,9 +179,9 @@ def evaluate_check(check, transcript_text, tool_calls, repo_path=None):
 
     Supported check types:
       contains         - value appears anywhere in transcript (case-insensitive,
-                         no boundary — matches inside identifiers)
+                         no boundary - matches inside identifiers)
       phrase           - case-insensitive substring with non-word boundaries
-                         on both sides — preferred over `contains` for short
+                         on both sides - preferred over `contains` for short
                          tokens that would otherwise leak into identifiers
                          (e.g. "ensure" matching "EnsureMagic")
       word             - value appears as whole word (word boundary match)
@@ -296,7 +296,7 @@ def _check_richness(transcript_text, min_files):
 def detect_misses(tool_calls):
     """Classify non-MCP search activity by position in the session.
 
-    This block is diagnostic only — it does not feed any score. The
+    This block is diagnostic only - it does not feed any score. The
     adoption layer's `tool_fluency = mcp / (mcp + grep)` is the single
     penalty for reaching for grep/Glob, and it counts every such call
     regardless of position. The breakdown below exists so a human
@@ -368,7 +368,7 @@ def detect_misses(tool_calls):
             f"pre-MCP bypasses: {len(pre_misses)}, "
             f"post-MCP verification reads: {len(post_reads)}, "
             f"post-MCP misses: {len(post_other)} "
-            f"(diagnostic only — grep_count drives fluency)"
+            f"(diagnostic only - grep_count drives fluency)"
         ),
     }
 
@@ -458,7 +458,7 @@ EFFICIENCY_CEILINGS = {
 
 DEFAULT_EFFICIENCY_CEILING = 30_000
 
-# Wall-time ceilings, in seconds — the "code map" advantage shows up as
+# Wall-time ceilings, in seconds - the "code map" advantage shows up as
 # faster sessions, so time is half of efficiency. Picked at ~3-4× a healthy
 # Sense session for each repo, so a fast tool scores ~0.7 and a slow one
 # (multi-thousand-second baseline run) collapses to 0.
@@ -466,6 +466,30 @@ DEFAULT_EFFICIENCY_CEILING = 30_000
 # well inside the previous ceilings (see Card 15 e2e: mean 145s on iter-1
 # sessions, vs. flask's previous 400s ceiling). New numbers tighten the
 # efficiency signal without truncating healthy sessions.
+#
+# ⚠️ CAN'T-FINISH-AT-BUDGET IS A RESULT - DO NOT RAISE A CEILING TO RESCUE AN ARM.
+# (A standing rule.) "You have a 1 hour exam and you are not finished
+# after the hour: you failed, but the exam is not invalid." An arm that runs out
+# of wall clock FAILED the exam, it was not invalidated by it. Assembly cost IS
+# the win axis: the win
+# condition is "baseline can't FINISH it correctly at budget", not "baseline
+# can't SEE the token". Widening a ceiling mid-campaign deletes the exact
+# measurement this bench exists to take. Same rule for the opencode watchdog
+# (OPENCODE_STALL_IDLE / OPENCODE_MAX_SECS) and every runner's --timeout.
+#
+# Same exit code (124/125), OPPOSITE meanings - classify before you judge:
+#   * never REACHED synthesis: high tool-call count, high output tokens, but the
+#     assistant text is only mid-work narration ("Now let me...") = REAL FAILURE,
+#     keep it, report it. It never got to the answer; it was not cut out of one.
+#   * cut MID-DELIVERY on a metered sub (throttle crosses a streaming answer) =
+#     measurement artifact, re-run uncontended. That is the false-LOSS rule.
+# The tell is assistant-text chars vs tool calls in transcript.json, not the
+# exit code. Run it; do not infer it from rc alone.
+#
+# If the SENSE arm is the one that can't finish: STOP the sweep and analyze
+# transcripts + logs. "It just needs more time" is almost never the cause - look
+# for tool-loop thrash, an oversized structural payload, MCP cold-start, or a
+# scenario asking for an unbounded dump.
 TIME_CEILINGS = {
     "dolt": 300,         # retention-core scenario: the wall is the lever. A code-capable
                          # adversary's first gold find lands past 500s (0/18 inside a
@@ -507,11 +531,11 @@ BUDGET_PER_REPO = {
     "nextjs":    2.25,
 }
 
-DEFAULT_BUDGET_USD = 1.50  # unknown repos (e.g. held-out sense) — sits at the median.
+DEFAULT_BUDGET_USD = 1.50  # unknown repos (e.g. held-out sense) - sits at the median.
 
 # Claude pricing per million tokens. Used to estimate cost on failed runs
 # whose transcript never emitted a final total_cost_usd. Update when
-# pricing or the default model changes — these are Opus 4.x rates.
+# pricing or the default model changes - these are Opus 4.x rates.
 PRICE_PER_M = {
     "input": 15.00,
     "output": 75.00,
@@ -578,19 +602,19 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     """Score a transcript against a scenario.
 
     Two-layer scoring:
-      fairness components — keyword_coverage, citation_grounding,
+      fairness components - keyword_coverage, citation_grounding,
                             efficiency. llm_quality is filled in by
                             judge.py; the combined fairness_score is
                             computed by the reporter via fairness.compute.
                             Skips checks tagged layer: adoption.
-      adoption_score      — tool_fluency (0.60) + discoverability (0.40)
+      adoption_score      - tool_fluency (0.60) + discoverability (0.40)
                             For code-intel-vs-code-intel comparisons only.
 
-    repo_path     — the result_dir, used as cwd for `diff_contains` checks.
-    repo_checkout — the cloned repo at run_meta.repo_commit, used by
+    repo_path     - the result_dir, used as cwd for `diff_contains` checks.
+    repo_checkout - the cloned repo at run_meta.repo_commit, used by
                     grounding to verify citations. Optional: if missing,
                     citation_grounding reports total but skips verification.
-    overhead      — optional dict from a build-time setup step that burned
+    overhead      - optional dict from a build-time setup step that burned
                     LLM tokens/time/cost before the scoring session
                     started (currently: serena's onboarding pre-run).
                     When present, its `token_total_billed`, `wall_time_seconds`,
@@ -598,7 +622,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
                     BEFORE efficiency is computed, so a tool whose
                     recommended install requires LLM onboarding pays for
                     it in the efficiency axis like any other token spend.
-                    Expected shape — see docker/lib/parse-claude-result.py.
+                    Expected shape - see docker/lib/parse-claude-result.py.
     """
     from grounding import ground_citations
 
@@ -651,7 +675,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
     eff_billed = billed_tokens + overhead_billed
     eff_wall   = wall_time + overhead_wall
 
-    # Zero tokens or zero wall-time means no measurable work — treat each as
+    # Zero tokens or zero wall-time means no measurable work - treat each as
     # a zero in its half of efficiency, not as perfect efficiency.
     token_eff = max(0.0, 1.0 - (eff_billed / ceiling)) if eff_billed > 0 else 0.0
     time_eff = max(0.0, 1.0 - (eff_wall / time_ceiling)) if eff_wall > 0 else 0.0
@@ -669,7 +693,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
         if name.startswith("mcp__"):
             mcp_count += 1
         elif name in ("Grep", "Glob") or "grep" in cmd or "rg " in cmd:
-            # Glob and Grep both count as conventional search for fluency —
+            # Glob and Grep both count as conventional search for fluency -
             # a tool that satisfies a "find this code" task with Glob is
             # still bypassing the code-intel layer.
             grep_count += 1
@@ -686,7 +710,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
         tool_fluency = 0.5
 
     # Saturate at 20 unique files rather than 10. The previous ceiling gave
-    # every reasonably-rich answer a free 1.0 — Sense surfaced 18 files in
+    # every reasonably-rich answer a free 1.0 - Sense surfaced 18 files in
     # discourse and was indistinguishable from a hypothetical 11. The richer
     # "novel files surfaced by MCP tool_result" notion is deferred to 20-06
     # once tool_result parsing has a few iterations of wear.
@@ -756,7 +780,7 @@ def score_transcript(transcript_path, scenario, repo_path=None, repo_checkout=No
                 (t["cost_usd"] if t.get("cost_usd") is not None else 0.0)
                 + overhead_cost, 4
             ) if (t.get("cost_usd") is not None or overhead_cost > 0) else None,
-            # Effective totals (session + overhead) — what efficiency is
+            # Effective totals (session + overhead) - what efficiency is
             # actually computed against. Equal to the session-only numbers
             # for any tool without an overhead block.
             "effective_token_total_billed": eff_billed,
@@ -851,7 +875,7 @@ if __name__ == "__main__":
         has_result_event = partial["cost_usd"] is not None
 
         if not has_answer:
-            # True crash — no model output. Zero everything (legacy path).
+            # True crash - no model output. Zero everything (legacy path).
             partial_usage = sum_partial_usage(transcript_path)
             partial_cost = estimate_cost(partial_usage)
             billed_tokens = partial_usage["input_tokens"] + partial_usage["output_tokens"]

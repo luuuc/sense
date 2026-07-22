@@ -1,8 +1,8 @@
-# bench — Scoring
+# bench - Scoring
 
 Single source of truth for how a transcript becomes a number. If this
 doc disagrees with `lib/fairness.py` or `lib/scorer.py`, the code wins
-— fix the doc. See [`CHANGELOG.md`](./CHANGELOG.md) for the ship
+- fix the doc. See [`CHANGELOG.md`](./CHANGELOG.md) for the ship
 history; this doc is the consolidated "what's true now".
 
 ---
@@ -22,7 +22,7 @@ get a useful answer?"**:
 
 The bench started with two axes (`correctness × efficiency`) on the
 view that keyword checks couldn't independently measure all five
-honestly — *"two honest dimensions, not four fake ones"*. Subsequent
+honestly - *"two honest dimensions, not four fake ones"*. Subsequent
 work walked that back by adding **non-keyword measurement** for each
 dimension. The current 4-axis fairness formula is the projection of
 those five dimensions onto axes the code can actually compute:
@@ -35,7 +35,7 @@ those five dimensions onto axes the code can actually compute:
 | Serendipity | **llm_quality.uncertainty** + **adoption.discoverability** | Judge credits flagged-but-unsure surfaces; adoption layer counts unique files cited. |
 | Efficiency | **efficiency** (20%) | Half tokens, half wall-time, calibrated per repo. |
 
-Adoption is **never folded into fairness** — a tool isn't penalised
+Adoption is **never folded into fairness** - a tool isn't penalised
 for being a generic agent rather than a code-intel layer. It's
 reported alongside for code-intel-vs-code-intel comparisons only
 (sense vs roam vs greptile).
@@ -61,17 +61,17 @@ fairness = 0.10 · keyword_coverage           ← smoke test (was the headline p
 ```
 
 Defined in [`lib/fairness.py`](./lib/fairness.py). The four axes are
-**locked** in [`locked/locked.yaml`](./locked/locked.yaml) — the
+**locked** in [`locked/locked.yaml`](./locked/locked.yaml) - the
 improvement loop may re-weight them within ±0.05/iter/axis but cannot
 add, remove, or rename them. Renaming would break comparability across
 runs and require re-grading the held-out anchor.
 
-If `judged.json` is missing for a result, fairness renders as `—` in
+If `judged.json` is missing for a result, fairness renders as `-` in
 the report (the formula won't run without `llm_quality`).
 
 ### Component definitions
 
-#### `keyword_coverage` (10%) — smoke test
+#### `keyword_coverage` (10%) - smoke test
 
 Was the obvious vocabulary present? Computed as
 
@@ -89,7 +89,7 @@ Two scoring-engine subtleties:
 - Checks search **`answer_text`** only (assistant prose), not the
   tool-call inputs. Pre-20-03, a `Grep("TopicCreator")` invocation
   produced a "hit" for the keyword `TopicCreator` even if grep
-  returned nothing — a real exploit surface for any tool that prefers
+  returned nothing - a real exploit surface for any tool that prefers
   grep. Tool inputs/results live in `audit_text` for diagnostics but
   are never scored against.
 - `keyword_coverage` is a true hit-rate (Σhits / Σtotal across all
@@ -101,8 +101,8 @@ Supported check types ([`lib/scorer.py:evaluate_check`](./lib/scorer.py)):
 
 | Type | Match |
 |---|---|
-| `contains` / `transcript_contains` | Substring, case-insensitive, **no boundary** — matches inside identifiers |
-| `phrase` | Substring with non-word boundaries on both sides — preferred over `contains` for short tokens |
+| `contains` / `transcript_contains` | Substring, case-insensitive, **no boundary** - matches inside identifiers |
+| `phrase` | Substring with non-word boundaries on both sides - preferred over `contains` for short tokens |
 | `word` | Whole-word match (regex word boundary) |
 | `starts_with` | Any line in the answer starts with the value |
 | `exact` | Verbatim substring (case-sensitive) |
@@ -111,7 +111,7 @@ Supported check types ([`lib/scorer.py:evaluate_check`](./lib/scorer.py)):
 | `diff_contains` | Value appears in `git diff` of the result_dir |
 | `response_richness` | ≥ N unique source files cited in the answer |
 
-#### `llm_quality` (55%) — the headline
+#### `llm_quality` (55%) - the headline
 
 Claude Opus 4.7 acting as judge, scoring each step against the
 scenario's rubric (`scenarios/<repo>.rubric.yaml`). Each rubric step
@@ -132,30 +132,30 @@ llm_quality       = scenario_quality
 
 The judge prompt is locked at
 [`lib/judge_prompt.v1.md`](./lib/judge_prompt.v1.md). It instructs
-the judge to score for an **AI agent audience** — not a human reader
+the judge to score for an **AI agent audience** - not a human reader
 and not for documentation quality. Per the prompt:
 
 - The **answer text** is the primary input.
 - **Side-context** (`wall_time_seconds`, `total_tokens`, `completed`)
   is provided but is **only** to be used for criteria the rubric
-  explicitly invites — typically `map_quality` ("did this answer save
+  explicitly invites - typically `map_quality` ("did this answer save
   the agent downstream exploration?") and `uncertainty` ("is the
   confidence calibrated against effort spent?"). The judge is told not
   to reward speed/cost in isolation for `specificity` or `justification`.
 
 **Reproducibility tuple:** `{prompt version, model id, scenario rubric,
 temperature=0.0}`. The judge model identity is locked in `locked.yaml`
-— swapping models invalidates every prior score, so a model change is
+- swapping models invalidates every prior score, so a model change is
 a versioned bench event (re-grade held-out + bump `locked_version`).
 
-**Variance** (from the calibration pass on 12 real transcripts —
+**Variance** (from the calibration pass on 12 real transcripts -
 re-run with [`lib/variance.py`](./lib/variance.py)):
 
 | Layer | Target stdev | Observed | Verdict |
 |---|---|---|---|
-| Per-criterion score | <0.05 | max 0.071 | **Fails target** — treat as diagnostic |
-| Per-step `step_quality` | — | max 0.048 | Acceptable |
-| Per-scenario `scenario_quality` | — | max \|Δ\| 0.014 | **Rock-solid for ranking** |
+| Per-criterion score | <0.05 | max 0.071 | **Fails target** - treat as diagnostic |
+| Per-step `step_quality` | - | max 0.048 | Acceptable |
+| Per-scenario `scenario_quality` | - | max \|Δ\| 0.014 | **Rock-solid for ranking** |
 
 Use `scenario_quality` and `step_quality` for any decision; treat
 individual criterion scores as commentary, not data.
@@ -164,7 +164,7 @@ individual criterion scores as commentary, not data.
 existing 12 transcripts and hand spot-checks before being committed.
 Eligible for ±0.05/iter movement by the improvement loop thereafter.
 
-#### `citation_grounding` (15%) — anti-hallucination
+#### `citation_grounding` (15%) - anti-hallucination
 
 Every `file.ext:line` and `file.ext:Symbol` reference in the
 **answer_text** is extracted ([`lib/grounding.py`](./lib/grounding.py))
@@ -174,21 +174,21 @@ and checked against the repo at `run_meta.repo_commit`:
 |---|---|---|
 | `grounded` | File exists, line ≤ EOF (or symbol resolves within ±5 lines) | hit |
 | `unresolved` | File not at the cited path (typo, basename-only, different dir) | miss |
-| `hallucinated` | File exists but line > EOF — outright fabrication | miss + flagged with `!N` in reports |
+| `hallucinated` | File exists but line > EOF - outright fabrication | miss + flagged with `!N` in reports |
 
 ```
 citation_grounding_rate = grounded / total
 ```
 
 If the answer printed **no** structured citations (`total == 0`), the
-component is **0.0**, not 1.0 — *"no map" is not credit-worthy for the
+component is **0.0**, not 1.0 - *"no map" is not credit-worthy for the
 AI-agent audience*. `report.sh` regenerates the full hallucination
 list as `citation-hallucinations.md` next to the report.
 
 **Symbol grounding** uses naive ±5 line word-boundary grep, not
-tree-sitter — covers ~95% of cases at a fraction of the complexity.
+tree-sitter - covers ~95% of cases at a fraction of the complexity.
 
-#### `efficiency` (20%) — tokens + time
+#### `efficiency` (20%) - tokens + time
 
 Half token efficiency, half time efficiency, both calibrated per repo:
 
@@ -198,7 +198,7 @@ time_eff    = max(0, 1 − wall_time     / TIME_CEILINGS[repo])
 efficiency  = 0.5 · token_eff + 0.5 · time_eff
 ```
 
-`billed_tokens = input_tokens + output_tokens` (uncached only —
+`billed_tokens = input_tokens + output_tokens` (uncached only -
 cache reads/writes don't count against the tool). Zero tokens or
 zero wall-time → zero in that half, not perfect.
 
@@ -230,7 +230,7 @@ tool_fluency      = mcp_calls / (mcp_calls + grep_calls)   (default 0.5 if neith
 discoverability   = min(1, unique_source_files_cited / 20)
 ```
 
-`grep_calls` includes `Grep`, `Glob`, raw `grep`, and `rg` — anything
+`grep_calls` includes `Grep`, `Glob`, raw `grep`, and `rg` - anything
 that bypasses the code-intel layer for string search (Glob was
 silently uncounted pre-20-03). Reads of `.summary.md` are excluded
 from file counts. Discoverability ceiling is 20 (raised from 10 in
@@ -247,13 +247,44 @@ driven by the right reason.
 
 | Flag | Meaning | Score impact |
 |---|---|---|
-| `failed: true` | Session crashed — no answer text in the transcript | Everything zeroed; fairness = 0.0 immediately |
+| `failed: true` | Session crashed - no answer text in the transcript | Everything zeroed; fairness = 0.0 immediately |
 | `constrained: true` + `constraint_reason` | Session hit `--max-budget-usd` or `--timeout` but produced answer content | Scored normally; flag is an audit signal only |
 
 A session over budget but with a complete answer is **not** a
-failure — its answer is judged like any other. Every downstream
+failure - its answer is judged like any other. Every downstream
 consumer (`fairness.py`, `judge.py`, `audit_*.py`, `reporter.py`)
 short-circuits only on `failed`, never on `constrained`.
+
+### `run_meta.valid` - did this run MEASURE the arm?
+
+A third flag, on the run record rather than the score. It answers one
+question - *did this run measure the arm?* - and never *did the arm do
+well*. **An arm that runs out of wall clock FAILED the exam; the exam is
+still valid** (a standing rule; full rule in
+`lib/scorer.py` → `TIME_CEILINGS`). Assembly cost is the win axis, so a
+baseline that cannot finish inside the budget is the measurement, not a
+broken instrument.
+
+Until 2026-07-21 the runners stamped `valid: rc == 0`, which contradicted
+`constrained` directly above and voided every timed-out run - a 38,649-char
+baseline answer read as "no result". Classification now lives in one place,
+`lib/run_validity.py`, and is **derived from what the run left behind**, so
+already-paid-for runs reclassify with no re-run and no rewrite:
+
+| Outcome | Tell | Measurement? |
+|---|---|---|
+| `completed` | clean exit, real answer | ✅ |
+| `truncated_at_ceiling` | watchdog cut a real answer short | ✅ failed exam |
+| `never_reached_synthesis` | tokens + tool calls burned, answer is mid-work narration | ✅ real 0.0 |
+| `empty_final_answer` | clean exit, degenerate/empty stream | ❌ artifact |
+| `no_output_hang` | watchdog fired before any output | ❌ artifact |
+| `provider_cap_error` | metered sub refused mid-delivery | ❌ artifact, re-run uncontended |
+| `answer_offloaded_to_file` | answer written to a file, stub returned | ❌ artifact |
+| `harness_crash` | non-watchdog failure | ❌ artifact |
+
+The two watchdog outcomes share an exit code and mean opposite things: the
+tell is **assistant-text chars vs tool calls**, never `rc`. `select_final.py`
+is the consumer; the four artifact classes are what it excludes.
 
 ---
 
@@ -261,7 +292,7 @@ short-circuits only on `failed`, never on `constrained`.
 
 | Column | Source | Best | Notes |
 |---|---|---|---|
-| Fairness | `fairness.compute(scored, judged)` | Higher | `—` if `judged.json` missing |
+| Fairness | `fairness.compute(scored, judged)` | Higher | `-` if `judged.json` missing |
 | Adoption | `scored["adoption_score"]` | Higher | Code-intel comparisons only |
 | Keyword Cov. | `scored["keyword_coverage"]` | Higher | 10% smoke test |
 | LLM Quality | `judged["scenario_quality"]` | Higher | The headline (55%) |
@@ -287,7 +318,7 @@ report.sh     reporter.build_report           → report.md / report.json
               (combines via fairness.compute)
 ```
 
-`score.sh` and `judge.sh` are independently idempotent — re-running
+`score.sh` and `judge.sh` are independently idempotent - re-running
 either is cheap when the transcript hasn't changed. The judge skips
 when `judged.json` is newer than `transcript.json` unless `--force`.
 
@@ -302,10 +333,10 @@ and watch the scoring layer:
 | Auditor | Asks | Output | Flag if |
 |---|---|---|---|
 | **Score auditor** ([`audit_scoring.py`](./lib/audit_scoring.py)) | For each fairness check, do you (judge) agree with the hit/miss verdict? | `audit-scoring.<tool>.<repo>.json` | disagreement_rate > 5% |
-| **Scenario auditor** ([`audit_scenarios.py`](./lib/audit_scenarios.py)) | What understanding does the LLM show that current checks don't reward? | `audit-scenarios.<repo>.json` | (always — proposes additions/removals as hints to the next iter's reviewer) |
+| **Scenario auditor** ([`audit_scenarios.py`](./lib/audit_scenarios.py)) | What understanding does the LLM show that current checks don't reward? | `audit-scenarios.<repo>.json` | (always - proposes additions/removals as hints to the next iter's reviewer) |
 | **Watchdog** ([`audit_watchdog.py`](./lib/audit_watchdog.py)) | Did `llm_quality` move with `keyword_coverage`, or only the metric? | `audit-watchdog.json` | `verdict: suspect` (2 in a row → hard halt) |
 
-All three use the same Opus 4.7 — there's no independent judge model.
+All three use the same Opus 4.7 - there's no independent judge model.
 A model bias contaminates both layers (accepted v1 limitation).
 Per-iteration meta narrative lives in `meta-report.md`.
 
@@ -325,15 +356,15 @@ improvement loop may *not* touch.
 | Held-out scenarios + gold grades | |
 | Orchestration code (`scorer.py`, `fairness.py`, `lib/*.py`, `*.sh`) | |
 
-Any structural change is a versioned event — bump `locked_version`,
+Any structural change is a versioned event - bump `locked_version`,
 re-grade the held-out set.
 
 ---
 
 ## Held-out validation (the anti-Goodhart anchor)
 
-Three frozen scenarios — `flask-blueprints`, `axum-towers`,
-`sense-mcp-flow` — sit in `scenarios/held-out/` with hand-graded
+Three frozen scenarios - `flask-blueprints`, `axum-towers`,
+`sense-mcp-flow` - sit in `scenarios/held-out/` with hand-graded
 `gold.json` reference scores. Their transcripts and rubrics are
 pinned by SHA256 in `locked/held-out.lock`; the loop refuses to
 start if any hash drifts.
@@ -354,11 +385,11 @@ into a local maximum that disagrees with hand grading.
 The improvement loop halts cleanly when **all four** hold for **two
 consecutive iterations** ([`lib/convergence.py`](./lib/convergence.py)):
 
-1. **Auditor agreement** — score-auditor `disagreement_rate < 5%`.
-2. **Rank stability** — per-scenario tool ranks unchanged vs prev iter.
-3. **Discrimination** — fairness gap ≥ 0.10 on ≥ ⌈2/3⌉ of scenarios run
+1. **Auditor agreement** - score-auditor `disagreement_rate < 5%`.
+2. **Rank stability** - per-scenario tool ranks unchanged vs prev iter.
+3. **Discrimination** - fairness gap ≥ 0.10 on ≥ ⌈2/3⌉ of scenarios run
    (full bench: ≥4/6).
-4. **Held-out correlation** — Spearman vs `gold.json` ≥ 0.85.
+4. **Held-out correlation** - Spearman vs `gold.json` ≥ 0.85.
 
 Each iter writes per-criterion pass/fail + the distance summary to
 `convergence.json` and prints it via `delta.md`. The full
@@ -369,15 +400,15 @@ lives in `results/bench-readiness.md`.
 
 ## Gold-target scoring: recall (floor) + F1 (precision, pre-registered 2026-06-15)
 
-A scenario may declare a `gold` list — the references a correct answer must
+A scenario may declare a `gold` list - the references a correct answer must
 surface. Two scores are computed over it, against the SAME per-scenario
 denominator for every arm (`lib/gold.py`):
 
-- **`gold_recall`** — `mention_recall` (target name/path appears) and
+- **`gold_recall`** - `mention_recall` (target name/path appears) and
   `cited_recall` (target pinned to `path:line`). The OBJECTIVE FLOOR. Substring
   recall, grep-can't-fake only when the gold is grep-hard (see the
   scenario-sourcing runbook's anti-litmus).
-- **`gold_f1`** (DROPPED 2026-06-19; no longer in `scored.json`) — was
+- **`gold_f1`** (DROPPED 2026-06-19; no longer in `scored.json`) - was
   precision/recall/F1 of the agent's claimed dependent set vs the file-like gold
   targets. **Removed because its precision punished Sense for the very thing it
   does best:** gold is a curated DISCRIMINATOR subset, so Sense's real
@@ -393,7 +424,7 @@ denominator for every arm (`lib/gold.py`):
 to a result):
 1. Both scores use the same gold list and same arms. Metric design was frozen
    and unit-tested (`test_gold.py`) before any re-score.
-2. **CAVEAT — gold incompleteness.** Gold is the curated MUST-FIND subset, not
+2. **CAVEAT - gold incompleteness.** Gold is the curated MUST-FIND subset, not
    the complete set of every legitimately-citable file. So an off-gold citation
    is counted a false positive even when fair. `gold_f1` is therefore a
    COMPARATIVE signal between identically-scored arms, NOT an absolute precision.
@@ -406,7 +437,7 @@ to a result):
 | baseline | 0.35 | 0.20 | 0.25 |
 | sense | 0.94 | 0.34 | 0.50 |
 
-Sense wins BOTH precision and recall (cleaner *and* more complete) — the metric
+Sense wins BOTH precision and recall (cleaner *and* more complete) - the metric
 is sound and asymmetric in Sense's favour. **But F1 yields only +25pt where
 recall alone gives +59pt:** precision sits low for both arms (0.20–0.34) because
 the 17-target gold is far smaller than the 46–91 files a thorough answer cites,
@@ -415,10 +446,10 @@ Conclusion: objective path-precision favours Sense but DILUTES the headline; it
 belongs as a reported secondary axis, with `cited_recall` kept as the ≥50pt
 headline.
 
-### `relationship_audit` — reference-aware relationship recall (pre-registered 2026-06-15)
+### `relationship_audit` - reference-aware relationship recall (pre-registered 2026-06-15)
 
 The per-step LLM judge scores each answer in isolation, with no reference for
-what a COMPLETE answer must contain — so it rated chatwoot's 35%-recall baseline
+what a COMPLETE answer must contain - so it rated chatwoot's 35%-recall baseline
 audit "exhaustive, map_quality 0.9" and never separated the arms (baseline ≈
 sense ≈ 0.85, both the original 4-criterion judge and the 5-criterion
 `relationship` variant). That blindness to omission was the defect.
@@ -428,8 +459,8 @@ The fix (`lib/relationship_audit.py`, wired into `judge.py`, written to
 TRUE connection to the contract under change, authored from source, NEVER shown
 to the agent). One judge call grades the whole answer against that fixed
 reference set, per item:
-- `covered` — the answer explicitly names the file/class/symbol (penalises omission)
-- `related` — covered AND the stated relation matches the reference (chain
+- `covered` - the answer explicitly names the file/class/symbol (penalises omission)
+- `related` - covered AND the stated relation matches the reference (chain
   correctness: grep names endpoints, it cannot assert the relation)
 
 **Honesty terms:** same reference, same prompt, both arms; `related ⇒ covered`;
@@ -443,7 +474,7 @@ authored before scoring.
 | baseline | 0.471 (.59/.41/.41) | 0.451 |
 | sense | **0.961** (.88/1.0/1.0) | **0.922** |
 
-Sense wins by **+0.49 covered / +0.47 related**, no run overlap — the
+Sense wins by **+0.49 covered / +0.47 related**, no run overlap - the
 reference-aware judge now agrees with objective recall (0.35 vs 0.94) instead of
 contradicting it. This is the judge-side headline the reference-blind judge could
 not produce: it measures completeness AND relationship-correctness, and grep can
@@ -479,6 +510,6 @@ fake neither.
 | 2026-05-13 | Score auditor + scenario auditor + watchdog wired as Phase 4 of the improvement loop. `meta-report.md` per iter. |
 | 2026-05-13 | Convergence criteria, held-out lock, `locked.yaml`, cost ceiling, `readiness.md`, credit-fallback policy. |
 | 2026-06-15 | `gold_f1` (precision/recall/F1 of the claimed dependent set vs gold) added to `scored.json` alongside `gold_recall`. Pre-registered above; validated on chatwoot (Sense wins both axes, F1 +25pt vs recall +59pt). Recall stays the floor. |
-| 2026-06-15 | Optional 5th judge criterion `relationship` (opt-in, v2 prompt; 4-criterion rubrics unchanged) — built but reference-BLIND, did not separate. Replaced/augmented by `relationship_audit` (`lib/relationship_audit.py`): reference-aware grading against per-target `relation`, written to `judged.json`. Validated on chatwoot ×3 — Sense +0.49 covered / +0.47 related, no overlap. The judge-side headline. |
+| 2026-06-15 | Optional 5th judge criterion `relationship` (opt-in, v2 prompt; 4-criterion rubrics unchanged) - built but reference-BLIND, did not separate. Replaced/augmented by `relationship_audit` (`lib/relationship_audit.py`): reference-aware grading against per-target `relation`, written to `judged.json`. Validated on chatwoot ×3 - Sense +0.49 covered / +0.47 related, no overlap. The judge-side headline. |
 
 Per-commit detail: [`CHANGELOG.md`](./CHANGELOG.md).

@@ -8,7 +8,7 @@ un-reproducible SENSE-SCORING-REPORT.md (the numbers did not trace to disk).
 
   cited_recall      from scored.json gold_recall.cited_recall  (OBJECTIVE)
   deps-delta        scored.json gold_recall.groups.dependents (cited/total)
-  sense-only        dependents cited by sense, never by baseline (any run) — gold_recall.details
+  sense-only        dependents cited by sense, never by baseline (any run) - gold_recall.details
   related_recall    judged.json relationship_audit.related_recall (Sonnet)
   grounded_prec     1 - sum(contradicted)/sum(covered) across runs
   contradictions    sum(contradicted) across runs, per arm
@@ -28,10 +28,12 @@ import glob
 import os
 import sys
 
+import run_validity
+
 REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT = os.path.join(REPO_ROOT, "bench", "verticals", "ruby-rails",
                        "results", "claude-opus-4-8")
-# Published Rails board order — a sort preference only; repos come from disk.
+# Published Rails board order - a sort preference only; repos come from disk.
 ORDER = ["mastodon", "gitlabhq", "chatwoot", "discourse", "solidus", "forem",
          "ruby_llm", "redmine", "rails", "llm.rb", "langchainrb", "lobsters", "raix"]
 GEMS = {"ruby_llm", "llm.rb", "langchainrb", "raix"}
@@ -65,9 +67,13 @@ def _mean(a):
 
 
 def _runs(arm_repo):
-    fs = sorted(glob.glob(os.path.join(arm_repo, "run-*", "scored.json")))
-    flat = os.path.join(arm_repo, "scored.json")
-    return fs or ([flat] if os.path.exists(flat) else [])
+    """Measurement runs only -- the SAME rule matrix.py and the article gate use.
+
+    Three instruments each carried their own copy of this glob; when only one
+    learned to drop harness crashes, the campaign published two different
+    numbers for dolt. The rule lives in lib/run_validity.py now.
+    """
+    return run_validity.measured_runs(arm_repo)
 
 
 def arm_axes(root, arm, repo):
@@ -179,7 +185,7 @@ def markdown(root):
     vert = _vertical(root)
     name = "Rails-vertical" if vert in (None, "ruby-rails") else f"{vert} vertical"
     out = []
-    out.append(f"# {name} scoring — Sense vs baseline\n")
+    out.append(f"# {name} scoring - Sense vs baseline\n")
     out.append(f"_Judge: {', '.join(judge)} (via subscription CLI). All axes "
                "averaged across runs. Regenerated FROM DISK by "
                "`bench/lib/scoreboard.py` (reproducible).\n")
@@ -188,7 +194,7 @@ def markdown(root):
                f"{len(rows)} repos on `cited_recall`. "
                f"Mean cited Δ (sense−baseline): **{mean_d:+.3f}**.\n")
     af = [r[0] for r in rows if r[5]]
-    out.append(f"Anti-fabrication wins (⚑ — baseline asserts a wrong relation, "
+    out.append(f"Anti-fabrication wins (⚑ - baseline asserts a wrong relation, "
                f"Sense does not): **{', '.join(af) if af else 'none'}**.\n")
     ew = [(r[0], r[6]) for r in rows if r[6] is not None]
     if ew:
@@ -202,9 +208,9 @@ def markdown(root):
         gem = " 🔸" if repo in GEMS else ""
         flag = " ⚑" if antifab else ""
         effflag = f" ◆ eff {eff:+.0f}% tok" if eff is not None else ""
-        dd = (f"{s['deps']-b['deps']:+.2f}" if (b['deps'] is not None and s['deps'] is not None) else "—")
-        rb = f"{b['related']:.2f}" if b['related'] is not None else "—"
-        rs = f"{s['related']:.2f}" if s['related'] is not None else "—"
+        dd = (f"{s['deps']-b['deps']:+.2f}" if (b['deps'] is not None and s['deps'] is not None) else "-")
+        rb = f"{b['related']:.2f}" if b['related'] is not None else "-"
+        rs = f"{s['related']:.2f}" if s['related'] is not None else "-"
         out.append(f"| {repo}{gem} | {b['cited']:.2f}→{s['cited']:.2f} ({d:+.2f}) "
                    f"| {dd} | {s['sense_only']} | {bscore(b):.2f}→{bscore(s):.2f} | {rb}→{rs} "
                    f"| {b['grounded']:.2f}/{s['grounded']:.2f} "

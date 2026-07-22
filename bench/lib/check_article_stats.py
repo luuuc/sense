@@ -15,6 +15,8 @@ eff_*) stays unchecked.
 Usage: check_article_stats.py [articles_dir] [--tol 0.01]
 """
 import glob
+
+import run_validity
 import json
 import os
 import sys
@@ -63,10 +65,14 @@ def frontmatter(path):
 
 
 def _runs(repo_dir):
-    paths = sorted(glob.glob(os.path.join(repo_dir, "run-*", "scored.json")))
-    if not paths and os.path.exists(os.path.join(repo_dir, "scored.json")):
-        paths = [os.path.join(repo_dir, "scored.json")]
-    return paths
+    """Measurement runs only -- the SAME rule the board uses.
+
+    This carried its own unfiltered glob, so the article gate averaged a harness
+    crash the board excluded and reported dolt at 0.88/+0.38 while report.json
+    said 1.00/+0.50. An article gate that computes the headline differently from
+    the board cannot validate the board.
+    """
+    return run_validity.measured_runs(repo_dir)
 
 
 def _mean(xs):
