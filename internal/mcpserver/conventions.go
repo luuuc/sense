@@ -76,31 +76,15 @@ func (h *handlers) handleConventions(ctx context.Context, req mcp.CallToolReques
 	return mcp.NewToolResultText(string(out)), nil
 }
 
-func conventionsHints(resp mcpio.ConventionsResponse, domain string) []mcpio.NextStep {
-	var hints []mcpio.NextStep
-
-	for _, c := range resp.Conventions {
-		if float64(c.Strength) >= 0.8 {
-			hints = append(hints, mcpio.NextStep{
-				Tool:   "sense_search",
-				Args:   map[string]any{"query": c.Description},
-				Reason: "strong convention — search for all instances",
-			})
-			break
-		}
-	}
-
-	if domain != "" && len(hints) < mcpio.MaxNextSteps {
-		hints = append(hints, mcpio.NextStep{
-			Tool:   "sense_conventions",
-			Reason: "scoped results — run without domain filter for project-wide patterns",
-		})
-	}
-
-	if len(hints) > mcpio.MaxNextSteps {
-		hints = hints[:mcpio.MaxNextSteps]
-	}
-	return hints
+// conventionsHints returns nothing by design. Its two hints - "strong
+// convention, search for all instances" and "run without domain filter" - both
+// restated the payload (the convention text and the domain arg are already in
+// the response/request) and pushed the model in a circle among the two
+// least-followed tools. Under the load-bearing rule (a hint must name a tool,
+// knob or gap NOT in the current payload) neither survives. Kept as a named
+// no-op so the wiring stays uniform.
+func conventionsHints(mcpio.ConventionsResponse, string) []mcpio.NextStep {
+	return nil
 }
 
 func buildKeyEntries(ctx context.Context, adapter *sqlite.Adapter, domain string, limit int) ([]mcpio.KeySymbolEntry, error) {

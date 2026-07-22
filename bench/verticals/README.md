@@ -152,7 +152,7 @@ stays manual by design.
 
 1. **Stamp the dirs:** `bash ../drivers/new-vertical.sh <name>` creates
    `verticals/<name>/scenarios/` + `repos.txt` (and a local doc skeleton). Then fill
-   `repos.txt` and pick the 6 repos.
+   `repos.txt` and pick the 4 repos.
 2. **Per repo, run the loop:** `bash ../drivers/vertical-loop.sh <repo>` (set
    `VERTICAL=<name>`). It chains index → scout → preflight → bench → report → harvest
    and STOPS at the human gates (scenario authoring, tie diagnosis); pass `--yes` to

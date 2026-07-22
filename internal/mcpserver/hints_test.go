@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/luuuc/sense/internal/mcpio"
+	"github.com/luuuc/sense/internal/model"
 )
 
 func TestGraphHintsManyCallers(t *testing.T) {
@@ -73,9 +74,13 @@ func TestGraphHintsNoCallers(t *testing.T) {
 	}
 }
 
-func TestGraphHintsNoCallersButHiddenLowConfidence(t *testing.T) {
-	// An empty called_by with hidden low-confidence callers must steer the
-	// agent to lower the threshold, not imply the symbol is unused.
+func TestGraphHintsNoShownButManyHiddenLowConfidence(t *testing.T) {
+	// 0 shown callers but 111 below the confidence floor is a HIGH-reach symbol
+	// (reach = shown + hidden). It must get the blast jump first (blast at the
+	// default 0.3 floor includes those weak edges and shows what holds it), then
+	// the min_confidence knob as the second hint. The go glm/consul loss was a
+	// milder version of this: 2 shown + 73 hidden fell through the old
+	// shown-only gate and never got routed to blast.
 	resp := mcpio.GraphResponse{
 		Symbol: mcpio.GraphSymbol{
 			Name:      "current_user",
@@ -86,20 +91,43 @@ func TestGraphHintsNoCallersButHiddenLowConfidence(t *testing.T) {
 		LowConfidenceHidden: 111,
 	}
 	hints := graphHints(resp, "callers")
-	if len(hints) == 0 {
-		t.Fatal("want a hint when low-confidence callers are hidden, got none")
+	if len(hints) != 2 {
+		t.Fatalf("want 2 hints (blast + min_confidence knob), got %d", len(hints))
 	}
-	if hints[0].Tool != "sense_graph" {
-		t.Errorf("tool = %q, want sense_graph", hints[0].Tool)
+	if hints[0].Tool != "sense_blast" {
+		t.Errorf("hints[0].tool = %q, want sense_blast (high reach routes to blast first)", hints[0].Tool)
 	}
-	if hints[0].Args["min_confidence"] != 0.3 {
-		t.Errorf("args.min_confidence = %v, want 0.3", hints[0].Args["min_confidence"])
+	if hints[1].Tool != "sense_graph" || hints[1].Args["min_confidence"] != 0.3 {
+		t.Errorf("hints[1] = %+v, want the min_confidence=0.3 knob", hints[1])
 	}
-	if hints[0].Args["direction"] != "callers" {
-		t.Errorf("args.direction = %v, want callers", hints[0].Args["direction"])
+	if hints[1].Args["direction"] != "callers" {
+		t.Errorf("hints[1].args.direction = %v, want callers", hints[1].Args["direction"])
 	}
-	if hints[0].Args["symbol"] != "Authentication#current_user" {
-		t.Errorf("args.symbol = %v, want qualified name", hints[0].Args["symbol"])
+}
+
+func TestGraphHintsFewShownManyHiddenRoutesToBlast(t *testing.T) {
+	// The exact go glm/consul shape: NewServer with 2 shown callers and 73 below
+	// the floor. reach = 75 >= 5, so the blast jump fires - the old
+	// `>= 5 shown` gate missed this and left the model with no route to the
+	// retention ring.
+	resp := mcpio.GraphResponse{
+		Symbol: mcpio.GraphSymbol{
+			Name:      "NewServer",
+			Qualified: "consul.NewServer",
+			File:      "agent/consul/server.go",
+		},
+		Edges:               mcpio.GraphEdges{CalledBy: make([]mcpio.CallEdgeRef, 2)},
+		LowConfidenceHidden: 73,
+	}
+	hints := graphHints(resp, "callers")
+	if len(hints) != 1 {
+		t.Fatalf("want 1 hint (blast), got %d", len(hints))
+	}
+	if hints[0].Tool != "sense_blast" {
+		t.Errorf("tool = %q, want sense_blast", hints[0].Tool)
+	}
+	if hints[0].Args["symbol"] != "consul.NewServer" {
+		t.Errorf("args.symbol = %q, want consul.NewServer", hints[0].Args["symbol"])
 	}
 }
 
@@ -120,7 +148,12 @@ func TestGraphHintsNoCallersTestFile(t *testing.T) {
 	}
 }
 
-func TestGraphHintsCallersOnlyDirection(t *testing.T) {
+func TestGraphHintsFewCallersNoFiller(t *testing.T) {
+	// 1-4 callers with no hidden tail: the old code appended a "see what this
+	// symbol depends on" callees hint here (46 of 605 issuances) purely because
+	// direction was callers. It restated the payload and is dropped - a
+	// low-reach symbol with everything already shown earns no hint, in any
+	// direction.
 	resp := mcpio.GraphResponse{
 		Symbol: mcpio.GraphSymbol{
 			Name:      "Foo",
@@ -131,19 +164,16 @@ func TestGraphHintsCallersOnlyDirection(t *testing.T) {
 			CalledBy: []mcpio.CallEdgeRef{{Symbol: "Bar"}},
 		},
 	}
-	hints := graphHints(resp, "callers")
-	if len(hints) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_graph" {
-		t.Errorf("tool = %q, want sense_graph", hints[0].Tool)
-	}
-	if hints[0].Args["direction"] != "callees" {
-		t.Errorf("args.direction = %q, want callees", hints[0].Args["direction"])
+	for _, dir := range []model.Direction{"callers", "both"} {
+		if hints := graphHints(resp, dir); hints != nil {
+			t.Fatalf("direction %q: want nil hints (1 caller, all shown), got %d", dir, len(hints))
+		}
 	}
 }
 
-func TestGraphHintsManyCallersAndCallersDirection(t *testing.T) {
+func TestGraphHintsManyCallersSingleBlastHint(t *testing.T) {
+	// A high-reach symbol with everything shown gets exactly the blast jump -
+	// no callees filler tagged on for the callers direction.
 	resp := mcpio.GraphResponse{
 		Symbol: mcpio.GraphSymbol{
 			Name:      "Hub",
@@ -155,158 +185,47 @@ func TestGraphHintsManyCallersAndCallersDirection(t *testing.T) {
 		},
 	}
 	hints := graphHints(resp, "callers")
-	if len(hints) != 2 {
-		t.Fatalf("want 2 hints (blast + callees), got %d", len(hints))
+	if len(hints) != 1 {
+		t.Fatalf("want 1 hint (blast only, no callees filler), got %d", len(hints))
 	}
 	if hints[0].Tool != "sense_blast" {
 		t.Errorf("hints[0].tool = %q, want sense_blast", hints[0].Tool)
 	}
-	if hints[1].Tool != "sense_graph" {
-		t.Errorf("hints[1].tool = %q, want sense_graph", hints[1].Tool)
-	}
 }
 
-func TestGraphHintsEmpty(t *testing.T) {
-	resp := mcpio.GraphResponse{
-		Symbol: mcpio.GraphSymbol{
-			Name:      "Foo",
-			Qualified: "pkg.Foo",
-			File:      "internal/pkg/foo.go",
-		},
-		Edges: mcpio.GraphEdges{
-			CalledBy: []mcpio.CallEdgeRef{{Symbol: "Bar"}},
-		},
-	}
-	hints := graphHints(resp, "both")
-	if hints != nil {
-		t.Fatalf("want nil hints (1-4 callers, both direction), got %d", len(hints))
-	}
-}
-
-func TestSearchHintsStrongMatch(t *testing.T) {
-	resp := mcpio.SearchResponse{
-		Results: []mcpio.SearchResultEntry{
-			{Symbol: "auth.Verify", File: "internal/auth/verify.go", Score: 0.92},
-			{Symbol: "auth.Token", File: "internal/auth/token.go", Score: 0.71},
-		},
-	}
-	hints := searchHints(resp)
-	if len(hints) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_graph" {
-		t.Errorf("tool = %q, want sense_graph", hints[0].Tool)
-	}
-	if hints[0].Args["symbol"] != "auth.Verify" {
-		t.Errorf("args.symbol = %q, want auth.Verify", hints[0].Args["symbol"])
-	}
-}
-
-func TestSearchHintsFileCluster(t *testing.T) {
-	resp := mcpio.SearchResponse{
-		Results: []mcpio.SearchResultEntry{
+func TestSearchHintsAlwaysEmpty(t *testing.T) {
+	// searchHints is a deliberate no-op: both hints it used to emit (the
+	// most-issued "strong match, explore its relationships" and the file-cluster
+	// conventions nudge) only restated the payload. Whatever the results shape,
+	// it returns nothing now.
+	cases := []mcpio.SearchResponse{
+		{Results: []mcpio.SearchResultEntry{{Symbol: "auth.Verify", File: "internal/auth/verify.go", Score: 0.92}}},
+		{Results: []mcpio.SearchResultEntry{
 			{Symbol: "Foo", File: "internal/models/user.go", Score: 0.5},
 			{Symbol: "Bar", File: "internal/models/user.go", Score: 0.4},
 			{Symbol: "Baz", File: "internal/models/user.go", Score: 0.3},
-		},
+		}},
+		{Results: []mcpio.SearchResultEntry{}},
 	}
-	hints := searchHints(resp)
-	if len(hints) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_conventions" {
-		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
-	}
-	if hints[0].Args["domain"] != "internal/models" {
-		t.Errorf("args.domain = %q, want internal/models", hints[0].Args["domain"])
-	}
-}
-
-func TestSearchHintsStrongMatchAndCluster(t *testing.T) {
-	resp := mcpio.SearchResponse{
-		Results: []mcpio.SearchResultEntry{
-			{Symbol: "Foo", File: "internal/models/user.go", Score: 0.95},
-			{Symbol: "Bar", File: "internal/models/user.go", Score: 0.8},
-			{Symbol: "Baz", File: "internal/models/user.go", Score: 0.7},
-		},
-	}
-	hints := searchHints(resp)
-	if len(hints) != 2 {
-		t.Fatalf("want 2 hints (graph + conventions), got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_graph" {
-		t.Errorf("hints[0].tool = %q, want sense_graph", hints[0].Tool)
-	}
-	if hints[1].Tool != "sense_conventions" {
-		t.Errorf("hints[1].tool = %q, want sense_conventions", hints[1].Tool)
-	}
-}
-
-func TestSearchHintsEmpty(t *testing.T) {
-	resp := mcpio.SearchResponse{
-		Results: []mcpio.SearchResultEntry{
-			{Symbol: "Foo", File: "a.go", Score: 0.3},
-			{Symbol: "Bar", File: "b.go", Score: 0.2},
-		},
-	}
-	hints := searchHints(resp)
-	if hints != nil {
-		t.Fatalf("want nil hints, got %d", len(hints))
-	}
-}
-
-func TestSearchHintsEmptyResults(t *testing.T) {
-	resp := mcpio.SearchResponse{Results: []mcpio.SearchResultEntry{}}
-	hints := searchHints(resp)
-	if hints != nil {
-		t.Fatalf("want nil hints for empty results, got %d", len(hints))
-	}
-}
-
-func TestSearchHintsClusterDeterminism(t *testing.T) {
-	resp := mcpio.SearchResponse{
-		Results: []mcpio.SearchResultEntry{
-			{Symbol: "A", File: "pkg/alpha.go", Score: 0.5},
-			{Symbol: "B", File: "pkg/beta.go", Score: 0.4},
-			{Symbol: "C", File: "pkg/beta.go", Score: 0.3},
-			{Symbol: "D", File: "pkg/beta.go", Score: 0.3},
-			{Symbol: "E", File: "pkg/alpha.go", Score: 0.2},
-			{Symbol: "F", File: "pkg/alpha.go", Score: 0.2},
-		},
-	}
-	first := searchHints(resp)
-	for i := 0; i < 20; i++ {
-		got := searchHints(resp)
-		if len(got) != len(first) {
-			t.Fatalf("iteration %d: length changed from %d to %d", i, len(first), len(got))
-		}
-		for j := range first {
-			if got[j].Tool != first[j].Tool || got[j].Reason != first[j].Reason {
-				t.Fatalf("iteration %d: hint[%d] changed", i, j)
-			}
+	for i, resp := range cases {
+		if hints := searchHints(resp); hints != nil {
+			t.Errorf("case %d: want nil hints, got %d", i, len(hints))
 		}
 	}
-	if len(first) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(first))
-	}
-	if first[0].Args["domain"] != "pkg" {
-		t.Errorf("expected first qualifying file's dir (pkg/beta.go → pkg), got %q", first[0].Args["domain"])
-	}
 }
 
-func TestBlastHintsHighRisk(t *testing.T) {
+func TestBlastHintsHighRiskNoLongerHinted(t *testing.T) {
+	// The risk="high" → conventions hint restated the `risk` field and pushed
+	// the least-followed tool; it is dropped. A high-risk symbol that HAS tests
+	// now earns no hint at all.
 	resp := mcpio.BlastResponse{
 		Symbol:        "User#destroy",
 		Risk:          "high",
 		TotalAffected: 15,
 		AffectedTests: []string{"test/user_test.rb"},
 	}
-	hints := blastHints(resp)
-	if len(hints) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_conventions" {
-		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
+	if hints := blastHints(resp); hints != nil {
+		t.Fatalf("want nil hints (risk hint dropped, tests present), got %d", len(hints))
 	}
 }
 
@@ -327,6 +246,7 @@ func TestBlastHintsNoTests(t *testing.T) {
 }
 
 func TestBlastHintsHighRiskNoTests(t *testing.T) {
+	// Only the no-test-coverage gap survives; risk="high" adds nothing.
 	resp := mcpio.BlastResponse{
 		Symbol:        "Critical#method",
 		Risk:          "high",
@@ -334,14 +254,11 @@ func TestBlastHintsHighRiskNoTests(t *testing.T) {
 		AffectedTests: []string{},
 	}
 	hints := blastHints(resp)
-	if len(hints) != 2 {
-		t.Fatalf("want 2 hints, got %d", len(hints))
+	if len(hints) != 1 {
+		t.Fatalf("want 1 hint (search for tests only), got %d", len(hints))
 	}
-	if hints[0].Tool != "sense_conventions" {
-		t.Errorf("hints[0].tool = %q, want sense_conventions", hints[0].Tool)
-	}
-	if hints[1].Tool != "sense_search" {
-		t.Errorf("hints[1].tool = %q, want sense_search", hints[1].Tool)
+	if hints[0].Tool != "sense_search" {
+		t.Errorf("hints[0].tool = %q, want sense_search", hints[0].Tool)
 	}
 }
 
@@ -371,67 +288,22 @@ func TestBlastHintsNoTestsZeroAffected(t *testing.T) {
 	}
 }
 
-func TestConventionsHintsStrongConvention(t *testing.T) {
-	resp := mcpio.ConventionsResponse{
-		Conventions: []mcpio.ConventionEntry{
-			{Description: "models inherit from Base", Strength: 0.5},
-			{Description: "controllers follow REST", Strength: 0.85},
-		},
+func TestConventionsHintsAlwaysEmpty(t *testing.T) {
+	// conventionsHints is a deliberate no-op: its two hints restated the
+	// convention text and the domain arg already in the request/response and
+	// circled among the least-followed tools.
+	cases := []struct {
+		resp   mcpio.ConventionsResponse
+		domain string
+	}{
+		{mcpio.ConventionsResponse{Conventions: []mcpio.ConventionEntry{{Description: "controllers follow REST", Strength: 0.85}}}, ""},
+		{mcpio.ConventionsResponse{Conventions: []mcpio.ConventionEntry{{Description: "naming pattern", Strength: 0.4}}}, "models"},
+		{mcpio.ConventionsResponse{Conventions: []mcpio.ConventionEntry{{Description: "strong pattern", Strength: 0.9}}}, "controllers"},
 	}
-	hints := conventionsHints(resp, "")
-	if len(hints) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_search" {
-		t.Errorf("tool = %q, want sense_search", hints[0].Tool)
-	}
-	if hints[0].Args["query"] != "controllers follow REST" {
-		t.Errorf("args.query = %q, want description of strong convention", hints[0].Args["query"])
-	}
-}
-
-func TestConventionsHintsDomainScoped(t *testing.T) {
-	resp := mcpio.ConventionsResponse{
-		Conventions: []mcpio.ConventionEntry{
-			{Description: "naming pattern", Strength: 0.4},
-		},
-	}
-	hints := conventionsHints(resp, "models")
-	if len(hints) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_conventions" {
-		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
-	}
-}
-
-func TestConventionsHintsStrongAndDomain(t *testing.T) {
-	resp := mcpio.ConventionsResponse{
-		Conventions: []mcpio.ConventionEntry{
-			{Description: "strong pattern", Strength: 0.9},
-		},
-	}
-	hints := conventionsHints(resp, "controllers")
-	if len(hints) != 2 {
-		t.Fatalf("want 2 hints, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_search" {
-		t.Errorf("hints[0].tool = %q, want sense_search", hints[0].Tool)
-	}
-	if hints[1].Tool != "sense_conventions" {
-		t.Errorf("hints[1].tool = %q, want sense_conventions", hints[1].Tool)
-	}
-}
-
-func TestConventionsHintsEmpty(t *testing.T) {
-	resp := mcpio.ConventionsResponse{
-		Conventions: []mcpio.ConventionEntry{
-			{Description: "weak pattern", Strength: 0.3},
-		},
-	}
-	hints := conventionsHints(resp, "")
-	if hints != nil {
-		t.Fatalf("want nil hints, got %d", len(hints))
+	for i, c := range cases {
+		if hints := conventionsHints(c.resp, c.domain); hints != nil {
+			t.Errorf("case %d: want nil hints, got %d", i, len(hints))
+		}
 	}
 }
 
@@ -442,7 +314,7 @@ func TestStatusHintsStaleFiles(t *testing.T) {
 			StaleFilesSeen: &stale,
 		},
 	}
-	hints := statusHints(resp, 3)
+	hints := statusHints(resp)
 	if len(hints) != 1 {
 		t.Fatalf("want 1 hint, got %d", len(hints))
 	}
@@ -454,38 +326,18 @@ func TestStatusHintsStaleFiles(t *testing.T) {
 	}
 }
 
-func TestStatusHintsFirstQuery(t *testing.T) {
+func TestStatusHintsFirstQueryNoLongerHinted(t *testing.T) {
+	// The "start of session - check project conventions" hint fired on every
+	// fresh session regardless of task; it is dropped. A fresh, non-stale index
+	// now earns no hint.
 	stale := 0
 	resp := mcpio.StatusResponse{
 		Freshness: mcpio.Freshness{
 			StaleFilesSeen: &stale,
 		},
 	}
-	hints := statusHints(resp, 0)
-	if len(hints) != 1 {
-		t.Fatalf("want 1 hint, got %d", len(hints))
-	}
-	if hints[0].Tool != "sense_conventions" {
-		t.Errorf("tool = %q, want sense_conventions", hints[0].Tool)
-	}
-}
-
-func TestStatusHintsStaleAndFirstQuery(t *testing.T) {
-	stale := 3
-	resp := mcpio.StatusResponse{
-		Freshness: mcpio.Freshness{
-			StaleFilesSeen: &stale,
-		},
-	}
-	hints := statusHints(resp, 0)
-	if len(hints) != 2 {
-		t.Fatalf("want 2 hints, got %d", len(hints))
-	}
-	if hints[0].Tool != "" {
-		t.Errorf("hints[0].tool = %q, want empty (advisory)", hints[0].Tool)
-	}
-	if hints[1].Tool != "sense_conventions" {
-		t.Errorf("hints[1].tool = %q, want sense_conventions", hints[1].Tool)
+	if hints := statusHints(resp); hints != nil {
+		t.Fatalf("want nil hints (session-start hint dropped, index fresh), got %d", len(hints))
 	}
 }
 
@@ -496,7 +348,7 @@ func TestStatusHintsEmpty(t *testing.T) {
 			StaleFilesSeen: &stale,
 		},
 	}
-	hints := statusHints(resp, 5)
+	hints := statusHints(resp)
 	if hints != nil {
 		t.Fatalf("want nil hints, got %d", len(hints))
 	}
@@ -548,13 +400,13 @@ func TestHintDeterminism(t *testing.T) {
 	firstGraph := graphHints(graphResp, "callers")
 	firstBlast := blastHints(blastResp)
 	firstConv := conventionsHints(convResp, "models")
-	firstStatus := statusHints(statusResp, 0)
+	firstStatus := statusHints(statusResp)
 
 	for i := 0; i < 50; i++ {
 		assertSameHints(t, "graphHints", firstGraph, graphHints(graphResp, "callers"))
 		assertSameHints(t, "blastHints", firstBlast, blastHints(blastResp))
 		assertSameHints(t, "conventionsHints", firstConv, conventionsHints(convResp, "models"))
-		assertSameHints(t, "statusHints", firstStatus, statusHints(statusResp, 0))
+		assertSameHints(t, "statusHints", firstStatus, statusHints(statusResp))
 	}
 }
 
@@ -610,7 +462,7 @@ func TestResponseCapsNextSteps(t *testing.T) {
 	statusResp := mcpio.StatusResponse{
 		Freshness: mcpio.Freshness{StaleFilesSeen: intPtr(5)},
 	}
-	if n := len(statusHints(statusResp, 0)); n > mcpio.MaxNextSteps {
+	if n := len(statusHints(statusResp)); n > mcpio.MaxNextSteps {
 		t.Errorf("statusHints returned %d hints, max is %d", n, mcpio.MaxNextSteps)
 	}
 }

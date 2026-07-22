@@ -1,0 +1,160 @@
+{
+  "scenario": "Pebble work session - interface-laundered retention audit of the write batch before pooling it",
+  "repo": "pebble",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "pebble.rubric.yaml"
+  },
+  "scenario_quality": 0.67,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 4,
+    "related": 4,
+    "contradicted": 0,
+    "covered_recall": 0.5714,
+    "related_recall": 0.5714,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "dep:invalidating",
+      "dep:internaliteropts",
+      "dep:blockpropfilterer"
+    ],
+    "missed_related": [
+      "dep:invalidating",
+      "dep:internaliteropts",
+      "dep:blockpropfilterer"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "contract-handle",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:invalidating",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:iterv2interleave",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rangekeymask",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:internaliteropts",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:blockpropfilterer",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:walfailoverwriter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient on the handle",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "Nails all essentials fast: identifies Pebble as an embedded KV store, points to `pebble.Batch` at `batch.go:240`, and enumerates the direct holders (`indexedBatch`, `batchIter`, `iteratorBatchState`, commit queue slots). Even goes beyond the step's scope into indirect retainers, which is bonus for the downstream agent."
+        },
+        "specificity": {
+          "score": 0.98,
+          "rationale": "Every direct holder is cited with concrete file:line (`batch.go:1761`, `iterator.go:393`, `iterator.go:295`, etc.), and even mentions the pool sites `batchPool` at `batch.go:482`. No vague 'core write path' phrasing."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "Explains Batch is the write handle and notes existing pooling at the repr level, hinting at why pool reuse matters. Doesn't explicitly frame 'why direct holders alone aren't the whole story' as setup for step 2, though the immediate pivot into indirect retainers implies it."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Every claim is stamped 'confirmed at source' with no hedging or flags for what wasn't checked. For an orientation step this is defensible, but there's no explicit note on audit edges (e.g. other injection sites unverified)."
+        }
+      },
+      "step_quality": 0.865,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 508,
+        "cache_creation_input_tokens": 50061,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Find the retainers hidden behind abstractions",
+      "scores": {
+        "map_quality": {
+          "score": 0.75,
+          "rationale": "Strong coverage of WAL failover ring (recordQueueEntry/poppedEntry), point-iterator stack (mergingIterLevel, InterleavingIter), and range-key masking chain, plus the flushableBatch retainer. However, misses invalidating.iter (invariants-build wrapper) which the rubric explicitly names, and the bench/workload harness layer is not covered at all."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Each row cites struct file:line, the interface stored, the concrete carrier, and the injection/construction site (e.g. `wal/failover_writer.go:25` with injection at `db.go:908`, `merging_iter.go:25` injected at `db.go:1436`). Proof is provided per row as the rubric demands."
+        },
+        "justification": {
+          "score": 0.6,
+          "rationale": "The failover ring row explains why it's sharp (byte slice outlives Apply) and the flushable row calls out cross-goroutine exposure, but most rows don't explicitly explain why a field-type sweep misses them, and there's no visible false-positive check where an interface field candidate was ruled out."
+        },
+        "uncertainty": {
+          "score": 0.4,
+          "rationale": "Every row is labeled 'confirmed at source' with no may-hold cases, no flagged low-confidence candidates, and no acknowledgment that InjectLogging or SpanMask could receive non-batch satisfiers at other sites \u2014 the audit reads as fully certain despite obvious gaps (compaction scheduler, bench harness untouched)."
+        }
+      },
+      "step_quality": 0.705,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 575,
+        "cache_creation_input_tokens": 19256,
+        "cache_read_input_tokens": 30952
+      }
+    },
+    {
+      "step": "Produce the indirect-retention risk map",
+      "scores": {
+        "map_quality": {
+          "score": 0.35,
+          "rationale": "The answer never delivers the ranked risk map the step asks for: no explicit lifetime classification per row (per-call/per-connection/process-long), no goroutine-crossing flag column, and no risk ranking. It also drops retainers from the prior step \u2014 notably `invalidating.iter` and the full `rangeKeyMasking`/`BoundLimitedBlockPropertyFilter` chain is only half-mentioned in prose, not carried as a row."
+        },
+        "specificity": {
+          "score": 0.7,
+          "rationale": "Per-row file:line, abstraction, carrier, and injection sites are concrete and well-cited (e.g. `wal/failover_writer.go:25`, `db.go:908`, `db.go:1436`). But the top-risk proof owed \u2014 the actual `go` statement or background-loop registration for the flush goroutine and WAL failover monitor \u2014 is never cited with file:line."
+        },
+        "justification": {
+          "score": 0.4,
+          "rationale": "There is some argument (\"read by the flush goroutine, not the writer\", \"potentially long after the caller's Apply returned\"), but ranking is not argued from evidence because no ranking is produced, and there is no closing section on what the pooling change must check/avoid at top-risk points."
+        },
+        "uncertainty": {
+          "score": 0.3,
+          "rationale": "The answer says \"I'll state each as I confirm it\" and every row is marked \"confirmed at source\", but it never flags what was NOT verified (other injection sites, closures, third-party structs) nor calibrates confidence \u2014 and given the completed run at 299s/16k tokens, the missing rows are silently dropped rather than labeled low-confidence."
+        }
+      },
+      "step_quality": 0.44,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 602,
+        "cache_creation_input_tokens": 18910,
+        "cache_read_input_tokens": 30952
+      }
+    }
+  ]
+}

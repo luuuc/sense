@@ -45,6 +45,7 @@ const ServerInstructions = "When Sense is available and indexed, prefer Sense to
 	"WORKFLOWS:\n" +
 	"- Orientation (new to the codebase?) → sense_search with broad concepts + sense_conventions\n" +
 	"- Impact analysis (changing something?) → sense_blast\n" +
+	"- Lifecycle/retention audit (what HOLDS X, incl. behind an interface-typed field?) → sense_blast, then read retained_via_interfaces\n" +
 	"- Dependency tracing (who calls what?) → sense_graph\n" +
 	"- Debugging (where does X happen?) → sense_search\n" +
 	"- Refactoring (what patterns exist?) → sense_conventions + sense_graph\n\n" +

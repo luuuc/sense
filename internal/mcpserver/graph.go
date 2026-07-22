@@ -405,32 +405,34 @@ func compactDispatchInferred(edges []mcpio.DispatchInferredRef) {
 func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.NextStep {
 	var hints []mcpio.NextStep
 
-	totalCallers := len(resp.Edges.CalledBy)
+	shownCallers := len(resp.Edges.CalledBy)
 	if resp.TestCallerSummary != nil {
-		totalCallers += resp.TestCallerSummary.Count
+		shownCallers += resp.TestCallerSummary.Count
 	}
+	// Reach counts hidden callers too: a symbol with 2 shown and 73 below the
+	// confidence floor is a high-reach symbol, and the go glm/consul loss was
+	// exactly this shape - a NewServer call with 2 shown + 73 hidden fell
+	// through the old `>= 5 shown` gate, so the one hint that would have routed
+	// the model to sense_blast (where the retention ring lives) never fired.
+	reach := shownCallers + resp.LowConfidenceHidden
 	switch {
-	case totalCallers >= 5:
+	case reach >= 5:
+		// The single highest-value cross-tool jump: graph shows the callers,
+		// blast is the only tool that shows what HOLDS the symbol behind an
+		// interface-typed field (retained_via_interfaces). Name both, not just
+		// "change impact" - the "what holds it" phrasing is what a lifecycle
+		// audit needs and what graph alone can never answer.
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense_blast",
 			Args:   map[string]any{"symbol": resp.Symbol.Qualified},
-			Reason: fmt.Sprintf("%d callers found — check blast radius before changing this symbol", totalCallers),
+			Reason: fmt.Sprintf("%d callers reach this - run sense_blast for full change impact and what holds it (retained_via_interfaces, holders that keep it behind an interface and never name it)", reach),
 		})
-	case totalCallers == 0 && resp.LowConfidenceHidden > 0:
-		// Callers exist in the index but sit below the display floor — e.g.
-		// implicit-receiver calls to a method whose name is defined in several
-		// classes, stamped 0.3 by name-collision fallback. Surfacing the knob
-		// here stops an agent from reading the empty list as "unused".
-		args := map[string]any{"symbol": resp.Symbol.Qualified, "min_confidence": 0.3}
-		if direction == model.DirectionCallers {
-			args["direction"] = "callers"
+		if shownCallers == 0 && resp.LowConfidenceHidden > 0 && len(hints) < mcpio.MaxNextSteps {
+			hints = append(hints, lowConfidenceHint(resp, direction))
 		}
-		hints = append(hints, mcpio.NextStep{
-			Tool:   "sense_graph",
-			Args:   args,
-			Reason: fmt.Sprintf("%d low-confidence callers hidden — re-run with min_confidence=0.3 to view before assuming this is unused", resp.LowConfidenceHidden),
-		})
-	case totalCallers == 0 && !isTestFile(resp.Symbol.File):
+	case shownCallers == 0 && resp.LowConfidenceHidden > 0:
+		hints = append(hints, lowConfidenceHint(resp, direction))
+	case shownCallers == 0 && !isTestFile(resp.Symbol.File):
 		hints = append(hints, mcpio.NextStep{
 			Tool:   "sense_search",
 			Args:   map[string]any{"query": resp.Symbol.Name},
@@ -438,18 +440,27 @@ func graphHints(resp mcpio.GraphResponse, direction model.Direction) []mcpio.Nex
 		})
 	}
 
-	if direction == model.DirectionCallers && len(hints) < mcpio.MaxNextSteps {
-		hints = append(hints, mcpio.NextStep{
-			Tool:   "sense_graph",
-			Args:   map[string]any{"symbol": resp.Symbol.Qualified, "direction": "callees"},
-			Reason: "see what this symbol depends on",
-		})
-	}
-
 	if len(hints) > mcpio.MaxNextSteps {
 		hints = hints[:mcpio.MaxNextSteps]
 	}
 	return hints
+}
+
+// lowConfidenceHint surfaces the min_confidence knob when callers exist in the
+// index but sit below the display floor - implicit-receiver calls to a method
+// whose name is defined in several classes, stamped 0.3 by name-collision
+// fallback. The knob is invisible in the payload, so naming it stops an agent
+// from reading an empty caller list as "unused".
+func lowConfidenceHint(resp mcpio.GraphResponse, direction model.Direction) mcpio.NextStep {
+	args := map[string]any{"symbol": resp.Symbol.Qualified, "min_confidence": 0.3}
+	if direction == model.DirectionCallers {
+		args["direction"] = "callers"
+	}
+	return mcpio.NextStep{
+		Tool:   "sense_graph",
+		Args:   args,
+		Reason: fmt.Sprintf("%d low-confidence callers hidden - re-run with min_confidence=0.3 to view before assuming this is unused", resp.LowConfidenceHidden),
+	}
 }
 
 // ---------------------------------------------------------------

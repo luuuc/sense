@@ -1,0 +1,158 @@
+{
+  "scenario": "Pebble work session - interface-laundered retention audit of the write batch before pooling it",
+  "repo": "pebble",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "pebble.rubric.yaml"
+  },
+  "scenario_quality": 0.8395,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 5,
+    "related": 5,
+    "contradicted": 0,
+    "covered_recall": 0.7143,
+    "related_recall": 0.7143,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "dep:internaliteropts",
+      "dep:blockpropfilterer"
+    ],
+    "missed_related": [
+      "dep:internaliteropts",
+      "dep:blockpropfilterer"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "contract-handle",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:invalidating",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:iterv2interleave",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rangekeymask",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:internaliteropts",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:blockpropfilterer",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:walfailoverwriter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient on the handle",
+      "scores": {
+        "map_quality": {
+          "score": 0.88,
+          "rationale": "Lands all essentials without delay: Pebble named as a LevelDB/RocksDB-inspired LSM store, `pebble.Batch` pinned at `batch.go:240`, and all four direct-holder categories the rubric requires are present \u2014 `indexedBatch.batch` at `batch.go:488`, `batchIter.batch` at `batch.go:1762`, `Iterator.batch` at `iterator.go:393`, and commit-queue slots at `commit.go:137,143` \u2014 plus the pooling context (`batchPool`/`indexedBatchPool` at `batch.go:493`) that frames the whole audit. The `flushableBatch` flag at the end correctly cues the agent that direct holders alone are not the whole story."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Every cited item carries a concrete file:line (`batch.go:240`, `batch.go:488`, `batch.go:1762`, `iterator.go:393`, `commit.go:137,143`, `batch.go:493`); no entry is left as a vague \"core write path\" description, giving the agent immediately actionable locations."
+        },
+        "justification": {
+          "score": 0.82,
+          "rationale": "The answer states why Batch is central \u2014 callers build up `Set`/`Merge`/`Delete` ops and hand to `DB.Apply`/`Batch.Commit` \u2014 and frames the audit goal as \"widening that reuse safely\"; the `flushableBatch` boundary case concretely motivates why a field-type sweep misses the indirect layer, setting up the next task correctly."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "Only one explicit hedge is offered \u2014 `flushableBatch` \"straddles the boundary\" \u2014 and the `Applier` listing is included without confidence annotation; the answer would be stronger for the agent if it labeled which direct-holder lines it read versus inferred, given that several `commit.go` slots are described without quoting field declarations."
+        }
+      },
+      "step_quality": 0.831,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2883,
+        "cache_creation_input_tokens": 46469,
+        "cache_read_input_tokens": 0
+      }
+    },
+    {
+      "step": "Find the retainers hidden behind abstractions",
+      "scores": {
+        "map_quality": {
+          "score": 0.7,
+          "rationale": "The answer covers the WAL failover ring (recordQueueEntry/poppedEntry refCount rows #21-22), iterv2.InterleavingIter (#4-5), the invalidating-build wrapper (#7/#8), and the rangeKeyMasking SpanMask back-pointer (#17/21) \u2014 all named by the rubric \u2014 but the full rangeKeyMasking chain as described (pebble.internalIterOpts and sstable.BlockPropertiesFilterer's BoundLimitedBlockPropertyFilter) is never surfaced; the answer traces only to the SpanMask interface assignment at db.go:1312 and stops, leaving the downstream masking structs unconfirmed."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Nearly every row carries the exact struct file:line, declared interface type, named concrete carrier, and a pinned injection site (e.g., recordQueueEntry.refCount wal/failover_writer.go:25, wal.RefCount, *Batch via Ref/Unref batch.go:288/295, injection db.go:908/950 \u2192 wal/failover_writer.go:540); the handful of gaps ('wrapper field types not read', 'field decl line not read', 'wrapFn setters not traced') are explicitly labeled rather than silently filled."
+        },
+        "justification": {
+          "score": 0.75,
+          "rationale": "The strongest cases are well-argued: the masking back-pointer is called out as 'invisible to any forward field walk', the flushable aliasing is proven with 'no copy (batch.go:2009)' plus the db.go:850 nil-out showing already-decoupled lifetimes, and the standalone WAL path is flagged as having 'no refcount protocol at all'; however, for the bulk of Tier-2 iterator rows the sweep-miss reasoning is implied by structure rather than stated per-row, and the false-positive clearance section (Applier, external_iterator.go) is the only explicit check-and-discard demonstration."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Evidence labels are applied consistently ('confirmed at source', 'confirmed at injection; wrapper field types not read', 'Unknown' for wrapFn goroutine crossing), the ingest path is bounded as 'Bounded \u2014 synchronous wait', and the final 'What the pooling change must check or avoid' section converts open-trace gaps directly into action items rather than asserting completion; the one uncalibrated area is the sstable masking chain, which is simply absent rather than flagged as unconfirmed."
+        }
+      },
+      "step_quality": 0.7825,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2368,
+        "cache_creation_input_tokens": 24341,
+        "cache_read_input_tokens": 22412
+      }
+    },
+    {
+      "step": "Produce the indirect-retention risk map",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "All 32 rows carry over with a clean three-tier structure ranked process-long/goroutine-crossing first; the rubric's named retainers (invalidating.iter, iterv2.InterleavingIter, rangeKeyMasking back-pointer, WAL failover ring) all appear with correct lifetime classes and crossing flags. The one minor gap is that the invalidating.iter wrapper from the invariants build (#17) is not promoted to its own named Tier-1 row even though it wraps a batch-level that lives at the Tier-2 boundary."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every row supplies file:line, abstraction, concrete carrier, injection site, and crossing flag; the top-risk proofs are exceptional \u2014 two independent goroutine-crossing proofs for WAL failover (monitorLoop at wal/failover_manager.go:335-336 and switchToNewDir's runAsync at wal/failover_writer.go:611), the large-batch go-statement at compaction.go:1389, and the compaction scheduler at compaction_scheduler.go:306. The eight-point 'what the pooling change must check' section is directly actionable with precise citations."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "Tier rankings are argued from evidence, not asserted \u2014 the standalone WAL path is singled out as having 'no refcount protocol at all' with the dropped-RefCount line at wal/standalone_manager.go:307 cited, and the large-batch aliasing hazard is explained via db.go:850 already nillingbatch.data while the flushable keeps the alias. The one partial gap is that Tier-2's 'same goroutine' classification is stated as a convention rather than shown by the absence of any cross-goroutine handoff in the iterator-creation paths."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Three rows are flagged with explicit gaps: wrapFn setters untraced (#23), invariants wrapper field types not read (#17), compaction scheduler field decl line not read (#8); and a 'Candidates I checked and cleared' section records honest false positives. The one omission is that iterTracker/inflight is noted as 'not read to the bottom' but is not promoted to a labeled uncertain row \u2014 the agent would need to re-check that thread manually."
+        }
+      },
+      "step_quality": 0.905,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1765,
+        "cache_creation_input_tokens": 24223,
+        "cache_read_input_tokens": 22412
+      }
+    }
+  ]
+}

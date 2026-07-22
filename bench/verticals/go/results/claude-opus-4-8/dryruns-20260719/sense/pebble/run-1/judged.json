@@ -1,0 +1,152 @@
+{
+  "scenario": "Pebble work session - interface-laundered retention audit of the write batch before pooling it",
+  "repo": "pebble",
+  "judge": {
+    "model": "claude-sonnet-4-6",
+    "prompt_version": "v1",
+    "rubric_path": "pebble.rubric.yaml"
+  },
+  "scenario_quality": 0.9357,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 7,
+    "related": 7,
+    "contradicted": 0,
+    "covered_recall": 1.0,
+    "related_recall": 1.0,
+    "grounded_precision": 1.0,
+    "missed_covered": [],
+    "missed_related": [],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "contract-handle",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:invalidating",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:iterv2interleave",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rangekeymask",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:internaliteropts",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:blockpropfilterer",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:walfailoverwriter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient on the handle",
+      "scores": {
+        "map_quality": {
+          "score": 1.0,
+          "rationale": "All four rubric-named direct holders are present with file:line anchors \u2014 batchIter (batch.go:1761), indexedBatch (batch.go:488), commitQueue ring (commit.go:25), iteratorBatchState (iterator.go:392) \u2014 Pebble is correctly characterized, Batch defined at batch.go:240, and the flushableBatch bridge is flagged as the transition point into abstract retention, saving the agent any re-exploration of direct holders."
+        },
+        "specificity": {
+          "score": 1.0,
+          "rationale": "Every holder carries a concrete file:line anchor (batch.go:240 for the type definition, batch.go:488, batch.go:1761, commit.go:25, iterator.go:392) plus test-tooling holders at metamorphic/test.go:47 and replay/replay.go:621 \u2014 nothing is left as vague prose."
+        },
+        "justification": {
+          "score": 0.9,
+          "rationale": "\"DB.Set/Delete/Merge/\u2026 build a transient Batch internally, so this is the single funnel for all writes\" establishes centrality clearly, and the explicit note that flushableBatch is \"the bridge from direct holding into abstract (interface-typed) retention, which is where Task 2 needs to look\" directly sets up why direct holders alone are insufficient."
+        },
+        "uncertainty": {
+          "score": 0.8,
+          "rationale": "No uncertainty needs flagging for well-confirmed direct struct fields, and the answer is appropriately confident; the only subtle hedge is the implicit \"Task 2 needs to look\" framing for the abstract-retention layer, which correctly marks the boundary of what this step can confirm versus what remains to be established."
+        }
+      },
+      "step_quality": 0.95,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1738,
+        "cache_creation_input_tokens": 19902,
+        "cache_read_input_tokens": 22412
+      }
+    },
+    {
+      "step": "Find the retainers hidden behind abstractions",
+      "scores": {
+        "map_quality": {
+          "score": 0.95,
+          "rationale": "All four retainer families named in the rubric are present with injection sites: WAL failover ring (rows 1-2, `recordQueueEntry`/`poppedEntry.refCount` at `wal/failover_writer.go:25,31`, injected at `db.go:950`), `invalidating.iter` (row 5, `internal/invalidating/iter.go:27`, `db.go:1502`), `iterv2.InterleavingIter` (rows 13-14, `internal/iterv2/interleaving_iter.go:26-27`, `db.go:1578-1582`), and the full rangeKeyMasking chain (rows 7-9, InterleavingIterOpts.Mask \u2192 internalIterOpts.boundLimitedFilter \u2192 BlockPropertiesFilterer.boundLimitedFilter with file_cache.go:686 bridging into the sstable layer). The answer also surfaces `flushableEntry.flushable` (row 10), `compact.Iter.iter` (row 16), the scheduler back-ref cycle (rows 17-18), and the bench harness (row 19), none of which a field-type sweep would find \u2014 each with a construction/injection site."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every row carries struct file:line, the exact interface type stored, the concrete carrier, and at least one injection/construction site file:line \u2014 e.g. row 9: `sstable/block_property.go:664`, interface `BoundLimitedBlockPropertyFilter`, carrier `*rangeKeyMasking`, injection chain `db.go:1377` \u2192 `file_cache.go:686` \u2192 `sstable/block_property.go:687`. The proof section re-pins goroutine crossings with additional sites (`record/log_writer.go:595`, `compaction.go:1389`, `compaction_scheduler.go:306`), going beyond the rubric's \"construction/injection site\" ask."
+        },
+        "justification": {
+          "score": 0.83,
+          "rationale": "The answer demonstrates real checking rather than type-compatibility reasoning: two Sense-reported candidates are explicitly rejected with source-confirmed reasons (`record.Writer` flusher is a file flusher, `SpanIterOptions.BlockPropertyFilter` has no found injection site), and \"confirmed at source\" tags distinguish verified rows from unverified ones. However, the per-row explanation of WHY a field-type sweep misses it is implicit (the interface type is named, the concrete carrier is named, but the sweep-miss reasoning is not stated row-by-row \u2014 the agent must infer it from the interface/concrete distinction)."
+        },
+        "uncertainty": {
+          "score": 0.88,
+          "rationale": "Row 20 is explicitly labeled \"UNCONFIRMED \u2014 reported by Sense, no production injection site confirmed,\" row 9 is hedged as \"plausible \u2014 file-cache iterators outlive the calling frame,\" and the `SpanIterOptions` rejection is labeled \"unconfirmed-negative\" rather than clean falsification. The distinction between \"confirmed at source\" and Sense-reported throughout the tables gives the consuming agent a clear epistemic gradient rather than a flat list."
+        }
+      },
+      "step_quality": 0.9155,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2300,
+        "cache_creation_input_tokens": 20026,
+        "cache_read_input_tokens": 22412
+      }
+    },
+    {
+      "step": "Produce the indirect-retention risk map",
+      "scores": {
+        "map_quality": {
+          "score": 0.97,
+          "rationale": "All 20 retention points from the previous step are carried forward in a single ranked table with no drops; each row supplies lifetime class (per-call/per-session/process-long) derived from construction sites, an explicit goroutine-crossing flag, and the rejected candidates are called out so they cannot re-enter. Risk ordering is correct: process-long+crossing rows (#10, #16, #1-2, #17-18, #19) lead, the file-cache plausible case (#9) is separated, and per-session no-crossing rows fill the tail."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every table row carries file:line for the retainer, the abstraction's declared type with its own file:line, the concrete carrier, lifetime, and crossing flag; the top-risk proof sections supply the injection site AND the exact go-statement or callback registration that proves the goroutine crossing (e.g. `go d.flush()` at `compaction.go:1389`, `go s.periodicGranter()` at `compaction_scheduler.go:306`, `go func(){ pprof.Do(\u2026, r.flushLoop) }()` at `record/log_writer.go:595`); the six pooling-change checks each cite the specific site the teammate must inspect or gate."
+        },
+        "justification": {
+          "score": 0.92,
+          "rationale": "Ranking is argued from first principles for each row: the flush-goroutine crossing is proved by tracing `go d.flush()` through `flush1` \u2192 `newInputIters` \u2192 `compact.NewIter`; the WAL crossing by `doneSyncCallback` running on the LogWriter flush goroutine; the scheduler crossing by `go s.periodicGranter()` firing inside `Register` itself; the six pooling checks each explain the mechanism that makes the check necessary (e.g. `batch.data` aliasing, `Commit`-is-not-last-reader on `ApplyNoSyncWait`) rather than just asserting them."
+        },
+        "uncertainty": {
+          "score": 0.88,
+          "rationale": "Row 20 is labeled `UNCONFIRMED \u2014 no production injection site found; likely test-only`; row 9 is labeled `plausible \u2014 file-cache iterators outlive the calling frame`; both rejected candidates are listed with their falsifying evidence; the WAL scope is bounded to the failover manager only, with `standaloneWriter` explicitly exonerated; check #5 names a specific thing still needing verification (`verify those filterers are cleared on iterator close`). The one gap is that the answer does not state which broader categories of code (closures, third-party consumers, external test harnesses beyond `bench/`) were out of scope for the search."
+        }
+      },
+      "step_quality": 0.9415,
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1839,
+        "cache_creation_input_tokens": 19769,
+        "cache_read_input_tokens": 22412
+      }
+    }
+  ]
+}

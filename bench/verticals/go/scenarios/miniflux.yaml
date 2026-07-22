@@ -1,0 +1,61 @@
+name: miniflux - audit what retains the storage layer before a contract change
+repo: miniflux
+# BALLAST / CONTROL CELL. The small seat under the 6->4 ruling
+# (set = 2 big + 1 medium + 1 small). Its job is HONESTY, not a win:
+# same question shape as the two paid wins (dolt, pebble) on a SMALL repo where
+# the answer is textually enumerable, so a tie is the expected and acceptable
+# result. Recording a measured tie is the point (control_bound.py, never predicted).
+#
+# $0 SCREEN (this session, MCP stdio at BOTH bands, miniflux-storage-{03,07}.txt):
+# storage.Storage: 0.3 band 46 files, 0.7 band 52, 38 in BOTH; 14 of those are
+# composition holders (structs retaining *storage.Storage). Gold = the 12
+# out-of-package holders, each hand-verified in source this session (field line
+# grepped and read; the 2 in-package holders in internal/storage/ were CUT per the
+# out-of-package gold rail). Ring: retained_via_interfaces is EMPTY on this anchor,
+# there is no interface laundering in miniflux, holders name the concrete type.
+#
+# PREDICTED CONTROL ~1.0: every gold file contains the literal string
+# `*storage.Storage`, so one grep reconstructs the whole set. Predicted, then
+# MEASURED by the baseline probe: a tie concluded from the proxy alone would
+# violate the never-conclude-tie-from-a-proxy law.
+description: 'You are a maintainer of this feed reader about to change the contract
+  of the storage layer: how the database handle is constructed, passed around and
+  held for the lifetime of a subsystem. Before touching it you need a complete audit
+  of the production code that RETAINS that handle — the structs and subsystems that
+  keep it alive in a field rather than receiving it per call — so the change does not
+  leave a subsystem holding a stale handle. Keep every answer concrete with file:line
+  so a teammate can act on the audit without re-exploring the codebase.'
+steps:
+- name: Audit every production holder that retains the storage handle
+  prompt: "Task: this is the whole ticket. Find EVERY place in production code (not
+    tests) that RETAINS the storage handle — a struct field or subsystem that keeps
+    it alive beyond a single call, rather than taking it as a parameter and dropping
+    it. Be exhaustive and group by area. TRANSCRIBE every holder individually with
+    the file:line of its retaining field and one phrase on what that subsystem does;
+    do not collapse a set into 'the handlers'. A missed holder is a stale handle
+    shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the holder set across areas
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold: 12 hand-verified out-of-package retaining fields at the current pin.
+# One item per FILE. All 12 present in the MCP-shown payload at BOTH 0.3 and 0.7.
+gold:
+  - {id: api-handler,        group: holders, match: [internal/api/api.go], relation: "api.handler.store *storage.Storage at :14 - REST API handler retains the store"}
+  - {id: api-middleware,     group: holders, match: [internal/api/middleware.go], relation: "api.middleware.store *storage.Storage at :17 - API auth middleware retains the store"}
+  - {id: fever-handler,      group: holders, match: [internal/fever/handler.go], relation: "fever.feverHandler.store *storage.Storage at :27 - Fever API handler retains the store"}
+  - {id: greader-handler,    group: holders, match: [internal/googlereader/handler.go], relation: "googlereader.greaderHandler.store *storage.Storage at :68 - Google Reader API handler retains the store"}
+  - {id: greader-middleware, group: holders, match: [internal/googlereader/middleware.go], relation: "googlereader.authMiddleware.store *storage.Storage at :22 - Google Reader auth middleware retains the store"}
+  - {id: metric-collector,   group: holders, match: [internal/metric/metric.go], relation: "metric.collector.store *storage.Storage at :147 - Prometheus collector retains the store for periodic gauges"}
+  - {id: icon-checker,       group: holders, match: [internal/reader/icon/checker.go], relation: "icon.iconChecker.store *storage.Storage at :17 - favicon refresh checker retains the store"}
+  - {id: opml-handler,       group: holders, match: [internal/reader/opml/handler.go], relation: "opml.Handler.store *storage.Storage at :17 - OPML import/export retains the store"}
+  - {id: authproxy-mw,       group: holders, match: [internal/ui/auth_proxy_middleware.go], relation: "ui.authProxyMiddleware.store *storage.Storage at :19 - reverse-proxy auth middleware retains the store"}
+  - {id: ui-handler,         group: holders, match: [internal/ui/handler.go], relation: "ui.handler.store *storage.Storage at :17 - web UI handler retains the store"}
+  - {id: websession-mw,      group: holders, match: [internal/ui/web_session_middleware.go], relation: "ui.webSessionMiddleware.store *storage.Storage at :20 - web session middleware retains the store"}
+  - {id: worker,             group: holders, match: [internal/worker/worker.go], relation: "worker.worker.store *storage.Storage at :20 - background feed-refresh worker retains the store"}

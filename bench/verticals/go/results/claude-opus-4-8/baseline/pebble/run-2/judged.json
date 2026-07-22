@@ -1,0 +1,158 @@
+{
+  "scenario": "Pebble work session - interface-laundered retention audit of the write batch before pooling it",
+  "repo": "pebble",
+  "judge": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v1",
+    "rubric_path": "pebble.rubric.yaml"
+  },
+  "scenario_quality": 0.6575,
+  "relationship_audit": {
+    "total": 7,
+    "covered": 5,
+    "related": 5,
+    "contradicted": 0,
+    "covered_recall": 0.7143,
+    "related_recall": 0.7143,
+    "grounded_precision": 1.0,
+    "missed_covered": [
+      "dep:internaliteropts",
+      "dep:blockpropfilterer"
+    ],
+    "missed_related": [
+      "dep:internaliteropts",
+      "dep:blockpropfilterer"
+    ],
+    "contradictions": [],
+    "items": [
+      {
+        "id": "contract-handle",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:invalidating",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:iterv2interleave",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:rangekeymask",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      },
+      {
+        "id": "dep:internaliteropts",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:blockpropfilterer",
+        "covered": false,
+        "related": false,
+        "contradicted": false
+      },
+      {
+        "id": "dep:walfailoverwriter",
+        "covered": true,
+        "related": true,
+        "contradicted": false
+      }
+    ]
+  },
+  "steps": [
+    {
+      "step": "Orient on the handle",
+      "scores": {
+        "map_quality": {
+          "score": 0.9,
+          "rationale": "Lands the essentials fast: identifies Pebble as an LSM KV store, names Batch in batch.go:240, and enumerates the direct holders (indexedBatch, batchIter, Iterator, commit-queue slots, flushableBatch, harnesses). Even mentions existing pooling (batchPool/indexedBatchPool), which is directly relevant to the pooling task."
+        },
+        "specificity": {
+          "score": 0.95,
+          "rationale": "Every cited path is concrete file:line (batch.go:240, batch.go:488, batch.go:1761, iterator.go:393, commit.go:137/143, metamorphic/test.go:65, replay/replay.go:627) with the field name and type \u2014 no vague 'the core write path' phrasing."
+        },
+        "justification": {
+          "score": 0.7,
+          "rationale": "Sets up why Batch is central by naming the operations callers accumulate (Set/Delete/Merge/RangeKeySet before Commit/Apply) and flags existing pooling, but doesn't explicitly say 'every write goes through one' or foreshadow that direct holders are insufficient before diving into Step 2."
+        },
+        "uncertainty": {
+          "score": 0.6,
+          "rationale": "The Step 1 block itself doesn't flag any unknowns \u2014 direct holders are asserted flat. Uncertainty discipline is strong later in Step 2/3 (evidence tags, 'inference not confirmed'), but for the orientation step there's no hedging on the enumeration."
+        }
+      },
+      "step_quality": 0.8275,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 543,
+        "cache_creation_input_tokens": 21402,
+        "cache_read_input_tokens": 30952
+      }
+    },
+    {
+      "step": "Find the retainers hidden behind abstractions",
+      "scores": {
+        "map_quality": {
+          "score": 0.85,
+          "rationale": "Surfaces the key interface-laundered retainers the rubric names: invalidating/interleaving iter chain (R4, R20), rangeKeyMasking\u2192parent Iterator\u2192batch (R10), WAL failover ring recordQueueEntry/poppedEntry (R11-R13), plus compaction scheduler and flushable chain. Missing an explicit invalidating.iter row and the answer truncates mid-sentence on R22 (BoundedIter/Defragmenting), leaving a range-key retainer unfinished."
+        },
+        "specificity": {
+          "score": 0.9,
+          "rationale": "Each row gives struct file:line, the stored interface, the concrete carrier, and a concrete construction/injection site (e.g. `db.go:1578-1581`, `wal/failover_writer.go:529-543`, `compaction.go:844`) \u2014 proof is delivered per row as the rubric demands, not deferred."
+        },
+        "justification": {
+          "score": 0.8,
+          "rationale": "Explains why field-type sweeps miss each (interface fields, transitive parent pointers) and shows real wiring checks (e.g. R14 noting `standaloneWriter` discards the RefCount so retention depends on which concrete impl is installed). Doesn't explicitly discuss candidates that turned out to be false positives."
+        },
+        "uncertainty": {
+          "score": 0.85,
+          "rationale": "Labels each row 'confirmed at source' vs inference (R18 external-implementation risk flagged as inference; R24 notes the install-site is not individually confirmed; R6 flagged as transitive-only). The mid-sentence truncation at R22 is itself an undeclared gap rather than a labeled unconfirmed row."
+        }
+      },
+      "step_quality": 0.8525,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 621,
+        "cache_creation_input_tokens": 21817,
+        "cache_read_input_tokens": 30952
+      }
+    },
+    {
+      "step": "Produce the indirect-retention risk map",
+      "scores": {
+        "map_quality": {
+          "score": 0.25,
+          "rationale": "The answer never produces the final ranked risk map that Step 3 explicitly asks for \u2014 it continues enumerating retainers from Step 2 (R1\u2013R24) and cuts off mid-sentence at R22. No rows carry a lifetime class, no goroutine-crossing column, no risk ranking, and no 'what pooling must check/avoid' closing section."
+        },
+        "specificity": {
+          "score": 0.4,
+          "rationale": "Individual retainer rows have concrete file:line and injection sites (e.g. `wal/failover_manager.go:335-337`, `db.go:908`), but the required per-row schema (abstraction / carrier / lifetime / crossing flag) is absent and the top-risk proof block never arrives."
+        },
+        "justification": {
+          "score": 0.2,
+          "rationale": "Some crossing evidence is argued in prose (R23 monitor goroutine rewriting `entries[i].p`), but there is no ranking argument from evidence because no ranking exists. Risk ordering by process-long/goroutine-crossing is never performed."
+        },
+        "uncertainty": {
+          "score": 0.35,
+          "rationale": "A few rows honestly flag inference vs confirmation (R18 external scheduler 'inference, not confirmed'; R24 'not individually confirmed line'), but the answer's truncation itself is unflagged and no statement of what was NOT audited (closures, third-party carriers, other injection sites) is given."
+        }
+      },
+      "step_quality": 0.2925,
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 527,
+        "cache_creation_input_tokens": 21644,
+        "cache_read_input_tokens": 30952
+      }
+    }
+  ]
+}

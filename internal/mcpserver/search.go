@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -153,38 +152,16 @@ func assembleSearchResponse(entries []mcpio.SearchResultEntry, uniqueFiles map[s
 	}
 }
 
-func searchHints(resp mcpio.SearchResponse) []mcpio.NextStep {
-	var hints []mcpio.NextStep
-
-	if len(resp.Results) > 0 && float64(resp.Results[0].Score) >= 0.8 {
-		hints = append(hints, mcpio.NextStep{
-			Tool:   "sense_graph",
-			Args:   map[string]any{"symbol": resp.Results[0].Symbol},
-			Reason: "strong match — explore its relationships",
-		})
-	}
-
-	if len(hints) < mcpio.MaxNextSteps {
-		fileCounts := map[string]int{}
-		for _, r := range resp.Results {
-			if r.File != "" {
-				fileCounts[r.File]++
-			}
-		}
-		for _, r := range resp.Results {
-			if r.File != "" && fileCounts[r.File] >= 3 {
-				hints = append(hints, mcpio.NextStep{
-					Tool:   "sense_conventions",
-					Args:   map[string]any{"domain": filepath.Dir(r.File)},
-					Reason: "cluster of related symbols — check conventions in this area",
-				})
-				break
-			}
-		}
-	}
-
-	if len(hints) > mcpio.MaxNextSteps {
-		hints = hints[:mcpio.MaxNextSteps]
-	}
-	return hints
+// searchHints returns nothing by design. Both hints it used to emit -
+// "strong match, explore its relationships" (the single most-issued hint in the
+// go campaign, 126 of 605) and "cluster, check conventions in this area" (108)
+// - only restated the payload: the top result's symbol, score and file are
+// already in the response, and "go look at it" adds no information the model
+// does not have. Over 605 issuances next_steps was obeyed 7% of the time on the
+// next call; a channel that fires 11 times a session is noise, so a hint now
+// has to name a tool, knob or gap that is NOT in the current payload to earn its
+// slot. Neither of these did. Kept as a named no-op so the wiring stays uniform
+// and a future load-bearing search hint has an obvious home.
+func searchHints(mcpio.SearchResponse) []mcpio.NextStep {
+	return nil
 }

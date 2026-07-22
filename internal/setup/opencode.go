@@ -97,9 +97,11 @@ export const sense = async () => {
           throw new Error(
             "You have read " + reads + " files. Stop reading file by file and " +
             "navigate structurally with Sense: sense_graph for who-calls-what " +
-            "(callers and callees), sense_search to find code by meaning, " +
-            "sense_conventions for the project's patterns. Read a file only after " +
-            "Sense points you to it."
+            "(callers and callees), sense_blast for what breaks or what HOLDS a " +
+            "symbol (its retained_via_interfaces lists holders that keep it behind " +
+            "an interface-typed field and never name it), sense_search to find code " +
+            "by meaning, sense_conventions for the project's patterns. Read a file " +
+            "only after Sense points you to it."
           )
         }
       }

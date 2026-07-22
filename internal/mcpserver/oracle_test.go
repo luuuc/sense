@@ -200,7 +200,15 @@ func oracleDigest(t *testing.T, calls []labeledCall) (string, []string) {
 // so the old wording was false whenever the collapsed caller was first
 // delivered by a call on a different symbol — digest moved. Counts and keys
 // are unchanged.
-const oracleGolden = "f828538af81dd76968dd9eafc73a539738f51fa9629988d33913adec6b7ee922"
+// next_steps made rare and load-bearing (a hint must name a tool/knob/gap NOT
+// in the payload): searchHints and conventionsHints are now no-ops, the
+// blast risk="high" and status session-start hints are dropped, and the graph
+// callers->callees filler is gone. The fixture's search/auth next_steps went
+// from the strong-match graph hint to [], and the blast/verify no-test-coverage
+// hint reason lost its em-dash (project no-em-dash rule) - both are the only
+// response changes. Every surviving hint (blast no-test-coverage, graph
+// zero-caller search, not_found search) is otherwise unchanged. digest moved.
+const oracleGolden = "d6c4a95cbcc3d3dddb34cec2440e6e6b94c30a34a81c9c1f84d77ebf2c2b5b5b"
 
 func TestMCPServerResponseOracle(t *testing.T) {
 	got, content := oracleDigest(t, collectOracleCalls(t))

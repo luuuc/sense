@@ -1,0 +1,169 @@
+name: dolt work session - audit what retains access into the core database object before a lifecycle rework
+repo: dolt
+# FULL 7-STEP SCENARIO, authored after the battery-(d) probe passed
+# BOTH arms of the dry-run gate (first candidate of the campaign to do so):
+# baseline 7/12 cited (dropped cli_context/metrics_listener/dialprovider/
+# cs_metrics_wrapper/pull_chunk_tracker); sense 10/12 cited from ONE blast whose
+# payload held 12/12 (+0.60 on the dropped-5 discriminator). Per-item stdio
+# probes: all 12 gold in the MCP-shown payload at BOTH min_confidence 0.3 AND
+# 0.7 (scratchpad mcp-dolt-{03,07}.json). The 2 sense misses (metrics_listener,
+# dialprovider) were transcription drops of held payload rows, the audit step
+# below forces transcription (php-laravel facts-not-suggestions lesson).
+# Probe preserved: dolt.container-probe.20260719.bak. Step 4 prompt extends the
+# probe prompt; gold unchanged (12 hand-verified at pin 7e268bfa).
+#
+# Single-prompt session bench: steps worked in order in ONE session. Rendered:
+# description + step name/prompt ONLY. Neutral: no paths, type names, counts,
+# or tool names in rendered text.
+description: 'You are a maintainer of this database about to rework the lifecycle
+  of the core database object: how the storage root is tracked and swapped, how
+  chunk storage is reached, and how query access is handed out to sessions and
+  commands. Before touching it, you need a complete audit of the production code
+  that RETAINS access into that object or its storage lifecycle today — including
+  holders that keep it behind a field typed as something else and never name the
+  core type — so the rework does not silently break or leak through one of them.
+  Work through the tasks below one at a time; each builds on what you learned in
+  the previous one. Keep every answer concrete with file:line so the next step
+  (and a teammate opening the PR) can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths: what is this
+    project, how is the code organized, and where does the object you are about to
+    rework live — the core database object that commands and sessions operate
+    through, and the storage layers it is built on? Hand the next agent a map so
+    they can act with small targeted lookups, not a fresh exploration. No Explore
+    agents.
+    "
+  checks:
+  - type: word
+    value: doltdb
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+- name: Map the storage lifecycle contract
+  prompt: "Task: map the contract you are about to change. How is the storage root
+    tracked and swapped today, how is chunk storage reached from the core object,
+    and what are the layers between a query and the bytes on disk? Give file:line
+    for each layer and one phrase on its role, so a teammate knows the current
+    contract before touching it.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how query access is handed out
+  prompt: "Task: trace how query access reaches a consumer. Start where a command
+    or session asks for the ability to run queries, follow how that access is
+    constructed and handed over, and end where it is retained for later use. Give
+    file:line for each hop, in order.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every production holder that retains access into the core database lifecycle
+  prompt: "Task: this is the core of the ticket. Find EVERY place in production
+    code (not tests) that RETAINS access into the core database object or its
+    storage lifecycle — a struct field, cache, or config that keeps a handle to it
+    or to the storage layers it is built on, so a lifecycle rework cannot silently
+    break or leak through one. Be exhaustive and group by area. The easy-to-miss
+    kind: holders whose field is typed as a narrow interface the core object (or
+    one of its storage layers) satisfies, so the file never names the core type at
+    all. TRANSCRIBE every holder you find into the answer individually — do not
+    collapse a set into 'several wrappers' or keep a tool's list in your head; a
+    holder you saw but did not write down with its file:line is a holder missed.
+    For each holder give file:line of the retaining field and one phrase on how it
+    reaches the core object. A missed holder is a stale handle shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the cross-package holder ring, not just direct users
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace the narrowed-interface routes
+  prompt: "Task: for the holders you found that keep access behind a field typed as
+    something other than the core type, trace each route mechanically: the field,
+    the interface it is typed as, and how the core object (or its storage layer)
+    ends up behind that interface at runtime. Give file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the lifecycle rework
+  prompt: "Task: assess the full blast radius of changing the storage-root and
+    access lifecycle: which holders are at risk, which are most likely to break or
+    leak, and what must be re-verified after the change, across every area you
+    found. Pay special attention to holders with no compile-time tie to the core
+    type — a lifecycle change reaches them with no signal. Be complete, use
+    file:line, rank by risk.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the scattered holders by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the core object
+    and storage layers you will edit, every holder that must be reviewed or
+    re-verified grouped by area and route, and the tests that must be updated or
+    added. Use file:line throughout, so a teammate could land the change from your
+    map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: test
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Mini-gold carried unchanged from the probe: 12 hand-verified retaining holders
+# at pin 7e268bfa; all 12 in the MCP-shown blast payload at BOTH 0.3/0.7.
+# Discriminator = the baseline-dropped 5 (pergroup measures `dropped`).
+gold:
+  - {id: dbfactory-file,    group: found, match: [go/libraries/doltcore/dbfactory/file.go], relation: "singletonDB.ddb datas.Database at :89 - factory caches the underlying database handle"}
+  - {id: backups-table,     group: found, match: [go/libraries/doltcore/sqle/dtables/backups_table.go], relation: "BackupsTable.db dsess.SqlDatabase at :30 - system table retains session database access"}
+  - {id: datas-roottracker, group: found, match: [go/store/datas/database_common.go], relation: "database.rt rootTracker at :39 - narrowed ChunkStore interface tracking the storage root"}
+  - {id: prolly-nodestore,  group: found, match: [go/store/prolly/tree/node_store.go], relation: "nodeStore.store chunks.ChunkStore at :65"}
+  - {id: types-valuestore,  group: found, match: [go/store/types/value_store.go], relation: "ValueStore.cs chunks.ChunkStore at :75 - value layer retains the chunk store"}
+  - {id: remotesrv-cache,   group: found, match: [go/utils/remotesrv/cscache.go], relation: "LocalCSCache.dbs map[string]remotesrv.RemoteSrvStore at :33 - remote-serving cache retains per-repo store handles"}
+  - {id: spec-db,           group: found, match: [go/store/spec/spec.go], relation: "Spec.db *datas.Database at :155 - spec lazily retains the database handle"}
+  # the baseline-dropped 5: THE DISCRIMINATOR
+  - {id: cli-queryist,      group: dropped, match: [go/cmd/dolt/cli/cli_context.go], relation: "LateBindQueryistResult.Queryist field at :29 - CLI retains query access via the Queryist interface, never names DoltDB"}
+  - {id: metrics-cluster,   group: dropped, match: [go/cmd/dolt/commands/sqlserver/metrics_listener.go], relation: "metricsListener.clusterStatus clusterdb.ClusterStatusProvider at :67"}
+  - {id: cluster-dial,      group: dropped, match: [go/libraries/doltcore/sqle/cluster/dialprovider.go], relation: "grpcDialProvider.orig dbfactory.GRPCDialProvider at :35"}
+  - {id: cs-metrics,        group: dropped, match: [go/store/chunks/cs_metrics_wrapper.go], relation: "CSMetricWrapper.cs ChunkStore at :56 - metrics wrapper retains the chunk store"}
+  - {id: pull-hasmanyer,    group: dropped, match: [go/store/datas/pull/pull_chunk_tracker.go], relation: "TrackerConfig.HasManyer at :30 - pull tracker retains chunk-presence access via a one-method interface"}

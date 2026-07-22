@@ -1,0 +1,67 @@
+# matrix-plan.yaml: go (FRESH CAMPAIGN, stamped at Loop 1 after the go-vertical
+# reset; LEDGER ruling/go-vertical-reset-executed). Arm POLICY is carried from the closed
+# campaign's plan (a maintainer cap/budget ruling, not a bench verdict): python-django
+# arm plan refreshed to the current model roster: Codex gpt-5.6, Kimi K3, and the
+# Ollama-cloud arms glm-5.2:cloud and mistral-large-3:cloud (replacing the retired
+# devstral-small-2/qwen3-coder-next and their interim 123b/397b stand-ins). The repo slate is
+# EMPTY by design: Loop 2 composes it fresh against loops/LAWS.md; nothing from the legacy
+# slate carries seniority.
+
+vertical: go
+headline:
+  arm: claude-opus-4-8
+  runner: bench-sense-local.sh    # RUNS=2 law applies here only
+
+arms:
+  - name: kimi-for-coding_k3
+    model: kimi-for-coding/k3
+    runner: opencode-run.sh
+    subscription: kimi-for-coding
+    weekly_ceiling: cap-windowed (weekly; exact quota per provider dashboard)
+    big_repo_budget: 2
+    pool: none
+    adoption_preflight: sense setup (full); opencode.json MCP + AGENTS.md + warm cold start
+    prompt_file: maintainer-local arm prompt (04-bench-opencode-kimi)
+  - name: ollama-cloud_glm-5.2
+    model: glm-5.2:cloud
+    runner: opencode-run.sh
+    subscription: ollama-cloud (SHARED with mistral)
+    weekly_ceiling: shared pool, see pools
+    big_repo_budget: 2
+    pool: ollama-weekly
+    adoption_preflight: sense setup (full); opencode MCP registration; verify the model id resolves before cell 1
+    prompt_file: maintainer-local arm prompt (05-bench-opencode-qwen)
+  - name: ollama-cloud_mistral-large-3
+    model: mistral-large-3:cloud
+    runner: opencode-run.sh
+    subscription: ollama-cloud (SHARED with glm)
+    weekly_ceiling: shared pool, see pools
+    big_repo_budget: 2
+    pool: ollama-weekly
+    adoption_preflight: sense setup (full); opencode MCP registration; verify the model id resolves before cell 1
+    prompt_file: maintainer-local arm prompt (10-bench-opencode-devstral)
+  - name: gpt-5.6
+    runner: codex-run.sh
+    subscription: codex
+    weekly_ceiling: cap-windowed
+    big_repo_budget: 2
+    pool: none
+    adoption_preflight: sense setup (full); AGENTS.md is load-bearing for codex exec (the zero-adoption incident)
+    prompt_file: maintainer-local arm prompt (06-bench-codex-gpt)
+
+pools:
+  - name: ollama-weekly
+    members: [ollama-cloud_glm-5.2, ollama-cloud_mistral-large-3]
+    note: >-
+      ONE shared weekly quota; the ~34%-per-big-run figure was measured on the RETIRED models
+      (devstral-small-2 24b / qwen3-coder-next); glm-5.2 and mistral-large-3 are different (and
+      larger) bodies, so RE-MEASURE quota burn on the first small-repo cell before scheduling any
+      big repo; until then treat big_repo_budget as provisional. Schedule as one pool, never two arms.
+
+repos:
+  # EMPTY at stamp (fresh campaign). Loop 2 composes the slate against loops/LAWS.md
+  # (IMPORT-LAW/K7, CONTROL BOUND, ARITHMETIC KILL, MEMORIZATION DISCRIMINATOR) and fills
+  # these rows at the slate entry; big scheduled last, rule 2.
+  big: []
+  medium: []
+  small: []

@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "sense": {
+      "alwaysLoad": true,
+      "args": [
+        "/Users/luc/Developer/luuuc/oss/sense/bench/lib/mcp_tee.py",
+        "--log",
+        "/Users/luc/Developer/luuuc/oss/sense/bench/verticals/go/results/claude-opus-4-8/sense/pebble/run-2/sense-io.jsonl",
+        "--",
+        "sense",
+        "mcp"
+      ],
+      "command": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "serverInstructions": "When Sense is available and indexed, prefer Sense tools over grep, glob, and file-walking agents for structural and semantic code questions. Sense provides pre-indexed results that are faster and more complete.\n\nWHEN TO USE SENSE TOOLS:\n- Symbol relationships, callers, dependencies \u2192 sense_graph\n- Who holds/embeds X, which structs carry it \u2192 sense_graph (composed_by)\n- What retains X transitively, incl. behind interface fields (lifecycle audit) \u2192 sense_blast (retained_via_interfaces)\n- \"What would break if I changed X?\", impact analysis \u2192 sense_blast\n- Conceptual/semantic code search (not exact string match) \u2192 sense_search\n- Project patterns and conventions \u2192 sense_conventions\n- Index health, what's indexed \u2192 sense_status\n\nWORKFLOWS:\n- Orientation (new to the codebase?) \u2192 sense_search with broad concepts + sense_conventions\n- Impact analysis (changing something?) \u2192 sense_blast\n- Dependency tracing (who calls what?) \u2192 sense_graph\n- Debugging (where does X happen?) \u2192 sense_search\n- Refactoring (what patterns exist?) \u2192 sense_conventions + sense_graph\n\nWHEN NOT TO USE SENSE TOOLS:\n- Exact text/string search \u2192 use grep\n- Reading file contents \u2192 use your file reading tool\n- Editing code \u2192 Sense is read-only"
+    }
+  }
+}

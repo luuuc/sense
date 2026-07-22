@@ -1,0 +1,160 @@
+name: grpc-go work session - audit what retains the per-address metadata before a semantics rework
+repo: grpc-go
+# FULL 7-STEP SCENARIO, authored after the battery-(d) probe showed
+# a TRANSCRIPTION mechanism, not a retrieval gap: both arms 1/8, but the sense
+# agent RECEIVED all 7 grep-dark gold files in ONE blast payload (session msg 31,
+# retained_via_interfaces) and cited 1, spending ~40 reads re-verifying instead.
+# Stdio probes: all 7 in the MCP-shown payload on BOTH the anchor route (blast
+# Attributes) and the agent's chosen route (blast resolver.Address), scratchpad
+# mcp-blast-{attributes,address}.json. The audit step below forces transcription
+# (php-laravel facts-not-suggestions law); this scenario IS the falsifier for the
+# transcription hypothesis. Probe preserved: grpc-go.attributes-probe.20260719.bak.
+# Gold unchanged (groundwork's 7 dark files + contract, chains hand-audited).
+description: 'You are a maintainer of this RPC framework about to rework how the
+  immutable per-address and per-endpoint metadata values attached during name
+  resolution are stored and compared. Those values ride inside addresses,
+  endpoints and connection state as they flow through the system, and code that
+  RETAINS any of those carriers retains the metadata with them. Before touching
+  the semantics you need a complete audit of the production code that holds on to
+  such values today — directly or by retaining a carrier — so the rework does not
+  silently change equality or lifetime under a holder. Work through the tasks
+  below one at a time; each builds on what you learned in the previous one. Keep
+  every answer concrete with file:line so the next step (and a teammate opening
+  the PR) can act without re-exploring the codebase.'
+steps:
+- name: Orient in the codebase
+  prompt: "Task: orient yourself. In a few sentences plus file paths: what is this
+    project, how is the code organized, and where does the metadata mechanism you
+    are about to rework live — the immutable value bag attached during name
+    resolution, and the carrier types it rides inside? Hand the next agent a map
+    so they can act with small targeted lookups, not a fresh exploration. No
+    Explore agents.
+    "
+  checks:
+  - type: word
+    value: attributes
+    required: true
+  - type: response_richness
+    value: '3'
+    required: false
+  - type: mcp_tool_used
+    value: sense_search
+    required: false
+    layer: adoption
+- name: Map the metadata contract and its carriers
+  prompt: "Task: map the contract you are about to change. What does the metadata
+    value expose (how it is set, read, and compared), and which carrier types
+    hold such values as they flow through resolution and load balancing? Give
+    file:line for the value type and each carrier, so a teammate knows the
+    current contract before touching it.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Trace how metadata flows from resolution to a connection
+  prompt: "Task: trace one flow end to end. Start where a resolver attaches
+    metadata, follow the carriers it rides through balancer and connection
+    machinery, and end where a component keeps the carrier alive beyond the call.
+    Give file:line for each hop, in order.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Audit every production holder that retains the resolved metadata or its carriers
+  prompt: "Task: this is the core of the ticket. Find EVERY place in production
+    code (not tests, not example/documentation code) that RETAINS the per-address
+    or per-endpoint metadata values — a struct field, map, or cache that keeps an
+    address, endpoint, resolver state, sub-connection or similar carrier alive
+    beyond a single call. Be exhaustive and group by area. The easy-to-miss kind:
+    holders whose field is typed as an interface, so the file names neither the
+    metadata type nor its package and no text search for the metadata reaches it.
+    TRANSCRIBE every holder you find into the answer individually — do not
+    collapse a set into 'several balancers' or keep a tool's list in your head; a
+    holder you saw but did not write down with its file:line is a holder missed.
+    For each holder give file:line of the retaining field and one phrase on how
+    the metadata reaches it. A missed holder is a stale-equality bug shipped.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Enumerated the interface-chained holder ring, not just direct attribute users
+  - type: no_grep
+    value: no_grep
+    required: false
+    layer: adoption
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Trace the interface-chained routes
+  prompt: "Task: for the holders you found whose field is typed as an interface,
+    trace each route mechanically: the field, the interface, and which concrete
+    carrier ends up behind it at runtime so the metadata is retained. Give
+    file:line throughout.
+    "
+  checks:
+  - type: response_richness
+    value: '4'
+    required: true
+  - type: mcp_tool_used
+    value: sense_graph
+    required: false
+    layer: adoption
+- name: Assess the blast radius of the semantics rework
+  prompt: "Task: assess the full blast radius of changing how the metadata is
+    stored and compared: which holders are at risk, which are most likely to see
+    changed equality or lifetime, and what must be re-verified after the change,
+    across every area you found. Pay special attention to holders with no
+    compile-time tie to the metadata type. Be complete, use file:line, rank by
+    risk.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+    description: Ranked the interface-chained holders by risk, not just relisted them
+  - type: mcp_tool_used
+    value: sense_blast
+    required: false
+    layer: adoption
+- name: Produce the change + verification map
+  prompt: "Task: produce the complete map for landing this safely: the metadata
+    type and comparison sites you will edit, every holder that must be reviewed
+    or re-verified grouped by area and route, and the tests that must be updated
+    or added. Use file:line throughout, so a teammate could land the change from
+    your map alone.
+    "
+  checks:
+  - type: response_richness
+    value: '6'
+    required: true
+  - type: contains
+    value: test
+    required: false
+scoring:
+  weights:
+    correctness: 0.70
+    efficiency: 0.30
+# Gold carried unchanged from the probe: contract (context) + 7 grep-dark holders
+# (discriminator), chains hand-audited in the groundwork; all 7 in the MCP-shown
+# payload on both routes. pubsub keeps its RE-VERIFY flag.
+gold:
+  - {id: contract,          group: contract, match: [attributes/attributes.go], relation: "the Attributes value itself - the contract under change"}
+  - {id: grpclb-picker,     group: ring, match: [balancer/grpclb/grpclb_picker.go], relation: "rrPicker:106 / lbPicker:136 retain []balancer.SubConn - subconns carry the resolved address metadata via the lbCacheSubConn ring"}
+  - {id: roundrobin,        group: ring, match: [balancer/roundrobin/roundrobin.go], relation: "rrBalancer:60 retains the child Balancer whose baseBalancer holds subConns AddressMapV2 keyed by address (metadata inside)"}
+  - {id: weightedaggregator,group: ring, match: [balancer/weightedtarget/weightedaggregator/aggregator.go], relation: "Aggregator.cc balancer.ClientConn at :56 - retains the wrapper whose childState.Endpoint carries endpoint metadata"}
+  - {id: dialoptions,       group: ring, match: [dialoptions.go], relation: "dialOptions.resolvers []resolver.Builder at :69 - retains manual resolvers whose lastSeenState holds resolver.State with metadata"}
+  - {id: health-producer,   group: ring, match: [health/producer.go], relation: "healthServiceProducer at :55 retains via ClientConnInterface - the acBalancerWrapper chain reaches addrConn addresses"}
+  - {id: nop-balancer,      group: ring, match: [internal/balancer/nop/nop.go], relation: "bal.cc balancer.ClientConn at :32 - minimal balancer still retains the metadata-carrying conn"}
+  - {id: pubsub,            group: ring, match: [internal/grpcsync/pubsub.go], relation: "PubSub.subscribers map[Subscriber]bool at :46 - rls.controlChannel subscribes and holds a ClientConn (RE-VERIFY flag from groundwork)"}

@@ -33,8 +33,9 @@ Load Sense tools:
 1. Load Sense tools (ToolSearch — one call)
 2. Use sense_search for broad exploration
 3. Use sense_graph to trace relationships
-4. Use Read only to examine specific file contents
-5. Synthesize findings into a clear summary
+4. Use sense_blast for impact, and for "what holds X" - its retained_via_interfaces lists holders that keep X behind an interface-typed field and never name X, which no search or graph call surfaces
+5. Use Read only to examine specific file contents
+6. Synthesize findings into a clear summary
 `,
 	},
 }
