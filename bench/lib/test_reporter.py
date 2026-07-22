@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for reporter.py — the split-axes headline rendering.
+"""Unit tests for reporter.py - the split-axes headline rendering.
 
 Run directly:
     python3 bench/lib/test_reporter.py
@@ -19,7 +19,7 @@ import reporter  # noqa: E402
 
 class FmtRecallTest(unittest.TestCase):
     def test_none_is_dash(self):
-        self.assertEqual(reporter._fmt_recall(None, None, None), "—")
+        self.assertEqual(reporter._fmt_recall(None, None, None), "-")
 
     def test_with_counts(self):
         self.assertEqual(reporter._fmt_recall(0.7778, 14, 18), "78% (14/18)")
@@ -88,7 +88,7 @@ class HeadlineTableTest(unittest.TestCase):
         ]
         md = "\n".join(reporter._headline_table_md(rows))
         self.assertIn("**FAILED**", md)
-        self.assertIn("| sense | — | — | — | — |", md)
+        self.assertIn("| sense | - | - | - | - |", md)
         # No delta line when an arm is missing usable billed tokens.
         self.assertNotIn("Billed-context Δ", md)
 
@@ -124,9 +124,9 @@ class FormatMarkdownSmokeTest(unittest.TestCase):
         md = reporter.format_markdown(tables, aggregate, {"total": 1})
         self.assertIn("Cited recall (fixed)", md)            # primary table present
         self.assertIn("-34%", md)                            # billed delta present
-        # The blind fairness composite is RETIRED — no secondary table, and the
+        # The blind fairness composite is RETIRED - no secondary table, and the
         # llm_quality/fairness composite must not be rendered as a scoreboard.
-        self.assertNotIn("Secondary — locked fairness", md)
+        self.assertNotIn("Secondary - locked fairness", md)
         self.assertNotIn("LLM Quality", md)
         self.assertIn("RETIRED", md)
         self.assertIn("B-score", md)                          # the fair replacement
@@ -169,7 +169,7 @@ class RankByRecallHeadline(unittest.TestCase):
 
 
 class FabricationAggregateTest(unittest.TestCase):
-    """Fix 3 — the aggregate surfaces grounded_precision + the contradiction count
+    """Fix 3 - the aggregate surfaces grounded_precision + the contradiction count
     so a confident-false baseline is visibly penalised, not rewarded."""
 
     def test_aggregates_precision_and_contradictions(self):
@@ -227,7 +227,7 @@ class BScoreTest(unittest.TestCase):
 
 class ProcessEfficiencyHeldRecallTest(unittest.TestCase):
     """Fix 4 / Judging Contract rule 5: process-cost savings are surfaced ONLY at
-    held recall — never as a standalone rank over a less-complete answer."""
+    held recall - never as a standalone rank over a less-complete answer."""
 
     def _agg(self, base_recall, sense_recall):
         results = [
@@ -262,3 +262,43 @@ class ProcessEfficiencyHeldRecallTest(unittest.TestCase):
         results = [{"tool": "sense", "gold_recall": {"cited_recall": 0.9},
                     "relationship_audit": 0.9, "metrics": {}}]
         self.assertEqual(reporter._process_efficiency_md(reporter.build_aggregate(results)), [])
+
+
+class AnswerYieldTest(unittest.TestCase):
+    """Spend per correctly-cited row - cost normalized by what was found."""
+
+    def _rows(self, b_cited=8, s_cited=15, b_billed=89732, s_billed=129416):
+        return [
+            {"tool": "baseline", "gold_cited": b_cited, "gold_total": 15,
+             "billed": b_billed, "total_all": 1767044, "tool_calls": 68, "read_count": 24},
+            {"tool": "sense", "gold_cited": s_cited, "gold_total": 15,
+             "billed": s_billed, "total_all": 2217096, "tool_calls": 55, "read_count": 12},
+        ]
+
+    def test_per_row_cost_beats_raw_token_total(self):
+        # Sense spent MORE tokens outright (+44%) yet buys a correct row for LESS.
+        md = "\n".join(reporter._answer_yield_md(self._rows()))
+        self.assertIn("Spend per correctly-cited row", md)
+        self.assertIn("11,216", md)   # 89,732 / 8
+        self.assertIn("8,628", md)    # 129,416 / 15
+        self.assertIn("-23.1%", md)
+
+    def test_all_four_axes_rendered(self):
+        md = "\n".join(reporter._answer_yield_md(self._rows()))
+        for axis in ("Billed tokens", "Total tokens (incl. cache)", "Tool calls", "File reads"):
+            self.assertIn(axis, md)
+
+    def test_zero_cited_skips_block(self):
+        # The pebble case: baseline pinned nothing, so there is no ratio to state.
+        self.assertEqual(reporter._answer_yield_md(self._rows(b_cited=0)), [])
+
+    def test_missing_tokens_skips_axis(self):
+        # A killed session never emits final usage (billed 0) - drop that axis,
+        # do not render it as a free arm.
+        md = "\n".join(reporter._answer_yield_md(self._rows(b_billed=0)))
+        self.assertNotIn("| Billed tokens |", md)
+        self.assertIn("| Tool calls |", md)
+
+    def test_single_arm_skips_block(self):
+        rows = [{"tool": "sense", "gold_cited": 15, "billed": 129416}]
+        self.assertEqual(reporter._answer_yield_md(rows), [])

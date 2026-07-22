@@ -28,16 +28,16 @@ SCENARIO_DESCRIPTIONS = {
 METRIC_DIRECTIONS = {
     "cited_recall": ("higher", "THE HEADLINE: objective cited-recall (location-pinned `path:line`) vs the authored must-find set. Ranks the report. The axis where Sense's structural advantage concentrates (mean margin +0.28 vs baseline)."),
     "b_score": ("higher", "Fair blended score = 0.55·cited_recall + 0.25·related + 0.20·grounded_precision. Replaces the retired blind composite. Every term is an objective/reference-aware axis Sense wins on merit; no efficiency (it dilutes and is not a correctness axis)."),
-    "relationship_audit": ("higher", "Reference-aware audit — fraction of the must-find set the answer COVERED, graded vs the authored relations. Omission-proof."),
+    "relationship_audit": ("higher", "Reference-aware audit - fraction of the must-find set the answer COVERED, graded vs the authored relations. Omission-proof."),
     "related_recall": ("higher", "Relation-correctness: covered AND the answer states the CORRECT relation. Grep can name an endpoint; it cannot assert the relation."),
     "grounded_precision": ("higher", "Anti-fabrication (Judging Contract rule 4): of the gold items characterised, the fraction characterised TRUTHFULLY (1 − contradictions/covered). Confident-FALSE relations are penalised here."),
     "contradictions": ("lower", "Raw count of confident-FALSE relation claims on gold items. The fabrication smoking gun. Lower is better."),
     "process_efficiency": ("lower", "Process cost at HELD recall (Judging Contract rule 5): reads / tool-calls / billed tokens, reported as a Sense win ONLY at recall parity or better. Never ranks a cheaper-but-less-complete answer over a complete one."),
     "efficiency": ("higher", "Half token efficiency + half time efficiency, each calibrated per repo"),
-    "tokens": ("lower", "Billed tokens (uncached) — lower is better (cheaper)"),
-    "wall_time": ("lower", "Wall-clock time — lower is better, folded into efficiency"),
-    "cost_usd": ("lower", "API cost in USD — lower is better"),
-    "cites": ("higher", "Citations grounded against the repo checkout: `grounded/total`. A trailing **!N** marks line numbers beyond EOF — outright fabrication. Reported, not folded into the headline."),
+    "tokens": ("lower", "Billed tokens (uncached) - lower is better (cheaper)"),
+    "wall_time": ("lower", "Wall-clock time - lower is better, folded into efficiency"),
+    "cost_usd": ("lower", "API cost in USD - lower is better"),
+    "cites": ("higher", "Citations grounded against the repo checkout: `grounded/total`. A trailing **!N** marks line numbers beyond EOF - outright fabrication. Reported, not folded into the headline."),
 }
 
 
@@ -52,9 +52,9 @@ METRIC_DIRECTIONS_PLAIN = {
     "related_recall": ("higher", "Coverage with the CORRECT relationship stated, not just the name. Naming an endpoint is easy; stating how it connects is the harder test."),
     "grounded_precision": ("higher", "Truthfulness: of the items the answer described, the share described correctly (1 minus false-claims over described)."),
     "contradictions": ("lower", "Count of confidently false relationship claims. The fabrication signal."),
-    "process_efficiency": ("lower", "Reads, tool calls, and billed tokens spent — credited as a saving only when recall is at least as high as the baseline, so a cheaper-but-thinner answer never wins."),
+    "process_efficiency": ("lower", "Reads, tool calls, and billed tokens spent - credited as a saving only when recall is at least as high as the baseline, so a cheaper-but-thinner answer never wins."),
     "efficiency": ("higher", "Combined token and time efficiency, calibrated per repo."),
-    "tokens": ("lower", "Billed (uncached) tokens — lower is cheaper."),
+    "tokens": ("lower", "Billed (uncached) tokens - lower is cheaper."),
     "wall_time": ("lower", "Wall-clock time."),
     "cost_usd": ("lower", "API cost in USD."),
     "cites": ("higher", "Citations that resolved against the repo checkout: `grounded/total`. A trailing **!N** flags line numbers past end-of-file (made-up). Reported, not folded into the headline."),
@@ -64,9 +64,9 @@ METRIC_DIRECTIONS_PLAIN = {
 def _attach_fairness(result, result_dir):
     """Load judged.json from result_dir and stamp fairness onto result.
 
-    The combined fairness score lives only in memory here — neither
+    The combined fairness score lives only in memory here - neither
     scored.json nor judged.json carries it on its own. If judged.json
-    is missing, fairness_score stays None and the report renders `—`.
+    is missing, fairness_score stays None and the report renders `-`.
     """
     judged_path = os.path.join(result_dir, "judged.json")
     judged = None
@@ -86,7 +86,7 @@ def _attach_fairness(result, result_dir):
     if judged is not None:
         result["_judge_steps"] = judged.get("steps", [])
         # Reference-aware audit (graded vs the authored must-find set) is the
-        # HEADLINE-grade judge signal — extract its covered-recall so the
+        # HEADLINE-grade judge signal - extract its covered-recall so the
         # aggregate can rank on it instead of the omission-blind llm_quality.
         ra = judged.get("relationship_audit") or {}
         if isinstance(ra, dict):
@@ -94,7 +94,7 @@ def _attach_fairness(result, result_dir):
             # Fix 3 (anti-fabrication, Judging Contract rule 4): grounded_precision
             # is the fraction of covered items characterised truthfully; the
             # contradiction count is the raw confident-false signal. Absent on
-            # pre-Fix-3 judged.json — stays None so old data renders `—`.
+            # pre-Fix-3 judged.json - stays None so old data renders `-`.
             result["grounded_precision"] = ra.get("grounded_precision")
             result["contradictions"] = ra.get("contradicted")
             # related_recall = correct-relation rate (sharper than covered_recall:
@@ -157,8 +157,8 @@ def load_results(results_dir):
 
             # Runs-only layout (vertical campaign): the repo dir has no top-level
             # scored.json, only run-1/, run-2/, ... Each run is loaded as its own
-            # result so the aggregate averages across runs. (The branch above —
-            # top-level scored.json present — is unchanged, so the global bench is
+            # result so the aggregate averages across runs. (The branch above -
+            # top-level scored.json present - is unchanged, so the global bench is
             # byte-identical.)
             for run_entry in sorted(os.listdir(repo_dir)):
                 if not run_entry.startswith("run-"):
@@ -212,13 +212,17 @@ def build_per_scenario_table(results):
                 "llm_quality": r.get("llm_quality"),
                 "efficiency": r.get("efficiency"),
                 "tokens": m.get("token_total_billed", m.get("token_total", 0)),
-                # Billed-context axis — first-class headline. token_total_billed
+                # Billed-context axis - first-class headline. token_total_billed
                 # is input+output billed; token_input_uncached is the uncached
                 # prompt tokens (what a code map saves by not re-reading files).
                 "billed": m.get("token_total_billed", m.get("token_total", 0)),
                 "uncached_in": m.get("token_input_uncached"),
                 "cached_read": m.get("token_cache_read"),
-                # Gold recall — the two split precision/completeness axes.
+                # Denominators for the per-correct-row yield block below.
+                "total_all": m.get("token_total_all"),
+                "tool_calls": m.get("tool_calls"),
+                "read_count": m.get("read_count"),
+                # Gold recall - the two split precision/completeness axes.
                 "mention_recall": gr.get("mention_recall"),
                 "cited_recall": gr.get("cited_recall"),
                 "gold_mentioned": gr.get("mentioned"),
@@ -262,7 +266,7 @@ def build_aggregate(results):
         # Sum citation counts so the aggregate rate is the true pooled
         # rate (grounded/total across all scenarios), not the mean of
         # per-scenario rates. A scenario with 0/0 citations contributes
-        # nothing — it doesn't drag the average down to "0%".
+        # nothing - it doesn't drag the average down to "0%".
         total_cites = sum((r2.get("citation_grounding") or {}).get("total", 0) for r2 in runs)
         grounded_cites = sum((r2.get("citation_grounding") or {}).get("grounded", 0) for r2 in runs)
         hallucinated_cites = sum((r2.get("citation_grounding") or {}).get("hallucinated", 0) for r2 in runs)
@@ -286,9 +290,9 @@ def build_aggregate(results):
 
         # B-score: the cited-dominant fair composite that REPLACES the blind
         # fairness composite. Every term is an objective/reference-aware axis Sense
-        # wins on merit — completeness (cited), relation-correctness (related),
+        # wins on merit - completeness (cited), relation-correctness (related),
         # anti-fabrication (grounded_precision). No efficiency (it dilutes and is
-        # not a correctness axis — reported separately, gated at held recall).
+        # not a correctness axis - reported separately, gated at held recall).
         # None when the relation-aware axes are absent (gems without relation gold).
         _cr = round(avg(recalls), 4) if recalls else None
         _rr = round(avg(related_recalls), 4) if related_recalls else None
@@ -298,7 +302,7 @@ def build_aggregate(results):
 
         # Fix 4 (process-efficiency at held correctness): the per-run process
         # metrics already live in scored.json. Averaged here so the headline can
-        # report "same answer, fewer reads/tool-calls" — but only gated on recall
+        # report "same answer, fewer reads/tool-calls" - but only gated on recall
         # parity downstream (see _process_efficiency_md), never as a standalone rank.
         def _metric_avg(key):
             vals = [r2.get("metrics", {}).get(key) for r2 in runs
@@ -374,7 +378,7 @@ def build_step_detail(results):
 def _fmt_cites_md(row):
     total = row.get("cites_total")
     if not total:
-        return "—"
+        return "-"
     grounded = row.get("cites_grounded") or 0
     halluc = row.get("cites_hallucinated") or 0
     s = f"{grounded}/{total}"
@@ -388,12 +392,12 @@ def _fmt_cites(row, width=7):
 
     `grounded/total`, with a trailing `!N` if N citations were
     out-of-range line numbers (the hard "made up" signal). 0/0 prints
-    as a dash — the answer simply had no structured citations to check,
+    as a dash - the answer simply had no structured citations to check,
     which is informational not bad.
     """
     total = row.get("cites_total")
     if not total:
-        return f"{'—':>{width}}"
+        return f"{'-':>{width}}"
     grounded = row.get("cites_grounded") or 0
     halluc = row.get("cites_hallucinated") or 0
     s = f"{grounded}/{total}"
@@ -403,9 +407,9 @@ def _fmt_cites(row, width=7):
 
 
 def _fmt_recall(recall, hit, total):
-    """`83% (10/12)` for a gold-recall cell, `—` when no gold declared."""
+    """`83% (10/12)` for a gold-recall cell, `-` when no gold declared."""
     if recall is None:
-        return "—"
+        return "-"
     if hit is not None and total:
         return f"{recall:.0%} ({hit}/{total})"
     return f"{recall:.0%}"
@@ -435,7 +439,7 @@ def _process_efficiency_md(aggregate, vertical=False):
 
     Compares the sense arm against baseline on the process axes that the spike
     moved (reads, tool-calls, billed tokens). The cost win is surfaced as a
-    headline ONLY when recall is at parity or better — never as a standalone
+    headline ONLY when recall is at parity or better - never as a standalone
     rank, so a cheaper-but-less-complete answer is never sold as a win. When
     recall is materially below baseline the block says so and claims nothing.
 
@@ -450,19 +454,19 @@ def _process_efficiency_md(aggregate, vertical=False):
 
     br, sr = b.get("avg_cited_recall"), s.get("avg_cited_recall")
     if br is None or sr is None:
-        out.append("_No cited-recall on one arm — cannot gate efficiency on correctness; not claimed._")
+        out.append("_No cited-recall on one arm - cannot gate efficiency on correctness; not claimed._")
         return out
 
     held = sr >= br - _RECALL_PARITY_EPS
     if sr > br + _RECALL_PARITY_EPS:
-        verdict = f"Sense recall is HIGHER ({sr:.2f} vs {br:.2f}) — any process saving is a bonus on top of a completeness win."
+        verdict = f"Sense recall is HIGHER ({sr:.2f} vs {br:.2f}) - any process saving is a bonus on top of a completeness win."
     elif held:
-        verdict = f"Recall is at parity ({sr:.2f} vs {br:.2f}, within ±{_RECALL_PARITY_EPS:g}) — process savings below are a clean same-answer-cheaper win."
+        verdict = f"Recall is at parity ({sr:.2f} vs {br:.2f}, within ±{_RECALL_PARITY_EPS:g}) - process savings below are a clean same-answer-cheaper win."
     elif vertical:
-        verdict = (f"Recall is BELOW parity ({sr:.2f} vs {br:.2f}) — efficiency is NOT claimed, "
+        verdict = (f"Recall is BELOW parity ({sr:.2f} vs {br:.2f}) - efficiency is NOT claimed, "
                    f"since a cheaper but less-complete answer is not a win.")
     else:
-        verdict = (f"Recall is BELOW parity ({sr:.2f} vs {br:.2f}) — per Judging Contract rule 5, "
+        verdict = (f"Recall is BELOW parity ({sr:.2f} vs {br:.2f}) - per Judging Contract rule 5, "
                    f"process efficiency is NOT claimed (a cheaper, less-complete answer is not a win).")
 
     out.append(f"_{verdict}_")
@@ -475,7 +479,7 @@ def _process_efficiency_md(aggregate, vertical=False):
                            ("Billed tokens", "avg_tokens")):
             bv, sv = b.get(key), s.get(key)
             if bv is None or sv is None or not bv:
-                out.append(f"| {label} | {bv if bv is not None else '—'} | {sv if sv is not None else '—'} | — |")
+                out.append(f"| {label} | {bv if bv is not None else '-'} | {sv if sv is not None else '-'} | - |")
                 continue
             delta = (sv - bv) / bv
             out.append(f"| {label} | {bv:,.0f} | {sv:,.0f} | **{delta:+.0%}** |")
@@ -495,20 +499,63 @@ def _headline_table_md(rows):
     for row in sorted(rows, key=lambda r: r["tool"]):
         tool = row["tool"]
         if row.get("failed"):
-            out.append(f"| {tool} | **FAILED** | — | — | — | — | — |")
+            out.append(f"| {tool} | **FAILED** | - | - | - | - | - |")
             continue
         men = _fmt_recall(row.get("mention_recall"), row.get("gold_mentioned"), row.get("gold_total"))
         cit = _fmt_recall(row.get("cited_recall"), row.get("gold_cited"), row.get("gold_total"))
-        billed = f"{row['billed']:,}" if row.get("billed") else "—"
-        unc = f"{row['uncached_in']:,}" if row.get("uncached_in") else "—"
-        cached = f"{row['cached_read']:,}" if row.get("cached_read") else "—"
-        wt = f"{row['wall_time']:.0f}s" if row.get("wall_time") else "—"
+        billed = f"{row['billed']:,}" if row.get("billed") else "-"
+        unc = f"{row['uncached_in']:,}" if row.get("uncached_in") else "-"
+        cached = f"{row['cached_read']:,}" if row.get("cached_read") else "-"
+        wt = f"{row['wall_time']:.0f}s" if row.get("wall_time") else "-"
         out.append(f"| {tool} | {men} | {cit} | {billed} | {unc} | {cached} | {wt} |")
     delta = _fmt_billed_delta(rows)
     if delta is not None:
         direction = "Sense loads less" if delta < 0 else "Sense loads more"
         out.append("")
-        out.append(f"_Billed-context Δ (sense vs baseline): **{delta:+.0%}** — {direction}._")
+        out.append(f"_Billed-context Δ (sense vs baseline): **{delta:+.0%}** - {direction}._")
+    return out
+
+
+def _answer_yield_md(rows):
+    """Spend per CORRECTLY-CITED row - cost normalized by what was actually found.
+
+    Tokens alone mislead when the arms found different amounts: an arm can look
+    cheap by answering less. Dividing each spend axis by `gold_cited` prices one
+    unit of correct answer, which is the comparison a reader actually wants.
+
+    Per-repo ONLY, never pooled across repos: gold-set sizes differ (pebble 7,
+    nomad 15), so a sum would silently weight the big-gold seat.
+
+    Skipped when either arm cited nothing (0 rows = no ratio, not a cheap arm) or
+    when an arm recorded no tokens (a killed session never emits final usage).
+    """
+    by_tool = {r["tool"]: r for r in rows}
+    b, s = by_tool.get("baseline"), by_tool.get("sense")
+    if not (b and s):
+        return []
+    if not b.get("gold_cited") or not s.get("gold_cited"):
+        return []
+
+    axes = (("Billed tokens", "billed"), ("Total tokens (incl. cache)", "total_all"),
+            ("Tool calls", "tool_calls"), ("File reads", "read_count"))
+    body = []
+    for label, key in axes:
+        bv, sv = b.get(key), s.get(key)
+        if not bv or sv is None:
+            continue
+        pb, ps = bv / b["gold_cited"], sv / s["gold_cited"]
+        body.append(f"| {label} | {pb:,.0f} | {ps:,.0f} | **{(ps / pb - 1) * 100:+.1f}%** |")
+    if not body:
+        return []
+
+    out = ["", "#### Spend per correctly-cited row", "",
+           "_Each axis divided by the rows that arm actually pinned "
+           f"(baseline {b['gold_cited']}/{b.get('gold_total')}, sense {s['gold_cited']}/{s.get('gold_total')}). "
+           "Negative Δ = Sense buys a correct row for less. Only meaningful because recall held: "
+           "a cheaper arm that found less is not more efficient._", "",
+           "| Axis (per correct row) | baseline | sense | Δ |",
+           "|------|---------:|------:|----:|"]
+    out.extend(body)
     return out
 
 
@@ -527,7 +574,7 @@ def _rank_badge(i):
 
 def format_terminal(tables, aggregate, header):
     lines = []
-    lines.append(f"Scenario Evaluation — {sum(t['rows'][0]['fairness_score'] is not None for t in tables if t['rows'])} completed")
+    lines.append(f"Scenario Evaluation - {sum(t['rows'][0]['fairness_score'] is not None for t in tables if t['rows'])} completed")
     lines.append("")
 
     for table in tables:
@@ -545,20 +592,20 @@ def format_terminal(tables, aggregate, header):
 
         for row in table["rows"]:
             if row.get("failed"):
-                wt = f"{row['wall_time']:>6.1f}s" if row["wall_time"] else "      —"
+                wt = f"{row['wall_time']:>6.1f}s" if row["wall_time"] else "      -"
                 reason = row.get("failure_reason") or "failed"
                 lines.append(
                     f"  {row['tool']:<14} FAILED                                              {wt}   ({reason})"
                 )
                 continue
-            fa = f"{row['fairness_score']:>6.3f}" if row["fairness_score"] is not None else "     —"
-            ad = f"{row['adoption_score']:>6.3f}" if row["adoption_score"] is not None else "     —"
-            kw = f"{row['keyword_coverage']:>6.0%}" if row["keyword_coverage"] is not None else "     —"
-            lq = f"{row['llm_quality']:>5.2f}" if row["llm_quality"] is not None else "    —"
-            ef = f"{row['efficiency']:>5.2f}" if row["efficiency"] is not None else "    —"
+            fa = f"{row['fairness_score']:>6.3f}" if row["fairness_score"] is not None else "     -"
+            ad = f"{row['adoption_score']:>6.3f}" if row["adoption_score"] is not None else "     -"
+            kw = f"{row['keyword_coverage']:>6.0%}" if row["keyword_coverage"] is not None else "     -"
+            lq = f"{row['llm_quality']:>5.2f}" if row["llm_quality"] is not None else "    -"
+            ef = f"{row['efficiency']:>5.2f}" if row["efficiency"] is not None else "    -"
             tk = f"{row['tokens']:>8,}"
-            wt = f"{row['wall_time']:>6.1f}s" if row["wall_time"] else "      —"
-            co = f"${row['cost_usd']:>6.2f}" if row["cost_usd"] is not None else "      —"
+            wt = f"{row['wall_time']:>6.1f}s" if row["wall_time"] else "      -"
+            co = f"${row['cost_usd']:>6.2f}" if row["cost_usd"] is not None else "      -"
             ci = _fmt_cites(row, width=7)
             lines.append(
                 f"  {row['tool']:<14} {fa}  {ad} {kw} {lq} {ef} {tk} {wt} {co} {ci}"
@@ -573,14 +620,14 @@ def format_terminal(tables, aggregate, header):
     lines.append(f"  {'-' * 110}")
 
     for row in aggregate:
-        af = f"{row['avg_fairness']:>8.4f}" if row["avg_fairness"] is not None else "       —"
-        aa = f"{row['avg_adoption']:>9.4f}" if row["avg_adoption"] is not None else "        —"
-        akw = f"{row['avg_keyword_coverage']:>8.1%}" if row["avg_keyword_coverage"] is not None else "       —"
-        alq = f"{row['avg_llm_quality']:>7.4f}" if row["avg_llm_quality"] is not None else "      —"
-        ae = f"{row['avg_efficiency']:>7.4f}" if row["avg_efficiency"] is not None else "      —"
-        at = f"{row['avg_time']:>8.1f}s" if row.get("avg_time") is not None else "        —"
-        co = f"${row['total_cost']:>6.2f}" if row["total_cost"] else "      —"
-        ag = f"{row['avg_grounding']:>9.1%}" if row.get("avg_grounding") is not None else "        —"
+        af = f"{row['avg_fairness']:>8.4f}" if row["avg_fairness"] is not None else "       -"
+        aa = f"{row['avg_adoption']:>9.4f}" if row["avg_adoption"] is not None else "        -"
+        akw = f"{row['avg_keyword_coverage']:>8.1%}" if row["avg_keyword_coverage"] is not None else "       -"
+        alq = f"{row['avg_llm_quality']:>7.4f}" if row["avg_llm_quality"] is not None else "      -"
+        ae = f"{row['avg_efficiency']:>7.4f}" if row["avg_efficiency"] is not None else "      -"
+        at = f"{row['avg_time']:>8.1f}s" if row.get("avg_time") is not None else "        -"
+        co = f"${row['total_cost']:>6.2f}" if row["total_cost"] else "      -"
+        ag = f"{row['avg_grounding']:>9.1%}" if row.get("avg_grounding") is not None else "        -"
         lines.append(
             f"  {row['tool']:<14} {row['scenarios']:>4} {row.get('failures', 0):>4} {af} {aa} {akw} {alq} {ae} {row['avg_tokens']:>10,} {at} {co} {ag}"
         )
@@ -599,23 +646,23 @@ def format_markdown(tables, aggregate, header, vertical=False):
     lines.append(f"Results: {len(aggregate)} tools × {len(tables)} scenarios")
     lines.append("")
     if vertical:
-        lines.append("Each scenario declares a **must-find set** of code locations a good answer should surface. The headline metric is **cited recall** — the share of that set the answer pinned to an exact location (`path:line`), so an agent can navigate straight there. Each repo below leads with a table of the axes that make up the comparison:")
+        lines.append("Each scenario declares a **must-find set** of code locations a good answer should surface. The headline metric is **cited recall** - the share of that set the answer pinned to an exact location (`path:line`), so an agent can navigate straight there. Each repo below leads with a table of the axes that make up the comparison:")
         lines.append("")
-        lines.append("- **Cited recall (the headline)** — share of the must-find set pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous name + line).")
-        lines.append("- **Mention recall** — share the answer named at all, location optional (how complete the map is).")
-        lines.append("- **Billed context** — billed tokens (uncached input + output) used to produce the answer, with uncached input shown alongside. Lower is better; never traded against recall.")
+        lines.append("- **Cited recall (the headline)** - share of the must-find set pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous name + line).")
+        lines.append("- **Mention recall** - share the answer named at all, location optional (how complete the map is).")
+        lines.append("- **Billed context** - billed tokens (uncached input + output) used to produce the answer, with uncached input shown alongside. Lower is better; never traded against recall.")
         lines.append("")
-        lines.append("The aggregate adds the **B-score** = `0.55·cited recall + 0.25·correct-relationship rate + 0.20·truthfulness` — one blended number for the whole answer. Efficiency is reported separately and only credited when recall holds.")
+        lines.append("The aggregate adds the **B-score** = `0.55·cited recall + 0.25·correct-relationship rate + 0.20·truthfulness` - one blended number for the whole answer. Efficiency is reported separately and only credited when recall holds.")
         lines.append("")
         lines.append("**Citations** are `file:line` / `file:Symbol` references the answer printed. Each is checked against the repo at the benchmarked commit; the ones that did not resolve are listed in [`citation-hallucinations.md`](citation-hallucinations.md).")
     else:
-        lines.append("**The headline is `cited_recall`; the blind `llm_quality`/`fairness` composite has been RETIRED** (it weighted 55% on omission-blind prose a frontier baseline aces, 0% on the objective axes Sense wins — it understated Sense ~16×, which silently favored the baseline). Each repo leads with a PRIMARY table of the axes that decompose Sense's value:")
+        lines.append("**The headline is `cited_recall`; the blind `llm_quality`/`fairness` composite has been RETIRED** (it weighted 55% on omission-blind prose a frontier baseline aces, 0% on the objective axes Sense wins - it understated Sense ~16×, which silently favored the baseline). Each repo leads with a PRIMARY table of the axes that decompose Sense's value:")
         lines.append("")
-        lines.append("- **Cited recall (THE headline)** — share of the gold must-find set pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous basename+line). An agent can jump straight there. This is where Sense's structural advantage concentrates.")
-        lines.append("- **Mention recall** — share the answer named at all (completeness of the map), location optional.")
-        lines.append("- **Billed context** — `token_total_billed` with `token_input_uncached` alongside. Lower is better; reported, never traded against recall.")
+        lines.append("- **Cited recall (THE headline)** - share of the gold must-find set pinned to an exact location (`path:line`, `path (line N)`, a `\"line\": N` field, or an unambiguous basename+line). An agent can jump straight there. This is where Sense's structural advantage concentrates.")
+        lines.append("- **Mention recall** - share the answer named at all (completeness of the map), location optional.")
+        lines.append("- **Billed context** - `token_total_billed` with `token_input_uncached` alongside. Lower is better; reported, never traded against recall.")
         lines.append("")
-        lines.append("The aggregate adds the **B-score** = `0.55·cited_recall + 0.25·related + 0.20·grounded_precision` — one fair blended number, every term an objective/reference-aware axis Sense wins on merit (no efficiency: it dilutes and is not a correctness axis; efficiency is reported separately, gated at held recall). **Related** = correct-relation rate; **grounded_precision** = anti-fabrication (1 − contradictions/covered).")
+        lines.append("The aggregate adds the **B-score** = `0.55·cited_recall + 0.25·related + 0.20·grounded_precision` - one fair blended number, every term an objective/reference-aware axis Sense wins on merit (no efficiency: it dilutes and is not a correctness axis; efficiency is reported separately, gated at held recall). **Related** = correct-relation rate; **grounded_precision** = anti-fabrication (1 − contradictions/covered).")
         lines.append("")
         lines.append("**Citations** are `file.ext:line`/`file.ext:Symbol` references the assistant printed. The scorer checks each against the repo at `run_meta.repo_commit`; `gold_f1` was dropped (it punished Sense for real beyond-gold finds). The ungrounded-citation list lives in [`citation-hallucinations.md`](citation-hallucinations.md).")
     lines.append("")
@@ -639,11 +686,12 @@ def format_markdown(tables, aggregate, header, vertical=False):
             lines.append(f"> {desc}")
             lines.append("")
 
-        # PRIMARY — cited/mention recall + billed context. Tools alphabetical
+        # PRIMARY - cited/mention recall + billed context. Tools alphabetical
         # (baseline, sense) so the comparison reads top-to-bottom, with a
         # billed-context delta when both arms are present. The blind fairness
         # composite table was REMOVED (retired anti-Sense artifact).
         lines.extend(_headline_table_md(table["rows"]))
+        lines.extend(_answer_yield_md(table["rows"]))
         lines.append("")
 
     lines.append("### Aggregate")
@@ -651,28 +699,28 @@ def format_markdown(tables, aggregate, header, vertical=False):
     if vertical:
         lines.append("Ranked by **cited recall** (the headline). **B-score** = `0.55·cited + 0.25·correct-relationship rate + 0.20·truthfulness`. The `Failures` column shows scenarios the tool could not complete. Costs marked `*` are estimated from partial token usage.")
     else:
-        lines.append("Ranked by **cited_recall** (the headline). The blind `fairness`/`llm_quality` composite is RETIRED — see the note above. **B-score** = `0.55·cited + 0.25·related + 0.20·grounded_precision`. The `Failures` column shows scenarios the tool could not complete. Costs marked `*` are estimated from partial-transcript token usage.")
+        lines.append("Ranked by **cited_recall** (the headline). The blind `fairness`/`llm_quality` composite is RETIRED - see the note above. **B-score** = `0.55·cited + 0.25·related + 0.20·grounded_precision`. The `Failures` column shows scenarios the tool could not complete. Costs marked `*` are estimated from partial-transcript token usage.")
     lines.append("")
     lines.append("| Rank | Tool | Scenarios | Failures | **Cited Recall** | **B-score** | Rel Audit (cov) | Related | Grounded Prec. | Contradict. | Avg Efficiency | Avg Tokens | Avg Time | Total Cost | Avg Grounding |")
     lines.append("|-----:|------|----------:|--------:|---------------:|-----------:|--------------:|--------:|---------------:|------------:|--------------:|-----------:|--------:|-----------:|--------------:|")
     for i, row in enumerate(aggregate):
         badge = _rank_badge(i)
-        ae = f"{row['avg_efficiency']:.4f}" if row.get("avg_efficiency") is not None else "—"
-        at = f"{row['avg_time']:.1f}s" if row.get("avg_time") is not None else "—"
-        co = f"${row['total_cost']:.2f}" if row["total_cost"] else "—"
+        ae = f"{row['avg_efficiency']:.4f}" if row.get("avg_efficiency") is not None else "-"
+        at = f"{row['avg_time']:.1f}s" if row.get("avg_time") is not None else "-"
+        co = f"${row['total_cost']:.2f}" if row["total_cost"] else "-"
         if row.get("avg_grounding") is not None:
             ag = f"{row['avg_grounding']:.1%} ({row.get('cites_grounded', 0)}/{row.get('cites_total', 0)})"
             if row.get("cites_hallucinated"):
                 ag += f" **!{row['cites_hallucinated']}**"
         else:
-            ag = "—"
+            ag = "-"
         fails = row.get("failures", 0)
         fail_cell = f"**{fails}**" if fails else "0"
-        acr = f"{row['avg_cited_recall']:.4f}" if row.get("avg_cited_recall") is not None else "—"
-        bsc = f"**{row['b_score']:.4f}**" if row.get("b_score") is not None else "—"
-        ara = f"{row['avg_relationship_audit']:.4f}" if row.get("avg_relationship_audit") is not None else "—"
-        arr = f"{row['avg_related_recall']:.4f}" if row.get("avg_related_recall") is not None else "—"
-        agp = f"{row['avg_grounded_precision']:.4f}" if row.get("avg_grounded_precision") is not None else "—"
+        acr = f"{row['avg_cited_recall']:.4f}" if row.get("avg_cited_recall") is not None else "-"
+        bsc = f"**{row['b_score']:.4f}**" if row.get("b_score") is not None else "-"
+        ara = f"{row['avg_relationship_audit']:.4f}" if row.get("avg_relationship_audit") is not None else "-"
+        arr = f"{row['avg_related_recall']:.4f}" if row.get("avg_related_recall") is not None else "-"
+        agp = f"{row['avg_grounded_precision']:.4f}" if row.get("avg_grounded_precision") is not None else "-"
         ncon = row.get("contradictions") or 0
         con_cell = f"**{ncon}**" if ncon else "0"
         lines.append(
@@ -720,7 +768,7 @@ def format_hallucination_log(results, vertical=False):
             "of the cited line."
         )
         lines.append("")
-        lines.append("Not yet folded into the fairness score — see pitch 20-04.")
+        lines.append("Not yet folded into the fairness score.")
     lines.append("")
 
     by_tool = {}
@@ -742,17 +790,17 @@ def format_hallucination_log(results, vertical=False):
             repo = r.get("repo_key", r.get("repo", "?"))
             grounded = cg.get("grounded", 0)
             total = cg.get("total", 0)
-            lines.append(f"### {tool}/{repo}  — {grounded}/{total} grounded")
+            lines.append(f"### {tool}/{repo}  - {grounded}/{total} grounded")
             lines.append("")
             if halluc:
                 lines.append("**Hallucinated**")
                 for d in halluc:
-                    lines.append(f"- `{d['file']}:{d['locator']}` — {d['reason']}")
+                    lines.append(f"- `{d['file']}:{d['locator']}` - {d['reason']}")
                 lines.append("")
             if unres:
                 lines.append("**Unresolved**")
                 for d in unres:
-                    lines.append(f"- `{d['file']}:{d['locator']}` — {d['reason']}")
+                    lines.append(f"- `{d['file']}:{d['locator']}` - {d['reason']}")
                 lines.append("")
 
         if not any_problems:
