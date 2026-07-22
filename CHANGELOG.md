@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.13.1] - 2026-07-22
+
+### Bug Fixes
+
+- count composition in blast completeness and make next_steps load-bearing
 ## [1.13.0] - 2026-07-20
 
 ### Features
