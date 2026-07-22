@@ -37,7 +37,9 @@ jobs:
 
       - name: Commit
         env:
-          GH_TOKEN: ${{ secrets.METRICS_TOKEN || github.token }}
+          # Push needs contents:write, which the workflow's GITHUB_TOKEN has.
+          # METRICS_TOKEN is a read-scoped PAT (traffic API only) and 403s on push.
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           git config user.name "github-actions[bot]"
