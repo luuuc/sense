@@ -10,7 +10,7 @@ criteria. Writes judged.json next to scored.json (or to --out).
 
 Reproducibility tuple: {prompt version, model id, scenario rubric}.
 temperature is omitted from requests (deprecated on recent Claude
-judges) — so the model runs in its default sampling mode and
+judges) - so the model runs in its default sampling mode and
 the variance baseline (results/judge-variance.md) characterises the
 residual non-determinism. The prompt is loaded from judge_prompt.v1.md;
 bump the filename when changing it.
@@ -37,7 +37,13 @@ JUDGE_PROMPT_VERSION = "v1"
 JUDGE_PROMPT_V2_PATH = os.path.join(LIB_DIR, "judge_prompt.v2.md")
 JUDGE_PROMPT_VERSION_EXTENDED = "v2-rel"
 RELATIONSHIP_KEY = "relationship"
-JUDGE_MODEL = os.environ.get("BENCH_JUDGE_MODEL", "claude-sonnet-4-6")
+# The judge is PINNED to Opus 4.7 by Prime Directive 6 ("bench on Opus 4.8 x2,
+# judge pinned Opus 4.7"). The default used to be sonnet-4-6, so a sweep that
+# forgot BENCH_JUDGE_MODEL silently swapped judges: the go board ended up with
+# dolt and pebble judged by opus-4-7 for four arms and by sonnet-4-6 for kimi,
+# with opus's own runs split across BOTH. Swapping models invalidates every
+# prior score (SCORING.md), so the pin belongs in the code, not in the caller.
+JUDGE_MODEL = os.environ.get("BENCH_JUDGE_MODEL", "claude-opus-4-7")
 ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
@@ -50,7 +56,7 @@ CREDIT_EXHAUSTED_EXIT_CODE = 42
 
 def _credit_exhausted_signature(http_code: int, body_lower: str) -> str | None:
     """Return a short reason string if this HTTP error means we are out
-    of credit / out of key validity / out of quota — otherwise None.
+    of credit / out of key validity / out of quota - otherwise None.
     """
     if http_code == 400 and "credit balance is too low" in body_lower:
         return "400 credit balance is too low"
@@ -73,7 +79,7 @@ def _notify_credit_exhausted(caller: str, reason: str) -> None:
     banner = (
         "\n"
         "============================================================\n"
-        f"  CREDIT EXHAUSTED — bench/{caller}\n"
+        f"  CREDIT EXHAUSTED - bench/{caller}\n"
         f"  reason: {reason}\n"
         "  loop will skip API-gated phases for the rest of this iteration\n"
         "============================================================\n"
@@ -91,7 +97,7 @@ def _notify_credit_exhausted(caller: str, reason: str) -> None:
             capture_output=True,
         )
     except (FileNotFoundError, subprocess.SubprocessError):
-        # No osascript (non-mac), or it failed — banner + exit code remain.
+        # No osascript (non-mac), or it failed - banner + exit code remain.
         pass
 
 DEFAULT_WEIGHTS = {
@@ -160,7 +166,7 @@ def slice_answer_for_step(full_answer, step_idx, step_name):
     Scenarios run all steps in one Claude session, so the transcript holds
     a single long answer covering every step. Most tools structure their
     synthesis under `## Step N:` headers; we slice between header N and
-    header N+1. If headers are missing, we hand back the whole answer —
+    header N+1. If headers are missing, we hand back the whole answer -
     the judge can still score, but more loosely.
 
     step_idx is 0-based; headers use 1-based numbering.
@@ -172,7 +178,7 @@ def slice_answer_for_step(full_answer, step_idx, step_name):
         return full_answer
 
     # Some tools repeat "## Step N:" once during work and again in the
-    # synthesis. Take the last match as the synthesis section start —
+    # synthesis. Take the last match as the synthesis section start -
     # that's the authoritative answer for the step.
     m = matches[-1]
     start = m.start()
@@ -190,13 +196,13 @@ def load_rubric(rubric_path, scenario_steps):
     """Load and validate a scenario rubric.
 
     The rubric's step names must match the scenario's step names
-    verbatim — order matters, and a mismatch means the judge would
+    verbatim - order matters, and a mismatch means the judge would
     score the wrong criteria against the wrong step. Hard error.
     """
     if not os.path.exists(rubric_path):
         raise SystemExit(
             f"judge: missing rubric file {rubric_path}. Author a rubric or "
-            f"add scenario coverage — judge does not silently default."
+            f"add scenario coverage - judge does not silently default."
         )
 
     with open(rubric_path) as f:
@@ -298,7 +304,7 @@ def _call_judge_via_cli(system_text: str, user_text: str, max_tokens: int = 1024
         timeout=int(os.environ.get("BENCH_JUDGE_CLI_TIMEOUT", "420")),
     )
     if proc.returncode != 0:
-        # Surface the CLI's stderr verbatim — usually one line. If the user
+        # Surface the CLI's stderr verbatim - usually one line. If the user
         # ran out of subscription credit, the CLI's error message will say so.
         raise SystemExit(
             f"judge: claude CLI failed (exit {proc.returncode}): "
@@ -368,7 +374,7 @@ def call_judge(system_text, user_text, *, api_key, max_tokens=1024, retries=3):
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
             last_err = f"HTTP {e.code}: {err_body[:500]}"
-            # Credit / key / quota exhaustion — distinct path. The loop
+            # Credit / key / quota exhaustion - distinct path. The loop
             # must keep running on subscription for scenario sessions,
             # so we exit 42 (not 1) and let the orchestrator decide.
             reason = _credit_exhausted_signature(e.code, err_body.lower())
@@ -394,7 +400,7 @@ def call_judge(system_text, user_text, *, api_key, max_tokens=1024, retries=3):
 def extract_usage(api_response):
     """Return the Anthropic Messages API usage dict (or zeros). All cost
     accounting downstream is computed from these counts × public per-token
-    pricing — see lib/scorer.PRICE_PER_M. A token is a token regardless
+    pricing - see lib/scorer.PRICE_PER_M. A token is a token regardless
     of whether the call was actually billed via API key or subscription;
     cost in this bench is a comparability metric, not an accounting one.
     """
@@ -475,7 +481,7 @@ def judge_step(*, step_idx, step, answer_slice, system_text, side_context,
         step["prompt"].strip(),
         "",
         "Answer to score:",
-        answer_slice if answer_slice else "(empty — the tool produced no answer for this step)",
+        answer_slice if answer_slice else "(empty - the tool produced no answer for this step)",
         "",
         "Side-context:",
         json.dumps(side_context),
@@ -484,7 +490,7 @@ def judge_step(*, step_idx, step, answer_slice, system_text, side_context,
 
     # Judge LLM occasionally returns non-JSON (truncated or wrapped prose).
     # One retry on parse failure recovers most of these without distorting the
-    # variance baseline — the retried call hits the cached system prefix, so
+    # variance baseline - the retried call hits the cached system prefix, so
     # the marginal cost is small.
     parse_attempts = 2
     parsed = None
@@ -577,7 +583,7 @@ def main(argv):
     with open(scored_path) as f:
         scored = json.load(f)
 
-    # Failed runs short-circuit — fairness=0 already, the judge has no answer
+    # Failed runs short-circuit - fairness=0 already, the judge has no answer
     # to score, and we should not bill an Opus call for an empty transcript.
     if scored.get("failed"):
         judged = {
@@ -654,7 +660,7 @@ def main(argv):
     # Reference-aware relationship audit. Runs only when the scenario's gold
     # carries `relation` fields (the authored reference). It grades the whole
     # answer against the fixed must-find set so the judge can no longer rate an
-    # incomplete answer as complete — the omission-blindness that made the
+    # incomplete answer as complete - the omission-blindness that made the
     # per-step judge miss the chatwoot win. One extra judge call per run.
     relationship_audit = None
     try:
