@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sweep.sh — run a vertical model sweep: each repo x each model, both arms
+# sweep.sh - run a vertical model sweep: each repo x each model, both arms
 # (baseline,sense) on the subscription, each written to its own model-scoped root
 # (verticals/<name>/results/<model>/) so models never overwrite each other; the
 # cross-model matrix is refreshed at the end. Defaults to the ruby-rails vertical;
@@ -7,7 +7,7 @@
 #
 # Idempotent: skips any (repo, model) already benched, so re-running after a
 # rate-limit failure only fills the gaps. Resilient: a failed run is logged and
-# the sweep continues. Judge stays claude-sonnet-4-6 (set in judge.py).
+# the sweep continues. Judge stays claude-opus-4-7 (set in judge.py).
 #
 #   bash bench/drivers/sweep.sh
 #   MODELS="claude-opus-4-8" REPOS="ruby_llm" bash bench/drivers/sweep.sh   # subset
@@ -76,7 +76,7 @@ for m in $MODELS; do
       remaining="$(count_words $queue)"
       if [ "$stuck" -ge "$remaining" ]; then
         # A full pass with every remaining repo locked: wait for one to free up.
-        # (Only reachable with pacing on — try-acquire never fails when off.)
+        # (Only reachable with pacing on - try-acquire never fails when off.)
         pace_sleep "$OPENCODE_PACE_SECONDS" "all $remaining remaining repos locked; waiting for a free one"
         stuck=0
       fi
@@ -109,7 +109,7 @@ for m in $MODELS; do
     if "${run[@]}"; then
       echo "[ok  ] $r / $m  done  $(date +%H:%M:%S)"
     else
-      echo "[FAIL run] $r / $m  (rerun later — sweep is idempotent)"
+      echo "[FAIL run] $r / $m  (rerun later - sweep is idempotent)"
     fi
     pace_lock_release
     # Inter-repo spacing for the metered arms only, so the next repo starts in a

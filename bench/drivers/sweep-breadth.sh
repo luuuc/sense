@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# sweep-breadth.sh — BREADTH-FIRST rails-vertical sweep for a metered arm
+# sweep-breadth.sh - BREADTH-FIRST rails-vertical sweep for a metered arm
 # (codex gpt / opencode), built to (a) land a COMPLETE board fast and (b) spend
 # the fewest weekly-cap tokens to get it. The depth-first sweepers (sweep /
-# sweep-resume at RUNS=2) finish one repo's ×2 before starting the next — slowest
+# sweep-resume at RUNS=2) finish one repo's ×2 before starting the next - slowest
 # path to a full board and double the tokens up front. This walks breadth-first:
 #
 #   PASS 1  run-1 for EVERY repo  -> a full board at ~half the ×2 token cost.
@@ -11,21 +11,21 @@
 #           -> the second run's tokens go only where they can still move the
 #           verdict; confirmed wins stay at ×1.
 #
-# Every repo gets at least one run — Pass 1 covers ALL of them, big repos are NOT
+# Every repo gets at least one run - Pass 1 covers ALL of them, big repos are NOT
 # dropped (default smallest-first, so under a cap the most cells land before the
 # big repos at the tail; resume next window picks up the rest).
 #
 # Harness-agnostic: dispatches through runs-variance.sh, so it serves any metered
-# arm — codex (gpt-*/o3*/o4*/codex:*) or opencode (kimi-for-coding/*, *:cloud,
+# arm - codex (gpt-*/o3*/o4*/codex:*) or opencode (kimi-for-coding/*, *:cloud,
 # ollama-cloud/*). The breadth logic and the close-call gate are identical; only
 # the big-repo runaway guard differs by harness (below).
 #
 # BIG-REPO RUNAWAY GUARD: big repos get a bounded session length so one stuck run
-# can't drain the weekly budget. This is a runaway guard ONLY — it does NOT touch
+# can't drain the weekly budget. This is a runaway guard ONLY - it does NOT touch
 # the scorer's TIME_CEILINGS, so efficiency scoring is unchanged. Per harness:
 #   - codex:    BENCH_CODEX_TIMEOUT (wall kill, default 540s).
 #   - opencode: OPENCODE_MAX_SECS (hard cap, default 1800s) AND a RAISED
-#               OPENCODE_STALL_IDLE (default 600s on big repos, 300s elsewhere) —
+#               OPENCODE_STALL_IDLE (default 600s on big repos, 300s elsewhere) -
 #               big-repo grep baselines idle for minutes, so the idle watchdog is
 #               *loosened*, while MAX_SECS bounds a true hang.
 # Trade-off: too tight truncates the heavier sense arm into a false loss, so keep
@@ -34,7 +34,7 @@
 #
 # Resumable + cap-aware: a repo already valid for this model is skipped, and a
 # session failure (codex_session_failed / opencode_session_failed / a watchdog
-# stall) stops the pass cleanly — re-run to continue. NOTE: Kimi has no clean cap
+# stall) stops the pass cleanly - re-run to continue. NOTE: Kimi has no clean cap
 # error, so on a flat subscription rely on the pacing cooldown + your budget read,
 # not only on this auto-stop.
 #
@@ -51,7 +51,11 @@ BENCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$BENCH_DIR/.."
 VERTICAL="${VERTICAL-ruby-rails}"; source "$BENCH_DIR/lib/bench-paths.sh"
 
 MODEL="${MODELS:?set MODELS to ONE model id, e.g. MODELS=gpt-5.6}"
-JUDGE="${BENCH_JUDGE_MODEL:-claude-sonnet-4-6}"; export BENCH_JUDGE_MODEL="$JUDGE"
+# Never hardcode a judge default here: exporting one OVERRIDES the pin in
+# judge.py (Prime Directive 6: judge pinned Opus 4.7) and that is exactly how the
+# go board ended up graded by two different judges. Only forward an explicit override.
+JUDGE="${BENCH_JUDGE_MODEL:-$(python3 -c "import sys;sys.path.insert(0,'$BENCH_DIR/lib');import judge;print(judge.JUDGE_MODEL)" 2>/dev/null || echo claude-opus-4-7)}"
+[ -n "${BENCH_JUDGE_MODEL:-}" ] && export BENCH_JUDGE_MODEL
 PASS="${PASS:-both}"                # 1 | 2 | both
 WINBAR="${WINBAR:-0.50}"            # close-call threshold (mirrors pergroup VERDICT)
 SKIP_BIG="${SKIP_BIG:-0}"          # defer the cost-outlier repos (only if the cap forces it)
@@ -62,7 +66,7 @@ REPOS="${REPOS:-raix langchainrb lobsters ruby_llm llm.rb solidus redmine chatwo
 # Cost outliers held back by SKIP_BIG=1 (178k + the framework): only when a cap forces it.
 HUGE="${HUGE_REPOS:-gitlabhq rails}"
 # Repos that get the runaway guard (mid-big; the huge ones keep their harness
-# default — they legitimately run long and tightening them just truncates).
+# default - they legitimately run long and tightening them just truncates).
 BIG_REPOS="${BIG_REPOS:-discourse mastodon forem chatwoot redmine solidus}"
 # codex wall kill (seconds) for BIG_REPOS:
 BIG_TIMEOUT="${BIG_TIMEOUT:-540}"
@@ -87,13 +91,13 @@ ERR_FLAGS='codex_session_failed\|provider_cap_error\|empty_final_answer\|opencod
 
 has_run1()  { [ -f "$modelroot/sense/$1/run-1/transcript.json" ]; }
 
-errored() {  # $1=repo — any error flag on EITHER arm's run_meta
+errored() {  # $1=repo - any error flag on EITHER arm's run_meta
   grep -lq "$ERR_FLAGS" \
     "$modelroot/sense/$1"/run-*/run_meta.json \
     "$modelroot/baseline/$1"/run-*/run_meta.json 2>/dev/null
 }
 
-adopted() {  # $1=repo — sense arm actually reached Sense (codex false-tie gate)
+adopted() {  # $1=repo - sense arm actually reached Sense (codex false-tie gate)
   local ch; for ch in "$modelroot/sense/$1"/run-*/channels.json; do
     [ -f "$ch" ] || continue
     python3 -c "import json,sys;c=json.load(open('$ch'))['channels'];sys.exit(0 if c.get('mcp_sense',0)+c.get('cli_sense',0)>0 else 1)" 2>/dev/null && return 0
@@ -105,7 +109,7 @@ adopted() {  # $1=repo — sense arm actually reached Sense (codex false-tie gat
 
 is_valid() { has_run1 "$1" && ! errored "$1" && adopted "$1"; }
 
-is_close() {  # $1=repo — run-1 has NO group clearing the win bar (worth a 2nd run)
+is_close() {  # $1=repo - run-1 has NO group clearing the win bar (worth a 2nd run)
   ! RESULTS_DIR="$modelroot" python3 bench/lib/pergroup.py "$1" "$WINBAR" 2>/dev/null \
       | grep -q "VERDICT: WIN"
 }
@@ -129,7 +133,7 @@ bench_one() {  # $1=repo  $2=start_run  $3=keep_runs
   local repo="$1" start="$2" keep="$3"
   local guard=(); read -ra guard <<< "$(guard_env_for "$repo")"
   echo "▶ $repo  (run $start, guard=${guard[*]:-default})"
-  # ${arr[@]+"${arr[@]}"} expands to nothing when the array is empty — bash 3.2
+  # ${arr[@]+"${arr[@]}"} expands to nothing when the array is empty - bash 3.2
   # (macOS default) errors on a bare "${arr[@]}" under `set -u` otherwise.
   env ${guard[@]+"${guard[@]}"} MODELS="$MODEL" RUNS=1 START_RUN="$start" KEEP_RUNS="$keep" \
     bash bench/drivers/runs-variance.sh "$repo" || true
@@ -137,31 +141,31 @@ bench_one() {  # $1=repo  $2=start_run  $3=keep_runs
 
 # ---- PASS 1: run-1 for every repo (full board) ----------------------------
 pass1() {
-  echo "=== PASS 1 — run-1 across all repos ==="
+  echo "=== PASS 1 - run-1 across all repos ==="
   for repo in $REPOS; do
     deferred "$repo" && { echo "⏭  defer $repo (SKIP_BIG=1)"; continue; }
     if is_valid "$repo"; then echo "✓ skip $repo (run-1 valid)"; continue; fi
     bench_one "$repo" 1 0
     if errored "$repo"; then
-      echo "⛔ cap/failure at $repo — stopping Pass 1 cleanly. Re-run after the reset"
+      echo "⛔ cap/failure at $repo - stopping Pass 1 cleanly. Re-run after the reset"
       echo "   to resume; valid repos are skipped."
       return 0
     fi
   done
-  echo "✅ PASS 1 complete — full run-1 board for $MODEL"
+  echo "✅ PASS 1 complete - full run-1 board for $MODEL"
 }
 
 # ---- PASS 2: add run-2 ONLY on the close calls ----------------------------
 pass2() {
-  echo "=== PASS 2 — run-2 on close calls only (bar +${WINBAR}) ==="
+  echo "=== PASS 2 - run-2 on close calls only (bar +${WINBAR}) ==="
   local set2="${CLOSE:-}"
   if [ -z "$set2" ]; then
     for repo in $REPOS; do
       deferred "$repo" && continue
-      is_valid "$repo" || { echo "·  $repo: no valid run-1 — skip (Pass 1 first)"; continue; }
+      is_valid "$repo" || { echo "·  $repo: no valid run-1 - skip (Pass 1 first)"; continue; }
       [ -d "$modelroot/sense/$repo/run-2" ] && { echo "✓ $repo: run-2 exists"; continue; }
-      if is_close "$repo"; then set2="$set2 $repo"; echo "→ $repo: CLOSE (run-1 < bar) — will harden"
-      else echo "✓ $repo: confirmed win at run-1 — no run-2 (token save)"; fi
+      if is_close "$repo"; then set2="$set2 $repo"; echo "→ $repo: CLOSE (run-1 < bar) - will harden"
+      else echo "✓ $repo: confirmed win at run-1 - no run-2 (token save)"; fi
     done
   else
     echo "[breadth] CLOSE override: $set2"
@@ -169,7 +173,7 @@ pass2() {
   for repo in $set2; do
     bench_one "$repo" 2 1
     if errored "$repo"; then
-      echo "⛔ cap/failure at $repo — stopping Pass 2 cleanly. Re-run after the reset."
+      echo "⛔ cap/failure at $repo - stopping Pass 2 cleanly. Re-run after the reset."
       return 0
     fi
   done

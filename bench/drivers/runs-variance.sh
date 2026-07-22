@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# runs-variance.sh — harden a repo's numbers by running each model N times and
+# runs-variance.sh - harden a repo's numbers by running each model N times and
 # reporting the spread (is the headline stable or noise?). Aggregates each
 # model's N runs before the next model overwrites bench/results/, so it works
 # with the single-run snapshot helper untouched.
@@ -9,7 +9,7 @@
 #
 # Uses --no-build: trusts the currently installed sense binary + the existing
 # .sense index (re-index the repo with the target sense version FIRST).
-# Judge stays claude-sonnet-4-6.
+# Judge is pinned in judge.py (Opus 4.7); never hardcode it here.
 
 set -uo pipefail
 BENCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,13 +42,13 @@ mkdir -p "$(dirname "$OUT")"
 RUN_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 REPO_CLONE="${SENSE_CLONES:-$HOME/Developer/luuuc/oss/sense-benchmark/sense}/$REPO"
 REPO_SHA="$(git -C "$REPO_CLONE" rev-parse --short HEAD 2>/dev/null || echo '?')"
-echo "# $REPO — variance ($RUNS runs per model)" > "$OUT"
+echo "# $REPO - variance ($RUNS runs per model)" > "$OUT"
 echo "" >> "$OUT"
 echo "**run date (UTC):** $RUN_DATE  ·  **models:** $MODELS  ·  **repo:** $REPO @ $REPO_SHA" >> "$OUT"
-echo "sense: $(sense --version 2>/dev/null | head -1)  ·  judge: ${BENCH_JUDGE_MODEL:-claude-sonnet-4-6}" >> "$OUT"
+echo "sense: $(sense --version 2>/dev/null | head -1)  ·  judge: ${BENCH_JUDGE_MODEL:-$(python3 -c "import sys;sys.path.insert(0,'$BENCH_DIR/lib');import judge;print(judge.JUDGE_MODEL)" 2>/dev/null || echo claude-opus-4-7)}" >> "$OUT"
 
 # Ensure the repo's Sense index matches the CURRENT scan engine before benching any
-# model — the index is shared across all models, so this runs once per repo. Rebuilds
+# model - the index is shared across all models, so this runs once per repo. Rebuilds
 # only when the scan-engine fingerprint changed (a no-op release reuses the existing
 # index); skips instantly when fresh. This replaces the old "blindly rebuild every repo"
 # prereq. Set SKIP_ENSURE_INDEX=1 to bypass (e.g. a host without the Go toolchain).
