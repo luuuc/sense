@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.13.2] - 2026-07-22
+
+### Bug Fixes
+
+- push metrics snapshot with GITHUB_TOKEN not the read-scoped PAT (#232)
 ## [1.13.1] - 2026-07-22
 
 ### Bug Fixes
