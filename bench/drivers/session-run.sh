@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# session-run.sh — multi-turn ("real work session") bench.
+# session-run.sh - multi-turn ("real work session") bench.
 #
 # Runs each scenario STEP as a separate conversational turn in the SAME claude
 # session: turn 1 fresh (captures its session_id), turns 2..N via --resume, so
 # context accumulates the way it does in real daily use. Concatenates every
 # turn's stream-json into one transcript.json and sums wall time, then
 # score -> judge (--via-cli) -> report. Subscription only (no API key);
-# judge stays claude-sonnet-4-6 (set in judge.py).
+# judge is pinned to claude-opus-4-7 (set in judge.py, per Prime Directive 6).
 #
 #   bash bench/drivers/session-run.sh --tool baseline,sense --repo discourse [--model M]
 #
@@ -26,6 +26,10 @@ LIB_DIR="$BENCH_DIR/lib"
 SENSE_BENCH_ROOT="${SENSE_BENCH_ROOT:-$(cd "$PROJECT_ROOT/.." && pwd)/sense-benchmark}"
 BASELINE_MCP="$LIB_DIR/baseline-mcp.json"
 
+# ⚠️ TURN_TIMEOUT / --timeout pins a ceiling; it is NEVER a rescue knob. An arm
+# that runs out of clock FAILED the exam, it was not invalidated by it (a
+# standing rule). Full rule + the never-reached-synthesis vs cut-mid-
+# delivery classification: lib/scorer.py -> TIME_CEILINGS.
 TOOLS_CSV="baseline,sense"; REPO=""; MODEL="claude-opus-4-8"; TURN_TIMEOUT=600
 while [[ $# -gt 0 ]]; do case "$1" in
   --tool) TOOLS_CSV="$2"; shift 2;;
@@ -78,7 +82,7 @@ Task 1 of $NSTEPS: $prompt"
     # Isolate MCP per arm. baseline = empty config (true no-code-intel control).
     # sense = ONLY the clone's own sense server (strict), so the operator's
     # global claude.ai servers (Gmail/Calendar/Drive) don't leak in and don't
-    # compete with or delay the Sense connection — the bug that left the sense
+    # compete with or delay the Sense connection - the bug that left the sense
     # arm running as grep (status: pending) and invalidated the first run.
     if [[ "$tool" == baseline ]]; then
       args+=(--strict-mcp-config --mcp-config "$BASELINE_MCP")
@@ -106,19 +110,42 @@ Task 1 of $NSTEPS: $prompt"
   if [[ "$tool" == sense ]]; then
     nmcp=$(grep -oE '"name":"mcp__sense__[a-z_]+"' "$out/transcript.json" | wc -l | tr -d ' ')
     if [[ "${nmcp:-0}" -gt 0 ]]; then echo "[session]   sense used $nmcp Sense tool calls (valid)" >&2
-    else echo "[session]   *** INVALID: sense arm made 0 Sense tool calls — ran as grep ***" >&2; fi
+    else echo "[session]   *** INVALID: sense arm made 0 Sense tool calls - ran as grep ***" >&2; fi
   fi
 
   commit=$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || echo "")
-  ver=""; [[ "$tool" == sense ]] && ver="$SVER"
-  python3 - "$tool" "$REPO" "$SCEN_NAME" "$total_wall" "$MODEL" "$commit" "$ver" > "$out/run_meta.json" <<'PY'
+  # Sense provenance: this runner recorded none, so its runs could never be matched
+  # to a release. `describe --exact-match` empties out as soon as HEAD passes the
+  # tag, so fall back to the nearest reachable tag and flag whether it was exact.
+  ver=""; sref=""; sdirty="false"; srel=""; srel_exact="true"
+  if [[ "$tool" == sense ]]; then
+    ver="$SVER"
+    sref="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo '')"
+    [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null)" ]] && sdirty="true"
+    srel="$(git -C "$PROJECT_ROOT" describe --tags --exact-match 2>/dev/null || echo '')"
+    if [[ -z "$srel" ]]; then
+      srel="$(git -C "$PROJECT_ROOT" describe --tags --abbrev=0 2>/dev/null || echo '')"
+      srel_exact="false"
+    fi
+  fi
+  python3 - "$tool" "$REPO" "$SCEN_NAME" "$total_wall" "$MODEL" "$commit" "$ver" "${rc:-0}" "$sref" "$sdirty" "$srel" "$srel_exact" > "$out/run_meta.json" <<'PY'
 import json, sys
-tool, repo, scen, wall, model, commit, ver = sys.argv[1:8]
+(tool, repo, scen, wall, model, commit, ver, rc,
+ sref, sdirty, srel, srel_exact) = sys.argv[1:13]
+rc = int(rc)
+# The multiturn driver stamped no exit code and no `valid` at all, so every one
+# of its runs read as falsy-invalid downstream. Record the observation; the
+# class is derived from the answer evidence by lib/run_validity.py at read time.
 print(json.dumps({
     "tool": tool, "repo": repo, "scenario": scen,
     "wall_time_seconds": int(wall), "model": model,
     "repo_commit": commit or None, "tool_version": ver or None,
     "auth_mode": "subscription_cli", "mode": "session_multiturn",
+    "claude_exit_code": rc,
+    "sense_ref": sref or None,
+    "sense_dirty": sdirty == "true",
+    "sense_release": srel or None,
+    "sense_release_exact": (srel_exact == "true") if srel else None,
 }, indent=2))
 PY
 
@@ -150,4 +177,4 @@ bash "$BENCH_DIR/judge.sh"  "${SJ[@]}" --via-cli
 bash "$BENCH_DIR/report.sh" --md
 bash "$BENCH_DIR/report.sh" --json
 [ -n "${VERTICAL:-}" ] && { bash "$BENCH_DIR/drivers/report-matrix.sh" >/dev/null 2>&1 || echo "[warn] matrix refresh failed" >&2; }
-echo "[session] done — see bench/results/{${TOOLS_CSV}}/$REPO/" >&2
+echo "[session] done - see bench/results/{${TOOLS_CSV}}/$REPO/" >&2

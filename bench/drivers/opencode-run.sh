@@ -34,7 +34,7 @@
 #
 # Prereqs: clones at $SENSE_BENCH_ROOT/{baseline,sense}/<repo>; sense arm already
 # `sense scan`-ed; opencode authed for ollama-cloud (`opencode providers list`);
-# `sense` on PATH. Judge stays claude-sonnet-4-6 on the Claude subscription.
+# `sense` on PATH. Judge stays claude-opus-4-7 on the Claude subscription.
 
 set -uo pipefail
 
@@ -99,6 +99,15 @@ esac
 # synthesis turn; the default 150s stall watchdog guillotines that recoverable
 # cooldown -> empty_final_answer (proven: native Kimi waits it out and converges).
 # Give this arm a longer stall tolerance + hard cap unless the caller pinned them.
+#
+# ⚠️ THIS CARVE-OUT IS FOR A THROTTLE ARTIFACT, NOT FOR A SLOW ARM. Never widen
+# OPENCODE_STALL_IDLE / OPENCODE_MAX_SECS to rescue an arm that ran out of clock:
+# can't-finish-at-budget is a RESULT, not an invalid run (a
+# standing rule). It is justified here only because the metered sub cuts a streaming
+# answer MID-DELIVERY; an arm that never REACHED synthesis after N greps failed
+# the exam and its failure is the finding. Classify with the transcript tell
+# (assistant-text chars vs tool calls), never from the exit code. Full rule and
+# the two-classes table: lib/scorer.py -> TIME_CEILINGS.
 case "$MODEL" in
   *kimi*)
     [ -z "$OPENCODE_STALL_IDLE_SET" ] && OPENCODE_STALL_IDLE=600
@@ -123,6 +132,20 @@ SCEN="$SCENARIOS_DIR/$REPO.yaml"
 SCEN_NAME=$(python3 -c "import yaml;print(yaml.safe_load(open('$SCEN'))['name'])")
 PROMPT=$(python3 "$LIB_DIR/scenario.py" "$SCEN" --prompt)
 SVER="$(sense --version 2>/dev/null | head -1 || echo '')"
+# Sense provenance. This runner recorded NONE of it, so every opencode sense run on
+# the go board was unverifiable and select_final rejected all of them as
+# "not-release" -- three whole model arms silently dropped from the final selection.
+# The release TAG is the match key, and `describe --exact-match` goes empty as soon
+# as HEAD moves past the tag (even a bench-only commit), so fall back to the nearest
+# reachable tag and record whether it was exact.
+SENSE_REF="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo '')"
+SENSE_DIRTY="false"; [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null)" ]] && SENSE_DIRTY="true"
+SENSE_RELEASE="$(git -C "$PROJECT_ROOT" describe --tags --exact-match 2>/dev/null || echo '')"
+SENSE_RELEASE_EXACT="true"
+if [[ -z "$SENSE_RELEASE" ]]; then
+  SENSE_RELEASE="$(git -C "$PROJECT_ROOT" describe --tags --abbrev=0 2>/dev/null || echo '')"
+  SENSE_RELEASE_EXACT="false"
+fi
 
 if [[ -n "$SESSION_TIMEOUT" ]]; then SECS="$SESSION_TIMEOUT"; else
   SECS=$(python3 -c "import sys;sys.path.insert(0,'$LIB_DIR');from scorer import TIME_CEILINGS,DEFAULT_TIME_CEILING;print(max($OPENCODE_MAX_SECS,TIME_CEILINGS.get('$REPO',DEFAULT_TIME_CEILING)))")
@@ -192,7 +215,7 @@ for tool in "${TOOLS[@]}"; do
   # Clean slate, then for the sense arm write the full Sense surface via
   # `sense setup` (no --tools): every detected tool is configured, incl.
   # opencode's opencode.json MCP server + AGENTS.md + .opencode/skills/. We do
-  # NOT scope to --tools opencode — the scoped form is what silently left the
+  # NOT scope to --tools opencode - the scoped form is what silently left the
   # codex arm un-set-up; each tool reads only its own file with identical
   # guidance text, so full setup never cross-contaminates. The sense binary
   # stays on PATH (CLI fallback = dual channel). The baseline arm gets none of
@@ -326,7 +349,7 @@ import json, os, re, sys, glob
 tpath, scratch, repo_dir, achars, maxchars = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
 # (a) file signal: model-chosen audit/final/compact .json names in the scratch or repo tree.
 # Length-gated like the content signal: an inline answer >= maxchars is a real audit, so a
-# working file the model ALSO wrote must not nuke it (netbox/Kimi false positive — the
+# working file the model ALSO wrote must not nuke it (netbox/Kimi false positive - the
 # audit-flavored scenarios make the model name its scratch notes *_audit.json).
 NAME = re.compile(r'(audit|final|compact|merge_request_audit).*\.json$', re.I)
 def has_artifact(root, maxdepth):
@@ -408,10 +431,17 @@ PY
   fi
 
   commit=$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || echo "")
-  ver=""; [[ "$tool" == sense ]] && ver="$SVER"
-  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" "$attempts" "$otok" "$achars" "$OPENCODE_MIN_ANSWER_CHARS" "$perr" "$offload" > "$out/run_meta.json" <<'PY'
+  ver=""; sref=""; sdirty="false"; srel=""; srel_exact="true"
+  if [[ "$tool" == sense ]]; then
+    ver="$SVER"; sref="$SENSE_REF"; sdirty="$SENSE_DIRTY"
+    srel="$SENSE_RELEASE"; srel_exact="$SENSE_RELEASE_EXACT"
+  fi
+  python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" "$attempts" "$otok" "$achars" "$OPENCODE_MIN_ANSWER_CHARS" "$perr" "$offload" "$LIB_DIR" "$sref" "$sdirty" "$srel" "$srel_exact" > "$out/run_meta.json" <<'PY'
 import json, sys
-tool, repo, scen, wall, model, commit, ver, rc, attempts, otok, achars, min_chars, perr, offload = sys.argv[1:15]
+(tool, repo, scen, wall, model, commit, ver, rc, attempts, otok, achars, min_chars,
+ perr, offload, lib_dir, sref, sdirty, srel, srel_exact) = sys.argv[1:20]
+sys.path.insert(0, lib_dir)
+from run_validity import classify
 rc = int(rc); otok = int(otok); achars = int(achars); min_chars = int(min_chars); perr = int(perr); offload = int(offload)
 # Classify the watchdog exit so the contaminated-vs-real distinction is legible
 # downstream (124 hard cap / 125 stalled / 126 cold-start hang).
@@ -425,6 +455,12 @@ meta = {
     "opencode_exit_code": rc, "attempts": int(attempts), "output_tokens": otok,
     "answer_chars": achars,
     "cost_usd_note": "opencode subscription bills off-platform; per-token cost left null",
+    # Provenance: run_meta is the on-disk source of record. sense_* ride on the
+    # sense arm only; the release TAG is the final-data match key.
+    "sense_ref": sref or None,
+    "sense_dirty": sdirty == "true",
+    "sense_release": srel or None,
+    "sense_release_exact": (srel_exact == "true") if srel else None,
 }
 kind = KIND.get(rc, "opencode_session_failed")
 if kind:
@@ -452,6 +488,14 @@ elif rc != 0 and otok == 0:
     meta["error"] = "opencode_session_failed"
 elif rc != 0:
     meta["note"] = f"watchdog stopped ({kind}) but produced {otok} output tokens and a {achars}-char answer; kept as a truncated-but-valid run"
+# Stamp the class this driver already reasoned out. It was never written down,
+# so select_final read the missing key as falsy and rejected every opencode arm
+# on the board -- four whole models silently dropped from the final selection.
+_cls = classify(rc, achars, otok, provider_error=(perr == 1),
+                offloaded=(offload == 1), min_answer_chars=min_chars)
+meta["valid"] = _cls["valid"]
+meta["void_reason"] = _cls["void_reason"]
+meta["outcome"] = _cls["outcome"]
 print(json.dumps(meta, indent=2))
 PY
   if [ "${perr:-0}" -eq 1 ]; then flag=" *** INVALID: provider cap error (Operation not allowed) -- re-run after reset ***"; hclass=cap;

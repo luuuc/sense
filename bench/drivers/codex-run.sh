@@ -21,7 +21,7 @@
 #
 # Prereqs: clones at $SENSE_BENCH_ROOT/{baseline,sense}/<repo>; sense arm
 # already `sense scan`-ed; `codex` logged in (`codex login`); `sense` on PATH.
-# Judge stays claude-sonnet-4-6 (set in judge.py); it runs on the Claude
+# Judge stays claude-opus-4-7 (set in judge.py); it runs on the Claude
 # subscription, untouched by this script.
 
 set -uo pipefail
@@ -99,7 +99,17 @@ SVER="$(sense --version 2>/dev/null | head -1 || echo '')"
 # the scored files (yaml + rubric sibling); pitch/purpose/link are env-fed.
 SENSE_REF="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo '')"
 SENSE_DIRTY="false"; [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null)" ]] && SENSE_DIRTY="true"
+# The release TAG is the final-data match key, so it must ALWAYS be populated.
+# `describe --exact-match` returns EMPTY the moment HEAD moves past the tag -- even
+# by a bench-only commit -- which is exactly how every cross-agent sense run on the
+# go board ended up with `sense_release: null` and got rejected as "not-release".
+# Fall back to the nearest reachable tag and record whether it was exact.
 SENSE_RELEASE="$(git -C "$PROJECT_ROOT" describe --tags --exact-match 2>/dev/null || echo '')"
+SENSE_RELEASE_EXACT="true"
+if [[ -z "$SENSE_RELEASE" ]]; then
+  SENSE_RELEASE="$(git -C "$PROJECT_ROOT" describe --tags --abbrev=0 2>/dev/null || echo '')"
+  SENSE_RELEASE_EXACT="false"
+fi
 SENSE_PITCH="${SENSE_PITCH:-}"; SENSE_PURPOSE="${SENSE_PURPOSE:-}"; SENSE_LINK="${SENSE_LINK:-}"
 RUBRIC="${SCEN%.yaml}.rubric.yaml"
 SCEN_VER=$(python3 - "$SCEN" "$RUBRIC" <<'PY'
@@ -113,6 +123,13 @@ print("sha256:" + h.hexdigest()[:16])
 PY
 )
 
+# ⚠️ --timeout is for pinning a ceiling, NEVER for rescuing an arm that ran out
+# of clock. Can't-finish-at-budget is a RESULT: the arm failed the exam, the exam
+# is not invalid (a standing rule). An rc=124 that never REACHED
+# synthesis is a real failure to keep and report; only a cut MID-DELIVERY on a
+# metered sub is an artifact worth re-running. Classify from the transcript
+# (assistant-text chars vs tool calls), not the exit code. Rule: lib/scorer.py
+# -> TIME_CEILINGS.
 if [[ -n "$SESSION_TIMEOUT" ]]; then SECS="$SESSION_TIMEOUT"; else
   SECS=$(python3 -c "import sys;sys.path.insert(0,'$LIB_DIR');from scorer import TIME_CEILINGS,DEFAULT_TIME_CEILING;print(max(600,TIME_CEILINGS.get('$REPO',DEFAULT_TIME_CEILING)))")
 fi
@@ -226,18 +243,20 @@ PY
 
   commit=$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || echo "")
   # sense_* binary provenance rides only on the sense arm, mirroring ver.
-  ver=""; ref=""; dirty="false"; release=""
+  ver=""; ref=""; dirty="false"; release=""; rel_exact="true"
   if [[ "$tool" == sense ]]; then
-    ver="$SVER"; ref="$SENSE_REF"; dirty="$SENSE_DIRTY"; release="$SENSE_RELEASE"
+    ver="$SVER"; ref="$SENSE_REF"; dirty="$SENSE_DIRTY"; release="$SENSE_RELEASE"; rel_exact="$SENSE_RELEASE_EXACT"
   fi
   python3 - "$tool" "$REPO" "$SCEN_NAME" "$wall" "$MODEL" "$commit" "$ver" "$rc" \
               "$ts_iso" "$SECS" "$ref" "$dirty" "$release" \
               "$SENSE_PITCH" "$SENSE_PURPOSE" "$SENSE_LINK" \
-              "$SCEN_VER" "$SCEN" > "$out/run_meta.json" <<'PY'
+              "$SCEN_VER" "$SCEN" "$LIB_DIR" "$rel_exact" > "$out/run_meta.json" <<'PY'
 import json, sys
 (tool, repo, scen, wall, model, commit, ver, rc,
  ts, timeout, ref, dirty, release,
- pitch, purpose, link, scen_ver, scen_file) = sys.argv[1:19]
+ pitch, purpose, link, scen_ver, scen_file, lib_dir, rel_exact) = sys.argv[1:21]
+sys.path.insert(0, lib_dir)
+from run_validity import WATCHDOG_CODES
 rc = int(rc)
 meta = {
     "tool": tool, "repo": repo, "scenario": scen,
@@ -255,16 +274,21 @@ meta = {
     "sense_ref": ref or None,
     "sense_dirty": dirty == "true",
     "sense_release": release or None,
+    "sense_release_exact": (rel_exact == "true") if release else None,
     "sense_pitch": pitch or None,
     "sense_purpose": purpose or None,
     "sense_link": link or None,
     "scenario_version": scen_ver or None,
     "scenario_file": scen_file or None,
-    # valid retires _invalid-* folder renaming; error stays for the scorer.
-    "valid": rc == 0,
-    "void_reason": None if rc == 0 else "codex_session_failed",
+    # OBSERVATION, not verdict - see bench-sense-local.sh for the full rule.
+    # A run the wall clock cut short FAILED the exam; the exam still counts, and
+    # run_meta is written before the answer evidence that separates truncated
+    # from never-synthesised exists. lib/run_validity.py judges at read time.
+    "watchdog_kind": WATCHDOG_CODES.get(rc),
+    "valid": None if rc in WATCHDOG_CODES else rc == 0,
+    "void_reason": None if rc == 0 or rc in WATCHDOG_CODES else "harness_crash",
 }
-if rc != 0:
+if rc != 0 and rc not in WATCHDOG_CODES:
     meta["error"] = "codex_session_failed"
 print(json.dumps(meta, indent=2))
 PY
