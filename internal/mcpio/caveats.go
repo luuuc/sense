@@ -23,6 +23,13 @@ func IndexCaveat(file string) string {
 		return "Static graph may miss: edge-runtime mirror files (.edge.*, route-modules/*), dynamic require / module.compiled wrappers, decorator-registered handlers, and build-template re-exports."
 	case "python":
 		return "Static graph may miss: decorator-registered handlers (Flask/FastAPI routes), __init_subclass__ / metaclass registration, importlib dynamic imports, and pytest fixture discovery."
+	case "php":
+		// Certain, not "may": a facade declares only getFacadeAccessor(), so
+		// Foo::bar() has no method symbol to bind a call edge to. The facade shows
+		// importers and no callers, and blast's `complete` verdict is about the
+		// resolvable set only. Measured on filament: 33 inbound imports, 34 files
+		// calling FilamentAsset::, total_affected 12.
+		return "Static graph MISSES facade static calls (Foo::bar() routed by __callStatic to a container-bound singleton, so a facade shows importers but no callers); may also miss service-provider container bindings resolved by string key, and __get/__call magic-method dispatch."
 	case "java", "kotlin":
 		return "Static graph may miss: reflection-based dispatch, ServiceLoader / @AutoService registration, Spring/CDI dependency injection, annotation-processor-generated handlers, and dynamic proxy classes."
 	}
@@ -42,14 +49,16 @@ func detectLanguage(file string) string {
 	switch ext {
 	case ".go":
 		return "go"
-	case ".rb", ".rake":
+	case ".rb", ".rake", ".gemspec":
 		return "ruby"
 	case ".js", ".jsx", ".mjs", ".cjs":
 		return "javascript"
 	case ".ts", ".tsx":
 		return "typescript"
-	case ".py":
+	case ".py", ".pyi":
 		return "python"
+	case ".php":
+		return "php"
 	case ".java":
 		return "java"
 	case ".kt", ".kts":
