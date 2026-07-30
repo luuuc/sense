@@ -5,7 +5,23 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/luuuc/sense/internal/model"
 )
+
+// couplingKinds is the edge vocabulary that counts as architectural coupling between
+// two areas. Declared so the parity test can see it.
+//
+// EXEMPT: model.EdgeTests (a test reaching across areas is not an architecture
+// violation), model.EdgeTemporal (co-change is not a structural dependency),
+// model.EdgeReferences (too weak to imply coupling), model.EdgeImports (an import
+// without a call is not coupling in the sense this detector reports).
+var couplingKinds = []model.EdgeKind{
+	model.EdgeCalls,
+	model.EdgeComposes,
+	model.EdgeInherits,
+	model.EdgeIncludes,
+}
 
 var serviceEntryPoints = map[string]bool{
 	"call": true, "execute": true, "perform": true, "run": true,
@@ -199,7 +215,7 @@ func detectExternalDependencies(ctx context.Context, db *sql.DB, domain string, 
 	      JOIN sense_files tf ON tf.id = t.file_id
 	      JOIN sense_symbols s ON s.id = e.source_id
 	      JOIN sense_files sf ON sf.id = s.file_id
-	      WHERE e.kind IN ('calls', 'composes', 'inherits', 'includes')
+	      WHERE e.kind IN (` + model.SQLKindList(couplingKinds) + `)
 	      AND sf.path LIKE ?
 	      AND NOT tf.path LIKE ?
 	      GROUP BY t.qualified

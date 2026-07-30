@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/luuuc/sense/internal/model"
+
 	"github.com/luuuc/sense/internal/extract"
 )
 
@@ -44,10 +46,25 @@ func countSymbols(ctx context.Context, db *sql.DB, opts Options) (int, error) {
 	return count, nil
 }
 
+// reachabilityKinds is the edge vocabulary that proves a symbol is referenced. Declared
+// so the parity test can see it.
+//
+// EXEMPT: model.EdgeTests, because a symbol referenced only by its own test is what this
+// package reports as dead-but-tested rather than reachable; model.EdgeTemporal, because
+// co-change is correlation, not a reference; model.EdgeImports, because importing a
+// symbol is not using it, and treating it as a reference would mark unused imports alive.
+var reachabilityKinds = []model.EdgeKind{
+	model.EdgeCalls,
+	model.EdgeComposes,
+	model.EdgeIncludes,
+	model.EdgeInherits,
+	model.EdgeReferences,
+}
+
 func queryCandidates(ctx context.Context, db *sql.DB, opts Options) ([]Symbol, error) {
 	edgeFilter := `SELECT 1 FROM sense_edges e
 			WHERE e.target_id = s.id
-			AND e.kind IN ('calls', 'composes', 'includes', 'inherits', 'references')`
+			AND e.kind IN (` + model.SQLKindList(reachabilityKinds) + `)`
 	if opts.ExcludeTestRefs {
 		edgeFilter += `
 			AND NOT EXISTS (

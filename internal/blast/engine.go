@@ -290,6 +290,25 @@ type Result struct {
 // point to any reopening, so all must be seeds.
 //
 // For single-symbol queries, pass a one-element slice.
+// TraversalKinds is the edge vocabulary the blast BFS follows. Declared rather than
+// written inline so TestEdgeKindConsumerParity can assert it against
+// model.AllEdgeKinds: `imports` was absent here for two months after the PHP extractor
+// began emitting it, and a facade's real dependents went unreported as a result.
+//
+// EXEMPT: model.EdgeImports. An import means "this file names the symbol", which on a
+// facade also means "calls it" but on an ordinary class adds nothing the call edges do
+// not already carry. Traversing it was measured: total_affected 12 -> 45 and the verdict
+// flipped to `partial`. Those importers surface as their own response group instead.
+var TraversalKinds = []model.EdgeKind{
+	model.EdgeCalls,
+	model.EdgeComposes,
+	model.EdgeIncludes,
+	model.EdgeInherits,
+	model.EdgeTemporal,
+	model.EdgeTests,
+	model.EdgeReferences,
+}
+
 func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (Result, error) {
 	if len(symbolIDs) == 0 {
 		return Result{}, fmt.Errorf("blast: no symbol IDs provided")
@@ -1175,7 +1194,7 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64) ([]edgePa
 		q := `SELECT source_id, target_id, kind, confidence, file_id, line FROM sense_edges
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
-		        AND kind IN ('calls', 'composes', 'includes', 'inherits', 'temporal', 'tests', 'references')
+		        AND kind IN (` + model.SQLKindList(TraversalKinds) + `)
 		        AND confidence >= 0.1`
 
 		args := make([]any, 0, len(batch))

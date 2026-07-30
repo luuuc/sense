@@ -4,7 +4,22 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/luuuc/sense/internal/model"
 )
+
+// contextKinds is the edge vocabulary a symbol's context view walks. Declared so the
+// parity test can see it.
+//
+// EXEMPT: model.EdgeTests, model.EdgeTemporal, model.EdgeReferences and
+// model.EdgeImports - the context view is a structural neighbourhood, and these four
+// widen it without telling the reader how the symbol is wired.
+var contextKinds = []model.EdgeKind{
+	model.EdgeComposes,
+	model.EdgeIncludes,
+	model.EdgeInherits,
+	model.EdgeCalls,
+}
 
 const contextBudget = 800
 
@@ -105,10 +120,10 @@ func (a *Adapter) contextSymbols(ctx context.Context, fileID int64) ([]symbolCtx
 }
 
 func (a *Adapter) contextEdges(ctx context.Context, fileID int64) (map[int64]symbolEdges, error) {
-	const q = `SELECT e.source_id, e.kind, t.name FROM sense_edges e
+	q := `SELECT e.source_id, e.kind, t.name FROM sense_edges e
 		JOIN sense_symbols t ON e.target_id = t.id
 		WHERE e.source_id IN (SELECT id FROM sense_symbols WHERE file_id = ?)
-		  AND e.kind IN ('composes','includes','inherits','calls')
+		  AND e.kind IN (` + model.SQLKindList(contextKinds) + `)
 		ORDER BY e.source_id, e.kind, t.name`
 
 	rows, err := a.db.QueryContext(ctx, q, fileID)
