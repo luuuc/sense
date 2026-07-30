@@ -284,3 +284,80 @@ func TestLoadReverseCompositionPropagatesQueryError(t *testing.T) {
 		t.Fatal("loadReverseComposition: expected propagated query error, got nil")
 	}
 }
+
+// The importer group's DB-error branches. A healthy database never reaches them, so
+// they are driven through the same fault harness as the rest of this file.
+
+func TestImportersNotReachedQueryError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastQueryFault("AND e.kind = 'imports'")
+	t.Cleanup(disarmBlastFaults)
+	if _, _, err := importersNotReached(context.Background(), db, []int64{1}, nil); err == nil {
+		t.Fatal("importersNotReached: expected query error, got nil")
+	}
+}
+
+func TestImportersNotReachedScanError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastRowsFault("AND e.kind = 'imports'", blastRowsScan)
+	t.Cleanup(disarmBlastFaults)
+	if _, _, err := importersNotReached(context.Background(), db, []int64{1}, nil); err == nil {
+		t.Fatal("importersNotReached: expected scan error, got nil")
+	}
+}
+
+func TestImportersNotReachedRowsIterationError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastRowsFault("AND e.kind = 'imports'", blastRowsNext)
+	t.Cleanup(disarmBlastFaults)
+	if _, _, err := importersNotReached(context.Background(), db, []int64{1}, nil); err == nil {
+		t.Fatal("importersNotReached: expected rows.Err iteration error, got nil")
+	}
+}
+
+// No symbol ids means no subject, so the group is empty without touching the DB.
+func TestImportersNotReachedEmptySubject(t *testing.T) {
+	db := openBlastFaultDB(t)
+	files, count, err := importersNotReached(context.Background(), db, nil, nil)
+	if err != nil || files != nil || count != 0 {
+		t.Fatalf("importersNotReached(no ids) = %v, %d, %v; want nil, 0, nil", files, count, err)
+	}
+}
+
+func TestFileIDsOfQueryError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastQueryFault("SELECT DISTINCT file_id FROM sense_symbols")
+	t.Cleanup(disarmBlastFaults)
+	if _, err := fileIDsOf(context.Background(), db, []int64{1}); err == nil {
+		t.Fatal("fileIDsOf: expected query error, got nil")
+	}
+}
+
+func TestFileIDsOfScanError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastRowsFault("SELECT DISTINCT file_id FROM sense_symbols", blastRowsBadValue)
+	t.Cleanup(disarmBlastFaults)
+	if _, err := fileIDsOf(context.Background(), db, []int64{1}); err == nil {
+		t.Fatal("fileIDsOf: expected scan error, got nil")
+	}
+}
+
+func TestFileIDsOfRowsIterationError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastRowsFault("SELECT DISTINCT file_id FROM sense_symbols", blastRowsNext)
+	t.Cleanup(disarmBlastFaults)
+	if _, err := fileIDsOf(context.Background(), db, []int64{1}); err == nil {
+		t.Fatal("fileIDsOf: expected rows.Err iteration error, got nil")
+	}
+}
+
+// The fileIDsOf failure has to propagate out of importersNotReached rather than be
+// swallowed into an empty group, which would silently report every importer as unreached.
+func TestImportersNotReachedFileIDsError(t *testing.T) {
+	db := openBlastFaultDB(t)
+	armBlastQueryFault("SELECT DISTINCT file_id FROM sense_symbols")
+	t.Cleanup(disarmBlastFaults)
+	if _, _, err := importersNotReached(context.Background(), db, []int64{1}, []int64{2}); err == nil {
+		t.Fatal("importersNotReached: expected the fileIDsOf error to propagate, got nil")
+	}
+}

@@ -99,6 +99,26 @@ func shouldExpandChildren(kind model.SymbolKind) bool {
 	}
 }
 
+// ImportersCap bounds the ImportersNotReached list. Past it the list is SUPPRESSED
+// rather than truncated: a partial list of dependents is a prompt to go grep, which
+// defeats the group's purpose, while the count alone still states the scale honestly.
+//
+// The value is a JUDGEMENT, and the honest reasoning is recorded here rather than implied.
+// Two inputs. The retention ring's history says an impure list converts into acted-upon
+// evidence when small and complete (it did at 14 rows) and dies when large and truncated.
+// And the measured distribution over filament's 969 importable symbols: 765 have 1-5
+// importers, 110 have 6-13, 48 have 14-24, 24 have 25-40, 14 have 41-84, 8 have 85+ - a
+// continuous distribution with no natural gap to sit in.
+//
+// 24 is p95 of that distribution. It is set higher than the ring's 14 because a row here
+// is a bare file path, roughly an order of magnitude cheaper per row than a ring row
+// carrying carrier and chain enrichments, so the token argument for a tight cap is weaker.
+//
+// Disclosure, so a reader can judge the choice: the facade that motivated this group has
+// 22 unreached importers, so this cap includes it and a p90 cap (13) would have suppressed
+// it. The distribution came first, but the coincidence is real and worth stating.
+const ImportersCap = 24
+
 const (
 	// InheritsDecay — type hierarchy is a strong structural signal.
 	InheritsDecay = 0.7
@@ -238,6 +258,28 @@ type Result struct {
 	// mismatch means the index moved and the pages must not be merged.
 	RetainedFingerprint string
 
+	// ImportersNotReached lists FILES that carry an inbound `imports` edge to the
+	// subject and appear nowhere in the caller lists. On a Laravel facade this is the
+	// real dependent set: the facade declares only getFacadeAccessor(), so a
+	// `Foo::bar()` static call binds to no method symbol and produces no call edge,
+	// leaving the `use` import as the only recorded evidence. Measured on filament's
+	// FilamentAsset: 32 importers, 12 affected, 22 unreported, and 22 of 22 verified
+	// to make a genuine static call.
+	//
+	// Like RetainedViaInterfaces this is a WEAKER claim than a call edge, so it never
+	// feeds TotalAffected and never moves the completeness verdict. Adding these rows
+	// to the radius was tried and measured: it tripled total_affected and flipped the
+	// verdict to `partial`, which is the "Sense is unsure, re-grep everything" failure
+	// this group exists to prevent.
+	//
+	// FILES, not symbols, and no synthetic line numbers: there is no call site to cite
+	// (that is the whole reason the group exists), and PHP attributes an import to the
+	// file's namespace symbol, so several importers share one symbol name.
+	ImportersNotReached []string
+	// ImportersNotReachedCount is the true number of such files even when the list is
+	// SUPPRESSED for exceeding ImportersCap, so the count never lies about scale.
+	ImportersNotReachedCount int
+
 	Truncated bool
 }
 
@@ -334,32 +376,149 @@ func Compute(ctx context.Context, db *sql.DB, symbolIDs []int64, opts Options) (
 	// total so total_affected never under-reports what the response surfaces.
 	totalAffectedCount += countUnvisited(viaComposition, affectedSet)
 
+	// The importer group is defined against what the traversal REACHED, so it is
+	// computed here rather than inside the BFS.
+	reached := make([]int64, 0, len(directIDs)+len(indirectIDs)+len(symbolIDs))
+	reached = append(reached, directIDs...)
+	reached = append(reached, indirectIDs...)
+	reached = append(reached, symbolIDs...) // the subject's own file is not a dependent
+	importerFiles, importerCount, err := importersNotReached(ctx, db, symbolIDs, reached)
+	if err != nil {
+		return Result{}, fmt.Errorf("blast: importers not reached: %w", err)
+	}
+
 	return Result{
-		Symbol:                 subject,
-		Risk:                   risk,
-		RiskReasons:            reasons,
-		DirectCallers:          directCallers,
-		IndirectCallers:        indirectCallers,
-		AffectedTests:          affectedTests,
-		TotalAffected:          totalAffectedCount,
-		EdgesTraversed:         state.edgesTraversed,
-		SubjectHasCallees:      hasCallees,
-		ViewReached:            viewReached,
-		DirectTemporalIDs:      directTemporalIDs,
-		DirectEdgeSites:        directEdgeSites,
-		DirectConfidence:       directConfidence,
-		CallerFan:              state.fanIn,
-		AffectedSubclasses:     subclasses,
-		AffectedViaComposition: viaComposition,
-		AffectedViaIncludes:    viaIncludes,
-		RetainedViaInterfaces:  retention.holders,
-		RetainedCount:          retention.count,
-		RetainedPurity:         retention.purity,
-		RetainedOffset:         retention.offset,
-		RetainedFingerprint:    retention.fingerprint,
-		SymbolTiers:            symbolTiers,
-		Truncated:              state.truncated,
+		Symbol:                   subject,
+		Risk:                     risk,
+		RiskReasons:              reasons,
+		DirectCallers:            directCallers,
+		IndirectCallers:          indirectCallers,
+		AffectedTests:            affectedTests,
+		TotalAffected:            totalAffectedCount,
+		EdgesTraversed:           state.edgesTraversed,
+		SubjectHasCallees:        hasCallees,
+		ViewReached:              viewReached,
+		DirectTemporalIDs:        directTemporalIDs,
+		DirectEdgeSites:          directEdgeSites,
+		DirectConfidence:         directConfidence,
+		CallerFan:                state.fanIn,
+		AffectedSubclasses:       subclasses,
+		AffectedViaComposition:   viaComposition,
+		AffectedViaIncludes:      viaIncludes,
+		RetainedViaInterfaces:    retention.holders,
+		RetainedCount:            retention.count,
+		RetainedPurity:           retention.purity,
+		RetainedOffset:           retention.offset,
+		RetainedFingerprint:      retention.fingerprint,
+		SymbolTiers:              symbolTiers,
+		ImportersNotReached:      importerFiles,
+		ImportersNotReachedCount: importerCount,
+		Truncated:                state.truncated,
 	}, nil
+}
+
+// importersNotReached returns the FILES holding an inbound `imports` edge to the
+// subject that the traversal never reached, plus the true count before suppression.
+//
+// Exclusion is per FILE, not per symbol, and that distinction is the whole correctness
+// of this function. PHP attributes an import to the file's NAMESPACE symbol, so the
+// symbol an imports edge starts from is never the class symbol a call edge would find.
+// Matching on symbol id therefore excludes nothing: measured on filament's FilamentAsset
+// it reported all 32 importers instead of the 22 the caller lists had not already
+// covered, i.e. it re-listed rows sitting in the answer.
+//
+// Runs AFTER the traversal because "reached" is defined by the caller lists. `imports` is
+// emitted by the PHP extractor only, so every other language gets an empty group.
+// Past ImportersCap the list is suppressed and only the count is returned.
+func importersNotReached(ctx context.Context, db *sql.DB, symbolIDs []int64, reached []int64) ([]string, int, error) {
+	if len(symbolIDs) == 0 {
+		return nil, 0, nil
+	}
+	reachedFiles, err := fileIDsOf(ctx, db, reached)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	placeholders := strings.Repeat("?,", len(symbolIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := `SELECT DISTINCT s.file_id, f.path
+	      FROM sense_edges e
+	      JOIN sense_symbols s ON s.id = e.source_id
+	      JOIN sense_files f ON f.id = s.file_id
+	      WHERE e.target_id IN (` + placeholders + `)
+	        AND e.kind = 'imports'
+	        AND e.source_id IS NOT NULL
+	      ORDER BY f.path`
+	args := make([]any, 0, len(symbolIDs))
+	for _, id := range symbolIDs {
+		args = append(args, id)
+	}
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var files []string
+	for rows.Next() {
+		var fileID int64
+		var path string
+		if err := rows.Scan(&fileID, &path); err != nil {
+			return nil, 0, err
+		}
+		if _, ok := reachedFiles[fileID]; ok {
+			continue // a call edge already put this file in the answer
+		}
+		files = append(files, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	count := len(files)
+	if count > ImportersCap {
+		return nil, count, nil
+	}
+	return files, count, nil
+}
+
+// fileIDsOf resolves symbol ids to the set of files they live in, chunked to stay under
+// SQLite's SQLITE_MAX_VARIABLE_NUMBER like expandFrontier does.
+func fileIDsOf(ctx context.Context, db *sql.DB, symbolIDs []int64) (map[int64]struct{}, error) {
+	out := make(map[int64]struct{}, len(symbolIDs))
+	const chunk = 500
+	for start := 0; start < len(symbolIDs); start += chunk {
+		end := start + chunk
+		if end > len(symbolIDs) {
+			end = len(symbolIDs)
+		}
+		batch := symbolIDs[start:end]
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, 0, len(batch))
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		rows, err := db.QueryContext(ctx,
+			`SELECT DISTINCT file_id FROM sense_symbols WHERE id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var fid int64
+			if err := rows.Scan(&fid); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[fid] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+	return out, nil
 }
 
 // loadEdgeTableGroups computes the two edge-table-derived groups after the

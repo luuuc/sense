@@ -357,6 +357,19 @@ type BlastResponse struct {
 	RetainedViaInterfaces []BlastRetained `json:"retained_via_interfaces,omitempty"`
 	RetainedCount         int             `json:"retained_via_interfaces_count,omitempty"`
 	RetainedNote          string          `json:"retained_note,omitempty"`
+	// ImportersNotReached lists FILES that import the subject and that no call
+	// edge reaches. On a facade this is the real dependent set: the class declares
+	// only getFacadeAccessor(), so a static call binds to no method symbol and the
+	// `use` import is the only recorded evidence. Like retained_via_interfaces it is
+	// a weaker claim than the affected_* groups and never feeds total_affected or
+	// the completeness verdict; adding these rows to the radius was measured and it
+	// flipped the verdict to `partial`, which sends the agent back to grep.
+	// Files, not symbols, and no synthetic line numbers: there is no call site to
+	// cite. Suppressed entirely past the engine's cap so a partial list never
+	// masquerades as the set, with the count still stating the true scale.
+	ImportersNotReached      []string `json:"importers_not_reached,omitempty"`
+	ImportersNotReachedCount int      `json:"importers_not_reached_count,omitempty"`
+	ImportersNote            string   `json:"importers_note,omitempty"`
 	// RetainedTrimmed is true when the budget stripped carrier/chain
 	// enrichments from retained rows: an absent enrichment on a row is
 	// then trimmed, not unknown. A flag rather than note prose so it is

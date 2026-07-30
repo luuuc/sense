@@ -450,6 +450,14 @@ func BuildBlastResponseSeen(ctx context.Context, r blast.Result, files FileLooku
 	// they stay out of tier2All (references.count), the production/test
 	// segmentation, affected_files, and the completeness arithmetic — their
 	// own count field is the only place they are tallied.
+	resp.ImportersNotReached = r.ImportersNotReached
+	resp.ImportersNotReachedCount = r.ImportersNotReachedCount
+	if r.ImportersNotReachedCount > 0 {
+		resp.ImportersNote = "These files import the subject and no call edge reaches them; " +
+			"on a facade the static call is routed by __callStatic, so the import is the only " +
+			"recorded evidence. Not counted in total_affected."
+	}
+
 	for _, rh := range r.RetainedViaInterfaces {
 		var file string
 		if path, ok := files(rh.Symbol.FileID); ok {
