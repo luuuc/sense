@@ -115,6 +115,21 @@ func TestIndexCaveatPHP(t *testing.T) {
 	}
 }
 
+// TestExtensionsInsideCoveredLanguages records the INTENT for the two extensions the
+// parity gate surfaced, so a later reader can tell they were reasoned about rather than
+// swept in. Both are the same language as an extension already covered - a .pyi stub is
+// Python and a .gemspec is Ruby, evaluated by the same interpreter with the same dynamic
+// features - so the existing caveat text is correct for them unchanged. Neither appears
+// in any frozen scenario's gold, which is what bounded this change's exposure to zero.
+func TestExtensionsInsideCoveredLanguages(t *testing.T) {
+	if got, want := IndexCaveat("types.pyi"), IndexCaveat("types.py"); got != want {
+		t.Errorf("a .pyi stub is Python: caveat = %q, want the Python caveat %q", got, want)
+	}
+	if got, want := IndexCaveat("sense.gemspec"), IndexCaveat("sense.rb"); got != want {
+		t.Errorf("a .gemspec is Ruby: caveat = %q, want the Ruby caveat %q", got, want)
+	}
+}
+
 // TestIndexCaveatUnchangedForOtherLanguages pins the five pre-existing caveats
 // BYTE-EXACT. The php addition claims "no other language changes"; byte equality is
 // precisely that claim, so it is asserted literally rather than by substring.

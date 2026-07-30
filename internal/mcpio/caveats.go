@@ -24,6 +24,9 @@ func IndexCaveat(file string) string {
 	case "python":
 		return "Static graph may miss: decorator-registered handlers (Flask/FastAPI routes), __init_subclass__ / metaclass registration, importlib dynamic imports, and pytest fixture discovery."
 	case "php":
+		// DELIBERATE BREAK from the "Static graph may miss:" shape the other five
+		// entries share: five identical hedges carry no information, so the one
+		// entry that can state a certainty says so. Do not normalise this back.
 		// Certain, not "may": a facade declares only getFacadeAccessor(), so
 		// Foo::bar() has no method symbol to bind a call edge to. The facade shows
 		// importers and no callers, and blast's `complete` verdict is about the
