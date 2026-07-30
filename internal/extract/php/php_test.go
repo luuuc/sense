@@ -457,3 +457,107 @@ func hasParityEdge(em *rec, want parityEdge) bool {
 func qualifiedSuffix(got, base string) bool {
 	return got == base || strings.HasSuffix(got, `\`+base)
 }
+
+// TestHolderComposition is the repro for the missing PHP holder graph.
+//
+// Go declares a holder on the field (`f io.Closer`) so the composition edge falls out of
+// the declaration. PHP puts the type on the CONSTRUCTOR PARAMETER and links it by
+// assignment, so the same fact needs two nodes joined by a name. Sense resolved those types
+// already - paramTypes builds a `$var -> type` environment and promoted parameters record a
+// property type - but never emitted an edge, so composition was invisible.
+//
+// Measured on laravel-framework/src the day this landed: 52 typed properties, 11 promoted
+// parameters, 235 typed constructor parameters and 1,343 `$this->x = $param` assignments,
+// against 297 composes edges repo-wide (nearly all Eloquent test relations) and ZERO into
+// `Application`. Go sits at 3.3-5.5% of edges being composes; php at 0.06-0.31%. That
+// missing density is why the retention question shape - the shape behind all four banked go
+// wins - could not be asked of a php codebase at all.
+func TestHolderComposition(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace App;
+
+use App\Services\Gateway;
+use App\Services\Logger;
+use App\Services\Mailer;
+
+class Checkout
+{
+    private Logger $log;
+
+    public function __construct(Gateway $gateway, private Mailer $mailer, string $label)
+    {
+        $this->gateway = $gateway;
+        $this->label = $label;
+    }
+}
+`)
+	// typed property: the type is on the declaration, as in Go
+	em.edge(t, model.EdgeComposes, `App\Checkout`, `App\Services\Logger`)
+	// promoted constructor parameter: declaration and assignment in one node
+	em.edge(t, model.EdgeComposes, `App\Checkout`, `App\Services\Mailer`)
+	// the dominant laravel shape: typed parameter assigned to a property
+	em.edge(t, model.EdgeComposes, `App\Checkout`, `App\Services\Gateway`)
+}
+
+// TestHolderCompositionNegatives pins what must NOT become a holder edge. An inference that
+// fires on the wrong assignment is worse than no inference, because it is indistinguishable
+// from a real one downstream.
+func TestHolderCompositionNegatives(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace App;
+
+use App\Services\Gateway;
+use App\Services\Other;
+
+class Checkout
+{
+    public function __construct(Gateway $gateway, Other $other)
+    {
+        $local = $gateway;          // assigned to a LOCAL, the class holds nothing
+        $this->thing = $unrelated;  // property assigned an UNTYPED, unknown variable
+    }
+}
+`)
+	// Scoped to composes: `imports` edges for these classes legitimately exist from the
+	// `use` lines, so a kind-agnostic check would pass for the wrong reason.
+	composes := func(target string) bool {
+		for _, e := range em.edges {
+			if e.Kind == model.EdgeComposes && e.TargetQualified == target {
+				return true
+			}
+		}
+		return false
+	}
+	if composes(`App\Services\Gateway`) {
+		t.Error("a constructor parameter assigned to a local must not compose the class")
+	}
+	if composes(`App\Services\Other`) {
+		t.Error("a parameter that is never assigned to a property must not compose the class")
+	}
+}
+
+// TestHolderCompositionSelfReference pins the guard in emitHolds. A node type holding its
+// own class is a real relationship in the source, but as a graph edge it makes the class its
+// own dependent, which is noise in every consumer of the composition graph: blast would list
+// the subject inside its own radius. The edge is suppressed deliberately, not by accident.
+func TestHolderCompositionSelfReference(t *testing.T) {
+	em := mustRun(t, `<?php
+namespace App;
+
+class Node
+{
+    private Node $next;
+    private $untyped;
+
+    public function __construct(Node $parent)
+    {
+        $this->parent = $parent;
+    }
+}
+`)
+	for _, e := range em.edges {
+		if e.Kind == model.EdgeComposes {
+			t.Errorf("self-composition emitted an edge: %s -> %s", e.SourceQualified, e.TargetQualified)
+		}
+	}
+}
