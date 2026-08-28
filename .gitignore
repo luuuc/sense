@@ -116,24 +116,6 @@ sense.yml
 /assets
 
 # ----------------------------------------------------------------------------
-# sense-lab run trees
-# ----------------------------------------------------------------------------
-# Where `sense-lab probe` and `sense-lab run` write cells: worktrees, disposable
-# HOMEs, transcripts and captures. One cell of a real repository is hundreds of
-# megabytes and tens of thousands of files.
-#
-# This line does TWO jobs, which is why it is a .gitignore entry rather than a
-# scan exclusion list. Git ignores the tree, AND `sense scan` skips it, because
-# the ignore matcher composes every .gitignore it walks. A separate exclusion
-# list would be a second thing to keep in sync with this one.
-#
-# Both jobs are load-bearing. Measured 2026-08-17: a mastodon cell left 230MB
-# and 19,703 files under runs/, and internal/blast, internal/cli and
-# internal/mcpserver then timed out at 10 minutes each in `make ci` — they scan
-# the repository and were indexing mastodon. Each passes in about 60s without it.
-/runs/
-
-# ----------------------------------------------------------------------------
 # improvement-loop/ - public by default, small private allowlist
 # ----------------------------------------------------------------------------
 # The default INVERTS here. Everything under improvement-loop/ is tracked unless

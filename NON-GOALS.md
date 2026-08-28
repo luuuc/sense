@@ -35,7 +35,7 @@ Sense is feature-complete for v1. The query surface and the CLI are deliberately
 
 This is not a moratorium on improvement. It is a refusal to grow surface area. The three lanes that ARE open (languages, frameworks and their dead-code idioms, AI-tool integration) all deepen the existing four tools rather than add new ones. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Every promise on this page describes the tool you install. Developing Sense is a different activity with different tools: the bench that grades it (`sense-lab`, a second binary in this repository) needs network access, an agent CLI and a subscription or API key, and none of that reaches the Sense binary, its install path, or its release archives.
+Every promise on this page describes the tool you install. Developing Sense is a different activity with different tools: the bench that grades it needs network access, an agent CLI and a subscription or API key, and none of that reaches the Sense binary, its install path, or its release archives.
 
 ---
 

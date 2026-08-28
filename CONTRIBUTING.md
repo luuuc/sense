@@ -42,8 +42,6 @@ make test
 
 `fetch-deps.sh --local` downloads the ONNX Runtime library and embedding model for your current platform. This is required before the first build.
 
-`make build` also produces `bin/sense-lab`, the bench that grades Sense (see [NON-GOALS.md](NON-GOALS.md)). You do not need it to contribute a language, a framework, or an AI-tool integration.
-
 Note: `.claude/` and `CLAUDE.md` are local-only files excluded from version control. It's your personal settings. Don't commit them.
 
 ## Before pushing
