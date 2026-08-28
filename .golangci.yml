@@ -60,66 +60,6 @@ linters:
               desc: "pure-core must not call syscalls directly; inject the effect at the edge"
             - pkg: github.com/fsnotify/fsnotify
               desc: "pure-core must not watch the filesystem; that is the watch package's job"
-        # The sense-lab boundary. The bench may reach Sense ONLY through the MCP
-        # server, because that is the channel the benched agent actually had.
-        # Querying the index directly would measure a channel no agent has, and
-        # nothing about that failure would be visible in a result.
-        # The lab's pure core. Scoring takes bytes and returns numbers, and it
-        # must keep doing so: the moment recall can fail because a checkout is
-        # missing, every number the instrument produces depends on the state of
-        # a disk. Grounding is the one piece needing a repository, and it lives
-        # in lab/internal/ground, at the edge.
-        #
-        # score and plan ONLY. transcript and scenario read files by design, so
-        # listing them here would describe an aspiration rather than a fact, and
-        # a rule that is already false where it points will not be believed when
-        # it matters. `os` is denied as well as `os/exec`, because the property
-        # is "does not touch a disk", and a rule that stopped only the shell
-        # would not hold it.
-        lab-pure:
-          files:
-            - "**/lab/internal/score/**"
-            - "**/lab/internal/plan/**"
-            - "**/lab/internal/judge/**"
-            - "**/lab/internal/tally/**"
-            - "**/lab/internal/gate/**"
-            - "**/lab/internal/phase/**"
-            - "**/lab/internal/loop/**"
-            - "**/lab/internal/mine/**"
-            - "**/lab/internal/validate/**"
-            - "**/lab/internal/replay/**"
-          deny:
-            - pkg: os
-              desc: "the lab's pure core must not read a disk; recall may not depend on the state of one"
-            - pkg: os/exec
-              desc: "the lab's pure core must not shell out; grounding lives in lab/internal/ground"
-            - pkg: net
-              desc: "the lab's pure core must not touch the network"
-            - pkg: syscall
-              desc: "the lab's pure core must not call syscalls directly"
-        # The deciding layer. These packages work out what happens next, and
-        # nothing that decides a next phase may spawn one: the spawner is a
-        # value the edge hands in, and the crank never imports one. `os` is
-        # allowed here and denied in lab-pure above, and the difference is the
-        # point — position reads a run tree by design, and what it may not do is
-        # reach a process.
-        lab-decides:
-          files:
-            - "**/lab/internal/position/**"
-            - "**/lab/internal/crank/**"
-          deny:
-            - pkg: os/exec
-              desc: "the deciding layer must not spawn; the spawner is injected at the edge"
-            - pkg: net
-              desc: "the deciding layer must not touch the network"
-            - pkg: syscall
-              desc: "the deciding layer must not call syscalls directly"
-        lab-boundary:
-          files:
-            - "**/lab/**"
-          deny:
-            - pkg: github.com/luuuc/sense/internal
-              desc: "sense-lab must reach Sense through the MCP server, never by importing sense/internal"
   exclusions:
     paths:
       - bench/lib/test_fixtures
@@ -136,12 +76,6 @@ linters:
       # claims it. Shrink this list as each package is brought into scope.
       - linters: [gocyclo, gocognit]
         path: (cmd/sense|internal/(benchmark|cli|freshen|hook|ignore|mcpio|summary))/
-      # depguard/lab-pure: the property is about the PRODUCTION core, which must
-      # not depend on the state of a disk. Its tests legitimately read checked-in
-      # fixtures, and forbidding that would only push the reads into a helper
-      # package and prove nothing.
-      - linters: [depguard]
-        path: lab/internal/(score|plan|judge|tally|gate|phase|loop|mine|validate|replay)/.*_test\.go
       # dupword: SQL NULL repetitions and embedded Ruby/test fixtures are fine
       - linters: [dupword]
         path: _test\.go

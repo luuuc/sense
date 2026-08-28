@@ -23,11 +23,8 @@ ensure-golangci = command -v golangci-lint >/dev/null 2>&1 || \
 fetch-deps: ## Downloads model + ORT lib on first run; no-ops if already present
 	./scripts/fetch-deps.sh --local
 
-LAB_LDFLAGS := -ldflags="-s -w -X 'github.com/luuuc/sense/lab/internal/cli.Version=$(VERSION)'"
-
 build: fetch-deps
 	go build $(LDFLAGS) -trimpath -o bin/sense ./cmd/sense
-	go build $(LAB_LDFLAGS) -trimpath -o bin/sense-lab ./lab/cmd/sense-lab
 
 test:
 	go test -v ./...
@@ -99,7 +96,7 @@ cover: fetch-deps
 # suppression is not debt.)
 LEDGER_MAX ?= 0
 ledger:
-	@n=$$(grep -rnE 'nolint:goc(yclo|ognit)' --include='*.go' internal cmd lab | wc -l | tr -d ' '); \
+	@n=$$(grep -rnE 'nolint:goc(yclo|ognit)' --include='*.go' internal cmd | wc -l | tr -d ' '); \
 	echo "complexity ledger: $$n entries (cap: $(LEDGER_MAX))"; \
 	if [ "$$n" -gt "$(LEDGER_MAX)" ]; then \
 		echo "FAIL: ledger grew past $(LEDGER_MAX). Decompose the function or retire an entry — do not add a new //nolint."; \
