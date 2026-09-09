@@ -101,6 +101,13 @@ jobs:
       # can't mint the OIDC token anyway (codecov keeps the PR-diff view).
       - name: Merge coverage profile for Qlty
         if: matrix.os == 'linux' && github.event_name == 'push'
+        # gocovmerge (2016) predates modules, so its synthesized go.mod pins
+        # nothing and `go run` resolves golang.org/x/tools/cover to latest,
+        # which since v0.50.0 needs Go 1.26. `auto` does not rescue this,
+        # because pkg@version runs never self-upgrade the toolchain, so name
+        # one here; build/test/lint stay on the go.mod version.
+        env:
+          GOTOOLCHAIN: go1.26.0
         run: go run github.com/wadey/gocovmerge@b5bfa59ec0adc420475f97f89b58045c721d761c coverage.txt > coverage-merged.txt
 
       - name: Upload coverage to Qlty
