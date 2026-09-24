@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/luuuc/sense/internal/extract"
 	"github.com/luuuc/sense/internal/model"
 )
 
@@ -307,6 +308,31 @@ var TraversalKinds = []model.EdgeKind{
 	model.EdgeInherits,
 	model.EdgeTemporal,
 	model.EdgeTests,
+	model.EdgeReferences,
+}
+
+// UsageKinds are the traversed kinds that claim "this code USES the subject",
+// and the only ones the resolver's bare-name fallback can fabricate: a call it
+// could not type is bound by trailing name alone and stamped
+// extract.ConfidenceNameCollision so impact analysis ignores the guess.
+//
+// A usage edge at that stamp never enters the radius, whatever
+// Options.MinConfidence says. The two are different floors: MinConfidence
+// bounds the CUMULATIVE path confidence (it is the depth control, and the MCP
+// server sets it to 0.3 so a chain of real 0.7 edges survives three hops),
+// while this one is a floor on a SINGLE edge's own confidence. Sharing one
+// knob let the depth setting re-admit every guess: on discourse,
+// Admin::BadgesController — whose entire claim on the word `new` is a two-line
+// empty Rails action — came back with 60 direct callers, 59 of them spans
+// calling some other class's .new, and total_affected 357 against a true 6.
+//
+// Structural kinds (composes/inherits/includes) and temporal keep riding
+// MinConfidence/StructuralMinConf alone: a 0.3 composes edge is a weak
+// association, and a temporal confidence is a co-change ratio, neither of them
+// a name guess. Same floor internal/summary applies to its hub counts, and the
+// stratum internal/dead still reads for liveness.
+var UsageKinds = []model.EdgeKind{
+	model.EdgeCalls,
 	model.EdgeReferences,
 }
 
@@ -1198,6 +1224,10 @@ func subjectViewReached(ctx context.Context, db *sql.DB, symbolIDs []int64) bool
 // outer loop can track predecessors, edge kinds, and cumulative
 // confidence for grouped output and confidence decay.
 //
+// Usage edges stamped at extract.ConfidenceNameCollision are excluded here
+// rather than left to Options.MinConfidence — see UsageKinds for why the two
+// floors are separate.
+//
 // Large frontiers are chunked to stay under SQLite's default
 // SQLITE_MAX_VARIABLE_NUMBER (999) — at pitch scale (~30K symbols)
 // frontiers are typically small, but the chunking guard keeps the
@@ -1219,12 +1249,14 @@ func expandFrontier(ctx context.Context, db *sql.DB, frontier []int64) ([]edgePa
 		      WHERE target_id IN (` + placeholders + `)
 		        AND source_id IS NOT NULL
 		        AND kind IN (` + model.SQLKindList(TraversalKinds) + `)
-		        AND confidence >= 0.1`
+		        AND confidence >= 0.1
+		        AND (confidence > ? OR kind NOT IN (` + model.SQLKindList(UsageKinds) + `))`
 
-		args := make([]any, 0, len(batch))
+		args := make([]any, 0, len(batch)+1)
 		for _, id := range batch {
 			args = append(args, id)
 		}
+		args = append(args, extract.ConfidenceNameCollision)
 
 		rows, err := db.QueryContext(ctx, q, args...)
 		if err != nil {
