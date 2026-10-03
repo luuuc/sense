@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.1] - 2026-10-03
+
+### Maintenance
+
+- bump the all-others group with 2 updates
 ## [1.16.0] - 2026-09-24
 
 ### Features
