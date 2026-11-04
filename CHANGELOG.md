@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.2] - 2026-11-04
+
+### Maintenance
+
+- bump Go modules (mcp-go 1.4.0, sqlite 1.61.0, +3)
 ## [1.16.1] - 2026-10-03
 
 ### Maintenance
