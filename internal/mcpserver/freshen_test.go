@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -63,8 +64,8 @@ func scanProject(t *testing.T, dir string) {
 	t.Helper()
 	if _, err := scan.Run(context.Background(), scan.Options{
 		Root:     dir,
-		Output:   os.NewFile(0, os.DevNull),
-		Warnings: os.NewFile(0, os.DevNull),
+		Output:   io.Discard,
+		Warnings: io.Discard,
 	}); err != nil {
 		t.Fatalf("initial scan: %v", err)
 	}
