@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.3] - 2026-11-04
+
+### Maintenance
+
+- bump the all-others group across 1 directory with 2 updates
 ## [1.16.2] - 2026-11-04
 
 ### Maintenance
