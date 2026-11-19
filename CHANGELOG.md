@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.5] - 2026-11-19
+
+### Bug Fixes
+
+- fetch ONNX Runtime from NuGet with pinned checksums
 ## [1.16.4] - 2026-11-19
 
 ### Maintenance
