@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.4] - 2026-11-19
+
+### Maintenance
+
+- bump scala grammar, sqlite driver and x/sync
 ## [1.16.3] - 2026-11-04
 
 ### Maintenance
