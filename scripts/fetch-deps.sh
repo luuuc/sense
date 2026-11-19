@@ -51,53 +51,59 @@ if [ ! -f "$BUNDLE/vocab.txt" ]; then
 fi
 
 # ── ONNX Runtime shared libraries ───────────────────────────────────
+# Fetched from Microsoft's official NuGet package (Microsoft.ML.OnnxRuntime),
+# not GitHub releases: github.com/microsoft/onnxruntime went 404 in Nov 2026.
+# NuGet versions are immutable, and each pinned SHA-256 below was checked
+# against the library shipped in Sense v1.16.3 (byte-identical for linux and
+# darwin/amd64; darwin/arm64 is the same build, Microsoft-signed). A mismatch
+# fails the build.
+
+NUGET_DIR=$(mktemp -d)
+trap 'rm -rf "$NUGET_DIR"' EXIT
+
+sha256() {
+    if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+}
 
 fetch_ort() {
     local os="$1" arch="$2" target_dir="$3"
-    local libname url archive_dir
+    local ver="$ORT_VERSION" libname rid want
 
-    # ORT 1.24+ dropped macOS x86_64 builds; use 1.23.0 for darwin/amd64
-    local ver="$ORT_VERSION"
-    if [ "$os" = "darwin" ] && [ "$arch" = "amd64" ]; then
-        ver="$ORT_VERSION_DARWIN_AMD64"
-    fi
-
-    mkdir -p "$target_dir"
-
-    case "$os" in
-        darwin)
-            libname="libonnxruntime.dylib"
-            if [ "$arch" = "arm64" ]; then
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-osx-arm64-${ver}.tgz"
-                archive_dir="onnxruntime-osx-arm64-${ver}"
-            else
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-osx-x86_64-${ver}.tgz"
-                archive_dir="onnxruntime-osx-x86_64-${ver}"
-            fi
-            ;;
-        linux)
-            libname="libonnxruntime.so"
-            if [ "$arch" = "arm64" ]; then
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-linux-aarch64-${ver}.tgz"
-                archive_dir="onnxruntime-linux-aarch64-${ver}"
-            else
-                url="https://github.com/microsoft/onnxruntime/releases/download/v${ver}/onnxruntime-linux-x64-${ver}.tgz"
-                archive_dir="onnxruntime-linux-x64-${ver}"
-            fi
-            ;;
+    case "${os}_${arch}" in
+        darwin_arm64) libname=libonnxruntime.dylib rid=osx-arm64
+            want=0db33e160224e480c17932799d1dfaea59853b8e722b57bf61932c87e03586f0 ;;
+        darwin_amd64) libname=libonnxruntime.dylib rid=osx-x64 ver="$ORT_VERSION_DARWIN_AMD64"
+            want=583a6f3738eca06878c32cc1d14adac95af22689ad20d18933dbcc53974ced53 ;;
+        linux_amd64) libname=libonnxruntime.so rid=linux-x64
+            want=d132535d051344ff5c64c9c200004150559049a81ed330eb4422c1962fb6b7e4 ;;
+        linux_arm64) libname=libonnxruntime.so rid=linux-arm64
+            want=52b2a0e75e79468404284fec38ad5ee1a7a996232274f5e1b84f3e793fb07554 ;;
+        *) echo "unsupported platform ${os}/${arch}" >&2; exit 1 ;;
     esac
 
+    mkdir -p "$target_dir"
     if [ -f "$target_dir/$libname" ]; then
         return
     fi
 
-    echo "Downloading ONNX Runtime for ${os}/${arch}..."
-    local tmp
-    tmp=$(mktemp -d)
-    curl -fSL "$url" -o "$tmp/ort.tgz"
-    tar -xzf "$tmp/ort.tgz" -C "$tmp"
-    cp "$tmp/$archive_dir/lib/$libname" "$target_dir/$libname"
-    rm -rf "$tmp"
+    local nupkg="$NUGET_DIR/onnxruntime-${ver}.nupkg"
+    if [ ! -f "$nupkg" ]; then
+        echo "Downloading ONNX Runtime ${ver} (NuGet)..."
+        curl -fSL "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ver}/microsoft.ml.onnxruntime.${ver}.nupkg" -o "$nupkg"
+    fi
+
+    echo "Extracting ONNX Runtime for ${os}/${arch}..."
+    local tmp="$NUGET_DIR/$libname.${os}_${arch}"
+    python3 -I -c 'import sys, zipfile; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]))' \
+        "$nupkg" "runtimes/${rid}/native/${libname}" > "$tmp"
+    local got
+    got=$(sha256 "$tmp")
+    if [ "$got" != "$want" ]; then
+        echo "checksum mismatch for ${os}/${arch}: got $got, want $want" >&2
+        exit 1
+    fi
+    chmod 755 "$tmp"
+    mv "$tmp" "$target_dir/$libname"
 }
 
 if [ "${1:-}" = "--local" ]; then
