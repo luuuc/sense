@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.8] - 2026-11-28
+
+### Bug Fixes
+
+- leave committed integration files alone on first scan
 ## [1.16.7] - 2026-11-28
 
 ### Maintenance
