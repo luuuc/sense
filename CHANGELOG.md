@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.9] - 2026-11-28
+
+### Bug Fixes
+
+- start without an index and pick it up after the first scan
 ## [1.16.8] - 2026-11-28
 
 ### Bug Fixes
