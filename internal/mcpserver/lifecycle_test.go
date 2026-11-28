@@ -80,11 +80,13 @@ func TestServerStartupSmoke(t *testing.T) {
 
 func TestInvalidDirectoryError(t *testing.T) {
 	t.Parallel()
-	emptyDir := t.TempDir()
+	// A dir without .sense/ now starts a server that waits for the first
+	// scan; a dir that does not exist at all is still a startup error.
+	missingDir := filepath.Join(t.TempDir(), "missing")
 
-	err := RunWithOptions(RunOptions{Dir: emptyDir})
+	err := RunWithOptions(RunOptions{Dir: missingDir})
 	if err == nil {
-		t.Fatal("expected error for invalid directory (no .sense/)")
+		t.Fatal("expected error for a directory that does not exist")
 	}
 	// Should be a wrapped error, not a panic
 	t.Logf("Got expected error: %v", err)
@@ -252,7 +254,7 @@ func TestRunWithOptionsEmptyDirDefaultsToCWD(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- RunWithOptions(RunOptions{Dir: t.TempDir()})
+		done <- RunWithOptions(RunOptions{Dir: filepath.Join(t.TempDir(), "missing")})
 	}()
 
 	select {
@@ -260,7 +262,7 @@ func TestRunWithOptionsEmptyDirDefaultsToCWD(t *testing.T) {
 		t.Fatal("RunWithOptions with invalid dir should return quickly, not hang")
 	case err := <-done:
 		if err == nil {
-			t.Fatal("expected error for directory without .sense")
+			t.Fatal("expected error for a directory that does not exist")
 		}
 	}
 }

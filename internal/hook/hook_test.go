@@ -131,9 +131,11 @@ func TestRunUnknownHook(t *testing.T) {
 }
 
 func TestRunNoIndex(t *testing.T) {
+	// session-start speaks up when there is no index (it says the index is
+	// being built); every other hook stays silent.
 	dir := t.TempDir()
 	var buf bytes.Buffer
-	code := Run("session-start", dir, strings.NewReader("{}"), &buf)
+	code := Run("pre-compact", dir, strings.NewReader("{}"), &buf)
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0", code)
 	}
@@ -963,6 +965,7 @@ func TestHandleSessionStartEmptyIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = adapter.Close() }()
+	stampFinishedScan(t, adapter) // a hand-built index standing for a completed scan
 
 	result, err := handleSessionStart(ctx, nil, adapter, dir)
 	if err != nil {
@@ -986,6 +989,7 @@ func TestHandleSessionStartWithLanguages(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = adapter.Close() }()
+	stampFinishedScan(t, adapter) // a hand-built index standing for a completed scan
 
 	db := adapter.DB()
 	_, _ = db.ExecContext(ctx, `INSERT INTO sense_files (id, path, language, hash, symbols, indexed_at) VALUES (1, 'main.go', 'go', 'abc', 1, ?)`, time.Now().Format(time.RFC3339Nano))
@@ -1023,6 +1027,7 @@ func TestHandleSessionStartLastScanFormats(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = adapter.Close() }()
+	stampFinishedScan(t, adapter) // a hand-built index standing for a completed scan
 
 	db := adapter.DB()
 
@@ -1075,5 +1080,14 @@ func TestHandleSessionStartLastScanFormats(t *testing.T) {
 				t.Errorf("expected %q in message, got: %s", tc.wantAge, resp.Message)
 			}
 		})
+	}
+}
+
+// stampFinishedScan marks a hand-built index as one a scan finished, as
+// finalizeScan does, so session-start treats it as ready.
+func stampFinishedScan(t *testing.T, a *sqlite.Adapter) {
+	t.Helper()
+	if err := a.StampSchemaVersion(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

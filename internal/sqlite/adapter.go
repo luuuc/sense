@@ -262,6 +262,16 @@ func (a *Adapter) StampSchemaVersion(ctx context.Context) error {
 	return nil
 }
 
+// ScanComplete reports whether a scan has finished on this index. A scan
+// creates the file as it starts, but stamps the schema version only once it
+// completes, so an unstamped index is one still being built (or a scan that
+// was interrupted).
+func (a *Adapter) ScanComplete(ctx context.Context) bool {
+	var v int
+	err := a.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&v)
+	return err == nil && v == SchemaVersion
+}
+
 // Close releases the underlying database handle and flushes the WAL.
 func (a *Adapter) Close() error {
 	return a.db.Close()
