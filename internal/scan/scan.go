@@ -177,7 +177,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	printScanSummary(h.out, opts, res, elapsed, phases)
 
 	if firstRun {
-		if _, serr := setup.Run(h.root, h.out, &setup.Options{CurrentOnly: true}); serr != nil {
+		if _, serr := setup.Run(h.root, h.out, &setup.Options{CurrentOnly: true, SkipConfigured: true}); serr != nil {
 			_, _ = fmt.Fprintf(h.warn, "warn: AI tool setup failed: %v\n", serr)
 		}
 	}

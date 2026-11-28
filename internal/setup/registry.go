@@ -2,6 +2,8 @@ package setup
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -34,6 +36,28 @@ type tool struct {
 	// (a tool with none can still be detected and configured; it just never
 	// wins DetectCurrent, which falls back to Claude Code).
 	currentEnv []string
+	// configured reports whether this tool's integration is already in root,
+	// as it is in a checkout of a repo that commits it. A first scan leaves a
+	// configured tool alone. It must check a file only this tool's configure
+	// writes: AGENTS.md is shared by several tools, so it only proves a tool
+	// whose setup writes nothing else.
+	configured func(root string) bool
+}
+
+// hasMarker returns a configured check: rel holds the Sense section's start marker.
+func hasMarker(rel, marker string) func(root string) bool {
+	return func(root string) bool {
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		return err == nil && strings.Contains(string(data), marker)
+	}
+}
+
+// hasFile returns a configured check: the Sense-owned file rel exists.
+func hasFile(rel string) func(root string) bool {
+	return func(root string) bool {
+		_, err := os.Stat(filepath.Join(root, rel))
+		return err == nil
+	}
 }
 
 // registry returns every tool Sense knows how to configure, in display order.
@@ -46,12 +70,12 @@ type tool struct {
 // init-order questions. Do not "optimize" it into a package var.
 func registry() []tool {
 	return []tool{
-		{id: ToolClaudeCode, displayName: "Claude Code", detect: detectClaudeCode, configure: configureClaudeCode, unconfigure: unconfigureClaudeCode, currentEnv: []string{"CLAUDE_CODE"}},
-		{id: ToolCursor, displayName: "Cursor", detect: detectCursor, configure: configureCursor, unconfigure: unconfigureCursor, currentEnv: cursorSessionEnvs},
-		{id: ToolCodexCLI, displayName: "Codex CLI", detect: detectCodexCLI, configure: configureCodexCLI, unconfigure: unconfigureCodexCLI},
-		{id: ToolOpencode, displayName: "Opencode", detect: detectOpencode, configure: configureOpencode, unconfigure: unconfigureOpencode, currentEnv: []string{"OPENCODE"}},
-		{id: ToolWindsurf, displayName: "Windsurf", detect: detectWindsurf, configure: configureWindsurf, unconfigure: unconfigureWindsurf},
-		{id: ToolCline, displayName: "Cline", detect: detectCline, configure: configureCline, unconfigure: unconfigureCline},
+		{id: ToolClaudeCode, displayName: "Claude Code", detect: detectClaudeCode, configure: configureClaudeCode, unconfigure: unconfigureClaudeCode, currentEnv: []string{"CLAUDE_CODE"}, configured: hasMarker("CLAUDE.md", markerStart)},
+		{id: ToolCursor, displayName: "Cursor", detect: detectCursor, configure: configureCursor, unconfigure: unconfigureCursor, currentEnv: cursorSessionEnvs, configured: hasMarker(".cursorrules", markerStart)},
+		{id: ToolCodexCLI, displayName: "Codex CLI", detect: detectCodexCLI, configure: configureCodexCLI, unconfigure: unconfigureCodexCLI, configured: hasMarker(".codex/config.toml", tomlMarkerStart)},
+		{id: ToolOpencode, displayName: "Opencode", detect: detectOpencode, configure: configureOpencode, unconfigure: unconfigureOpencode, currentEnv: []string{"OPENCODE"}, configured: hasFile(".opencode/plugin/sense.js")},
+		{id: ToolWindsurf, displayName: "Windsurf", detect: detectWindsurf, configure: configureWindsurf, unconfigure: unconfigureWindsurf, configured: hasMarker("AGENTS.md", markerStart)},
+		{id: ToolCline, displayName: "Cline", detect: detectCline, configure: configureCline, unconfigure: unconfigureCline, configured: hasMarker("AGENTS.md", markerStart)},
 	}
 }
 
@@ -97,6 +121,12 @@ func configureTool(root string, t Tool) (*ToolResult, error) {
 		return e.configure(root)
 	}
 	return nil, fmt.Errorf("unknown tool: %s", t)
+}
+
+// isConfigured reports whether a tool's Sense guidance is already in root.
+func isConfigured(root string, t Tool) bool {
+	e, ok := lookup(t)
+	return ok && e.configured(root)
 }
 
 // unconfigureTool removes the integration files for a single tool.
