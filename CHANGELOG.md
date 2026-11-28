@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.7] - 2026-11-28
+
+### Maintenance
+
+- bump modernc.org/sqlite
 ## [1.16.6] - 2026-11-28
 
 ### Maintenance
