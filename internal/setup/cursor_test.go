@@ -60,7 +60,7 @@ func TestWriteCursorMCPJSON_OverwritesStaleSense(t *testing.T) {
 	root := t.TempDir()
 	cursorDir := filepath.Join(root, ".cursor")
 	_ = os.MkdirAll(cursorDir, 0o755)
-	existing := `{"mcpServers":{"sense":{"command":"old-sense","args":["old"]}},"other":"value"}`
+	existing := `{"mcpServers":{"sense":{"command":"sense","args":["old"]}},"other":"value"}`
 	_ = os.WriteFile(filepath.Join(cursorDir, "mcp.json"), []byte(existing), 0o644)
 
 	_, err := writeCursorMCPJSON(root)
@@ -72,11 +72,11 @@ func TestWriteCursorMCPJSON_OverwritesStaleSense(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(data)
-	if !strings.Contains(content, `"command": "sense"`) {
-		t.Error("sense command should be updated")
+	if !strings.Contains(content, `"mcp"`) {
+		t.Error("sense args should be updated")
 	}
-	if strings.Contains(content, `"old-sense"`) {
-		t.Error("old sense config should be overwritten")
+	if strings.Contains(content, `"old"`) {
+		t.Error("old sense args should be overwritten")
 	}
 	if !strings.Contains(content, `"other"`) {
 		t.Error("existing 'other' key should be preserved")

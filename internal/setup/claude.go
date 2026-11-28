@@ -115,6 +115,7 @@ func writeMCPJSON(root string) (bool, error) {
 	if servers == nil {
 		servers = map[string]any{}
 	}
+	keepUserCommand(servers, senseCfg)
 	servers["sense"] = senseCfg
 	existing["mcpServers"] = servers
 

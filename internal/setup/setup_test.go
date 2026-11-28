@@ -1317,3 +1317,155 @@ func TestPruneJSONFileReportsWriteErrors(t *testing.T) {
 		t.Errorf("outcome=%v err=%v, want unchanged and an error", o, err)
 	}
 }
+
+// --- first scan leaves an existing integration alone (issue #354) ---
+
+// A team that commits its Sense integration must not see the first scan in a
+// fresh clone or worktree rewrite those files. With SkipConfigured, a tool
+// whose guidance section is already present is left exactly as it is.
+func TestRunSkipConfiguredLeavesCommittedFilesAlone(t *testing.T) {
+	root := t.TempDir()
+	claudeMD := "# Team notes\n\n<!-- sense:start -->\n\n| Our | padded table |\n| --- | ------------ |\n<!-- sense:end -->\n"
+	mcpJSON := `{ "mcpServers": { "sense": { "command": "bin/sense-mcp" } } }` + "\n"
+	writeFile(t, root, "CLAUDE.md", claudeMD)
+	writeFile(t, root, ".mcp.json", mcpJSON)
+
+	var buf bytes.Buffer
+	res, err := Run(root, &buf, &Options{Tools: []Tool{ToolClaudeCode}, SkipConfigured: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(res.Tools) != 0 {
+		t.Errorf("Tools = %v, want none configured", res.Tools)
+	}
+	if got := readFile(t, root, "CLAUDE.md"); got != claudeMD {
+		t.Errorf("CLAUDE.md changed:\n got: %q\nwant: %q", got, claudeMD)
+	}
+	if got := readFile(t, root, ".mcp.json"); got != mcpJSON {
+		t.Errorf(".mcp.json changed:\n got: %q\nwant: %q", got, mcpJSON)
+	}
+	for _, p := range []string{".claude/settings.json", ".claude/skills", ".claude/agents"} {
+		if _, err := os.Stat(filepath.Join(root, p)); !os.IsNotExist(err) {
+			t.Errorf("%s was created, want it left absent (err=%v)", p, err)
+		}
+	}
+	if !strings.Contains(buf.String(), "already set up for Claude Code") || !strings.Contains(buf.String(), "sense setup") {
+		t.Errorf("output = %q, want a note that names the tool and points at sense setup", buf.String())
+	}
+}
+
+// SkipConfigured only skips what is already set up: a fresh project still
+// gets the full integration on its first scan.
+func TestRunSkipConfiguredStillConfiguresFreshProject(t *testing.T) {
+	root := t.TempDir()
+	res, err := Run(root, &bytes.Buffer{}, &Options{Tools: []Tool{ToolClaudeCode}, SkipConfigured: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Tools) != 1 {
+		t.Fatalf("Tools = %d, want 1", len(res.Tools))
+	}
+	if _, err := os.Stat(filepath.Join(root, ".mcp.json")); err != nil {
+		t.Errorf(".mcp.json not written: %v", err)
+	}
+}
+
+// Each tool's configured check is how SkipConfigured recognises an existing
+// setup, so configure must write the file the check looks at. This catches a
+// registry entry checking the wrong file.
+func TestRegistryConfiguredMatchesConfigure(t *testing.T) {
+	for _, e := range registry() {
+		t.Run(string(e.id), func(t *testing.T) {
+			root := t.TempDir()
+			if e.configured(root) {
+				t.Fatal("configured = true before configure ran")
+			}
+			if _, err := e.configure(root); err != nil {
+				t.Fatalf("configure: %v", err)
+			}
+			if !e.configured(root) {
+				t.Error("configured = false after configure; its check names a file configure did not write")
+			}
+		})
+	}
+}
+
+// Four tools write the same AGENTS.md section. A repo set up for Windsurf
+// must not make a first scan inside Opencode skip Opencode's own files,
+// or Opencode ends up with no MCP server and a message saying it is set up.
+func TestRunSkipConfiguredIgnoresAnotherToolsSharedFile(t *testing.T) {
+	root := t.TempDir()
+	if _, err := Run(root, &bytes.Buffer{}, &Options{Tools: []Tool{ToolWindsurf}}); err != nil {
+		t.Fatalf("Windsurf setup: %v", err)
+	}
+
+	res, err := Run(root, &bytes.Buffer{}, &Options{Tools: []Tool{ToolOpencode}, SkipConfigured: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Tools) != 1 {
+		t.Fatalf("Tools = %d, want Opencode configured", len(res.Tools))
+	}
+	if _, err := os.Stat(filepath.Join(root, "opencode.json")); err != nil {
+		t.Errorf("opencode.json not written: %v", err)
+	}
+}
+
+// A user who starts the server through their own wrapper keeps it when
+// setup re-runs: setup refreshes its other fields but not the command.
+func TestMCPJSONKeepsUserCommand(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".mcp.json", `{"mcpServers":{"sense":{"command":"bin/sense-mcp"}}}`)
+
+	if _, err := Run(root, &bytes.Buffer{}, claudeCodeOnly()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	sense := readSenseServer(t, filepath.Join(root, ".mcp.json"))
+	if sense["command"] != "bin/sense-mcp" {
+		t.Errorf("command = %v, want bin/sense-mcp", sense["command"])
+	}
+	if _, ok := sense["args"]; ok {
+		t.Errorf("args = %v, want none (the user's command had none)", sense["args"])
+	}
+	if sense["alwaysLoad"] != true {
+		t.Errorf("alwaysLoad = %v, want true", sense["alwaysLoad"])
+	}
+}
+
+func TestCursorMCPJSONKeepsUserCommand(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".cursor/mcp.json", `{"mcpServers":{"sense":{"command":"bin/sense-mcp","args":["--quiet"]}}}`)
+
+	if _, err := Run(root, &bytes.Buffer{}, &Options{Tools: []Tool{ToolCursor}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	sense := readSenseServer(t, filepath.Join(root, ".cursor", "mcp.json"))
+	if sense["command"] != "bin/sense-mcp" {
+		t.Errorf("command = %v, want bin/sense-mcp", sense["command"])
+	}
+	args, _ := sense["args"].([]any)
+	if len(args) != 1 || args[0] != "--quiet" {
+		t.Errorf("args = %v, want [--quiet]", sense["args"])
+	}
+}
+
+func readSenseServer(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	servers, _ := m["mcpServers"].(map[string]any)
+	sense, _ := servers["sense"].(map[string]any)
+	if sense == nil {
+		t.Fatalf("%s has no sense server", path)
+	}
+	return sense
+}

@@ -29,6 +29,12 @@ type Options struct {
 	// CurrentOnly restricts setup to the tool the user is currently
 	// running inside (detected via env vars). Used by scan first-run.
 	CurrentOnly bool
+
+	// SkipConfigured leaves a tool alone when its Sense guidance section is
+	// already in the project, so a fresh clone or worktree of a repo that
+	// commits its integration keeps those files as committed. Used by scan
+	// first-run; `sense setup` always writes.
+	SkipConfigured bool
 }
 
 // ToolResult summarises what was written for a single tool.
@@ -60,6 +66,10 @@ func Run(root string, out io.Writer, opts *Options) (*Result, error) {
 	res := &Result{}
 
 	for _, t := range tools {
+		if opts != nil && opts.SkipConfigured && isConfigured(root, t) {
+			_, _ = fmt.Fprintf(out, "Sense is already set up for %s here; left its files alone (run `sense setup` to refresh them).\n", t.DisplayName())
+			continue
+		}
 		tr, err := configureTool(root, t)
 		if err != nil {
 			return nil, fmt.Errorf("configure %s: %w", t.DisplayName(), err)

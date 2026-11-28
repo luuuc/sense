@@ -36,6 +36,7 @@ type tool struct {
     configure   func(root string) (*ToolResult, error) // write its files
     unconfigure func(root string) (*ToolResult, error) // remove them again
     currentEnv  []string                   // env vars that mean "running inside this tool now"
+    configured  func(root string) bool     // is its integration already in the project?
 }
 ```
 
@@ -48,6 +49,14 @@ found it. A registry entry missing either half fails
 configure only the tool the user is currently inside. It is optional: a tool with
 no live-session env var still detects and configures normally, it just never wins
 `DetectCurrent` (which falls back to Claude Code).
+
+`configured` tells a first `sense scan` that the tool is already set up, so a
+repo that commits its integration keeps it as committed in every fresh clone and
+worktree. Build it with `hasMarker(file, marker)` or `hasFile(file)`, and point it
+at a file **only this tool's `configure` writes**: `AGENTS.md` is shared by several
+tools, so it is the right check only for a tool whose setup writes nothing else.
+`TestRegistryConfiguredMatchesConfigure` fails if `configure` doesn't write the
+file the check looks at.
 
 Every public entry point loops over that slice, so the registry is the only place
 the tool list is enumerated:

@@ -269,3 +269,20 @@ func removeSensePermissions(settings map[string]any, patterns []string) bool {
 	}
 	return true
 }
+
+// keepUserCommand carries a user-set command for the Sense server from the
+// existing entry into the one setup is about to write. A team that starts the
+// server through a wrapper script keeps it when setup re-runs. The args go
+// with the command they belong to, absent args included.
+func keepUserCommand(servers, senseCfg map[string]any) {
+	old, _ := servers["sense"].(map[string]any)
+	cmd, _ := old["command"].(string)
+	if cmd == "" || cmd == "sense" {
+		return
+	}
+	senseCfg["command"] = cmd
+	delete(senseCfg, "args")
+	if args, ok := old["args"]; ok {
+		senseCfg["args"] = args
+	}
+}
