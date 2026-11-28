@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/luuuc/sense/internal/cli"
@@ -86,7 +87,7 @@ func Run(dir string) error {
 
 // RunWithOptions starts the MCP stdio server with explicit options.
 func RunWithOptions(opts RunOptions) error {
-	s, _, cleanup, err := buildMCPServer(opts)
+	s, cleanup, err := startServer(opts, defaultDeps())
 	if err != nil {
 		return err
 	}
@@ -108,17 +109,32 @@ func buildMCPServer(opts RunOptions) (*server.MCPServer, *handlers, func(), erro
 // orchestration, but the process edges arrive through d so a test can drive the
 // error paths. Production calls it through buildMCPServer with defaultDeps.
 func buildMCPServerWithDeps(opts RunOptions, d deps) (*server.MCPServer, *handlers, func(), error) {
+	h, cleanup, err := buildHandlers(opts, d)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	s := newMCPServer()
+	for _, e := range toolTable() {
+		s.AddTool(e.tool, withAliasing(e.name, bindTool(h, e.handle)))
+	}
+	return s, h, cleanup, nil
+}
+
+// buildHandlers opens the index and starts everything the tool handlers need:
+// the search engine, the background freshener and the one-shot embed. The
+// returned cleanup stops and releases all of it.
+func buildHandlers(opts RunOptions, d deps) (*handlers, func(), error) {
 	diag := resolveDiag(opts)
 
 	dir, err := resolveDir(opts, d)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	ctx := context.Background()
 	adapter, err := openIndexWithRebuild(ctx, dir, diag, d)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	warnModelMismatch(ctx, adapter, diag)
@@ -126,7 +142,7 @@ func buildMCPServerWithDeps(opts RunOptions, d deps) (*server.MCPServer, *handle
 	engine, embedder, err := search.BuildEngine(ctx, adapter, dir)
 	if err != nil {
 		_ = adapter.Close()
-		return nil, nil, nil, fmt.Errorf("sense mcp: %w", err)
+		return nil, nil, fmt.Errorf("sense mcp: %w", err)
 	}
 
 	embeddingsEnabled := cli.EmbeddingsEnabled(dir)
@@ -136,23 +152,10 @@ func buildMCPServerWithDeps(opts RunOptions, d deps) (*server.MCPServer, *handle
 
 	tracker := metrics.NewTracker(adapter.DB())
 
-	s := server.NewMCPServer(
-		"sense",
-		version.Version,
-		server.WithToolCapabilities(false),
-		server.WithInstructions(serverInstructions),
-	)
-
 	defaults := profile.DefaultParams()
 	textFallback := search.NewTextFallback()
 
 	h := &handlers{adapter: adapter, db: adapter.DB(), dir: dir, search: engine, textFallback: textFallback, watchState: watchState, freshen: freshenSvc, tracker: tracker, defaults: defaults, seenSymbols: make(map[int64]bool)}
-
-	s.AddTool(searchTool(), withAliasing("sense_search", h.handleSearch))
-	s.AddTool(graphTool(), withAliasing("sense_graph", h.handleGraph))
-	s.AddTool(blastTool(), withAliasing("sense_blast", h.handleBlast))
-	s.AddTool(conventionsTool(), withAliasing("sense_conventions", h.handleConventions))
-	s.AddTool(statusTool(), withAliasing("sense_status", h.handleStatus))
 
 	cleanup := func() {
 		// Stop the watcher first so no further re-index batch starts, then
@@ -169,7 +172,42 @@ func buildMCPServerWithDeps(opts RunOptions, d deps) (*server.MCPServer, *handle
 		_ = adapter.Close()
 	}
 
-	return s, h, cleanup, nil
+	return h, cleanup, nil
+}
+
+// newMCPServer creates the bare server, before any tool is registered.
+func newMCPServer() *server.MCPServer {
+	return server.NewMCPServer(
+		"sense",
+		version.Version,
+		server.WithToolCapabilities(false),
+		server.WithInstructions(serverInstructions),
+	)
+}
+
+// toolEntry pairs a tool's definition with the handler method that serves it.
+type toolEntry struct {
+	tool   mcp.Tool
+	name   string
+	handle func(*handlers, context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+}
+
+// toolTable lists the tools every server registers, in listing order.
+func toolTable() []toolEntry {
+	return []toolEntry{
+		{searchTool(), "sense_search", (*handlers).handleSearch},
+		{graphTool(), "sense_graph", (*handlers).handleGraph},
+		{blastTool(), "sense_blast", (*handlers).handleBlast},
+		{conventionsTool(), "sense_conventions", (*handlers).handleConventions},
+		{statusTool(), "sense_status", (*handlers).handleStatus},
+	}
+}
+
+// bindTool binds a handler method to h.
+func bindTool(h *handlers, handle func(*handlers, context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return handle(h, ctx, req)
+	}
 }
 
 // resolveDir returns the index directory, falling back to the working

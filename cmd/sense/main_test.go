@@ -77,11 +77,11 @@ func TestRunHookMissingSubcommand(t *testing.T) {
 }
 
 func TestRunHookDispatches(t *testing.T) {
-	// session-start with empty stdin and no index in cwd: hook.Run fails open,
-	// writes {} to stdout, and returns 0. We only need the dispatch line covered.
+	// pre-compact with no index in cwd: hook.Run fails open, writes {} to
+	// stdout, and returns 0. We only need the dispatch line covered.
 	t.Chdir(t.TempDir())
 	var out bytes.Buffer
-	code := run([]string{"hook", "session-start"}, strings.NewReader("{}"), &out, io.Discard)
+	code := run([]string{"hook", "pre-compact"}, strings.NewReader("{}"), &out, io.Discard)
 	if code != 0 {
 		t.Fatalf("hook dispatch exit = %d, want 0", code)
 	}
@@ -120,12 +120,13 @@ func TestRunQueryCommandsDispatch(t *testing.T) {
 	}
 }
 
-func TestRunMCPMissingIndex(t *testing.T) {
-	// An empty dir has no index, so mcpserver.Run fails to build the server and
-	// returns before ServeStdio — covering the error arm without blocking.
-	code, _, errb := runOut(t, "mcp", "--dir", t.TempDir())
+func TestRunMCPMissingDir(t *testing.T) {
+	// A missing index no longer stops the server (it waits for the first
+	// scan), but a --dir that does not exist does, before ServeStdio —
+	// covering the error arm without blocking.
+	code, _, errb := runOut(t, "mcp", "--dir", filepath.Join(t.TempDir(), "missing"))
 	if code != 1 {
-		t.Fatalf("mcp missing-index exit = %d, want 1", code)
+		t.Fatalf("mcp missing-dir exit = %d, want 1", code)
 	}
 	if !strings.Contains(errb, "sense mcp:") {
 		t.Errorf("stderr = %q", errb)

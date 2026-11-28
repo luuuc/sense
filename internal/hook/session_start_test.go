@@ -211,6 +211,7 @@ func TestSessionStartEmptyIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stampFinishedScan(t, adapter) // a finished scan that found no symbols
 	_ = adapter.Close()
 
 	var buf bytes.Buffer
@@ -445,5 +446,45 @@ func TestSessionStartSkipsReconcileWhenLockHeld(t *testing.T) {
 	_ = adapter.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sense_symbols WHERE name = 'Goodbye'`).Scan(&after)
 	if after != 0 {
 		t.Error("hook should not reconcile while another process holds the writer lock")
+	}
+}
+
+// An agent that starts before the first scan finishes must not be told the
+// Sense tools are callable now. With no index file yet, or one a scan has
+// created but not finished, session-start says the index is being built.
+func TestSessionStartSaysIndexIsBeingBuilt(t *testing.T) {
+	t.Setenv("SENSE_BENCH", "")
+	cases := map[string]func(t *testing.T, dir string){
+		"no index yet": func(*testing.T, string) {},
+		"scan still running": func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, ".sense"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			a, err := sqlite.Open(context.Background(), filepath.Join(dir, ".sense", "index.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.DB().Exec(`INSERT INTO sense_files (path, language, hash, symbols, indexed_at) VALUES ('main.go', 'go', 'h', 1, '2026-01-01T00:00:00Z')`); err != nil {
+				t.Fatal(err)
+			}
+			_ = a.Close()
+		},
+	}
+	for name, prepare := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			prepare(t, dir)
+
+			var out bytes.Buffer
+			Run("session-start", dir, strings.NewReader("{}"), &out)
+
+			var resp messageResponse
+			if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+				t.Fatalf("parse %q: %v", out.String(), err)
+			}
+			if !strings.Contains(resp.Message, "being built") || strings.Contains(resp.Message, "callable now") {
+				t.Errorf("message = %q, want 'being built' and no 'callable now'", resp.Message)
+			}
+		})
 	}
 }

@@ -34,7 +34,7 @@ func Run(name string, dir string, stdin io.Reader, stdout io.Writer) int {
 	case "subagent-start":
 		silentRun(dir, stdin, stdout, handleSubagentStart)
 	case "session-start":
-		silentRun(dir, stdin, stdout, handleSessionStart)
+		runSessionStart(dir, stdin, stdout)
 	default:
 		fmt.Fprintf(os.Stderr, "sense hook: unknown hook %q\n", name)
 		writeEmpty(stdout)
@@ -77,7 +77,11 @@ func silentRun(dir string, stdin io.Reader, stdout io.Writer, fn handlerFunc) {
 		writeEmpty(stdout)
 		return
 	}
+	writeResult(stdout, result)
+}
 
+// writeResult writes result as one JSON line, or {} if it does not marshal.
+func writeResult(stdout io.Writer, result any) {
 	data, err := json.Marshal(result)
 	if err != nil {
 		writeEmpty(stdout)

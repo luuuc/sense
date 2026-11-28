@@ -5,7 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,7 +76,29 @@ func checkFreshness(ctx context.Context, db *sql.DB, dir string) string {
 	return fmt.Sprintf("Index is stale (%s since last scan).", strings.Join(parts, ", "))
 }
 
+// indexBuildingMessage tells an agent that started before the first scan
+// finished that the Sense tools are coming, so it neither waits on them nor
+// writes them off.
+const indexBuildingMessage = "The Sense index for this repo is still being built: the first `sense scan` has not finished. " +
+	"Until it does, the Sense tools answer that the index is being built. Use grep and file reads for now and try Sense again in a minute."
+
+// runSessionStart runs the session-start hook. Unlike the other hooks it does
+// not stay silent without an index: an agent starting before the first scan
+// finishes is told the index is being built.
+func runSessionStart(dir string, stdin io.Reader, stdout io.Writer) {
+	if _, err := os.Stat(indexPath(dir)); errors.Is(err, fs.ErrNotExist) {
+		writeResult(stdout, &messageResponse{Message: indexBuildingMessage})
+		return
+	}
+	silentRun(dir, stdin, stdout, handleSessionStart)
+}
+
 func handleSessionStart(ctx context.Context, _ json.RawMessage, adapter *sqlite.Adapter, dir string) (any, error) {
+	// A scan creates the index file as it starts; only a finished scan
+	// stamps it. Until then the index is partial and the server waits.
+	if !adapter.ScanComplete(ctx) {
+		return &messageResponse{Message: indexBuildingMessage}, nil
+	}
 	db := adapter.DB()
 
 	var symbolCount, edgeCount int
