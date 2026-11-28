@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to Sense.
+## [1.16.6] - 2026-11-28
+
+### Maintenance
+
+- bump mcp-go and tree-sitter C# and PHP grammars
 ## [1.16.5] - 2026-11-19
 
 ### Bug Fixes
